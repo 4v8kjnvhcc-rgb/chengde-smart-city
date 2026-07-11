@@ -1,0 +1,46 @@
+/* Element Plus overrides — portal shell */
+
+.el-button--primary {
+  --el-button-bg-color: var(--portal-primary);
+  --el-button-border-color: var(--portal-primary);
+  --el-button-hover-bg-color: var(--portal-primary-dark);
+  --el-button-hover-border-color: var(--portal-primary-dark);
+}
+
+.portal-sidebar-menu.el-menu {
+  border-right: none;
+  background: var(--portal-sidebar-bg);
+}
+
+.portal-sidebar-menu .el-menu-item,
+.portal-sidebar-menu .el-sub-menu__title {
+  color: rgba(255, 255, 255, 0.75);
+}
+
+.portal-sidebar-menu .el-menu-item:hover,
+.portal-sidebar-menu .el-sub-menu__title:hover {
+  background: rgba(255, 255, 255, 0.08) !important;
+  color: #fff;
+}
+
+.portal-sidebar-menu .el-menu-item.is-active {
+  background: var(--portal-primary) !important;
+  color: #fff;
+}
+
+.portal-card.el-card {
+  border: 1px solid var(--portal-border);
+  border-radius: var(--portal-radius);
+  box-shadow: var(--portal-shadow);
+}
+
+.portal-card .el-card__header {
+  border-bottom: 1px solid var(--portal-border);
+  font-weight: 600;
+}
+
+.portal-table .el-table th.el-table__cell {
+  background: #fafafa;
+  color: var(--portal-text);
+  font-weight: 600;
+}

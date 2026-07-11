@@ -1,0 +1,47 @@
+server:
+  port: 8080
+
+spring:
+  application:
+    name: platform-backend
+  datasource:
+    url: jdbc:mysql://localhost:3306/smart_city?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai
+    username: smart_city
+    password: smart_city
+    driver-class-name: com.mysql.cj.jdbc.Driver
+  data:
+    redis:
+      host: localhost
+      port: 6379
+      database: 0
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+    baseline-on-migrate: true
+
+mybatis-plus:
+  configuration:
+    map-underscore-to-camel-case: true
+  global-config:
+    db-config:
+      id-type: auto
+
+app:
+  jwt:
+    secret: change-me-in-production-use-256bit-secret-key-here
+    access-token-minutes: 30
+    refresh-token-hours: 8
+  security:
+    session-idle-minutes: 30
+    login-max-failures: 5
+    login-lock-minutes: 60
+
+springdoc:
+  api-docs:
+    path: /api/v1/openapi
+  swagger-ui:
+    path: /swagger-ui.html
+
+logging:
+  level:
+    com.chengde.smartcity: INFO

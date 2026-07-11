@@ -1,0 +1,15 @@
+:root {
+  --portal-primary: #1677ff;
+  --portal-primary-dark: #1a5fb4;
+  --portal-sidebar-bg: #001529;
+  --portal-sidebar-width: 220px;
+  --portal-header-height: 56px;
+  --portal-header-bg: #ffffff;
+  --portal-bg: #f0f2f5;
+  --portal-card-bg: #ffffff;
+  --portal-text: #1f2937;
+  --portal-text-secondary: #6b7280;
+  --portal-border: #e5e7eb;
+  --portal-radius: 8px;
+  --portal-shadow: 0 1px 2px rgba(0, 0, 0, 0.06), 0 1px 3px rgba(0, 0, 0, 0.08);
+}

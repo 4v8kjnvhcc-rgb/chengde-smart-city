@@ -1,0 +1,8 @@
+﻿esb.env.local
+local.env
+local.env.local
+*.env.local
+platform-backend/target/
+platform-web/node_modules/
+platform-web/dist/
+mysql-data/
