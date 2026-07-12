@@ -61,6 +61,9 @@ public class AuthService {
         if (user == null) {
             throw new BadCredentialsException("用户名或密码错误");
         }
+        if (user.getStatus() != null && user.getStatus() == 0) {
+            throw new LockedException("账号已禁用");
+        }
         if (user.getLockedUntil() != null && user.getLockedUntil().isAfter(LocalDateTime.now())) {
             throw new LockedException("账号已锁定，请稍后再试");
         }

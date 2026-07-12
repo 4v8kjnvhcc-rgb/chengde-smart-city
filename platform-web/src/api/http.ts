@@ -1,9 +1,38 @@
-import axios from 'axios'
+import axios, { type AxiosError, type InternalAxiosRequestConfig } from 'axios'
 
 const api = axios.create({
   baseURL: '/api/v1',
   timeout: 30000,
 })
+
+let refreshing: Promise<string> | null = null
+
+async function refreshAccessToken(): Promise<string> {
+  const refreshToken = localStorage.getItem('refreshToken')
+  if (!refreshToken) {
+    throw new Error('无 Refresh Token')
+  }
+  const res = await axios.post('/api/v1/auth/refresh', { refreshToken })
+  const body = res.data
+  if (!body || body.code !== 0) {
+    throw new Error(body?.message || '刷新失败')
+  }
+  const accessToken = body.data.accessToken as string
+  const nextRefresh = body.data.refreshToken as string
+  localStorage.setItem('accessToken', accessToken)
+  if (nextRefresh) {
+    localStorage.setItem('refreshToken', nextRefresh)
+  }
+  return accessToken
+}
+
+function clearSessionAndRedirect() {
+  localStorage.removeItem('accessToken')
+  localStorage.removeItem('refreshToken')
+  if (!window.location.pathname.includes('/login')) {
+    window.location.href = '/login'
+  }
+}
 
 api.interceptors.request.use((config) => {
   const token = localStorage.getItem('accessToken')
@@ -17,19 +46,38 @@ api.interceptors.response.use(
   (res) => {
     const body = res.data
     if (body && typeof body.code === 'number' && body.code !== 0) {
-      return Promise.reject(new Error(body.message || '请求失败'))
+      const err = new Error(body.message || '请求失败') as Error & { code?: number }
+      err.code = body.code
+      return Promise.reject(err)
     }
     return body?.data !== undefined ? { ...res, data: body.data } : res
   },
-  (err) => {
-    if (err.response?.status === 401) {
-      localStorage.removeItem('accessToken')
-      localStorage.removeItem('refreshToken')
-      if (!window.location.pathname.includes('/login')) {
-        window.location.href = '/login'
+  async (err: AxiosError) => {
+    const original = err.config as InternalAxiosRequestConfig & { _retry?: boolean }
+    const url = original?.url || ''
+    const isAuthApi = url.includes('/auth/login') || url.includes('/auth/refresh')
+    if (err.response?.status === 401 && original && !original._retry && !isAuthApi) {
+      original._retry = true
+      try {
+        if (!refreshing) {
+          refreshing = refreshAccessToken().finally(() => {
+            refreshing = null
+          })
+        }
+        const token = await refreshing
+        original.headers.Authorization = `Bearer ${token}`
+        return api(original)
+      } catch {
+        clearSessionAndRedirect()
       }
+    } else if (err.response?.status === 401) {
+      clearSessionAndRedirect()
     }
-    return Promise.reject(err)
+    const body = err.response?.data as { message?: string; code?: number } | undefined
+    const message = body?.message || err.message || '请求失败'
+    const wrapped = new Error(message) as Error & { code?: number }
+    wrapped.code = body?.code ?? err.response?.status
+    return Promise.reject(wrapped)
   },
 )
 

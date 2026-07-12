@@ -13,3 +13,29 @@ spring:
 logging:
   level:
     com.chengde.smartcity: DEBUG
+
+app:
+  integration:
+    enabled: ${INTEGRATION_ENABLED:false}
+    demo-fallback: ${INTEGRATION_DEMO_FALLBACK:false}
+    om:
+      url: ${OM_URL:http://localhost:8585/api/v1}
+      user: ${OM_USER:admin@open-metadata.org}
+      password: ${OM_PASSWORD:admin}
+    de:
+      url: ${DE_URL:http://localhost:8100}
+      embed-base: ${DE_EMBED_BASE:http://localhost:8100}
+    ds:
+      url: ${DS_URL:http://localhost:12345/dolphinscheduler}
+      user: ${DS_USER:admin}
+      password: ${DS_PASSWORD:dolphinscheduler123}
+    kettle:
+      url: ${KETTLE_URL:http://localhost:8081}
+      user: ${KETTLE_USER:cluster}
+      password: ${KETTLE_PASSWORD:cluster}
+    storage:
+      es-url: ${ES_URL:http://localhost:9200}
+      seaweed-s3-endpoint: ${SEAWEED_S3_ENDPOINT:http://localhost:8333}
+      seaweed-bucket: ${SEAWEED_S3_BUCKET:smartcity-docs}
+      mongo-url: ${MONGO_URL:mongodb://localhost:27017}
+      canal-url: ${CANAL_URL:http://localhost:19090}

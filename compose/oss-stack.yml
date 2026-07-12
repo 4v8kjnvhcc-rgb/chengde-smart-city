@@ -1,0 +1,250 @@
+# 开源组件联调栈（profile 分波启动，不占用本机 3306 smart_city）
+# 用法: docker compose -f compose/oss-stack.yml --profile storage up -d
+
+name: smart-city-oss
+
+services:
+  oss-elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.11.0
+    container_name: sc_oss_elasticsearch
+    profiles: [storage, governance]
+    environment:
+      discovery.type: single-node
+      xpack.security.enabled: "false"
+      ES_JAVA_OPTS: -Xms512m -Xmx512m
+    ports:
+      - "9200:9200"
+    volumes:
+      - sc_oss_es_data:/usr/share/elasticsearch/data
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:9200/_cluster/health || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+
+  seaweedfs:
+    image: chrislusf/seaweedfs:3.68
+    container_name: sc_oss_seaweedfs
+    profiles: [storage]
+    command: server -dir=/data -s3 -s3.port=8333 -ip=seaweedfs
+    ports:
+      - "9333:9333"
+      - "8333:8333"
+    volumes:
+      - sc_oss_seaweed_data:/data
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "-", "http://localhost:9333/dir/status"]
+      interval: 15s
+      timeout: 5s
+      retries: 8
+
+  mongodb:
+    image: mongo:7
+    container_name: sc_oss_mongodb
+    profiles: [storage, cdc]
+    ports:
+      - "27017:27017"
+    volumes:
+      - sc_oss_mongo_data:/data/db
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      interval: 15s
+      timeout: 5s
+      retries: 8
+
+  oss-mysql:
+    image: mysql:8.0
+    container_name: sc_oss_mysql
+    profiles: [governance, bi, sched]
+    environment:
+      MYSQL_ROOT_PASSWORD: oss_root
+      MYSQL_DATABASE: openmetadata_db
+    ports:
+      - "3307:3306"
+    command: --character-set-server=utf8mb4 --collation-server=utf8mb4_unicode_ci --default-authentication-plugin=mysql_native_password
+    volumes:
+      - sc_oss_mysql_data:/var/lib/mysql
+      - ./init-oss-mysql.sql:/docker-entrypoint-initdb.d/01-init.sql:ro
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-poss_root"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+
+  om-migrate:
+    image: docker.getcollate.io/openmetadata/server:1.5.0
+    container_name: sc_om_migrate
+    profiles: [governance]
+    command: ./bootstrap/openmetadata-ops.sh migrate
+    environment:
+      DB_DRIVER_CLASS: com.mysql.cj.jdbc.Driver
+      DB_SCHEME: mysql
+      OM_DATABASE: openmetadata_db
+      DB_USE_SSL: "false"
+      DB_USER: root
+      DB_USER_PASSWORD: oss_root
+      DB_HOST: oss-mysql
+      DB_PORT: 3306
+      ELASTICSEARCH_HOST: oss-elasticsearch
+      ELASTICSEARCH_PORT: 9200
+      ELASTICSEARCH_SCHEME: http
+      SEARCH_TYPE: elasticsearch
+    depends_on:
+      oss-mysql:
+        condition: service_healthy
+      oss-elasticsearch:
+        condition: service_healthy
+
+  openmetadata:
+    image: docker.getcollate.io/openmetadata/server:1.5.0
+    container_name: sc_openmetadata
+    profiles: [governance]
+    ports:
+      - "8585:8585"
+    environment:
+      DB_DRIVER_CLASS: com.mysql.cj.jdbc.Driver
+      DB_SCHEME: mysql
+      OM_DATABASE: openmetadata_db
+      DB_USE_SSL: "false"
+      DB_USER: root
+      DB_USER_PASSWORD: oss_root
+      DB_HOST: oss-mysql
+      DB_PORT: 3306
+      ELASTICSEARCH_HOST: oss-elasticsearch
+      ELASTICSEARCH_PORT: 9200
+      ELASTICSEARCH_SCHEME: http
+      SEARCH_TYPE: elasticsearch
+      AUTHORIZER_CLASS_NAME: org.openmetadata.service.security.DefaultAuthorizer
+      AUTHORIZER_REQUEST_FILTER: org.openmetadata.service.security.JwtFilter
+      AUTHENTICATION_PROVIDER: basic
+      AUTHENTICATION_PUBLIC_KEYS: "[http://openmetadata:8585/api/v1/system/config/jwks]"
+      AUTHENTICATION_ENABLE_SELF_SIGNUP: "true"
+    depends_on:
+      om-migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8585/api/v1/system/version || exit 1"]
+      interval: 20s
+      timeout: 10s
+      retries: 15
+      start_period: 120s
+
+  dataease:
+    image: wojiushixiaobai/dataease:v2.10.10
+    container_name: sc_dataease
+    profiles: [bi]
+    ports:
+      - "8100:8100"
+    environment:
+      TZ: Asia/Shanghai
+      DB_HOST: oss-mysql
+      DB_PORT: 3306
+      DB_NAME: dataease
+      DB_USER: root
+      DB_PASSWORD: oss_root
+    depends_on:
+      oss-mysql:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8100 || exit 1"]
+      interval: 20s
+      timeout: 10s
+      retries: 15
+      start_period: 180s
+
+  ds-schema-init:
+    image: mysql:8.0
+    container_name: sc_ds_schema_init
+    profiles: [sched]
+    volumes:
+      - ./libs/ds/dolphinscheduler_mysql.sql:/schema.sql:ro
+    entrypoint:
+      - sh
+      - -c
+      - |
+        mysql -h oss-mysql -uroot -poss_root -e "CREATE DATABASE IF NOT EXISTS dolphinscheduler" &&
+        if mysql -h oss-mysql -uroot -poss_root dolphinscheduler -e "SHOW TABLES LIKE 't_ds_user'" | grep -q t_ds_user; then
+          echo "dolphinscheduler schema already present"
+        else
+          mysql -h oss-mysql -uroot -poss_root dolphinscheduler < /schema.sql
+        fi
+    depends_on:
+      oss-mysql:
+        condition: service_healthy
+    restart: "no"
+
+  dolphinscheduler:
+    image: apache/dolphinscheduler-standalone-server:3.2.2
+    container_name: sc_dolphinscheduler
+    profiles: [sched]
+    ports:
+      - "12345:12345"
+      - "25333:25333"
+    environment:
+      DATABASE: mysql
+      SPRING_PROFILES_ACTIVE: mysql
+      SPRING_DATASOURCE_DRIVER_CLASS_NAME: com.mysql.cj.jdbc.Driver
+      SPRING_DATASOURCE_URL: jdbc:mysql://oss-mysql:3306/dolphinscheduler?useUnicode=true&characterEncoding=UTF-8&useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=Asia/Shanghai
+      SPRING_DATASOURCE_USERNAME: root
+      SPRING_DATASOURCE_PASSWORD: oss_root
+    volumes:
+      - ./libs/ds/mysql-connector-j-8.0.33.jar:/opt/dolphinscheduler/libs/standalone-server/mysql-connector-j-8.0.33.jar:ro
+    depends_on:
+      ds-schema-init:
+        condition: service_completed_successfully
+      oss-mysql:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:12345/dolphinscheduler/actuator/health || exit 1"]
+      interval: 20s
+      timeout: 10s
+      retries: 15
+      start_period: 120s
+
+  kettle-carte:
+    image: ghcr.io/it-at-m/pentaho-carte:0.0.2
+    container_name: sc_kettle_carte
+    profiles: [etl]
+    ports:
+      - "8081:8080"
+    environment:
+      PENTAHO_USER: cluster
+      PENTAHO_PASSWORD: cluster
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8080 || exit 1"]
+      interval: 20s
+      timeout: 10s
+      retries: 10
+      start_period: 120s
+
+  canal:
+    image: canal/canal-server:v1.1.7
+    container_name: sc_canal
+    profiles: [cdc]
+    ports:
+      # Windows Hyper-V 常保留 11072-11171，映射 Canal 服务端口 11111 到 19090
+      - "19090:11111"
+    environment:
+      canal.instance.master.address: host.docker.internal:3306
+      canal.instance.dbUsername: root
+      canal.instance.dbPassword: ""
+      canal.instance.connectionCharset: UTF-8
+      canal.instance.tsdb.enable: "false"
+      canal.instance.gtidon: "false"
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    depends_on:
+      mongodb:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "bash -c 'echo > /dev/tcp/127.0.0.1/11111' || exit 1"]
+      interval: 20s
+      timeout: 5s
+      retries: 8
+      start_period: 60s
+
+volumes:
+  sc_oss_es_data:
+  sc_oss_seaweed_data:
+  sc_oss_mongo_data:
+  sc_oss_mysql_data:

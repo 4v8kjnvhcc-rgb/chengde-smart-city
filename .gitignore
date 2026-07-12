@@ -6,3 +6,7 @@ platform-backend/target/
 platform-web/node_modules/
 platform-web/dist/
 mysql-data/
+data/
+platform-backend/data/
+~$*
+

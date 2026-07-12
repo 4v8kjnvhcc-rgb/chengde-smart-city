@@ -105,6 +105,9 @@ function getSubSystems(node: MenuNode): MenuNode[] {
   <div class="portal-drawer">
     <div class="portal-drawer__header">
       <h1 class="portal-drawer__title">承德高新区智慧城市数据中台</h1>
+      <el-button type="primary" plain class="d05-search-btn" @click="router.push('/catalog')">
+        D05 全量功能检索（M001～M215）
+      </el-button>
     </div>
 
     <div v-if="platforms.length" class="cards-row">
@@ -182,6 +185,9 @@ function getSubSystems(node: MenuNode): MenuNode[] {
   text-align: center;
   margin-bottom: 20px;
   flex-shrink: 0;
+}
+.d05-search-btn {
+  margin-top: 16px;
 }
 .portal-drawer__title {
   font-size: 56px;

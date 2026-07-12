@@ -19,7 +19,12 @@ async function submit() {
     await auth.login(form.username, form.password, form.totpCode || undefined)
     router.push('/dashboard')
   } catch (e: unknown) {
-    ElMessage.error(e instanceof Error ? e.message : '登录失败')
+    const err = e as Error & { code?: number }
+    if (err.code === 40101) {
+      ElMessage.warning('已开启双因素认证，请填写验证码（演示可用 000000）后重试')
+    } else {
+      ElMessage.error(err instanceof Error ? err.message : '登录失败')
+    }
   } finally {
     loading.value = false
   }

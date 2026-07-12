@@ -1,0 +1,3 @@
+CREATE DATABASE IF NOT EXISTS openmetadata_db CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+CREATE DATABASE IF NOT EXISTS dataease CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+CREATE DATABASE IF NOT EXISTS dolphinscheduler CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;

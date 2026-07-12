@@ -91,12 +91,56 @@ try {
 $unauth = GetStatus '/system/users?page=1' ''
 Record 'unauth 401' ($unauth -eq 401) "http=$unauth"
 
+# 单会话绑定：其他客户端（如门户静默刷新）可能踢掉旧 accessToken，关键操作前重新登录
+try {
+    $admin = Login 'sys_admin'
+} catch {
+    Record 'relogin sys_admin' $false $_.Exception.Message
+    exit 1
+}
+
 try {
     $audit = GetApi '/system/audit-logs?page=1&size=10' $admin.accessToken
     $loginCnt = ($audit.data.records | Where-Object { $_.action -eq 'LOGIN' }).Count
     Record 'audit LOGIN' ($loginCnt -gt 0) "login rows=$loginCnt"
 } catch {
     Record 'audit LOGIN' $false $_.Exception.Message
+}
+
+try {
+    $uname = "smoke_u_$([guid]::NewGuid().ToString('N').Substring(0,8))"
+    $createBody = @{
+        username = $uname
+        password = $Pass
+        displayName = 'smoke-user'
+        orgId = 1
+        roleIds = @(3)
+    } | ConvertTo-Json -Compress
+    $h = @{ Authorization = "Bearer $($admin.accessToken)" }
+    $created = Invoke-RestMethod -Uri 'http://localhost:8080/api/v1/system/users' -Method Post -Headers $h -Body $createBody -ContentType 'application/json'
+    $uid = $created.data
+    $upd = @{ displayName = 'smoke-user-edited'; status = 1; orgId = 1; roleIds = @(3) } | ConvertTo-Json -Compress
+    Invoke-RestMethod -Uri "http://localhost:8080/api/v1/system/users/$uid" -Method Put -Headers $h -Body $upd -ContentType 'application/json' | Out-Null
+    Invoke-RestMethod -Uri "http://localhost:8080/api/v1/system/users/$uid" -Method Delete -Headers $h | Out-Null
+    try {
+        Login $uname | Out-Null
+        Record 'disable user blocks login' $false 'disabled user still logged in'
+    } catch {
+        Record 'disable user blocks login' $true "user=$uname disabled"
+    }
+} catch {
+    Record 'user crud disable' $false $_.Exception.Message
+}
+
+try {
+    $code = "ORG_SMOKE_$([guid]::NewGuid().ToString('N').Substring(0,6))"
+    $orgBody = @{ orgCode = $code; orgName = 'smoke-org'; parentId = 1; orgType = 1 } | ConvertTo-Json -Compress
+    $h = @{ Authorization = "Bearer $($admin.accessToken)" }
+    $oid = (Invoke-RestMethod -Uri 'http://localhost:8080/api/v1/system/orgs' -Method Post -Headers $h -Body $orgBody -ContentType 'application/json').data
+    Invoke-RestMethod -Uri "http://localhost:8080/api/v1/system/orgs/$oid" -Method Delete -Headers $h | Out-Null
+    Record 'org create delete' $true "orgId=$oid"
+} catch {
+    Record 'org create delete' $false $_.Exception.Message
 }
 
 try {

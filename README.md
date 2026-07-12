@@ -7,7 +7,8 @@
 | `platform-backend/` | Spring Boot 3.2 后端 |
 | `platform-web/` | Vue3 统一门户 |
 | `scripts/setup_smart_city.sql` | 本机 MySQL 建库 |
-| `local.env.example` | 本机数据库/Redis 账号模板 |
+| `local.env.example` | 本机数据库/Redis/开源组件 URL 模板 |
+| `compose/oss-stack.yml` | 开源组件 Docker Compose（profile 分波） |
 
 ## 本机快速启动（推荐）
 
@@ -16,6 +17,53 @@
 3. 后端：`platform-backend\mvnw.cmd spring-boot:run "-Dspring-boot.run.profiles=dev"`
 4. 前端：`cd platform-web && npm run dev`
 5. 登录 `http://localhost:3000`，`sys_admin` / `Test@12345`
+
+## 开源组件联调（D04/D07/D13）
+
+验收范围包含 **7+2 开源组件真实部署 + 门户集成**，不仅是自研 POC。
+
+1. 复制 `local.env.example` → `local.env`，设置 `INTEGRATION_ENABLED=true`
+2. 启动开源栈：`powershell -File scripts\oss_up.ps1 -All`
+3. 探活：`powershell -File scripts\oss_health.ps1`
+4. 样例配置：`powershell -File scripts\seed_oss_config.ps1`
+5. 集成冒烟：`powershell -File scripts\smoke_oss_integration.ps1`
+
+部署手册：[`D13-框架部署手册.md`](D13-框架部署手册.md)。**AEAI ESB 不在本机联调范围**，现场环境再验收。
+
+### 冒烟与端到端演示（D02 §6.2）
+
+```powershell
+# MS1 认证/RBAC/用户机构
+powershell -ExecutionPolicy Bypass -File scripts\smoke_ms1_auth_rbac.ps1
+
+# 五条端到端演示 API（归集/目录共享/供需/ESB+Kettle）
+powershell -ExecutionPolicy Bypass -File scripts\smoke_e2e_demos.ps1
+
+# MS3~MS5：治理 / 非结构化 / 资源中心
+powershell -ExecutionPolicy Bypass -File scripts\smoke_ms3_ms5.ps1
+
+# MS6~MS7：40 分析模型 / DataEase iframe SSO / 调度
+powershell -ExecutionPolicy Bypass -File scripts\smoke_ms6_ms7.ps1
+
+# M139~M151：通用支撑 + 智能 BI
+powershell -ExecutionPolicy Bypass -File scripts\smoke_analytics.ps1
+
+# M152~M209：人口/法人/宏观/重点领域域模块
+powershell -ExecutionPolicy Bypass -File scripts\smoke_analytics_domains.ps1
+
+# MS8：全量冒烟回归（80 条 / 13 脚本）+ 备份演练 POC
+powershell -ExecutionPolicy Bypass -File scripts\smoke_ms8_regression.ps1
+powershell -ExecutionPolicy Bypass -File scripts\backup_drill_poc.ps1
+
+# 含开源栈联调（加 -IncludeOss，需 Docker + INTEGRATION_ENABLED=true）
+powershell -ExecutionPolicy Bypass -File scripts\smoke_ms8_regression.ps1 -IncludeOss
+```
+
+门户内手工路径：登录 → Hub → 系统管理；数据共享交换平台 → 归集 / 应用平台 / 共享门户 / ESB；**主数据平台 → 数据融合治理 / 非结构化治理 / 资源中心**；**挖掘分析平台 → 智能 BI / 人口 / 法人 / 宏观 / 重点领域**；系统管理 → ETL 治理 / 调度管理。
+
+终验交付包：[`D15-终验交付包.md`](D15-终验交付包.md)。  
+甲方基线/外部依赖签字：[`D16-基线与外部依赖确认单.md`](D16-基线与外部依赖确认单.md)。
+
 
 ## 可选：Docker 仅作 MySQL/Redis
 

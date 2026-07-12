@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { onMounted, reactive, ref } from 'vue'
 import api from '@/api/http'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import { useAuthStore } from '@/stores/auth'
 import PageHeader from '@/components/common/PageHeader.vue'
 import PageCard from '@/components/common/PageCard.vue'
@@ -30,6 +30,7 @@ const users = ref<UserRow[]>([])
 const total = ref(0)
 const page = ref(1)
 const dialogVisible = ref(false)
+const editVisible = ref(false)
 const orgs = ref<Org[]>([])
 const roles = ref<Role[]>([])
 const submitting = ref(false)
@@ -38,6 +39,14 @@ const form = reactive({
   username: '',
   password: 'Test@12345',
   displayName: '',
+  orgId: undefined as number | undefined,
+  roleIds: [] as number[],
+})
+
+const editForm = reactive({
+  id: 0,
+  displayName: '',
+  status: 1,
   orgId: undefined as number | undefined,
   roleIds: [] as number[],
 })
@@ -53,19 +62,38 @@ async function load() {
   }
 }
 
-async function openCreate() {
-  dialogVisible.value = true
+async function loadMeta() {
   const [orgRes, roleRes] = await Promise.all([
     api.get('/system/orgs'),
     api.get('/system/roles'),
   ])
   orgs.value = orgRes.data
   roles.value = roleRes.data
+}
+
+async function openCreate() {
+  dialogVisible.value = true
+  await loadMeta()
   form.username = ''
   form.displayName = ''
   form.password = 'Test@12345'
   form.orgId = orgs.value[0]?.id
   form.roleIds = []
+}
+
+async function openEdit(row: UserRow) {
+  await loadMeta()
+  editForm.id = row.id
+  editForm.displayName = row.displayName
+  editForm.status = row.status
+  editForm.orgId = row.orgId
+  try {
+    const roleRes = await api.get(`/system/users/${row.id}/roles`)
+    editForm.roleIds = roleRes.data
+  } catch {
+    editForm.roleIds = []
+  }
+  editVisible.value = true
 }
 
 async function submitCreate() {
@@ -89,6 +117,40 @@ async function submitCreate() {
     ElMessage.error(e instanceof Error ? e.message : '创建失败')
   } finally {
     submitting.value = false
+  }
+}
+
+async function submitEdit() {
+  submitting.value = true
+  try {
+    await api.put(`/system/users/${editForm.id}`, {
+      displayName: editForm.displayName,
+      status: editForm.status,
+      orgId: editForm.orgId,
+      roleIds: editForm.roleIds,
+    })
+    ElMessage.success('用户已更新')
+    editVisible.value = false
+    load()
+  } catch (e: unknown) {
+    ElMessage.error(e instanceof Error ? e.message : '更新失败')
+  } finally {
+    submitting.value = false
+  }
+}
+
+async function disableUser(row: UserRow) {
+  try {
+    await ElMessageBox.confirm(`确认禁用用户「${row.username}」？禁用后无法登录。`, '禁用用户', {
+      type: 'warning',
+    })
+    await api.delete(`/system/users/${row.id}`)
+    ElMessage.success('用户已禁用')
+    load()
+  } catch (e: unknown) {
+    if (e !== 'cancel' && e !== 'close') {
+      ElMessage.error(e instanceof Error ? e.message : '禁用失败')
+    }
   }
 }
 
@@ -120,6 +182,26 @@ onMounted(load)
             <el-tag :type="row.status === 1 ? 'success' : 'info'" size="small">
               {{ statusLabel(row.status) }}
             </el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column label="操作" width="180" fixed="right">
+          <template #default="{ row }">
+            <el-button
+              v-if="auth.hasPermission('system:user:edit')"
+              link
+              type="primary"
+              @click="openEdit(row)"
+            >
+              编辑
+            </el-button>
+            <el-button
+              v-if="auth.hasPermission('system:user:delete') && row.status === 1"
+              link
+              type="danger"
+              @click="disableUser(row)"
+            >
+              禁用
+            </el-button>
           </template>
         </el-table-column>
       </el-table>
@@ -157,6 +239,34 @@ onMounted(load)
       <template #footer>
         <el-button @click="dialogVisible = false">取消</el-button>
         <el-button type="primary" :loading="submitting" @click="submitCreate">确定</el-button>
+      </template>
+    </el-dialog>
+
+    <el-dialog v-model="editVisible" title="编辑用户" width="480px" destroy-on-close>
+      <el-form label-position="top">
+        <el-form-item label="姓名" required>
+          <el-input v-model="editForm.displayName" />
+        </el-form-item>
+        <el-form-item label="状态">
+          <el-radio-group v-model="editForm.status">
+            <el-radio :value="1">启用</el-radio>
+            <el-radio :value="0">禁用</el-radio>
+          </el-radio-group>
+        </el-form-item>
+        <el-form-item label="机构">
+          <el-select v-model="editForm.orgId" placeholder="选择机构" style="width: 100%">
+            <el-option v-for="o in orgs" :key="o.id" :label="o.orgName" :value="o.id" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="角色">
+          <el-select v-model="editForm.roleIds" multiple placeholder="选择角色" style="width: 100%">
+            <el-option v-for="r in roles" :key="r.id" :label="r.roleName" :value="r.id" />
+          </el-select>
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="editVisible = false">取消</el-button>
+        <el-button type="primary" :loading="submitting" @click="submitEdit">保存</el-button>
       </template>
     </el-dialog>
   </div>

@@ -4,6 +4,8 @@ import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.chengde.smartcity.common.api.ApiResponse;
 import com.chengde.smartcity.security.UserPrincipal;
 import com.chengde.smartcity.system.dto.MenuTreeNode;
+import com.chengde.smartcity.system.dto.OrgCreateRequest;
+import com.chengde.smartcity.system.dto.OrgUpdateRequest;
 import com.chengde.smartcity.system.dto.RoleMenuAssignRequest;
 import com.chengde.smartcity.system.dto.UserCreateRequest;
 import com.chengde.smartcity.system.dto.UserUpdateRequest;
@@ -13,8 +15,8 @@ import com.chengde.smartcity.system.entity.SysOrg;
 import com.chengde.smartcity.system.entity.SysRole;
 import com.chengde.smartcity.system.entity.SysUser;
 import com.chengde.smartcity.system.mapper.AuditLogMapper;
-import com.chengde.smartcity.system.mapper.SysOrgMapper;
 import com.chengde.smartcity.system.service.MenuService;
+import com.chengde.smartcity.system.service.OrgService;
 import com.chengde.smartcity.system.service.RoleService;
 import com.chengde.smartcity.system.service.SecurityConfigService;
 import com.chengde.smartcity.system.service.UserService;
@@ -23,6 +25,7 @@ import java.util.List;
 import java.util.Map;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -39,17 +42,17 @@ public class SystemController {
     private final MenuService menuService;
     private final UserService userService;
     private final RoleService roleService;
-    private final SysOrgMapper orgMapper;
+    private final OrgService orgService;
     private final AuditLogMapper auditLogMapper;
     private final SecurityConfigService securityConfigService;
 
     public SystemController(MenuService menuService, UserService userService, RoleService roleService,
-                              SysOrgMapper orgMapper, AuditLogMapper auditLogMapper,
-                              SecurityConfigService securityConfigService) {
+                            OrgService orgService, AuditLogMapper auditLogMapper,
+                            SecurityConfigService securityConfigService) {
         this.menuService = menuService;
         this.userService = userService;
         this.roleService = roleService;
-        this.orgMapper = orgMapper;
+        this.orgService = orgService;
         this.auditLogMapper = auditLogMapper;
         this.securityConfigService = securityConfigService;
     }
@@ -90,8 +93,22 @@ public class SystemController {
         return ApiResponse.ok(null);
     }
 
+    @DeleteMapping("/users/{id}")
+    @PreAuthorize("hasAuthority('system:user:delete')")
+    public ApiResponse<Void> disableUser(@AuthenticationPrincipal UserPrincipal principal,
+                                         @PathVariable Long id) {
+        userService.disable(principal, id);
+        return ApiResponse.ok(null);
+    }
+
+    @GetMapping("/users/{id}/roles")
+    @PreAuthorize("hasAuthority('system:user:query') or hasAuthority('system:user:list') or hasAuthority('system:user:edit')")
+    public ApiResponse<List<Long>> userRoles(@PathVariable Long id) {
+        return ApiResponse.ok(userService.roleIdsOfUser(id));
+    }
+
     @GetMapping("/roles")
-  public ApiResponse<List<SysRole>> roles() {
+    public ApiResponse<List<SysRole>> roles() {
         return ApiResponse.ok(roleService.list());
     }
 
@@ -111,7 +128,31 @@ public class SystemController {
     @GetMapping("/orgs")
     @PreAuthorize("hasAuthority('system:org:list')")
     public ApiResponse<List<SysOrg>> orgs() {
-        return ApiResponse.ok(orgMapper.selectList(null));
+        return ApiResponse.ok(orgService.list());
+    }
+
+    @PostMapping("/orgs")
+    @PreAuthorize("hasAuthority('system:org:add')")
+    public ApiResponse<Long> createOrg(@AuthenticationPrincipal UserPrincipal principal,
+                                       @Valid @RequestBody OrgCreateRequest request) {
+        return ApiResponse.ok(orgService.create(principal, request));
+    }
+
+    @PutMapping("/orgs/{id}")
+    @PreAuthorize("hasAuthority('system:org:edit')")
+    public ApiResponse<Void> updateOrg(@AuthenticationPrincipal UserPrincipal principal,
+                                       @PathVariable Long id,
+                                       @RequestBody OrgUpdateRequest request) {
+        orgService.update(principal, id, request);
+        return ApiResponse.ok(null);
+    }
+
+    @DeleteMapping("/orgs/{id}")
+    @PreAuthorize("hasAuthority('system:org:delete')")
+    public ApiResponse<Void> deleteOrg(@AuthenticationPrincipal UserPrincipal principal,
+                                       @PathVariable Long id) {
+        orgService.delete(principal, id);
+        return ApiResponse.ok(null);
     }
 
     @GetMapping("/audit-logs")

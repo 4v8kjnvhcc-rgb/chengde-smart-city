@@ -97,6 +97,23 @@ public class UserService {
                 "USER_UPDATE", "sys_user", String.valueOf(id), user.getUsername());
     }
 
+    /** MS1：删除语义 = 禁用账号（对齐 TC-M211-001） */
+    @Transactional
+    public void disable(UserPrincipal operator, Long id) {
+        SysUser user = userMapper.selectById(id);
+        if (user == null) {
+            throw new BusinessException(404, "用户不存在");
+        }
+        assertOrgAccess(operator, user.getOrgId());
+        if (operator.getUserId().equals(id)) {
+            throw new BusinessException(400, "不能禁用当前登录账号");
+        }
+        user.setStatus(0);
+        userMapper.updateById(user);
+        auditService.log(operator.getUserId(), operator.getUsername(), operator.getOrgId(),
+                "USER_DISABLE", "sys_user", String.valueOf(id), user.getUsername());
+    }
+
     public void assertOrgAccess(UserPrincipal operator, Long targetOrgId) {
         if (operator.isSystemAdmin()) {
             return;
