@@ -15,6 +15,7 @@ public class IngDataSource {
     private String sourceType;
     private String connStatus;
     private Integer tableCount;
+    private String connConfigJson;
     private LocalDateTime createdAt;
 
     public Long getId() { return id; }
@@ -31,6 +32,8 @@ public class IngDataSource {
     public void setConnStatus(String connStatus) { this.connStatus = connStatus; }
     public Integer getTableCount() { return tableCount; }
     public void setTableCount(Integer tableCount) { this.tableCount = tableCount; }
+    public String getConnConfigJson() { return connConfigJson; }
+    public void setConnConfigJson(String connConfigJson) { this.connConfigJson = connConfigJson; }
     public LocalDateTime getCreatedAt() { return createdAt; }
     public void setCreatedAt(LocalDateTime createdAt) { this.createdAt = createdAt; }
 }

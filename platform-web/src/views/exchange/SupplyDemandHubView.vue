@@ -5,6 +5,17 @@ import api from '@/api/http'
 import { ElMessage } from 'element-plus'
 import PageHeader from '@/components/common/PageHeader.vue'
 import PageCard from '@/components/common/PageCard.vue'
+import HubSideLayout from '@/components/common/HubSideLayout.vue'
+
+const navItems = [
+  { key: 'm020', label: 'M020 需求管理' },
+  { key: 'm021', label: 'M021 需求分析' },
+  { key: 'm022', label: 'M022 需求确认' },
+  { key: 'm023', label: 'M023 供给查看' },
+  { key: 'm024', label: 'M024 目录清单' },
+  { key: 'm025', label: 'M025 异议清单' },
+  { key: 'm026', label: 'M026 供需清单' },
+]
 
 interface Template {
   id: number
@@ -300,8 +311,8 @@ onMounted(() => { resolveTab(); loadTabData() })
 <template>
   <div>
     <PageHeader :title="`应用平台 · ${tabTitle}`" description="M020～M026：需求管理、分析分发、确认供给、目录与异议清单" />
-    <el-tabs v-model="tab" type="border-card">
-      <el-tab-pane label="M020 需求管理" name="m020">
+    <HubSideLayout v-model="tab" :items="navItems">
+      <template v-if="tab === 'm020'">
         <PageCard>
           <el-form inline>
             <el-form-item label="模板">
@@ -333,9 +344,9 @@ onMounted(() => { resolveTab(); loadTabData() })
             </el-table-column>
           </el-table>
         </PageCard>
-      </el-tab-pane>
+      </template>
 
-      <el-tab-pane label="M021 需求分析" name="m021">
+      <template v-if="tab === 'm021'">
         <PageCard>
           <el-table :data="demands.filter(d => d.status === 'SUBMITTED' || d.status === 'ANALYZING' || d.status === 'DISPATCHED')" stripe>
             <el-table-column prop="demandTitle" label="需求" min-width="160" />
@@ -353,9 +364,9 @@ onMounted(() => { resolveTab(); loadTabData() })
           <el-alert v-if="analysisResult" type="info" :closable="false" style="margin-top:12px"
             :title="`匹配目录 ID=${analysisResult.matchedCatalogId} 得分=${analysisResult.matchScore}`" />
         </PageCard>
-      </el-tab-pane>
+      </template>
 
-      <el-tab-pane label="M022 需求确认" name="m022">
+      <template v-if="tab === 'm022'">
         <PageCard>
           <el-input v-model="confirmNote" style="max-width:480px;margin-bottom:12px" />
           <el-table :data="demands.filter(d => ['ANALYZING','DISPATCHED','SUBMITTED'].includes(d.status))" stripe>
@@ -370,9 +381,9 @@ onMounted(() => { resolveTab(); loadTabData() })
             </el-table-column>
           </el-table>
         </PageCard>
-      </el-tab-pane>
+      </template>
 
-      <el-tab-pane label="M023 供给查看" name="m023">
+      <template v-if="tab === 'm023'">
         <PageCard>
           <el-select v-model="selectedDemandId" placeholder="选择已确认需求" style="width:280px;margin-bottom:12px" @change="loadSupplyView">
             <el-option v-for="d in demands.filter(x => x.status === 'CONFIRMED')" :key="d.id" :label="d.demandTitle" :value="d.id" />
@@ -389,9 +400,9 @@ onMounted(() => { resolveTab(); loadTabData() })
             <el-descriptions-item label="API">{{ supplyView.apiEndpoint }}</el-descriptions-item>
           </el-descriptions>
         </PageCard>
-      </el-tab-pane>
+      </template>
 
-      <el-tab-pane label="M024 目录清单" name="m024">
+      <template v-if="tab === 'm024'">
         <PageCard>
           <el-form inline>
             <el-form-item label="标题"><el-input v-model="catalogForm.title" /></el-form-item>
@@ -411,9 +422,9 @@ onMounted(() => { resolveTab(); loadTabData() })
             </el-table-column>
           </el-table>
         </PageCard>
-      </el-tab-pane>
+      </template>
 
-      <el-tab-pane label="M025 异议清单" name="m025">
+      <template v-if="tab === 'm025'">
         <PageCard>
           <el-form inline>
             <el-form-item label="目录">
@@ -443,9 +454,9 @@ onMounted(() => { resolveTab(); loadTabData() })
             </el-table-column>
           </el-table>
         </PageCard>
-      </el-tab-pane>
+      </template>
 
-      <el-tab-pane label="M026 供需清单" name="m026">
+      <template v-if="tab === 'm026'">
         <PageCard>
           <el-table :data="manifests" stripe>
             <el-table-column prop="manifestType" label="类型" width="120" />
@@ -462,7 +473,7 @@ onMounted(() => { resolveTab(); loadTabData() })
             </el-table-column>
           </el-table>
         </PageCard>
-      </el-tab-pane>
-    </el-tabs>
+      </template>
+    </HubSideLayout>
   </div>
 </template>

@@ -5,10 +5,19 @@ export const PLATFORM_ROUTE_MAP: Record<string, string[]> = {
   '/exchange': ['/exchange', '/catalog/exchange'],
   '/master-data': ['/master-data', '/governance', '/unstructured', '/resource-center', '/catalog/master-data'],
   '/analytics': ['/analytics', '/catalog/analytics'],
+  '/business': ['/business'],
   '/system': ['/system', '/integration', '/catalog/system'],
 }
 
 export const PLATFORM_PATHS = Object.keys(PLATFORM_ROUTE_MAP)
+
+export const PLATFORM_LABELS: Record<string, string> = {
+  '/exchange': '数据共享交换平台',
+  '/master-data': '主数据平台',
+  '/analytics': '大数据挖掘分析平台',
+  '/business': '业务功能平台',
+  '/system': '系统管理',
+}
 
 export function visibleMenuChildren(node: MenuNode): MenuNode[] {
   return (node.children || []).filter((c) => c.menuType !== 3)
@@ -36,16 +45,41 @@ export function matchPlatformPath(path: string): string | null {
   return null
 }
 
-/** 用户有权限且含子菜单的一级平台（无权限不展示卡片） */
+/** 用户有权限的一级平台（业务功能平台允许无菜单子项，靠外链填充） */
 export function getAuthorizedPlatforms(menus: MenuNode[]): MenuNode[] {
   const set = new Set(PLATFORM_PATHS)
-  return getMenuRoots(menus)
-    .filter((n) => set.has(n.path) && visibleMenuChildren(n).length > 0)
+  return getMenuRoots(menus).filter((n) => {
+    if (!set.has(n.path)) return false
+    if (n.path === '/business') return true
+    return visibleMenuChildren(n).length > 0
+  })
 }
 
 export function findPlatformNode(menus: MenuNode[], platformPath: string): MenuNode | undefined {
   return getMenuRoots(menus).find((n) => n.path === platformPath)
 }
+
+/** 使用 HubSideLayout 内嵌侧栏的页面：不展示 MainLayout 外层平台侧栏 */
+export function isHubLayoutRoute(path: string, meta?: { hubLayout?: boolean }): boolean {
+  if (meta?.hubLayout) return true
+  return HUB_LAYOUT_PATHS.has(path)
+}
+
+const HUB_LAYOUT_PATHS = new Set([
+  '/exchange/ingestion',
+  '/exchange/application',
+  '/exchange/assessment',
+  '/exchange/portal',
+  '/governance',
+  '/unstructured',
+  '/resource-center',
+  '/analytics/support',
+  '/analytics/bi',
+  '/analytics/population',
+  '/analytics/legal-entity',
+  '/analytics/macro',
+  '/analytics/key-domains',
+])
 
 /** 系统管理域：保持平台级侧栏（用户/角色/机构等并列） */
 export function isSystemRoute(path: string): boolean {
@@ -110,10 +144,11 @@ export interface SidebarContext {
   menus: MenuNode[]
 }
 
-/** 侧栏上下文：系统管理用平台菜单；其余业务用子系统子菜单（无子菜单则不显示侧栏） */
-export function resolveSidebarContext(menus: MenuNode[], path: string): SidebarContext | null {
+/** 侧栏上下文：系统管理用平台菜单；Hub 内嵌页不显示外层侧栏；D05 清单页保留 D05 树 */
+export function resolveSidebarContext(menus: MenuNode[], path: string, meta?: { hubLayout?: boolean }): SidebarContext | null {
   if (path === '/dashboard' || path === '/') return null
   if (path === '/catalog') return null
+  if (isHubLayoutRoute(path, meta)) return null
 
   const roots = getMenuRoots(menus)
 

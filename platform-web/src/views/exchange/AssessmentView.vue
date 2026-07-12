@@ -1,9 +1,24 @@
 <script setup lang="ts">
-import { onMounted, reactive, ref } from 'vue'
+import { onMounted, reactive, ref, watch } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import api from '@/api/http'
 import { ElMessage } from 'element-plus'
 import PageHeader from '@/components/common/PageHeader.vue'
 import PageCard from '@/components/common/PageCard.vue'
+import HubSideLayout from '@/components/common/HubSideLayout.vue'
+
+const navItems = [
+  { key: 'm027', label: 'M027 评价数据来源' },
+  { key: 'm028', label: 'M028 评价周期' },
+  { key: 'm029', label: 'M029 评价指标' },
+  { key: 'm030', label: 'M030 评价执行' },
+]
+
+const route = useRoute()
+const router = useRouter()
+const tabMap: Record<string, string> = {
+  m027: 'm027', m028: 'm028', m029: 'm029', m030: 'm030',
+}
 
 interface DataSource {
   id: number
@@ -45,6 +60,16 @@ interface Execution {
 }
 
 const tab = ref('m027')
+
+function resolveTab() {
+  const q = String(route.query.tab || 'm027').toLowerCase()
+  tab.value = tabMap[q] || 'm027'
+}
+
+watch(tab, () => {
+  router.replace({ query: { ...route.query, tab: tab.value } })
+})
+watch(() => route.query.tab, resolveTab)
 const sources = ref<DataSource[]>([])
 const periods = ref<Period[]>([])
 const indicators = ref<Indicator[]>([])
@@ -146,7 +171,7 @@ async function publishExec(id: number) {
   loadAll()
 }
 
-onMounted(loadAll)
+onMounted(() => { resolveTab(); loadAll() })
 </script>
 
 <template>
@@ -156,8 +181,8 @@ onMounted(loadAll)
       description="M027 数据来源 · M028 评价周期 · M029 指标体系 · M030 评价执行与发布"
     />
 
-    <el-tabs v-model="tab" class="assess-tabs">
-      <el-tab-pane label="M027 评价数据来源" name="m027">
+    <HubSideLayout v-model="tab" :items="navItems">
+      <template v-if="tab === 'm027'">
         <PageCard title="平台业务数据自动采集">
           <el-button type="primary" @click="syncSources">同步数据来源</el-button>
           <el-table class="portal-table" :data="sources" stripe style="margin-top: 12px">
@@ -168,9 +193,9 @@ onMounted(loadAll)
             <el-table-column prop="lastSyncAt" label="最近同步" min-width="160" />
           </el-table>
         </PageCard>
-      </el-tab-pane>
+      </template>
 
-      <el-tab-pane label="M028 评价周期" name="m028">
+      <template v-if="tab === 'm028'">
         <PageCard title="评价周期管理">
           <el-form inline>
             <el-form-item label="名称">
@@ -206,9 +231,9 @@ onMounted(loadAll)
             </el-table-column>
           </el-table>
         </PageCard>
-      </el-tab-pane>
+      </template>
 
-      <el-tab-pane label="M029 评价指标" name="m029">
+      <template v-if="tab === 'm029'">
         <PageCard title="指标体系（A 类自动 / B 类人工）">
           <el-form inline>
             <el-form-item label="指标名">
@@ -233,9 +258,9 @@ onMounted(loadAll)
             <el-table-column prop="formulaDesc" label="说明" min-width="200" />
           </el-table>
         </PageCard>
-      </el-tab-pane>
+      </template>
 
-      <el-tab-pane label="M030 评价执行" name="m030">
+      <template v-if="tab === 'm030'">
         <PageCard title="评价执行与结果发布">
           <el-form inline>
             <el-form-item label="周期">
@@ -279,13 +304,7 @@ onMounted(loadAll)
             </el-table>
           </div>
         </PageCard>
-      </el-tab-pane>
-    </el-tabs>
+      </template>
+    </HubSideLayout>
   </div>
 </template>
-
-<style scoped>
-.assess-tabs {
-  margin-top: 8px;
-}
-</style>

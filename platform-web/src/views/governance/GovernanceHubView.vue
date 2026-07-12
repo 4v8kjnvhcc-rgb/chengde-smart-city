@@ -5,6 +5,15 @@ import api from '@/api/http'
 import { ElMessage } from 'element-plus'
 import PageHeader from '@/components/common/PageHeader.vue'
 import PageCard from '@/components/common/PageCard.vue'
+import HubSideLayout from '@/components/common/HubSideLayout.vue'
+
+const navItems = [
+  { key: 'quality', label: '质量与标准' },
+  { key: 'metadata', label: '元数据' },
+  { key: 'etl', label: '治理ETL' },
+  { key: 'model', label: '模型融合' },
+  { key: 'catalog', label: '资源目录' },
+]
 
 interface Rule { id: number; ruleCode: string; ruleName: string; ruleType: string; status: string }
 interface QTask { id: number; taskName: string; status: string; lastScore?: number; lastMessage?: string }
@@ -183,8 +192,8 @@ onMounted(() => { resolveTab(); loadTabData() })
     <el-alert v-if="integration.openmetadata !== undefined" type="info" :closable="false" show-icon
       :title="`OpenMetadata=${integration.openmetadata ? 'UP' : 'DOWN'} · 集成=${integration.enabled ? 'ON' : 'OFF'}`"
       style="margin-bottom:12px" />
-    <el-tabs v-model="tab" type="border-card">
-      <el-tab-pane label="质量与标准" name="quality">
+    <HubSideLayout v-model="tab" :items="navItems">
+      <template v-if="tab === 'quality'">
         <PageCard title="M078/M079 质量规则与任务">
           <el-form inline>
             <el-form-item label="规则"><el-input v-model="ruleForm.ruleName" /></el-form-item>
@@ -223,9 +232,9 @@ onMounted(() => { resolveTab(); loadTabData() })
             <el-table-column prop="standardRef" label="引用标准" />
           </el-table>
         </PageCard>
-      </el-tab-pane>
+      </template>
 
-      <el-tab-pane label="元数据" name="metadata">
+      <template v-if="tab === 'metadata'">
         <PageCard title="M086-M097 OpenMetadata">
           <el-form inline>
             <el-form-item label="适配器"><el-input v-model="connectorForm.connectorName" /></el-form-item>
@@ -246,9 +255,9 @@ onMounted(() => { resolveTab(); loadTabData() })
           </el-table>
           <el-tag v-if="omServices.length" style="margin-top:8px">OM服务 {{ omServices.length }} 个</el-tag>
         </PageCard>
-      </el-tab-pane>
+      </template>
 
-      <el-tab-pane label="治理ETL" name="etl">
+      <template v-if="tab === 'etl'">
         <PageCard>
           <el-space wrap style="margin-bottom:12px">
             <el-button @click="router.push('/integration/kettle')">M099 Kettle ETL</el-button>
@@ -263,9 +272,9 @@ onMounted(() => { resolveTab(); loadTabData() })
             </el-table-column>
           </el-table>
         </PageCard>
-      </el-tab-pane>
+      </template>
 
-      <el-tab-pane label="模型融合" name="model">
+      <template v-if="tab === 'model'">
         <PageCard title="M106-M111 逻辑/物理/脚本/工作流/算子">
           <el-table :data="fusionAssets" stripe>
             <el-table-column prop="assetName" label="资产" />
@@ -276,9 +285,9 @@ onMounted(() => { resolveTab(); loadTabData() })
             </el-table-column>
           </el-table>
         </PageCard>
-      </el-tab-pane>
+      </template>
 
-      <el-tab-pane label="资源目录" name="catalog">
+      <template v-if="tab === 'catalog'">
         <PageCard>
           <el-form inline>
             <el-form-item label="资源名"><el-input v-model="catalogForm.resourceName" /></el-form-item>
@@ -299,7 +308,7 @@ onMounted(() => { resolveTab(); loadTabData() })
             </el-table-column>
           </el-table>
         </PageCard>
-      </el-tab-pane>
-    </el-tabs>
+      </template>
+    </HubSideLayout>
   </div>
 </template>

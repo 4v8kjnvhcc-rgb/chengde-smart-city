@@ -5,6 +5,16 @@ import api from '@/api/http'
 import { ElMessage } from 'element-plus'
 import PageHeader from '@/components/common/PageHeader.vue'
 import PageCard from '@/components/common/PageCard.vue'
+import HubSideLayout from '@/components/common/HubSideLayout.vue'
+
+const navItems = [
+  { key: 'display', label: '显示引擎 M146' },
+  { key: 'component', label: '组件引擎 M147' },
+  { key: 'map', label: '地图管理 M148' },
+  { key: 'datasource', label: '数据源 M149' },
+  { key: 'design', label: '可视化设计 M150' },
+  { key: 'self', label: '自助分析 M151' },
+]
 
 interface Widget {
   id: number
@@ -109,45 +119,38 @@ onMounted(async () => {
       :title="`智能 BI 平台 · ${tabTitle}`"
       :description="`M146～M151：DataEase GPL iframe 嵌入 · 健康=${dataEaseHealthy ? '在线' : '离线'} · ${dataEaseUrl}`"
     />
-    <el-tabs v-model="tab" type="border-card">
-      <el-tab-pane label="显示引擎 M146" name="display" />
-      <el-tab-pane label="组件引擎 M147" name="component" />
-      <el-tab-pane label="地图管理 M148" name="map" />
-      <el-tab-pane label="数据源 M149" name="datasource" />
-      <el-tab-pane label="可视化设计 M150" name="design" />
-      <el-tab-pane label="自助分析 M151" name="self" />
-    </el-tabs>
-
-    <PageCard v-if="activeWidget" :title="`${activeWidget.mCode} ${activeWidget.widgetName}`" style="margin-top:16px">
-      <el-descriptions :column="2" border size="small">
-        <el-descriptions-item label="Widget 编码">{{ activeWidget.widgetCode }}</el-descriptions-item>
-        <el-descriptions-item label="类型">{{ activeWidget.widgetType }}</el-descriptions-item>
-        <el-descriptions-item label="DE Dashboard">{{ activeWidget.deDashboardId }}</el-descriptions-item>
-        <el-descriptions-item label="说明">{{ activeWidget.description }}</el-descriptions-item>
-      </el-descriptions>
-      <div style="margin-top:12px">
-        <el-button type="primary" @click="issueEmbed">签发嵌入令牌并加载 iframe</el-button>
-        <el-button v-if="embedUrl" @click="openPreview">新窗口预览</el-button>
-      </div>
-      <div class="iframe-shell">
-        <iframe v-if="iframeSrc" class="de-iframe" :src="iframeSrc" title="DataEase" />
-        <div v-else class="iframe-placeholder">
-          <div class="title">DataEase Embedded Canvas</div>
-          <div class="sub">{{ activeWidget.deDashboardId }}</div>
-          <div class="hint">点击「签发嵌入令牌」加载 GPL iframe；未启动 DataEase 时显示占位</div>
+    <HubSideLayout v-model="tab" :items="navItems">
+      <PageCard v-if="activeWidget" :title="`${activeWidget.mCode} ${activeWidget.widgetName}`">
+        <el-descriptions :column="2" border size="small">
+          <el-descriptions-item label="Widget 编码">{{ activeWidget.widgetCode }}</el-descriptions-item>
+          <el-descriptions-item label="类型">{{ activeWidget.widgetType }}</el-descriptions-item>
+          <el-descriptions-item label="DE Dashboard">{{ activeWidget.deDashboardId }}</el-descriptions-item>
+          <el-descriptions-item label="说明">{{ activeWidget.description }}</el-descriptions-item>
+        </el-descriptions>
+        <div style="margin-top:12px">
+          <el-button type="primary" @click="issueEmbed">签发嵌入令牌并加载 iframe</el-button>
+          <el-button v-if="embedUrl" @click="openPreview">新窗口预览</el-button>
         </div>
-      </div>
-      <pre v-if="embedMeta" class="embed-log">{{ embedMeta }}</pre>
-    </PageCard>
+        <div class="iframe-shell">
+          <iframe v-if="iframeSrc" class="de-iframe" :src="iframeSrc" title="DataEase" />
+          <div v-else class="iframe-placeholder">
+            <div class="title">DataEase Embedded Canvas</div>
+            <div class="sub">{{ activeWidget.deDashboardId }}</div>
+            <div class="hint">点击「签发嵌入令牌」加载 GPL iframe；未启动 DataEase 时显示占位</div>
+          </div>
+        </div>
+        <pre v-if="embedMeta" class="embed-log">{{ embedMeta }}</pre>
+      </PageCard>
 
-    <PageCard title="BI 大屏清单" style="margin-top:16px">
-      <el-table :data="dashboards" stripe size="small">
-        <el-table-column prop="dashCode" label="编码" width="140" />
-        <el-table-column prop="dashName" label="名称" />
-        <el-table-column prop="deDashboardId" label="DE Dashboard" />
-        <el-table-column prop="status" label="状态" width="90" />
-      </el-table>
-    </PageCard>
+      <PageCard title="BI 大屏清单">
+        <el-table :data="dashboards" stripe size="small">
+          <el-table-column prop="dashCode" label="编码" width="140" />
+          <el-table-column prop="dashName" label="名称" />
+          <el-table-column prop="deDashboardId" label="DE Dashboard" />
+          <el-table-column prop="status" label="状态" width="90" />
+        </el-table>
+      </PageCard>
+    </HubSideLayout>
   </div>
 </template>
 

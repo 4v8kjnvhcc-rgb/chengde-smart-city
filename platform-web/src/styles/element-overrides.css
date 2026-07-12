@@ -44,3 +44,97 @@
   color: var(--portal-text);
   font-weight: 600;
 }
+
+/* 单行工具栏表单：控件等高、垂直居中、宽度统一 */
+.portal-inline-form.el-form--inline {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 16px;
+}
+
+.portal-inline-form--block {
+  margin-bottom: 12px;
+}
+
+.portal-inline-form.el-form--inline .el-form-item {
+  margin-right: 0 !important;
+  margin-bottom: 0 !important;
+  align-items: center;
+}
+
+.portal-inline-form.el-form--inline .el-form-item__label {
+  height: 32px;
+  line-height: 32px;
+  padding-bottom: 0;
+}
+
+.portal-inline-form.el-form--inline .el-form-item__content {
+  display: inline-flex;
+  align-items: center;
+  min-height: 32px;
+  line-height: 32px;
+}
+
+.portal-inline-form.el-form--inline .el-input,
+.portal-inline-form.el-form--inline .el-select,
+.portal-inline-form.el-form--inline .el-input-number {
+  vertical-align: middle;
+}
+
+.portal-inline-form.el-form--inline .el-button {
+  height: 32px;
+  margin: 0;
+}
+
+.portal-inline-form--sm.el-form--inline .el-form-item__label {
+  height: 28px;
+  line-height: 28px;
+}
+
+.portal-inline-form--sm.el-form--inline .el-form-item__content {
+  min-height: 28px;
+  line-height: 28px;
+}
+
+.portal-inline-form--sm.el-form--inline .el-button {
+  height: 28px;
+}
+
+.portal-inline-form .portal-field-xs .el-input,
+.portal-inline-form .portal-field-xs .el-select {
+  width: 100px;
+}
+
+.portal-inline-form .portal-field-sm .el-input,
+.portal-inline-form .portal-field-sm .el-select {
+  width: 120px;
+}
+
+.portal-inline-form .portal-field-md .el-input,
+.portal-inline-form .portal-field-md .el-select {
+  width: 160px;
+}
+
+.portal-inline-form .portal-field-lg .el-input,
+.portal-inline-form .portal-field-lg .el-select {
+  width: 200px;
+}
+
+.portal-inline-form .portal-field-xl .el-input,
+.portal-inline-form .portal-field-xl .el-select {
+  width: 240px;
+}
+
+.portal-inline-form .portal-field-cron .el-input {
+  width: 140px;
+}
+
+.portal-inline-form .portal-field-default .el-input,
+.portal-inline-form .portal-field-default .el-select {
+  width: 180px;
+}
+
+.portal-inline-form .portal-form-actions .el-form-item__content {
+  margin-left: 0 !important;
+}

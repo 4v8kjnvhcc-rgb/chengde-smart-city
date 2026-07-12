@@ -6,10 +6,12 @@ import com.chengde.smartcity.security.UserPrincipal;
 import com.chengde.smartcity.system.dto.MenuTreeNode;
 import com.chengde.smartcity.system.dto.OrgCreateRequest;
 import com.chengde.smartcity.system.dto.OrgUpdateRequest;
+import com.chengde.smartcity.system.dto.PortalCardLinkRequest;
 import com.chengde.smartcity.system.dto.RoleMenuAssignRequest;
 import com.chengde.smartcity.system.dto.UserCreateRequest;
 import com.chengde.smartcity.system.dto.UserUpdateRequest;
 import com.chengde.smartcity.system.entity.AuditLog;
+import com.chengde.smartcity.system.entity.PortalCardLink;
 import com.chengde.smartcity.system.entity.SysMenu;
 import com.chengde.smartcity.system.entity.SysOrg;
 import com.chengde.smartcity.system.entity.SysRole;
@@ -17,6 +19,7 @@ import com.chengde.smartcity.system.entity.SysUser;
 import com.chengde.smartcity.system.mapper.AuditLogMapper;
 import com.chengde.smartcity.system.service.MenuService;
 import com.chengde.smartcity.system.service.OrgService;
+import com.chengde.smartcity.system.service.PortalCardLinkService;
 import com.chengde.smartcity.system.service.RoleService;
 import com.chengde.smartcity.system.service.SecurityConfigService;
 import com.chengde.smartcity.system.service.UserService;
@@ -43,16 +46,18 @@ public class SystemController {
     private final UserService userService;
     private final RoleService roleService;
     private final OrgService orgService;
+    private final PortalCardLinkService portalCardLinkService;
     private final AuditLogMapper auditLogMapper;
     private final SecurityConfigService securityConfigService;
 
     public SystemController(MenuService menuService, UserService userService, RoleService roleService,
-                            OrgService orgService, AuditLogMapper auditLogMapper,
-                            SecurityConfigService securityConfigService) {
+                            OrgService orgService, PortalCardLinkService portalCardLinkService,
+                            AuditLogMapper auditLogMapper, SecurityConfigService securityConfigService) {
         this.menuService = menuService;
         this.userService = userService;
         this.roleService = roleService;
         this.orgService = orgService;
+        this.portalCardLinkService = portalCardLinkService;
         this.auditLogMapper = auditLogMapper;
         this.securityConfigService = securityConfigService;
     }
@@ -160,6 +165,42 @@ public class SystemController {
     public ApiResponse<Page<AuditLog>> auditLogs(@RequestParam(defaultValue = "1") int page,
                                                  @RequestParam(defaultValue = "20") int size) {
         return ApiResponse.ok(auditLogMapper.selectPage(new Page<>(page, size), null));
+    }
+
+    @GetMapping("/portal-links/enabled")
+    public ApiResponse<List<PortalCardLink>> enabledPortalLinks(
+            @RequestParam(required = false) String platformPath) {
+        return ApiResponse.ok(portalCardLinkService.listEnabled(platformPath));
+    }
+
+    @GetMapping("/portal-links")
+    @PreAuthorize("hasAuthority('system:portal-link:list')")
+    public ApiResponse<List<PortalCardLink>> portalLinks() {
+        return ApiResponse.ok(portalCardLinkService.listAll());
+    }
+
+    @PostMapping("/portal-links")
+    @PreAuthorize("hasAuthority('system:portal-link:add')")
+    public ApiResponse<Long> createPortalLink(@AuthenticationPrincipal UserPrincipal principal,
+                                              @Valid @RequestBody PortalCardLinkRequest request) {
+        return ApiResponse.ok(portalCardLinkService.create(principal, request));
+    }
+
+    @PutMapping("/portal-links/{id}")
+    @PreAuthorize("hasAuthority('system:portal-link:edit')")
+    public ApiResponse<Void> updatePortalLink(@AuthenticationPrincipal UserPrincipal principal,
+                                              @PathVariable Long id,
+                                              @Valid @RequestBody PortalCardLinkRequest request) {
+        portalCardLinkService.update(principal, id, request);
+        return ApiResponse.ok(null);
+    }
+
+    @DeleteMapping("/portal-links/{id}")
+    @PreAuthorize("hasAuthority('system:portal-link:delete')")
+    public ApiResponse<Void> deletePortalLink(@AuthenticationPrincipal UserPrincipal principal,
+                                              @PathVariable Long id) {
+        portalCardLinkService.delete(principal, id);
+        return ApiResponse.ok(null);
     }
 
     @GetMapping("/security-config")

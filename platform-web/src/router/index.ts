@@ -46,6 +46,12 @@ const router = createRouter({
           meta: { title: '菜单管理' },
         },
         {
+          path: 'system/portal-links',
+          name: 'system-portal-links',
+          component: () => import('@/views/system/PortalLinkManage.vue'),
+          meta: { title: '门户外链管理' },
+        },
+        {
           path: 'system/audit',
           name: 'system-audit',
           component: () => import('@/views/system/AuditLog.vue'),
@@ -60,8 +66,8 @@ const router = createRouter({
         {
           path: 'exchange/ingestion',
           name: 'exchange-ingestion',
-          component: () => import('@/views/exchange/IngestionHubView.vue'),
-          meta: { title: '大数据归集平台' },
+          component: () => import('@/views/exchange/ingestion/IngestionHubView.vue'),
+          meta: { title: '大数据归集平台', hubLayout: true },
         },
         {
           path: 'exchange/esb',
@@ -73,19 +79,19 @@ const router = createRouter({
           path: 'exchange/application',
           name: 'exchange-application',
           component: () => import('@/views/exchange/SupplyDemandHubView.vue'),
-          meta: { title: '供需对接平台' },
+          meta: { title: '供需对接平台', hubLayout: true },
         },
         {
           path: 'exchange/assessment',
           name: 'exchange-assessment',
           component: () => import('@/views/exchange/AssessmentView.vue'),
-          meta: { title: '考核评估' },
+          meta: { title: '考核评估', hubLayout: true },
         },
         {
           path: 'exchange/portal',
           name: 'exchange-portal',
           component: () => import('@/views/exchange/PortalHubView.vue'),
-          meta: { title: '应用分析门户' },
+          meta: { title: '应用分析门户', hubLayout: true },
         },
         {
           path: 'exchange/analysis-portal',
@@ -101,55 +107,55 @@ const router = createRouter({
           path: 'governance',
           name: 'governance',
           component: () => import('@/views/governance/GovernanceHubView.vue'),
-          meta: { title: '数据融合治理平台' },
+          meta: { title: '数据融合治理平台', hubLayout: true },
         },
         {
           path: 'unstructured',
           name: 'unstructured',
           component: () => import('@/views/unstructured/UnstructuredHubView.vue'),
-          meta: { title: '非结构化治理平台' },
+          meta: { title: '非结构化治理平台', hubLayout: true },
         },
         {
           path: 'resource-center',
           name: 'resource-center',
           component: () => import('@/views/resource/ResourceCenterHubView.vue'),
-          meta: { title: '大数据资源中心' },
+          meta: { title: '大数据资源中心', hubLayout: true },
         },
         {
           path: 'analytics/support',
           name: 'analytics-support',
           component: () => import('@/views/analytics/AnalyticsSupportHubView.vue'),
-          meta: { title: '通用支撑' },
+          meta: { title: '通用支撑', hubLayout: true },
         },
         {
           path: 'analytics/bi',
           name: 'analytics-bi',
           component: () => import('@/views/analytics/AnalyticsBiHubView.vue'),
-          meta: { title: '智能BI' },
+          meta: { title: '智能BI', hubLayout: true },
         },
         {
           path: 'analytics/population',
           name: 'analytics-population',
           component: () => import('@/views/analytics/AnalyticsDomainHubView.vue'),
-          meta: { title: '人口大数据' },
+          meta: { title: '人口大数据', hubLayout: true },
         },
         {
           path: 'analytics/legal-entity',
           name: 'analytics-legal',
           component: () => import('@/views/analytics/AnalyticsDomainHubView.vue'),
-          meta: { title: '法人大数据' },
+          meta: { title: '法人大数据', hubLayout: true },
         },
         {
           path: 'analytics/macro',
           name: 'analytics-macro',
           component: () => import('@/views/analytics/AnalyticsDomainHubView.vue'),
-          meta: { title: '宏观经济' },
+          meta: { title: '宏观经济', hubLayout: true },
         },
         {
           path: 'analytics/key-domains',
           name: 'analytics-key',
           component: () => import('@/views/analytics/AnalyticsDomainHubView.vue'),
-          meta: { title: '重点领域' },
+          meta: { title: '重点领域', hubLayout: true },
         },
         {
           path: 'analytics/embed-preview',
@@ -202,9 +208,13 @@ router.beforeEach(async (to) => {
   if (!auth.menus.length && !auth.permissions.length) {
     try {
       await auth.fetchProfile()
-    } catch {
-      await auth.logout()
-      return '/login'
+    } catch (e: unknown) {
+      const err = e as Error & { code?: number }
+      // 仅认证失败时登出；网络/接口异常不应清空会话
+      if (err.code === 401) {
+        await auth.logout()
+        return '/login'
+      }
     }
   }
   return true

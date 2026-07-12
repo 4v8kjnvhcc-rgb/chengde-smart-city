@@ -1,0 +1,286 @@
+{
+  "scope": "collect",
+  "description": "数据资源采集汇聚 Tab M051～M077；语义基线 D05 §2.2 + 功能清单.xlsx",
+  "guideDoc": "D17-系统优化流程及方式.md",
+  "modules": [
+    {
+      "mCode": "M051",
+      "moduleName": "上传模板管理",
+      "featureDesc": "上传模板",
+      "implMode": "纯自研",
+      "collectPage": "upload",
+      "sectionKey": "m051",
+      "ownerView": "collect/CollectUploadView.vue",
+      "ownerApi": "/exchange/ingestion/collect/templates",
+      "status": "match"
+    },
+    {
+      "mCode": "M052",
+      "moduleName": "数据上传管理",
+      "featureDesc": "上传执行",
+      "implMode": "纯自研",
+      "collectPage": "upload",
+      "sectionKey": "m052",
+      "ownerView": "collect/CollectUploadView.vue",
+      "ownerApi": "/exchange/ingestion/uploads",
+      "status": "match"
+    },
+    {
+      "mCode": "M053",
+      "moduleName": "数据上传记录",
+      "featureDesc": "上传记录",
+      "implMode": "纯自研",
+      "collectPage": "upload",
+      "sectionKey": "m053",
+      "ownerView": "collect/CollectUploadView.vue",
+      "ownerApi": "/exchange/ingestion/uploads",
+      "status": "match"
+    },
+    {
+      "mCode": "M054",
+      "moduleName": "结构化数据接入",
+      "featureDesc": "库表接入",
+      "implMode": "纯自研",
+      "collectPage": "ingest",
+      "sectionKey": "m054",
+      "ownerView": "collect/CollectIngestView.vue",
+      "ownerApi": "/exchange/ingestion/channels",
+      "status": "match"
+    },
+    {
+      "mCode": "M055",
+      "moduleName": "远程文件接入（FTP）",
+      "featureDesc": "FTP",
+      "implMode": "纯自研",
+      "collectPage": "ingest",
+      "sectionKey": "m055",
+      "ownerView": "collect/CollectIngestView.vue",
+      "ownerApi": "/exchange/ingestion/channels",
+      "status": "match"
+    },
+    {
+      "mCode": "M056",
+      "moduleName": "本地文件接入",
+      "featureDesc": "本地文件",
+      "implMode": "纯自研",
+      "collectPage": "ingest",
+      "sectionKey": "m056",
+      "ownerView": "collect/CollectIngestView.vue",
+      "ownerApi": "/exchange/ingestion/channels",
+      "status": "match"
+    },
+    {
+      "mCode": "M057",
+      "moduleName": "非结构化数据接入",
+      "featureDesc": "FTP 至文件存储",
+      "implMode": "开源集成·SeaweedFS",
+      "frameworkRef": "SeaweedFS",
+      "integrationPattern": "api-adapter",
+      "collectPage": "ingest",
+      "sectionKey": "m057",
+      "ownerView": "collect/CollectIngestView.vue",
+      "ownerAdapter": "integration/storage/StorageIntegrationClient.java",
+      "ownerApi": "/exchange/ingestion/channels",
+      "ossProbe": "/integration/health → seaweedfs",
+      "bizProbe": "非结构化通道执行",
+      "status": "match"
+    },
+    {
+      "mCode": "M058",
+      "moduleName": "半结构化数据接入",
+      "featureDesc": "Kafka/MongoDB/ES",
+      "implMode": "开源集成·MongoDB",
+      "frameworkRef": "MongoDB",
+      "integrationPattern": "api-adapter",
+      "collectPage": "ingest",
+      "sectionKey": "m058",
+      "ownerView": "collect/CollectIngestView.vue",
+      "ownerApi": "/exchange/ingestion/channels",
+      "ossProbe": "/integration/health → mongodb",
+      "bizProbe": "半结构化通道配置",
+      "status": "match"
+    },
+    {
+      "mCode": "M059",
+      "moduleName": "API 接口数据接入",
+      "featureDesc": "REST 采集",
+      "implMode": "纯自研",
+      "collectPage": "ingest",
+      "sectionKey": "m059",
+      "ownerView": "collect/CollectIngestView.vue",
+      "ownerApi": "/exchange/ingestion/channels",
+      "status": "match"
+    },
+    {
+      "mCode": "M060",
+      "moduleName": "CDC 实时数据接入",
+      "featureDesc": "MySQL 变更捕获",
+      "implMode": "开源集成·Canal",
+      "frameworkRef": "Canal",
+      "integrationPattern": "api-adapter",
+      "collectPage": "ingest",
+      "sectionKey": "m060",
+      "ownerView": "collect/CollectIngestView.vue",
+      "ownerAdapter": "integration/storage/StorageIntegrationClient.java",
+      "ownerApi": "/exchange/ingestion/channels",
+      "ossProbe": "/integration/health → canal",
+      "bizProbe": "CDC 通道执行",
+      "status": "match"
+    },
+    {
+      "mCode": "M061",
+      "moduleName": "数据探查",
+      "featureDesc": "数据探查",
+      "implMode": "纯自研",
+      "collectPage": "pipeline",
+      "sectionKey": "m061",
+      "ownerView": "collect/CollectPipelineView.vue",
+      "ownerApi": "/exchange/ingestion/collect/probe-reports",
+      "status": "match"
+    },
+    {
+      "mCode": "M062",
+      "moduleName": "数据定义",
+      "featureDesc": "数据定义",
+      "implMode": "纯自研",
+      "collectPage": "pipeline",
+      "sectionKey": "m062",
+      "ownerView": "collect/CollectPipelineView.vue",
+      "ownerApi": "/exchange/ingestion/collect/definitions",
+      "status": "match"
+    },
+    {
+      "mCode": "M063",
+      "moduleName": "数据读取",
+      "featureDesc": "数据读取",
+      "implMode": "纯自研",
+      "collectPage": "pipeline",
+      "sectionKey": "m063",
+      "ownerView": "collect/CollectPipelineView.vue",
+      "ownerApi": "/exchange/ingestion/pipeline-jobs/run",
+      "status": "match"
+    },
+    {
+      "mCode": "M064",
+      "moduleName": "数据对账",
+      "featureDesc": "数据对账",
+      "implMode": "纯自研",
+      "collectPage": "pipeline",
+      "sectionKey": "m064",
+      "ownerView": "collect/CollectPipelineView.vue",
+      "ownerApi": "/exchange/ingestion/reconcile/analysis",
+      "status": "match"
+    },
+    {
+      "mCode": "M065",
+      "moduleName": "数据资源编目管理",
+      "featureDesc": "编目",
+      "implMode": "纯自研",
+      "collectPage": "catalog",
+      "sectionKey": "m065",
+      "ownerView": "collect/CollectCatalogView.vue",
+      "ownerApi": "/exchange/ingestion/registries",
+      "status": "match"
+    },
+    {
+      "mCode": "M066",
+      "moduleName": "数据资源分类",
+      "featureDesc": "分类",
+      "implMode": "纯自研",
+      "collectPage": "catalog",
+      "sectionKey": "m066",
+      "ownerView": "collect/CollectCatalogView.vue",
+      "ownerApi": "/exchange/ingestion/collect/categories",
+      "status": "match"
+    },
+    {
+      "mCode": "M067",
+      "moduleName": "资源目录注册发布",
+      "featureDesc": "注册发布",
+      "implMode": "纯自研",
+      "collectPage": "catalog",
+      "sectionKey": "m067",
+      "ownerView": "collect/CollectCatalogView.vue",
+      "ownerApi": "/exchange/ingestion/registries",
+      "status": "match"
+    },
+    {
+      "mCode": "M068",
+      "moduleName": "数据资源目录审批",
+      "featureDesc": "审批",
+      "implMode": "纯自研",
+      "collectPage": "catalog",
+      "sectionKey": "m068",
+      "ownerView": "collect/CollectCatalogView.vue",
+      "ownerApi": "/exchange/ingestion/registries/{id}/approve",
+      "status": "match"
+    },
+    {
+      "mCode": "M069",
+      "moduleName": "数据分级分类",
+      "outOfScope": "collectUiRemoved",
+      "status": "excluded",
+      "note": "R1.2 移出采集 Tab；不作为采集汇聚验收，见登记侧 M046/M045"
+    },
+    {
+      "mCode": "M070",
+      "moduleName": "数据脱敏策略",
+      "outOfScope": "collectUiRemoved",
+      "status": "excluded"
+    },
+    {
+      "mCode": "M071",
+      "moduleName": "数据标签管理",
+      "outOfScope": "collectUiRemoved",
+      "status": "excluded"
+    },
+    {
+      "mCode": "M072",
+      "moduleName": "数据搜索引擎",
+      "outOfScope": "collectUiRemoved",
+      "status": "excluded"
+    },
+    {
+      "mCode": "M073",
+      "moduleName": "数据备份",
+      "outOfScope": "collectUiRemoved",
+      "status": "excluded"
+    },
+    {
+      "mCode": "M074",
+      "moduleName": "数据归档",
+      "outOfScope": "collectUiRemoved",
+      "status": "excluded"
+    },
+    {
+      "mCode": "M075",
+      "moduleName": "数据销毁",
+      "outOfScope": "collectUiRemoved",
+      "status": "excluded"
+    },
+    {
+      "mCode": "M076",
+      "moduleName": "全局数据资产视图",
+      "outOfScope": "collectUiRemoved",
+      "status": "excluded"
+    },
+    {
+      "mCode": "M077",
+      "moduleName": "健康监控",
+      "outOfScope": "collectUiRemoved",
+      "status": "excluded"
+    }
+  ],
+  "excludedFromCollectAcceptance": ["M069", "M070", "M071", "M072", "M073", "M074", "M075", "M076", "M077"],
+  "boundaryItems": [
+    {
+      "xlsxRow": 27,
+      "moduleName": "数据质量管控",
+      "mCode": "M078",
+      "implMode": "集成+自研·OpenMetadata",
+      "outOfScope": "qualityCenter",
+      "status": "boundary-split",
+      "note": "归属治理域 M078+；collect Tab 不实施，见 D17 §3.4"
+    }
+  ]
+}

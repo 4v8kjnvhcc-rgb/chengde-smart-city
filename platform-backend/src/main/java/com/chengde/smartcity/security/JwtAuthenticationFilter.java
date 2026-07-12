@@ -47,10 +47,10 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
                 }
                 Long userId = claims.get("uid", Long.class);
                 if (sessionRedisService.isSessionIdleExpired(userId)) {
-                    chain.doFilter(request, response);
-                    return;
+                    // Redis 重启或会话键丢失时，凭有效 Access Token 恢复空闲计时，避免误报 401
+                    sessionRedisService.touchSession(userId);
                 }
-                UserPrincipal principal = userDetailsService.loadByUsername(claims.getSubject());
+                UserPrincipal principal = userDetailsService.loadByUserId(userId);
                 var authorities = principal.getPermissions().stream()
                         .map(SimpleGrantedAuthority::new)
                         .toList();

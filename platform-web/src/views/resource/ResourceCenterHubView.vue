@@ -5,6 +5,15 @@ import api from '@/api/http'
 import { ElMessage } from 'element-plus'
 import PageHeader from '@/components/common/PageHeader.vue'
 import PageCard from '@/components/common/PageCard.vue'
+import HubSideLayout from '@/components/common/HubSideLayout.vue'
+
+const navItems = [
+  { key: 'library', label: '基础库' },
+  { key: 'partition', label: '分区存储' },
+  { key: 'catalog', label: '资产目录' },
+  { key: 'analytics', label: '检索统计' },
+  { key: 'monitor', label: '监控' },
+]
 
 interface Library { id: number; libCode: string; libName: string; libType: string; recordCount: number }
 interface Partition { partitionCode: string; partitionName: string; partitionType: string }
@@ -103,9 +112,8 @@ onMounted(() => { resolveTab(); loadTabData() })
 <template>
   <div>
     <PageHeader :title="`大数据资源中心 · ${tabTitle}`" description="M130～M138：主题库、分区备份、资产目录、检索统计与监控" />
-    <el-tabs v-model="tab" type="border-card">
-      <el-tab-pane label="基础库" name="library">
-        <PageCard>
+    <HubSideLayout v-model="tab" :items="navItems">
+      <PageCard v-if="tab === 'library'">
           <el-form inline>
             <el-form-item label="库名"><el-input v-model="libForm.libName" /></el-form-item>
             <el-select v-model="libForm.libType" style="width:120px"><el-option label="基础库" value="BASE" /><el-option label="半结构" value="SEMI" /><el-option label="非结构" value="UNSTRUCT" /></el-select>
@@ -114,10 +122,8 @@ onMounted(() => { resolveTab(); loadTabData() })
           <el-table v-if="libOverview" :data="(libOverview.baseLibraries as Library[])" stripe size="small">
             <el-table-column prop="libCode" label="编码" width="130" /><el-table-column prop="libName" label="名称" /><el-table-column prop="recordCount" label="记录数" width="100" />
           </el-table>
-        </PageCard>
-      </el-tab-pane>
-      <el-tab-pane label="分区存储" name="partition">
-        <PageCard v-if="partOverview">
+      </PageCard>
+      <PageCard v-if="tab === 'partition' && partOverview">
           <el-table :data="(partOverview.partitions as Partition[])" stripe size="small">
             <el-table-column prop="partitionName" label="分区" /><el-table-column prop="partitionType" label="类型" width="90" />
           </el-table>
@@ -129,16 +135,12 @@ onMounted(() => { resolveTab(); loadTabData() })
             <el-table-column prop="jobName" label="备份任务" /><el-table-column prop="status" label="状态" width="90" />
             <el-table-column label="操作" width="80"><template #default="{ row }"><el-button link @click="runBackup(row.id)">执行</el-button></template></el-table-column>
           </el-table>
-        </PageCard>
-      </el-tab-pane>
-      <el-tab-pane label="资产目录" name="catalog">
-        <PageCard>
+      </PageCard>
+      <PageCard v-if="tab === 'catalog'">
           <el-form inline><el-form-item label="名称"><el-input v-model="catalogForm.entryName" /></el-form-item><el-button type="primary" @click="createCatalog">编目</el-button></el-form>
           <el-table :data="catalogEntries" stripe><el-table-column prop="entryCode" label="编码" width="140" /><el-table-column prop="entryName" label="名称" /><el-table-column prop="driveTask" label="驱动任务" /></el-table>
-        </PageCard>
-      </el-tab-pane>
-      <el-tab-pane label="检索统计" name="analytics">
-        <PageCard v-if="stats">
+      </PageCard>
+      <PageCard v-if="tab === 'analytics' && stats">
           <el-descriptions :column="3" border size="small">
             <el-descriptions-item label="总记录">{{ stats.totalRecords }}</el-descriptions-item>
             <el-descriptions-item label="库数量">{{ stats.libraryCount }}</el-descriptions-item>
@@ -146,15 +148,12 @@ onMounted(() => { resolveTab(); loadTabData() })
           </el-descriptions>
           <el-input v-model="searchQ" placeholder="库检索" style="max-width:280px;margin-top:12px" @keyup.enter="doSearch" />
           <el-button style="margin-left:8px" @click="doSearch">M136 检索</el-button>
-        </PageCard>
-      </el-tab-pane>
-      <el-tab-pane label="监控" name="monitor">
-        <PageCard>
+      </PageCard>
+      <PageCard v-if="tab === 'monitor'">
           <el-table :data="monitor" stripe size="small">
             <el-table-column prop="metricLabel" label="指标" /><el-table-column prop="metricValue" label="值" /><el-table-column prop="alertLevel" label="级别" width="80" />
           </el-table>
-        </PageCard>
-      </el-tab-pane>
-    </el-tabs>
+      </PageCard>
+    </HubSideLayout>
   </div>
 </template>

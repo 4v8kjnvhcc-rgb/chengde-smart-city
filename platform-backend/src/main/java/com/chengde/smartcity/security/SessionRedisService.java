@@ -26,10 +26,6 @@ public class SessionRedisService {
 
     public void bindActiveAccessToken(Long userId, String jti, String accessToken) {
         String key = ACTIVE_TOKEN_PREFIX + userId;
-        String oldJti = redis.opsForValue().get(key);
-        if (oldJti != null) {
-            blacklist(oldJti, jwtProperties.accessTokenMinutes() * 60);
-        }
         redis.opsForValue().set(key, jti);
         redis.opsForValue().set(ACTIVE_TOKEN_PREFIX + "token:" + userId, accessToken,
                 Duration.ofMinutes(jwtProperties.accessTokenMinutes()));

@@ -1,0 +1,40 @@
+---
+description: 门户/Hub 页面单行工具栏表单对齐规范
+globs: platform-web/src/**/*.vue
+alwaysApply: true
+---
+
+# 单行工具栏表单对齐
+
+页面内「一行展示」的查询/登记工具栏（`el-form inline`）须统一使用项目样式类，保证控件等高、垂直居中。
+
+## 必用类名
+
+- 表单根节点：`class="portal-inline-form"`
+- 需与下方内容留距：`portal-inline-form portal-inline-form--block`
+- 小尺寸表单：`portal-inline-form portal-inline-form--sm"`（配合 `size="small"`）
+- 表单项宽度（加在 `el-form-item` 上）：
+  - `portal-field-xs` 100px · `portal-field-sm` 120px · `portal-field-md` 160px
+  - `portal-field-lg` 200px · `portal-field-xl` 240px · `portal-field-default` 180px
+  - `portal-field-cron` 140px（调度表达式等）
+- 行内按钮：放在 `<el-form-item class="portal-form-actions">` 内，不要与 `el-form-item` 平级裸放
+
+## 示例
+
+```vue
+<el-form inline class="portal-inline-form">
+  <el-form-item label="数据源" class="portal-field-xl">
+    <el-select v-model="sourceId">...</el-select>
+  </el-form-item>
+  <el-form-item class="portal-form-actions">
+    <el-button type="primary">下一步</el-button>
+  </el-form-item>
+</el-form>
+```
+
+## 禁止
+
+- 禁止在 inline 工具栏上用零散 `style="width:..."` 控制宽度（对话框/多行表单除外）
+- 禁止 inline 表单项高度不一致（输入框 32px、按钮须同高）
+
+样式定义见 `platform-web/src/styles/element-overrides.css`。

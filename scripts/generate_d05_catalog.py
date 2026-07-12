@@ -353,20 +353,21 @@ def resolve_status(m_code: str, impl_type: str) -> tuple[str, str | None, str | 
         tab = {31: "home", 32: "home", 33: "search", 34: "catalog", 35: "subscribe", 36: "situation"}[n]
         return "poc", f"/exchange/portal?tab={tab}", None
     if 37 <= n <= 77:
-        ing_tab = {37: "stats", 38: "stats"}
-        for i in range(39, 51):
-            ing_tab[i] = "register"
-        for i in range(51, 54):
-            ing_tab[i] = "upload"
-        for i in range(54, 61):
-            ing_tab[i] = "channel"
-        for i in range(61, 65):
-            ing_tab[i] = "pipeline"
-        for i in range(65, 69):
-            ing_tab[i] = "resource"
-        for i in range(69, 78):
-            ing_tab[i] = "govern"
-        return "poc", f"/exchange/ingestion?tab={ing_tab[n]}", None
+        if n in (37, 38):
+            return "poc", "/exchange/portal?tab=situation", None
+        if n <= 50:
+            return "implemented", f"/exchange/ingestion?system=register&module=m{n:03d}", None
+        if n <= 53:
+            mod = "upload"
+        elif n <= 60:
+            mod = "ingest"
+        elif n <= 64:
+            mod = "pipeline"
+        elif n <= 68:
+            mod = "catalog"
+        else:
+            mod = "asset"
+        return "implemented", f"/exchange/ingestion?system=collect&module={mod}&section=m{n:03d}", None
     if 78 <= n <= 122:
         if 78 <= n <= 85 or 102 <= n <= 105:
             tab = "quality"

@@ -1,11 +1,12 @@
 <script setup lang="ts">
-import { ref, computed } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
 import {
   Connection,
   Coin,
   DataAnalysis,
+  Grid,
   Setting,
 } from '@element-plus/icons-vue'
 import {
@@ -14,6 +15,21 @@ import {
   visibleMenuChildren,
 } from '@/utils/menu'
 import type { MenuNode } from '@/stores/auth'
+import api from '@/api/http'
+
+interface PortalLink {
+  id: number
+  platformPath: string
+  title: string
+  url: string
+  openMode: string
+  ssoMode: string
+  ssoParam: string
+}
+
+type CardItem =
+  | { kind: 'menu'; key: string; title: string; node: MenuNode }
+  | { kind: 'link'; key: string; title: string; link: PortalLink }
 
 const auth = useAuthStore()
 const router = useRouter()
@@ -22,6 +38,7 @@ const platformIcons: Record<string, object> = {
   '/exchange': Connection,
   '/master-data': Coin,
   '/analytics': DataAnalysis,
+  '/business': Grid,
   '/system': Setting,
 }
 
@@ -64,6 +81,15 @@ const platformThemes: Record<
     accent: '#BA7517',
     dotColor: '#EF9F27',
   },
+  '/business': {
+    border: '#9AD4C8',
+    headerBg: '#E6F7F3',
+    iconBg: '#9AD4C8',
+    iconColor: '#0B6E63',
+    titleColor: '#085048',
+    accent: '#1D9A88',
+    dotColor: '#5CBEAE',
+  },
   '/system': {
     border: '#CECBF6',
     headerBg: '#EEEDFE',
@@ -75,12 +101,33 @@ const platformThemes: Record<
   },
 }
 
+const portalLinks = ref<PortalLink[]>([])
 const platforms = computed(() => getAuthorizedPlatforms(auth.menus))
 
 const activeIndex = ref<number | null>(null)
 
 function getTheme(path: string) {
   return platformThemes[path] || platformThemes['/exchange']
+}
+
+function linksOf(platformPath: string): PortalLink[] {
+  return portalLinks.value.filter((l) => l.platformPath === platformPath)
+}
+
+function getCardItems(node: MenuNode): CardItem[] {
+  const menus: CardItem[] = visibleMenuChildren(node).map((child) => ({
+    kind: 'menu',
+    key: `m-${child.id}`,
+    title: child.menuName,
+    node: child,
+  }))
+  const links: CardItem[] = linksOf(node.path).map((link) => ({
+    kind: 'link',
+    key: `l-${link.id}`,
+    title: link.title,
+    link,
+  }))
+  return [...menus, ...links]
 }
 
 function toggleDrawer(index: number) {
@@ -96,9 +143,55 @@ function enterSubsystem(node: MenuNode) {
   if (target) router.push(target)
 }
 
-function getSubSystems(node: MenuNode): MenuNode[] {
-  return visibleMenuChildren(node)
+function buildSsoUrl(link: PortalLink): string {
+  const token = auth.accessToken || localStorage.getItem('accessToken') || ''
+  if (link.ssoMode !== 'token_query' || !token) {
+    return link.url
+  }
+  try {
+    if (link.url.startsWith('/')) {
+      const u = new URL(link.url, window.location.origin)
+      u.searchParams.set(link.ssoParam || 'access_token', token)
+      return u.pathname + u.search + u.hash
+    }
+    const u = new URL(link.url)
+    u.searchParams.set(link.ssoParam || 'access_token', token)
+    return u.toString()
+  } catch {
+    const sep = link.url.includes('?') ? '&' : '?'
+    return `${link.url}${sep}${encodeURIComponent(link.ssoParam || 'access_token')}=${encodeURIComponent(token)}`
+  }
 }
+
+function openExternalLink(link: PortalLink) {
+  const target = buildSsoUrl(link)
+  if (link.openMode === 'same_tab') {
+    if (target.startsWith('/')) {
+      router.push(target)
+    } else {
+      window.location.href = target
+    }
+    return
+  }
+  window.open(target, '_blank', 'noopener,noreferrer')
+}
+
+function onCardItemClick(item: CardItem) {
+  if (item.kind === 'menu') {
+    enterSubsystem(item.node)
+  } else {
+    openExternalLink(item.link)
+  }
+}
+
+onMounted(async () => {
+  try {
+    const res = await api.get('/system/portal-links/enabled')
+    portalLinks.value = res.data || []
+  } catch {
+    portalLinks.value = []
+  }
+})
 </script>
 
 <template>
@@ -147,17 +240,21 @@ function getSubSystems(node: MenuNode): MenuNode[] {
         <div class="drawer-body">
           <div class="drawer-body-inner">
             <button
-              v-for="child in getSubSystems(node)"
-              :key="child.id"
+              v-for="item in getCardItems(node)"
+              :key="item.key"
               type="button"
               class="sub-item"
-              @click="enterSubsystem(child)"
+              @click="onCardItemClick(item)"
             >
               <span class="sub-dot" />
-              <span class="sub-name">{{ child.menuName }}</span>
+              <span class="sub-name">{{ item.title }}</span>
+              <span v-if="item.kind === 'link'" class="sub-badge">外链</span>
               <span class="sub-arrow">→</span>
             </button>
-            <div class="drawer-footer">{{ getSubSystems(node).length }} 个子系统</div>
+            <div v-if="!getCardItems(node).length" class="drawer-empty">
+              暂无入口，请在「系统管理 → 门户外链管理」中配置
+            </div>
+            <div class="drawer-footer">{{ getCardItems(node).length }} 个入口</div>
           </div>
         </div>
       </div>
@@ -210,9 +307,10 @@ function getSubSystems(node: MenuNode): MenuNode[] {
   margin-top: 40px;
 }
 
+/* 原宽 222px，加宽 30% → 289px */
 .drawer-card {
-  flex: 0 0 222px;
-  width: 222px;
+  flex: 0 0 289px;
+  width: 289px;
   align-self: flex-start;
   max-height: 100%;
   display: flex;
@@ -230,7 +328,7 @@ function getSubSystems(node: MenuNode): MenuNode[] {
 }
 .drawer-card.is-open {
   align-self: flex-start;
-  width: 222px;
+  width: 289px;
   flex: 0 0 auto;
   height: auto;
 }
@@ -371,6 +469,16 @@ function getSubSystems(node: MenuNode): MenuNode[] {
   color: #1e3a5f;
 }
 
+.sub-badge {
+  flex-shrink: 0;
+  font-size: 11px;
+  line-height: 1;
+  padding: 3px 6px;
+  border-radius: 4px;
+  color: var(--card-accent);
+  background: color-mix(in srgb, var(--card-accent) 14%, white);
+}
+
 .sub-arrow {
   margin-left: auto;
   font-size: 18px;
@@ -380,6 +488,14 @@ function getSubSystems(node: MenuNode): MenuNode[] {
 }
 .sub-item:hover .sub-arrow {
   opacity: 1;
+}
+
+.drawer-empty {
+  padding: 16px 18px;
+  font-size: 13px;
+  color: #8a96a5;
+  text-align: center;
+  line-height: 1.5;
 }
 
 .drawer-footer {
@@ -418,7 +534,7 @@ function getSubSystems(node: MenuNode): MenuNode[] {
   }
   .drawer-card.is-open {
     flex: 0 0 auto;
-    width: 222px;
+    width: 289px;
     height: auto;
   }
 }

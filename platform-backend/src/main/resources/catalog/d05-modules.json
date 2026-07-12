@@ -767,7 +767,7 @@
       "implType": "纯自研",
       "description": "基础库分析",
       "implStatus": "poc",
-      "implRoute": "/exchange/ingestion?tab=stats",
+      "implRoute": "/exchange/portal?tab=situation",
       "externalUrl": null
     },
     {
@@ -782,7 +782,7 @@
       "implType": "纯自研",
       "description": "重点领域",
       "implStatus": "poc",
-      "implRoute": "/exchange/ingestion?tab=stats",
+      "implRoute": "/exchange/portal?tab=situation",
       "externalUrl": null
     },
     {
@@ -796,8 +796,8 @@
       "deliveryLevel": "L1",
       "implType": "纯自研",
       "description": "登记引导",
-      "implStatus": "poc",
-      "implRoute": "/exchange/ingestion?tab=register",
+      "implStatus": "implemented",
+      "implRoute": "/exchange/ingestion?system=register&module=m039",
       "externalUrl": null
     },
     {
@@ -811,8 +811,8 @@
       "deliveryLevel": "L1",
       "implType": "纯自研",
       "description": "项目与系统",
-      "implStatus": "poc",
-      "implRoute": "/exchange/ingestion?tab=register",
+      "implStatus": "implemented",
+      "implRoute": "/exchange/ingestion?system=register&module=m040",
       "externalUrl": null
     },
     {
@@ -826,8 +826,8 @@
       "deliveryLevel": "L1",
       "implType": "纯自研",
       "description": "数据源与模型",
-      "implStatus": "poc",
-      "implRoute": "/exchange/ingestion?tab=register",
+      "implStatus": "implemented",
+      "implRoute": "/exchange/ingestion?system=register&module=m041",
       "externalUrl": null
     },
     {
@@ -841,8 +841,8 @@
       "deliveryLevel": "L1",
       "implType": "纯自研",
       "description": "字典登记",
-      "implStatus": "poc",
-      "implRoute": "/exchange/ingestion?tab=register",
+      "implStatus": "implemented",
+      "implRoute": "/exchange/ingestion?system=register&module=m042",
       "externalUrl": null
     },
     {
@@ -856,8 +856,8 @@
       "deliveryLevel": "L1",
       "implType": "纯自研",
       "description": "标签登记",
-      "implStatus": "poc",
-      "implRoute": "/exchange/ingestion?tab=register",
+      "implStatus": "implemented",
+      "implRoute": "/exchange/ingestion?system=register&module=m043",
       "externalUrl": null
     },
     {
@@ -871,8 +871,8 @@
       "deliveryLevel": "L1",
       "implType": "纯自研",
       "description": "数据项",
-      "implStatus": "poc",
-      "implRoute": "/exchange/ingestion?tab=register",
+      "implStatus": "implemented",
+      "implRoute": "/exchange/ingestion?system=register&module=m044",
       "externalUrl": null
     },
     {
@@ -886,8 +886,8 @@
       "deliveryLevel": "L1",
       "implType": "纯自研",
       "description": "标签体系",
-      "implStatus": "poc",
-      "implRoute": "/exchange/ingestion?tab=register",
+      "implStatus": "implemented",
+      "implRoute": "/exchange/ingestion?system=register&module=m045",
       "externalUrl": null
     },
     {
@@ -901,8 +901,8 @@
       "deliveryLevel": "L1",
       "implType": "纯自研",
       "description": "资产大屏",
-      "implStatus": "poc",
-      "implRoute": "/exchange/ingestion?tab=register",
+      "implStatus": "implemented",
+      "implRoute": "/exchange/ingestion?system=register&module=m046",
       "externalUrl": null
     },
     {
@@ -916,8 +916,8 @@
       "deliveryLevel": "L1",
       "implType": "纯自研",
       "description": "血缘图谱",
-      "implStatus": "poc",
-      "implRoute": "/exchange/ingestion?tab=register",
+      "implStatus": "implemented",
+      "implRoute": "/exchange/ingestion?system=register&module=m047",
       "externalUrl": null
     },
     {
@@ -961,8 +961,8 @@
       "deliveryLevel": "L1",
       "implType": "纯自研",
       "description": "字典管理",
-      "implStatus": "poc",
-      "implRoute": "/exchange/ingestion?tab=register",
+      "implStatus": "implemented",
+      "implRoute": "/exchange/ingestion?system=register&module=m050",
       "externalUrl": null
     },
     {
@@ -976,8 +976,8 @@
       "deliveryLevel": "L1",
       "implType": "纯自研",
       "description": "上传模板",
-      "implStatus": "poc",
-      "implRoute": "/exchange/ingestion?tab=upload",
+      "implStatus": "implemented",
+      "implRoute": "/exchange/ingestion?system=collect&module=upload&section=m051",
       "externalUrl": null
     },
     {
@@ -991,8 +991,8 @@
       "deliveryLevel": "L1",
       "implType": "纯自研",
       "description": "上传执行",
-      "implStatus": "poc",
-      "implRoute": "/exchange/ingestion?tab=upload",
+      "implStatus": "implemented",
+      "implRoute": "/exchange/ingestion?system=collect&module=upload&section=m052",
       "externalUrl": null
     },
     {
@@ -1006,8 +1006,8 @@
       "deliveryLevel": "L1",
       "implType": "纯自研",
       "description": "上传记录",
-      "implStatus": "poc",
-      "implRoute": "/exchange/ingestion?tab=upload",
+      "implStatus": "implemented",
+      "implRoute": "/exchange/ingestion?system=collect&module=upload&section=m053",
       "externalUrl": null
     },
     {
@@ -1021,8 +1021,8 @@
       "deliveryLevel": "L1",
       "implType": "纯自研",
       "description": "库表接入",
-      "implStatus": "poc",
-      "implRoute": "/exchange/ingestion?tab=channel",
+      "implStatus": "implemented",
+      "implRoute": "/exchange/ingestion?system=collect&module=ingest&section=m054",
       "externalUrl": null
     },
     {
@@ -1036,8 +1036,8 @@
       "deliveryLevel": "L2",
       "implType": "纯自研",
       "description": "FTP",
-      "implStatus": "poc",
-      "implRoute": "/exchange/ingestion?tab=channel",
+      "implStatus": "implemented",
+      "implRoute": "/exchange/ingestion?system=collect&module=ingest&section=m055",
       "externalUrl": null
     },
     {
@@ -1051,8 +1051,8 @@
       "deliveryLevel": "L2",
       "implType": "纯自研",
       "description": "本地文件",
-      "implStatus": "poc",
-      "implRoute": "/exchange/ingestion?tab=channel",
+      "implStatus": "implemented",
+      "implRoute": "/exchange/ingestion?system=collect&module=ingest&section=m056",
       "externalUrl": null
     },
     {
@@ -1066,8 +1066,8 @@
       "deliveryLevel": "L2",
       "implType": "开源集成·SeaweedFS",
       "description": "FTP 至文件存储",
-      "implStatus": "poc",
-      "implRoute": "/exchange/ingestion?tab=channel",
+      "implStatus": "implemented",
+      "implRoute": "/exchange/ingestion?system=collect&module=ingest&section=m057",
       "externalUrl": null
     },
     {
@@ -1081,8 +1081,8 @@
       "deliveryLevel": "L3",
       "implType": "开源集成·MongoDB",
       "description": "Kafka/MongoDB/ES",
-      "implStatus": "poc",
-      "implRoute": "/exchange/ingestion?tab=channel",
+      "implStatus": "implemented",
+      "implRoute": "/exchange/ingestion?system=collect&module=ingest&section=m058",
       "externalUrl": null
     },
     {
@@ -1096,8 +1096,8 @@
       "deliveryLevel": "L1",
       "implType": "纯自研",
       "description": "REST 采集",
-      "implStatus": "poc",
-      "implRoute": "/exchange/ingestion?tab=channel",
+      "implStatus": "implemented",
+      "implRoute": "/exchange/ingestion?system=collect&module=ingest&section=m059",
       "externalUrl": null
     },
     {
@@ -1111,8 +1111,8 @@
       "deliveryLevel": "L1",
       "implType": "开源集成·Canal",
       "description": "MySQL 变更捕获",
-      "implStatus": "poc",
-      "implRoute": "/exchange/ingestion?tab=channel",
+      "implStatus": "implemented",
+      "implRoute": "/exchange/ingestion?system=collect&module=ingest&section=m060",
       "externalUrl": null
     },
     {
@@ -1126,8 +1126,8 @@
       "deliveryLevel": "L2",
       "implType": "纯自研",
       "description": "数据探查",
-      "implStatus": "poc",
-      "implRoute": "/exchange/ingestion?tab=pipeline",
+      "implStatus": "implemented",
+      "implRoute": "/exchange/ingestion?system=collect&module=pipeline&section=m061",
       "externalUrl": null
     },
     {
@@ -1141,8 +1141,8 @@
       "deliveryLevel": "L2",
       "implType": "纯自研",
       "description": "数据定义",
-      "implStatus": "poc",
-      "implRoute": "/exchange/ingestion?tab=pipeline",
+      "implStatus": "implemented",
+      "implRoute": "/exchange/ingestion?system=collect&module=pipeline&section=m062",
       "externalUrl": null
     },
     {
@@ -1156,8 +1156,8 @@
       "deliveryLevel": "L2",
       "implType": "纯自研",
       "description": "数据读取",
-      "implStatus": "poc",
-      "implRoute": "/exchange/ingestion?tab=pipeline",
+      "implStatus": "implemented",
+      "implRoute": "/exchange/ingestion?system=collect&module=pipeline&section=m063",
       "externalUrl": null
     },
     {
@@ -1171,8 +1171,8 @@
       "deliveryLevel": "L2",
       "implType": "纯自研",
       "description": "数据对账",
-      "implStatus": "poc",
-      "implRoute": "/exchange/ingestion?tab=pipeline",
+      "implStatus": "implemented",
+      "implRoute": "/exchange/ingestion?system=collect&module=pipeline&section=m064",
       "externalUrl": null
     },
     {
@@ -1186,8 +1186,8 @@
       "deliveryLevel": "L1",
       "implType": "纯自研",
       "description": "编目",
-      "implStatus": "poc",
-      "implRoute": "/exchange/ingestion?tab=resource",
+      "implStatus": "implemented",
+      "implRoute": "/exchange/ingestion?system=collect&module=catalog&section=m065",
       "externalUrl": null
     },
     {
@@ -1201,8 +1201,8 @@
       "deliveryLevel": "L1",
       "implType": "纯自研",
       "description": "分类",
-      "implStatus": "poc",
-      "implRoute": "/exchange/ingestion?tab=resource",
+      "implStatus": "implemented",
+      "implRoute": "/exchange/ingestion?system=collect&module=catalog&section=m066",
       "externalUrl": null
     },
     {
@@ -1216,8 +1216,8 @@
       "deliveryLevel": "L1",
       "implType": "纯自研",
       "description": "注册发布",
-      "implStatus": "poc",
-      "implRoute": "/exchange/ingestion?tab=resource",
+      "implStatus": "implemented",
+      "implRoute": "/exchange/ingestion?system=collect&module=catalog&section=m067",
       "externalUrl": null
     },
     {
@@ -1231,8 +1231,8 @@
       "deliveryLevel": "L1",
       "implType": "纯自研",
       "description": "审批",
-      "implStatus": "poc",
-      "implRoute": "/exchange/ingestion?tab=resource",
+      "implStatus": "implemented",
+      "implRoute": "/exchange/ingestion?system=collect&module=catalog&section=m068",
       "externalUrl": null
     },
     {
@@ -1246,8 +1246,8 @@
       "deliveryLevel": "L2",
       "implType": "纯自研",
       "description": "分级分类",
-      "implStatus": "poc",
-      "implRoute": "/exchange/ingestion?tab=govern",
+      "implStatus": "implemented",
+      "implRoute": "/exchange/ingestion?system=collect&module=asset&section=m069",
       "externalUrl": null
     },
     {
@@ -1261,8 +1261,8 @@
       "deliveryLevel": "L2",
       "implType": "纯自研",
       "description": "脱敏",
-      "implStatus": "poc",
-      "implRoute": "/exchange/ingestion?tab=govern",
+      "implStatus": "implemented",
+      "implRoute": "/exchange/ingestion?system=collect&module=asset&section=m070",
       "externalUrl": null
     },
     {
@@ -1276,8 +1276,8 @@
       "deliveryLevel": "L2",
       "implType": "纯自研",
       "description": "标签",
-      "implStatus": "poc",
-      "implRoute": "/exchange/ingestion?tab=govern",
+      "implStatus": "implemented",
+      "implRoute": "/exchange/ingestion?system=collect&module=asset&section=m071",
       "externalUrl": null
     },
     {
@@ -1291,8 +1291,8 @@
       "deliveryLevel": "L2",
       "implType": "开源集成·Elasticsearch",
       "description": "搜索",
-      "implStatus": "poc",
-      "implRoute": "/exchange/ingestion?tab=govern",
+      "implStatus": "implemented",
+      "implRoute": "/exchange/ingestion?system=collect&module=asset&section=m072",
       "externalUrl": null
     },
     {
@@ -1306,8 +1306,8 @@
       "deliveryLevel": "L2",
       "implType": "纯自研",
       "description": "备份",
-      "implStatus": "poc",
-      "implRoute": "/exchange/ingestion?tab=govern",
+      "implStatus": "implemented",
+      "implRoute": "/exchange/ingestion?system=collect&module=asset&section=m073",
       "externalUrl": null
     },
     {
@@ -1321,8 +1321,8 @@
       "deliveryLevel": "L2",
       "implType": "纯自研",
       "description": "归档",
-      "implStatus": "poc",
-      "implRoute": "/exchange/ingestion?tab=govern",
+      "implStatus": "implemented",
+      "implRoute": "/exchange/ingestion?system=collect&module=asset&section=m074",
       "externalUrl": null
     },
     {
@@ -1336,8 +1336,8 @@
       "deliveryLevel": "L2",
       "implType": "纯自研",
       "description": "销毁与回收",
-      "implStatus": "poc",
-      "implRoute": "/exchange/ingestion?tab=govern",
+      "implStatus": "implemented",
+      "implRoute": "/exchange/ingestion?system=collect&module=asset&section=m075",
       "externalUrl": null
     },
     {
@@ -1351,8 +1351,8 @@
       "deliveryLevel": "L2",
       "implType": "纯自研",
       "description": "全局视图",
-      "implStatus": "poc",
-      "implRoute": "/exchange/ingestion?tab=govern",
+      "implStatus": "implemented",
+      "implRoute": "/exchange/ingestion?system=collect&module=asset&section=m076",
       "externalUrl": null
     },
     {
@@ -1366,8 +1366,8 @@
       "deliveryLevel": "L2",
       "implType": "纯自研",
       "description": "健康监控",
-      "implStatus": "poc",
-      "implRoute": "/exchange/ingestion?tab=govern",
+      "implStatus": "implemented",
+      "implRoute": "/exchange/ingestion?system=collect&module=asset&section=m077",
       "externalUrl": null
     },
     {

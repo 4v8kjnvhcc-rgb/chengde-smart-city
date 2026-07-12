@@ -5,6 +5,15 @@ import api from '@/api/http'
 import { ElMessage } from 'element-plus'
 import PageHeader from '@/components/common/PageHeader.vue'
 import PageCard from '@/components/common/PageCard.vue'
+import HubSideLayout from '@/components/common/HubSideLayout.vue'
+
+const navItems = [
+  { key: 'm032', label: 'M032 门户首页' },
+  { key: 'm034', label: 'M034 资源目录' },
+  { key: 'm033', label: 'M033 全文检索' },
+  { key: 'm035', label: 'M035 订阅申请' },
+  { key: 'm036', label: 'M036 八态势' },
+]
 
 interface CatalogRow {
   id: number | string
@@ -226,8 +235,8 @@ onMounted(() => {
       description="M031～M036：部门共享门户、首页检索、目录浏览、订阅审批与领导八态势"
     />
 
-    <el-tabs v-model="tab" type="border-card" class="portal-tabs">
-      <el-tab-pane label="M032 门户首页" name="m032">
+    <HubSideLayout v-model="tab" :items="navItems">
+      <template v-if="tab === 'm032'">
         <PageCard v-if="home">
           <div class="portal-search-bar">
             <el-input v-model="searchQ" placeholder="搜索目录、主题、单位…" clearable @keyup.enter="doSearch" />
@@ -258,9 +267,9 @@ onMounted(() => {
             <el-button v-for="t in home.themes" :key="t.code" @click="goTheme(t.route)">{{ t.name }}</el-button>
           </el-space>
         </PageCard>
-      </el-tab-pane>
+      </template>
 
-      <el-tab-pane label="M034 资源目录" name="m034">
+      <template v-if="tab === 'm034'">
         <PageCard>
           <div class="portal-toolbar">
             <el-input v-model="searchQ" placeholder="目录关键词" clearable style="max-width: 320px" @keyup.enter="loadCatalog" />
@@ -286,9 +295,9 @@ onMounted(() => {
             </el-col>
           </el-row>
         </PageCard>
-      </el-tab-pane>
+      </template>
 
-      <el-tab-pane label="M033 全文检索" name="m033">
+      <template v-if="tab === 'm033'">
         <PageCard>
           <div class="portal-toolbar">
             <el-input v-model="searchQ" placeholder="Elasticsearch 全文检索（离线时回退数据库）" clearable style="max-width: 420px" @keyup.enter="loadSearch" />
@@ -303,9 +312,9 @@ onMounted(() => {
             <el-table-column prop="score" label="相关度" width="90" />
           </el-table>
         </PageCard>
-      </el-tab-pane>
+      </template>
 
-      <el-tab-pane label="M035 订阅申请" name="m035">
+      <template v-if="tab === 'm035'">
         <PageCard>
           <el-form :inline="true" class="sub-form">
             <el-form-item label="目录">
@@ -358,9 +367,9 @@ onMounted(() => {
             </el-table-column>
           </el-table>
         </PageCard>
-      </el-tab-pane>
+      </template>
 
-      <el-tab-pane label="M036 八态势" name="m036">
+      <template v-if="tab === 'm036'">
         <PageCard>
           <el-row :gutter="16">
             <el-col v-for="s in situations" :key="s.situationCode" :span="6">
@@ -372,8 +381,8 @@ onMounted(() => {
             </el-col>
           </el-row>
         </PageCard>
-      </el-tab-pane>
-    </el-tabs>
+      </template>
+    </HubSideLayout>
   </div>
 </template>
 

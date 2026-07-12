@@ -1,0 +1,52 @@
+---
+description: 前端 API 按需加载，禁止过度并行请求与 Tab 切换全量 reload
+globs: platform-web/src/**/*.{vue,ts}
+alwaysApply: true
+---
+
+# 前端 API 加载与并行请求
+
+页面加载与 Tab/步骤切换时，**禁止**为「省事」一次性拉齐所有区块可能用到的数据。
+
+## 必须遵守
+
+1. **按当前视图加载**：只请求当前 Tab、子 Tab、步骤条**正在展示**所需接口；未展示的区块数据延后或懒加载。
+2. **控制并行数量**：同一轮加载优先 **1～3 个**并行请求；超过 3 个须说明理由（且不得跨无关区块凑数）。
+3. **Tab/步骤切换不全量 reload**：已加载且仍有效的数据走组件内缓存或共享缓存（如 `ingestion-register-cache.ts`），切换时复用，不重复打相同 API。
+4. **变更后局部刷新**：保存、执行、删除成功后，只刷新**受影响**的那一类数据（如仅 `channels` 或仅 `tasks`），禁止再次 `Promise.all` 拉全页。
+5. **Hub 子页保活**：侧栏切换使用 `keep-alive`，避免 `:key` 导致销毁重建后重复 onMounted 全量请求。
+6. **折叠/弹层懒加载**：字典、详情、次要列表等，在用户展开/打开时再请求。
+
+## 禁止写法
+
+```typescript
+// ❌ 一进页或一切 Tab 就拉齐全部
+await Promise.all([channels(), tasks(), dataSources(), tables(), templates(), uploads()])
+
+// ❌ watch(route.query.section) 无差别触发全量 reload
+watch(() => route.query.section, () => reloadEverything())
+```
+
+## 推荐写法
+
+```typescript
+// ✅ 按 scope 加载
+if (scope === 'structured-table') {
+  await Promise.all([loadChannels('TABLE'), loadTasks(), loadTables()])
+} else if (scope === 'structured-upload') {
+  await Promise.all([loadTemplates(), loadUploads()])
+}
+
+// ✅ 登记侧共享数据走缓存
+tables.value = await ingestionRegisterCache.tables()
+
+// ✅ 变更后只刷新相关接口
+await ingestionApi.updateChannel(id, body)
+await loadChannels(activeType, true)
+```
+
+## 修改自检
+
+- 首屏进入当前视图：并行请求是否 ≤3？是否都与当前可见 UI 相关？
+- 切换 Tab/侧栏：是否会重复请求已在缓存中的 `tables` / `dataSources` / `channels`？
+- 后端并行 N 个请求时，是否叠加了鉴权/权限等**每请求固定成本**（需知会或配合缓存）？

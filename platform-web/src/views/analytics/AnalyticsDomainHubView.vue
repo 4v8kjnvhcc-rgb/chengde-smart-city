@@ -5,6 +5,7 @@ import api from '@/api/http'
 import { ElMessage } from 'element-plus'
 import PageHeader from '@/components/common/PageHeader.vue'
 import PageCard from '@/components/common/PageCard.vue'
+import HubSideLayout, { type HubNavGroup } from '@/components/common/HubSideLayout.vue'
 
 interface DomainModule {
   id: number
@@ -27,15 +28,6 @@ interface Sample {
   metric2: number
 }
 
-interface Model {
-  id: number
-  modelCode: string
-  modelName: string
-  mCode: string
-  deDashboardId: string
-  sampleRowCount: number
-}
-
 const route = useRoute()
 const router = useRouter()
 
@@ -56,6 +48,25 @@ const embedMeta = ref('')
 
 const dataOpsModules = computed(() => modules.value.filter(m => m.moduleType === 'DATA_OPS'))
 const analysisModules = computed(() => modules.value.filter(m => m.moduleType === 'ANALYSIS'))
+
+const navGroups = computed<HubNavGroup[]>(() => [
+  {
+    title: '数据治理（L1）',
+    items: dataOpsModules.value.map(m => ({
+      key: m.mCode,
+      label: m.mCode,
+      subLabel: m.moduleName,
+    })),
+  },
+  {
+    title: '分析模型',
+    items: analysisModules.value.map(m => ({
+      key: m.mCode,
+      label: m.mCode,
+      subLabel: m.moduleName,
+    })),
+  },
+])
 
 const activeModule = computed(() => modules.value.find(m => m.mCode === activeMCode.value))
 
@@ -103,12 +114,10 @@ async function issueEmbed() {
   if (res.data.embedUrl) window.open(res.data.embedUrl as string, '_blank')
 }
 
-function selectModule(mCode: string) {
-  activeMCode.value = mCode
-  router.replace({ query: { ...route.query, tab: mCode.toLowerCase() } })
-}
-
-watch(activeMCode, loadDetail)
+watch(activeMCode, (code) => {
+  router.replace({ query: { ...route.query, tab: code.toLowerCase() } })
+  loadDetail()
+})
 watch(() => route.path, () => { loadOverview() })
 watch(() => route.query.tab, resolveTab)
 
@@ -128,81 +137,47 @@ onMounted(loadOverview)
       </el-descriptions>
     </PageCard>
 
-    <el-row :gutter="16">
-      <el-col :span="7">
-        <PageCard title="模块导航">
-          <div class="group-title">数据治理（L1）</div>
-          <el-menu :default-active="activeMCode" @select="selectModule">
-            <el-menu-item v-for="m in dataOpsModules" :key="m.mCode" :index="m.mCode">
-              <span>{{ m.mCode }}</span>
-              <span class="menu-sub">{{ m.moduleName }}</span>
-            </el-menu-item>
-          </el-menu>
-          <div class="group-title">分析模型</div>
-          <el-menu :default-active="activeMCode" @select="selectModule">
-            <el-menu-item v-for="m in analysisModules" :key="m.mCode" :index="m.mCode">
-              <span>{{ m.mCode }}</span>
-              <span class="menu-sub">{{ m.moduleName }}</span>
-            </el-menu-item>
-          </el-menu>
-        </PageCard>
-      </el-col>
+    <HubSideLayout v-model="activeMCode" :groups="navGroups">
+      <PageCard v-if="activeModule" :title="`${activeModule.mCode} ${activeModule.moduleName}`">
+        <el-descriptions :column="2" border size="small">
+          <el-descriptions-item label="类型">{{ activeModule.moduleType }}</el-descriptions-item>
+          <el-descriptions-item label="分组">{{ activeModule.capGroup }}</el-descriptions-item>
+          <el-descriptions-item label="状态">{{ activeModule.status }}</el-descriptions-item>
+          <el-descriptions-item label="最近运行">{{ activeModule.lastRunAt || '-' }}</el-descriptions-item>
+          <el-descriptions-item v-if="activeModule.deDashboardId" label="DE 看板" :span="2">
+            {{ activeModule.deDashboardId }}
+          </el-descriptions-item>
+        </el-descriptions>
 
-      <el-col :span="17">
-        <PageCard v-if="activeModule" :title="`${activeModule.mCode} ${activeModule.moduleName}`">
-          <el-descriptions :column="2" border size="small">
-            <el-descriptions-item label="类型">{{ activeModule.moduleType }}</el-descriptions-item>
-            <el-descriptions-item label="分组">{{ activeModule.capGroup }}</el-descriptions-item>
-            <el-descriptions-item label="状态">{{ activeModule.status }}</el-descriptions-item>
-            <el-descriptions-item label="最近运行">{{ activeModule.lastRunAt || '-' }}</el-descriptions-item>
-            <el-descriptions-item v-if="activeModule.deDashboardId" label="DE 看板" :span="2">
-              {{ activeModule.deDashboardId }}
-            </el-descriptions-item>
-          </el-descriptions>
+        <div v-if="activeModule.moduleType === 'DATA_OPS'" class="action-row">
+          <el-button type="primary" @click="runOps">执行治理任务</el-button>
+          <span v-if="activeModule.lastMessage" class="hint">{{ activeModule.lastMessage }}</span>
+        </div>
 
-          <div v-if="activeModule.moduleType === 'DATA_OPS'" class="action-row">
-            <el-button type="primary" @click="runOps">执行治理任务</el-button>
-            <span v-if="activeModule.lastMessage" class="hint">{{ activeModule.lastMessage }}</span>
+        <template v-if="activeModule.moduleType === 'ANALYSIS' && detail?.model">
+          <div class="action-row">
+            <el-button type="primary" @click="issueEmbed">签发 DataEase 嵌入</el-button>
+            <el-tag>样例 {{ detail.sampleCount }} 行</el-tag>
           </div>
-
-          <template v-if="activeModule.moduleType === 'ANALYSIS' && detail?.model">
-            <div class="action-row">
-              <el-button type="primary" @click="issueEmbed">签发 DataEase 嵌入</el-button>
-              <el-tag>样例 {{ detail.sampleCount }} 行</el-tag>
-            </div>
-            <el-table :data="(detail.samplesPreview as Sample[])" stripe size="small" style="margin-top:12px">
-              <el-table-column prop="rowNo" label="#" width="60" />
-              <el-table-column prop="dim1" label="维度1" />
-              <el-table-column prop="dim2" label="维度2" />
-              <el-table-column prop="metric1" label="指标1" />
-              <el-table-column prop="metric2" label="指标2" />
-            </el-table>
-            <div class="iframe-shell">
-              <iframe v-if="iframeSrc" class="de-iframe" :src="iframeSrc" title="DataEase" />
-              <div v-else class="iframe-placeholder">签发令牌后在此加载 GPL iframe</div>
-            </div>
-            <pre v-if="embedMeta" class="embed-log">{{ embedMeta }}</pre>
-          </template>
-        </PageCard>
-      </el-col>
-    </el-row>
+          <el-table :data="(detail.samplesPreview as Sample[])" stripe size="small" style="margin-top:12px">
+            <el-table-column prop="rowNo" label="#" width="60" />
+            <el-table-column prop="dim1" label="维度1" />
+            <el-table-column prop="dim2" label="维度2" />
+            <el-table-column prop="metric1" label="指标1" />
+            <el-table-column prop="metric2" label="指标2" />
+          </el-table>
+          <div class="iframe-shell">
+            <iframe v-if="iframeSrc" class="de-iframe" :src="iframeSrc" title="DataEase" />
+            <div v-else class="iframe-placeholder">签发令牌后在此加载 GPL iframe</div>
+          </div>
+          <pre v-if="embedMeta" class="embed-log">{{ embedMeta }}</pre>
+        </template>
+      </PageCard>
+    </HubSideLayout>
   </div>
 </template>
 
 <style scoped>
-.group-title {
-  margin: 8px 0 4px;
-  font-size: 12px;
-  font-weight: 600;
-  color: #909399;
-}
-.menu-sub {
-  margin-left: 8px;
-  font-size: 12px;
-  color: #606266;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
 .action-row {
   margin-top: 12px;
   display: flex;

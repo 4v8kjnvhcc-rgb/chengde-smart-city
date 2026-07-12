@@ -5,6 +5,14 @@ import api from '@/api/http'
 import { ElMessage } from 'element-plus'
 import PageHeader from '@/components/common/PageHeader.vue'
 import PageCard from '@/components/common/PageCard.vue'
+import HubSideLayout from '@/components/common/HubSideLayout.vue'
+
+const navItems = [
+  { key: 'classify', label: 'M123 分类' },
+  { key: 'files', label: 'M124-M125 文件' },
+  { key: 'metadata', label: 'M126 元数据' },
+  { key: 'process', label: 'M127-M129 处理' },
+]
 
 interface Category { id: number; categoryCode: string; categoryName: string; mediaType: string }
 interface Doc { id: number; docCode: string; title: string; storageKey: string; indexStatus: string; publishStatus: string; processStatus?: string; tagJson?: string }
@@ -106,9 +114,8 @@ onMounted(() => { resolveTab(); loadTabData() })
       <el-descriptions-item label="已索引">{{ overview.indexed }}</el-descriptions-item>
       <el-descriptions-item label="Seaweed/ES">{{ overview.seaweedHealthy }}/{{ overview.esHealthy }}</el-descriptions-item>
     </el-descriptions>
-    <el-tabs v-model="tab" type="border-card">
-      <el-tab-pane label="M123 分类" name="classify">
-        <PageCard>
+    <HubSideLayout v-model="tab" :items="navItems">
+      <PageCard v-if="tab === 'classify'">
           <el-form inline>
             <el-form-item label="分类名"><el-input v-model="catForm.categoryName" /></el-form-item>
             <el-button type="primary" @click="addCategory">新增</el-button>
@@ -118,10 +125,8 @@ onMounted(() => { resolveTab(); loadTabData() })
             <el-table-column prop="categoryName" label="名称" />
             <el-table-column prop="mediaType" label="媒介" width="100" />
           </el-table>
-        </PageCard>
-      </el-tab-pane>
-      <el-tab-pane label="M124-M125 文件" name="files">
-        <PageCard>
+      </PageCard>
+      <PageCard v-if="tab === 'files'">
           <el-form inline>
             <el-form-item label="标题"><el-input v-model="docForm.title" /></el-form-item>
             <el-button type="primary" @click="registerDoc">登记</el-button>
@@ -140,19 +145,15 @@ onMounted(() => { resolveTab(); loadTabData() })
               </template>
             </el-table-column>
           </el-table>
-        </PageCard>
-      </el-tab-pane>
-      <el-tab-pane label="M126 元数据" name="metadata">
-        <PageCard>
+      </PageCard>
+      <PageCard v-if="tab === 'metadata'">
           <el-table :data="docs" stripe>
             <el-table-column prop="title" label="文档" />
             <el-table-column prop="tagJson" label="标签" />
             <el-table-column prop="processStatus" label="处理状态" width="110" />
           </el-table>
-        </PageCard>
-      </el-tab-pane>
-      <el-tab-pane label="M127-M129 处理" name="process">
-        <PageCard>
+      </PageCard>
+      <PageCard v-if="tab === 'process'">
           <el-table :data="docs" stripe size="small">
             <el-table-column prop="title" label="文档" />
             <el-table-column label="操作" width="260">
@@ -167,8 +168,7 @@ onMounted(() => { resolveTab(); loadTabData() })
             <el-table-column prop="pipelineType" label="类型" width="90" />
             <el-table-column prop="resultMessage" label="结果" />
           </el-table>
-        </PageCard>
-      </el-tab-pane>
-    </el-tabs>
+      </PageCard>
+    </HubSideLayout>
   </div>
 </template>

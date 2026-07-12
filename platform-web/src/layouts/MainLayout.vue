@@ -11,7 +11,9 @@ const route = useRoute()
 
 const isHubPage = computed(() => route.path === '/dashboard' || route.path === '/')
 
-const sidebarContext = computed(() => resolveSidebarContext(auth.menus, route.path))
+const sidebarContext = computed(() =>
+  resolveSidebarContext(auth.menus, route.path, route.meta as { hubLayout?: boolean }),
+)
 
 const showSidebar = computed(() => sidebarContext.value !== null)
 const sidebarTitle = computed(() => sidebarContext.value?.title ?? '统一门户')

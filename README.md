@@ -73,3 +73,12 @@ powershell -ExecutionPolicy Bypass -File scripts\smoke_ms8_regression.ps1 -Inclu
 
 - D11：[`D11-统一门户技术方案.md`](D11-统一门户技术方案.md)
 - D12：[`D12-数据库设计.md`](D12-数据库设计.md)
+- D17：[`D17-系统优化流程及方式.md`](D17-系统优化流程及方式.md)（分块优化活文档）
+
+### 采集汇聚域 CI（R1）
+
+```powershell
+python scripts/normalize_v3_catalog.py --scope collect
+python scripts/validate_d05_consistency.py --scope collect
+powershell -File scripts/smoke_ingestion.ps1 -CollectOnly
+```

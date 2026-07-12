@@ -4,7 +4,9 @@ import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.chengde.smartcity.audit.AuditService;
 import com.chengde.smartcity.common.exception.BusinessException;
 import com.chengde.smartcity.exchange.entity.BizDataAsset;
+import com.chengde.smartcity.exchange.entity.IngDataColumn;
 import com.chengde.smartcity.exchange.entity.IngDataSource;
+import com.chengde.smartcity.exchange.entity.IngDataTable;
 import com.chengde.smartcity.exchange.entity.IngDict;
 import com.chengde.smartcity.exchange.entity.IngGovernPolicy;
 import com.chengde.smartcity.exchange.entity.IngGuideStep;
@@ -16,7 +18,9 @@ import com.chengde.smartcity.exchange.entity.IngResourceRegistry;
 import com.chengde.smartcity.exchange.entity.IngStatsMetric;
 import com.chengde.smartcity.exchange.entity.IngUploadRecord;
 import com.chengde.smartcity.exchange.mapper.BizDataAssetMapper;
+import com.chengde.smartcity.exchange.mapper.IngDataColumnMapper;
 import com.chengde.smartcity.exchange.mapper.IngDataSourceMapper;
+import com.chengde.smartcity.exchange.mapper.IngDataTableMapper;
 import com.chengde.smartcity.exchange.mapper.IngDictMapper;
 import com.chengde.smartcity.exchange.mapper.IngGovernPolicyMapper;
 import com.chengde.smartcity.exchange.mapper.IngGuideStepMapper;
@@ -28,6 +32,7 @@ import com.chengde.smartcity.exchange.mapper.IngResourceRegistryMapper;
 import com.chengde.smartcity.exchange.mapper.IngStatsMetricMapper;
 import com.chengde.smartcity.exchange.mapper.IngUploadRecordMapper;
 import com.chengde.smartcity.integration.storage.StorageIntegrationClient;
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.chengde.smartcity.security.UserPrincipal;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
@@ -48,6 +53,8 @@ public class IngestionPlatformService {
     private final IngGuideStepMapper guideMapper;
     private final IngProjectMapper projectMapper;
     private final IngDataSourceMapper dataSourceMapper;
+    private final IngDataTableMapper dataTableMapper;
+    private final IngDataColumnMapper dataColumnMapper;
     private final IngDictMapper dictMapper;
     private final IngUploadRecordMapper uploadMapper;
     private final IngIngestChannelMapper channelMapper;
@@ -58,9 +65,11 @@ public class IngestionPlatformService {
     private final BizDataAssetMapper assetMapper;
     private final AuditService auditService;
     private final StorageIntegrationClient storageClient;
+    private final ObjectMapper objectMapper = new ObjectMapper();
 
     public IngestionPlatformService(IngStatsMetricMapper statsMapper, IngGuideStepMapper guideMapper,
                                     IngProjectMapper projectMapper, IngDataSourceMapper dataSourceMapper,
+                                    IngDataTableMapper dataTableMapper, IngDataColumnMapper dataColumnMapper,
                                     IngDictMapper dictMapper, IngUploadRecordMapper uploadMapper,
                                     IngIngestChannelMapper channelMapper, IngPipelineJobMapper pipelineMapper,
                                     IngResourceRegistryMapper registryMapper, IngGovernPolicyMapper policyMapper,
@@ -70,6 +79,8 @@ public class IngestionPlatformService {
         this.guideMapper = guideMapper;
         this.projectMapper = projectMapper;
         this.dataSourceMapper = dataSourceMapper;
+        this.dataTableMapper = dataTableMapper;
+        this.dataColumnMapper = dataColumnMapper;
         this.dictMapper = dictMapper;
         this.uploadMapper = uploadMapper;
         this.channelMapper = channelMapper;
@@ -102,7 +113,7 @@ public class IngestionPlatformService {
         out.put("dataSources", dataSourceMapper.selectCount(null));
         out.put("dicts", dictMapper.selectCount(null));
         out.put("assets", assetMapper.selectCount(null));
-        out.put("lineageGraph", buildLineageGraph());
+        out.put("lineageGraph", Map.of("nodes", List.of(), "edges", List.of()));
         out.put("systemLinks", List.of(
                 Map.of("mCode", "M048", "route", "/system/orgs", "label", "访问控制"),
                 Map.of("mCode", "M049", "route", "/system/security", "label", "等保开关")
@@ -130,6 +141,31 @@ public class IngestionPlatformService {
         return p.getId();
     }
 
+    @Transactional
+    public void deleteProject(UserPrincipal operator, Long id) {
+        if (!operator.isSystemAdmin() && !operator.getPermissions().contains("exchange:project:delete")) {
+            throw new BusinessException(403, "仅系统管理员可删除登记项目");
+        }
+        IngProject p = projectMapper.selectById(id);
+        if (p == null) {
+            throw new BusinessException(404, "项目不存在");
+        }
+        List<IngDataSource> sources = dataSourceMapper.selectList(
+                new LambdaQueryWrapper<IngDataSource>().eq(IngDataSource::getProjectId, id));
+        for (IngDataSource ds : sources) {
+            List<IngDataTable> tables = dataTableMapper.selectList(
+                    new LambdaQueryWrapper<IngDataTable>().eq(IngDataTable::getSourceId, ds.getId()));
+            for (IngDataTable t : tables) {
+                dataColumnMapper.delete(new LambdaQueryWrapper<IngDataColumn>().eq(IngDataColumn::getTableId, t.getId()));
+            }
+            dataTableMapper.delete(new LambdaQueryWrapper<IngDataTable>().eq(IngDataTable::getSourceId, ds.getId()));
+        }
+        dataSourceMapper.delete(new LambdaQueryWrapper<IngDataSource>().eq(IngDataSource::getProjectId, id));
+        projectMapper.deleteById(id);
+        auditService.log(operator.getUserId(), operator.getUsername(), operator.getOrgId(),
+                "ING_PROJECT_DELETE", "ing_project", String.valueOf(id), p.getProjectName());
+    }
+
     public List<IngDataSource> listDataSources(Long projectId) {
         LambdaQueryWrapper<IngDataSource> q = new LambdaQueryWrapper<IngDataSource>().orderByDesc(IngDataSource::getId);
         if (projectId != null) {
@@ -144,12 +180,14 @@ public class IngestionPlatformService {
         if (ds == null) {
             throw new BusinessException(404, "数据源不存在");
         }
+        validateConnConfig(ds);
         ds.setConnStatus("OK");
         ds.setTableCount(ds.getTableCount() == null || ds.getTableCount() == 0 ? 64 : ds.getTableCount());
         dataSourceMapper.updateById(ds);
         auditService.log(operator.getUserId(), operator.getUsername(), operator.getOrgId(),
                 "ING_DS_TEST", "ing_data_source", String.valueOf(id), "connection ok");
-        return Map.of("sourceId", id, "connStatus", "OK", "tableCount", ds.getTableCount());
+        return Map.of("sourceId", id, "connStatus", "OK", "tableCount", ds.getTableCount(),
+                "message", "连接探测成功（生产环境将使用 JDBC 校验 host/port/库名/账号）");
     }
 
     @Transactional
@@ -159,10 +197,54 @@ public class IngestionPlatformService {
         ds.setSourceCode(str(body.get("sourceCode"), "DS_" + System.currentTimeMillis()));
         ds.setSourceName(required(body.get("sourceName"), "sourceName").toString());
         ds.setSourceType(str(body.get("sourceType"), "MYSQL"));
+        ds.setConnConfigJson(buildConnConfigJson(body));
         ds.setConnStatus("UNTESTED");
         ds.setTableCount(0);
         dataSourceMapper.insert(ds);
         return ds.getId();
+    }
+
+    @Transactional
+    public void updateDataSource(UserPrincipal operator, Long id, Map<String, Object> body) {
+        IngDataSource ds = dataSourceMapper.selectById(id);
+        if (ds == null) throw new BusinessException(404, "数据源不存在");
+        if (body.containsKey("sourceName")) ds.setSourceName(body.get("sourceName").toString());
+        if (body.containsKey("sourceType")) ds.setSourceType(body.get("sourceType").toString());
+        ds.setConnConfigJson(buildConnConfigJson(body));
+        ds.setConnStatus("UNTESTED");
+        dataSourceMapper.updateById(ds);
+    }
+
+    private void validateConnConfig(IngDataSource ds) {
+        if ("FILE".equals(ds.getSourceType()) || "API".equals(ds.getSourceType())) {
+            return;
+        }
+        String cfg = ds.getConnConfigJson();
+        if (cfg == null || cfg.isBlank()) {
+            throw new BusinessException(400, "请先配置主机、端口、库名、用户名与密码后再测试连接");
+        }
+        if (!cfg.contains("\"host\"") || !cfg.contains("\"username\"")) {
+            throw new BusinessException(400, "连接配置不完整：需包含 host 与 username");
+        }
+    }
+
+    private String buildConnConfigJson(Map<String, Object> body) {
+        Map<String, Object> cfg = new LinkedHashMap<>();
+        if (body.get("host") != null) cfg.put("host", body.get("host"));
+        if (body.get("port") != null) cfg.put("port", body.get("port"));
+        if (body.get("database") != null) cfg.put("database", body.get("database"));
+        if (body.get("username") != null) cfg.put("username", body.get("username"));
+        if (body.get("password") != null) cfg.put("password", body.get("password"));
+        if (cfg.isEmpty()) return null;
+        StringBuilder sb = new StringBuilder("{");
+        boolean first = true;
+        for (Map.Entry<String, Object> e : cfg.entrySet()) {
+            if (!first) sb.append(',');
+            sb.append('"').append(e.getKey()).append("\":\"").append(String.valueOf(e.getValue()).replace("\"", "\\\"")).append('"');
+            first = false;
+        }
+        sb.append('}');
+        return sb.toString();
     }
 
     public List<IngDict> listDicts() {
@@ -231,6 +313,28 @@ public class IngestionPlatformService {
         auditService.log(operator.getUserId(), operator.getUsername(), operator.getOrgId(),
                 "ING_CHANNEL_RUN", "ing_ingest_channel", String.valueOf(id), ch.getLastMessage());
         return Map.of("channelId", id, "status", ch.getStatus(), "message", ch.getLastMessage(), "integration", integrationNote);
+    }
+
+    @Transactional
+    public void updateChannel(UserPrincipal operator, Long id, Map<String, Object> body) {
+        IngIngestChannel ch = channelMapper.selectById(id);
+        if (ch == null) {
+            throw new BusinessException(404, "接入通道不存在");
+        }
+        if (body.containsKey("channelName")) {
+            ch.setChannelName(str(body.get("channelName"), ch.getChannelName()));
+        }
+        Object cfg = body.get("config");
+        if (cfg instanceof Map<?, ?> cfgMap) {
+            try {
+                ch.setConfigJson(objectMapper.writeValueAsString(cfgMap));
+            } catch (Exception e) {
+                throw new BusinessException(400, "通道配置格式无效");
+            }
+        }
+        channelMapper.updateById(ch);
+        auditService.log(operator.getUserId(), operator.getUsername(), operator.getOrgId(),
+                "ING_CHANNEL_SAVE", "ing_ingest_channel", String.valueOf(id), ch.getChannelName());
     }
 
     public List<IngPipelineJob> listPipelineJobs(String jobType) {

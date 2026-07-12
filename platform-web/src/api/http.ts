@@ -1,4 +1,5 @@
 import axios, { type AxiosError, type InternalAxiosRequestConfig } from 'axios'
+import { useAuthStore } from '@/stores/auth'
 
 const api = axios.create({
   baseURL: '/api/v1',
@@ -23,6 +24,13 @@ async function refreshAccessToken(): Promise<string> {
   if (nextRefresh) {
     localStorage.setItem('refreshToken', nextRefresh)
   }
+  try {
+    const auth = useAuthStore()
+    auth.accessToken = accessToken
+    if (nextRefresh) auth.refreshToken = nextRefresh
+  } catch {
+    // Pinia 未初始化时仅更新 localStorage
+  }
   return accessToken
 }
 
@@ -32,6 +40,14 @@ function clearSessionAndRedirect() {
   if (!window.location.pathname.includes('/login')) {
     window.location.href = '/login'
   }
+}
+
+function rejectFrom(err: AxiosError) {
+  const body = err.response?.data as { message?: string; code?: number } | undefined
+  const message = body?.message || err.message || '请求失败'
+  const wrapped = new Error(message) as Error & { code?: number }
+  wrapped.code = body?.code ?? err.response?.status
+  return Promise.reject(wrapped)
 }
 
 api.interceptors.request.use((config) => {
@@ -56,6 +72,7 @@ api.interceptors.response.use(
     const original = err.config as InternalAxiosRequestConfig & { _retry?: boolean }
     const url = original?.url || ''
     const isAuthApi = url.includes('/auth/login') || url.includes('/auth/refresh')
+
     if (err.response?.status === 401 && original && !original._retry && !isAuthApi) {
       original._retry = true
       try {
@@ -69,15 +86,20 @@ api.interceptors.response.use(
         return api(original)
       } catch {
         clearSessionAndRedirect()
+        return rejectFrom(err)
       }
-    } else if (err.response?.status === 401) {
+    }
+
+    // 已刷新过仍 401：多为接口未部署/无权限，不应踢出登录
+    if (err.response?.status === 401 && original?._retry) {
+      return rejectFrom(err)
+    }
+
+    if (err.response?.status === 401 && (isAuthApi || !original)) {
       clearSessionAndRedirect()
     }
-    const body = err.response?.data as { message?: string; code?: number } | undefined
-    const message = body?.message || err.message || '请求失败'
-    const wrapped = new Error(message) as Error & { code?: number }
-    wrapped.code = body?.code ?? err.response?.status
-    return Promise.reject(wrapped)
+
+    return rejectFrom(err)
   },
 )
 
