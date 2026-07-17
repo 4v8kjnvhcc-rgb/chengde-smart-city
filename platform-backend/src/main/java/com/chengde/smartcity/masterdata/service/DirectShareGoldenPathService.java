@@ -30,6 +30,7 @@ import com.chengde.smartcity.masterdata.mapper.GovQualityTaskMapper;
 import com.chengde.smartcity.masterdata.mapper.GovQualityTaskRunMapper;
 import com.chengde.smartcity.masterdata.service.SharePathSupportService.ColumnDef;
 import com.chengde.smartcity.masterdata.service.SharePathSupportService.EligibleTable;
+import com.chengde.smartcity.masterdata.support.DataLayerSupport;
 import com.chengde.smartcity.security.UserPrincipal;
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
@@ -69,6 +70,7 @@ public class DirectShareGoldenPathService {
     private final QualityExecuteService qualityExecuteService;
     private final CatalogResourceService catalogResourceService;
     private final CatalogSubscriptionService catalogSubscriptionService;
+    private final OpenMetadataSyncService openMetadataSyncService;
 
     public DirectShareGoldenPathService(SharePathSupportService shareSupport,
                                         GovOmConnectorMapper connectorMapper,
@@ -86,7 +88,8 @@ public class DirectShareGoldenPathService {
                                         GovCatalogAuthorizationMapper authorizationMapper,
                                         QualityExecuteService qualityExecuteService,
                                         CatalogResourceService catalogResourceService,
-                                        CatalogSubscriptionService catalogSubscriptionService) {
+                                        CatalogSubscriptionService catalogSubscriptionService,
+                                        OpenMetadataSyncService openMetadataSyncService) {
         this.shareSupport = shareSupport;
         this.connectorMapper = connectorMapper;
         this.metaTaskMapper = metaTaskMapper;
@@ -104,10 +107,22 @@ public class DirectShareGoldenPathService {
         this.qualityExecuteService = qualityExecuteService;
         this.catalogResourceService = catalogResourceService;
         this.catalogSubscriptionService = catalogSubscriptionService;
+        this.openMetadataSyncService = openMetadataSyncService;
     }
 
     public List<Map<String, Object>> eligibleTables() {
         return shareSupport.listEligibleTables();
+    }
+
+    private List<Map<String, Object>> toColumnMaps(List<ColumnDef> columns) {
+        List<Map<String, Object>> out = new ArrayList<>();
+        for (ColumnDef c : columns) {
+            Map<String, Object> m = new LinkedHashMap<>();
+            m.put("columnName", c.name());
+            m.put("dataType", c.typeName());
+            out.add(m);
+        }
+        return out;
     }
 
     public Map<String, Object> overview(UserPrincipal operator, Long tableId) {
@@ -171,11 +186,16 @@ public class DirectShareGoldenPathService {
                         column.name(), "COLUMN", entryCode, sample, run.getId(), column.typeName());
             }
 
+            // 真实同步 OM：库/表/列 upsert，并回写 entryCode ↔ OM FQN/entityId
+            Map<String, Object> omResult = openMetadataSyncService.syncTable(entryCode, physicalTable,
+                    toColumnMaps(columns), false);
+
             run.setStatus("SUCCESS");
             run.setEndedAt(LocalDateTime.now());
             run.setTableCount(1);
-            run.setSummary("元数据入账成功，表1，字段" + columns.size());
-            run.setLogText(run.getLogText() + "\nentryCode=" + entryCode + "\ncolumns=" + columns.size());
+            run.setSummary("元数据入账成功，表1，字段" + columns.size() + "，OM=" + omResult.get("syncStatus"));
+            run.setLogText(run.getLogText() + "\nentryCode=" + entryCode + "\ncolumns=" + columns.size()
+                    + "\nomFqn=" + omResult.getOrDefault("fqn", "-"));
             metaRunMapper.updateById(run);
 
             task.setStatus("READY");
@@ -190,6 +210,8 @@ public class DirectShareGoldenPathService {
             out.put("physicalTableName", physicalTable);
             out.put("columnCount", columns.size());
             out.put("searchable", findEntry(entryCode) != null);
+            out.put("omSyncStatus", omResult.get("syncStatus"));
+            out.put("omFqn", omResult.get("fqn"));
             out.put("status", "SUCCESS");
             return out;
         } catch (RuntimeException ex) {
@@ -414,6 +436,14 @@ public class DirectShareGoldenPathService {
         entry.setDataSourceId(sample.source().getId());
         entry.setSourceTableId(sample.table().getId());
         entry.setPhysicalTableName(sample.table().getPhysicalTableName());
+        String physical = sample.table().getPhysicalTableName();
+        if (physical != null && !physical.isBlank()) {
+            String layer = DataLayerSupport.layerForTableName(physical);
+            String db = DataLayerSupport.databaseForLayer(layer);
+            entry.setDataLayer(layer);
+            entry.setDatabaseName(db);
+            entry.setSchemaName(db);
+        }
         entry.setDescription(description);
         entry.setTags("直通共享");
         entry.setKeywords(sample.source().getSourceName() + "," + sample.table().getTableName());

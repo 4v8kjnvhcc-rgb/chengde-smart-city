@@ -13,6 +13,9 @@ public class GovMetaRelation {
     private String toCode;
     private String relationType;
     private String label;
+    private String omFromFqn;
+    private String omToFqn;
+    private String omSyncStatus;
     private String status;
     private LocalDateTime createdAt;
 
@@ -26,6 +29,12 @@ public class GovMetaRelation {
     public void setRelationType(String relationType) { this.relationType = relationType; }
     public String getLabel() { return label; }
     public void setLabel(String label) { this.label = label; }
+    public String getOmFromFqn() { return omFromFqn; }
+    public void setOmFromFqn(String omFromFqn) { this.omFromFqn = omFromFqn; }
+    public String getOmToFqn() { return omToFqn; }
+    public void setOmToFqn(String omToFqn) { this.omToFqn = omToFqn; }
+    public String getOmSyncStatus() { return omSyncStatus; }
+    public void setOmSyncStatus(String omSyncStatus) { this.omSyncStatus = omSyncStatus; }
     public String getStatus() { return status; }
     public void setStatus(String status) { this.status = status; }
     public LocalDateTime getCreatedAt() { return createdAt; }

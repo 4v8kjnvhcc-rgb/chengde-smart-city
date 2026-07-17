@@ -1,6 +1,5 @@
 <script setup lang="ts">
 import { onMounted, reactive, ref } from 'vue'
-import { useRouter } from 'vue-router'
 import api from '@/api/http'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import PageCard from '@/components/common/PageCard.vue'
@@ -22,7 +21,11 @@ interface TaskRow {
   nextRunAt?: string
 }
 
-const router = useRouter()
+const emit = defineEmits<{
+  design: [id: number]
+  monitor: [id: number]
+}>()
+
 const tasks = ref<TaskRow[]>([])
 const loading = ref(false)
 const createVisible = ref(false)
@@ -88,25 +91,11 @@ async function submitCreate() {
 }
 
 function openDesign(id: number) {
-  router.replace({
-    query: {
-      ...router.currentRoute.value.query,
-      tab: 'etl',
-      etlView: 'design',
-      taskId: String(id),
-    },
-  })
+  emit('design', id)
 }
 
 function openMonitor(id: number) {
-  router.replace({
-    query: {
-      ...router.currentRoute.value.query,
-      tab: 'etl',
-      etlView: 'monitor',
-      taskId: String(id),
-    },
-  })
+  emit('monitor', id)
 }
 
 function openRename(row: TaskRow) {

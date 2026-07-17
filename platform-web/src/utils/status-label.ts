@@ -64,6 +64,41 @@ const STATUS_ZH: Record<string, string> = {
   MAPPED: '已对标',
   PARTIAL: '部分对标',
   UNMAPPED: '未对标',
+  // 元数据条目类型
+  SOURCE: '数据源',
+  CONNECTOR: '连接器',
+  TABLE: '数据表',
+  COLUMN: '字段',
+  CATALOG: '编目',
+  MODEL: '元模型',
+  LINEAGE: '血缘',
+  VERSION: '版本',
+  METRIC: '指标',
+  SERVICE: '服务',
+  FILE: '文件',
+  API: '接口',
+  // 安全分级
+  PUBLIC: '公开',
+  INTERNAL: '内部',
+  SENSITIVE: '敏感',
+  SECRET: '核心',
+  CORE: '核心',
+  // 采集范围 / 符合度 / 分层
+  FULL: '整库',
+  PASS: '通过',
+  FAIL: '不通过',
+  ODS: 'ODS',
+  DWD: 'DWD',
+  DWS: 'DWS',
+  ADS: 'ADS',
+  EXTERNAL: '外部源',
+  // 关系类型
+  FK: '外键',
+  IMPACT: '影响',
+  ASSOC: '关联',
+  // 健康
+  UP: '可用',
+  DOWN: '不可用',
 }
 
 /**

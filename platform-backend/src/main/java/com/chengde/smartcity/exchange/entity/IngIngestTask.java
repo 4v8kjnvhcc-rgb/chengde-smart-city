@@ -16,6 +16,14 @@ public class IngIngestTask {
     private Long tableId;
     private String targetTable;
     private Long collectedRows;
+    private String kettleTransName;
+    private Long dsProjectCode;
+    private Long dsDefinitionCode;
+    private Long dsInstanceId;
+    private Long linesInput;
+    private Long linesOutput;
+    private Long linesRejected;
+    private String errorDetail;
     private String scheduleCron;
     private String status;
     private LocalDateTime lastRunAt;
@@ -38,6 +46,22 @@ public class IngIngestTask {
     public void setTargetTable(String targetTable) { this.targetTable = targetTable; }
     public Long getCollectedRows() { return collectedRows; }
     public void setCollectedRows(Long collectedRows) { this.collectedRows = collectedRows; }
+    public String getKettleTransName() { return kettleTransName; }
+    public void setKettleTransName(String kettleTransName) { this.kettleTransName = kettleTransName; }
+    public Long getDsProjectCode() { return dsProjectCode; }
+    public void setDsProjectCode(Long dsProjectCode) { this.dsProjectCode = dsProjectCode; }
+    public Long getDsDefinitionCode() { return dsDefinitionCode; }
+    public void setDsDefinitionCode(Long dsDefinitionCode) { this.dsDefinitionCode = dsDefinitionCode; }
+    public Long getDsInstanceId() { return dsInstanceId; }
+    public void setDsInstanceId(Long dsInstanceId) { this.dsInstanceId = dsInstanceId; }
+    public Long getLinesInput() { return linesInput; }
+    public void setLinesInput(Long linesInput) { this.linesInput = linesInput; }
+    public Long getLinesOutput() { return linesOutput; }
+    public void setLinesOutput(Long linesOutput) { this.linesOutput = linesOutput; }
+    public Long getLinesRejected() { return linesRejected; }
+    public void setLinesRejected(Long linesRejected) { this.linesRejected = linesRejected; }
+    public String getErrorDetail() { return errorDetail; }
+    public void setErrorDetail(String errorDetail) { this.errorDetail = errorDetail; }
     public String getScheduleCron() { return scheduleCron; }
     public void setScheduleCron(String scheduleCron) { this.scheduleCron = scheduleCron; }
     public String getStatus() { return status; }

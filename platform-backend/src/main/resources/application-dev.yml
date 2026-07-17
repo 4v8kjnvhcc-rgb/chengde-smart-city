@@ -15,6 +15,8 @@ logging:
     com.chengde.smartcity: DEBUG
 
 app:
+  security:
+    credential-key: ${CREDENTIAL_KEY:chengde-smartcity-credential-key}
   integration:
     enabled: ${INTEGRATION_ENABLED:false}
     demo-fallback: ${INTEGRATION_DEMO_FALLBACK:false}
@@ -29,10 +31,25 @@ app:
       url: ${DS_URL:http://localhost:12345/dolphinscheduler}
       user: ${DS_USER:admin}
       password: ${DS_PASSWORD:dolphinscheduler123}
+      token: ${DS_TOKEN:}
+      tenant-code: ${DS_TENANT:default}
     kettle:
       url: ${KETTLE_URL:http://localhost:8081}
       user: ${KETTLE_USER:cluster}
       password: ${KETTLE_PASSWORD:cluster}
+      # Carte 容器写入平台 ODS 分层库时的可达地址；宿主机数据库经 host-gateway 访问
+      target-host: ${KETTLE_TARGET_HOST:host.docker.internal}
+      target-port: ${KETTLE_TARGET_PORT:3306}
+      target-database: ${KETTLE_TARGET_DB:smart_city_ods}
+      target-user: ${KETTLE_TARGET_USER:root}
+      target-password: ${KETTLE_TARGET_PASSWORD:${MYSQL_PASSWORD:}}
+      # DS SHELL 节点在容器网内访问 Carte 的地址
+      carte-host: ${KETTLE_CARTE_HOST:kettle-carte}
+      carte-port: ${KETTLE_CARTE_PORT:8080}
+      # 源库 host:port -> Carte 可达 host:port（源库容器 source-mysql 在同一 compose 网络）
+      host-map:
+        "localhost:3308": source-mysql:3306
+        "127.0.0.1:3308": source-mysql:3306
     storage:
       es-url: ${ES_URL:http://localhost:9200}
       seaweed-s3-endpoint: ${SEAWEED_S3_ENDPOINT:http://localhost:8333}

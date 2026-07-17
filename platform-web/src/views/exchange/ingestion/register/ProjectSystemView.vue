@@ -3,7 +3,7 @@ import { computed, onMounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { useAuthStore } from '@/stores/auth'
 import PageCard from '@/components/common/PageCard.vue'
-import { ingestionApi, useIngestionLoading, type DataSource, type Project } from '../useIngestionHub'
+import { ingestionApi, useIngestionLoading, type DataSource, type Project, type ProbeTable } from '../useIngestionHub'
 
 const auth = useAuthStore()
 const { loading, loadError, withLoad } = useIngestionLoading()
@@ -23,6 +23,14 @@ const dsForm = reactive({
 })
 const connDialog = ref(false)
 const editingDs = ref<DataSource | null>(null)
+
+const probeDialog = ref(false)
+const probeSource = ref<DataSource | null>(null)
+const probeTables = ref<ProbeTable[]>([])
+const probeSchema = ref('')
+const selectedTables = ref<string[]>([])
+const probing = ref(false)
+const registering = ref(false)
 
 const canDeleteProject = computed(() => auth.hasPermission('exchange:project:delete'))
 
@@ -93,6 +101,44 @@ async function testDs(id: number) {
   const res = await ingestionApi.testDataSource(id)
   ElMessage.success(String(res.data.message || '连接测试成功'))
   await reload()
+}
+
+async function openProbe(ds: DataSource) {
+  probeSource.value = ds
+  probeTables.value = []
+  selectedTables.value = []
+  probeSchema.value = ''
+  probeDialog.value = true
+  probing.value = true
+  try {
+    const res = await ingestionApi.probeDataSource(ds.id)
+    probeSchema.value = res.data.schema
+    probeTables.value = res.data.tables
+  } catch (e: unknown) {
+    ElMessage.error(e instanceof Error ? e.message : '探库失败')
+  } finally {
+    probing.value = false
+  }
+}
+
+async function registerSelected() {
+  if (!probeSource.value || !selectedTables.value.length) {
+    ElMessage.warning('请至少勾选一张源表')
+    return
+  }
+  registering.value = true
+  try {
+    const tables = selectedTables.value.map((name) => ({ sourceTable: name }))
+    const res = await ingestionApi.registerTables(probeSource.value.id, { tables })
+    const registered = (res.data.registered as unknown[]) || []
+    ElMessage.success(`已登记 ${registered.length} 张源表（待汇聚）`)
+    probeDialog.value = false
+    await reload()
+  } catch (e: unknown) {
+    ElMessage.error(e instanceof Error ? e.message : '登记失败')
+  } finally {
+    registering.value = false
+  }
 }
 
 onMounted(async () => {
@@ -171,17 +217,42 @@ onMounted(async () => {
         <el-table-column label="表数" width="70">
           <template #default="{ row }">{{ isDbType(row.sourceType) ? row.tableCount : '—' }}</template>
         </el-table-column>
-        <el-table-column label="操作" width="160">
+        <el-table-column label="操作" width="240">
           <template #default="{ row }">
             <template v-if="isDbType(row.sourceType)">
               <el-button link @click="openConn(row)">配置连接</el-button>
               <el-button link type="primary" @click="testDs(row.id)">测试</el-button>
+              <el-button link type="success" :disabled="row.connStatus !== 'OK'" @click="openProbe(row)">探库登记</el-button>
             </template>
             <span v-else class="muted">无需测试</span>
           </template>
         </el-table-column>
       </el-table>
     </PageCard>
+    <el-dialog v-model="probeDialog" :title="`探库登记 · ${probeSource?.sourceName || ''}`" width="720px">
+      <el-alert type="info" :closable="false" style="margin-bottom:10px"
+        :title="`源库 ${probeSchema || '-'} 真实探测到 ${probeTables.length} 张表；勾选后登记到平台（状态：待汇聚），再由汇聚流程真实抽取到 ODS。`" />
+      <div v-loading="probing">
+        <el-table :data="probeTables" size="small" max-height="360"
+          @selection-change="(rows: ProbeTable[]) => selectedTables = rows.map(r => r.sourceTable)">
+          <el-table-column type="selection" width="46" />
+          <el-table-column prop="sourceTable" label="源表" min-width="160" />
+          <el-table-column label="列数" width="70">
+            <template #default="{ row }">{{ row.columns.length }}</template>
+          </el-table-column>
+          <el-table-column label="主键" min-width="120">
+            <template #default="{ row }">{{ row.primaryKeys.join(', ') || '—' }}</template>
+          </el-table-column>
+          <el-table-column label="行数" width="90">
+            <template #default="{ row }">{{ row.rowCount < 0 ? '—' : row.rowCount }}</template>
+          </el-table-column>
+        </el-table>
+      </div>
+      <template #footer>
+        <el-button @click="probeDialog = false">取消</el-button>
+        <el-button type="primary" :loading="registering" @click="registerSelected">登记选中表</el-button>
+      </template>
+    </el-dialog>
     <el-dialog v-model="connDialog" title="数据源连接配置" width="480px">
       <el-form label-width="80px">
         <el-form-item label="主机"><el-input v-model="dsForm.host" /></el-form-item>

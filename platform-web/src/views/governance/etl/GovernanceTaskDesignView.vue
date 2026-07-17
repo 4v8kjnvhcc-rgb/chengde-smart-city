@@ -511,6 +511,7 @@ function backToList() {
   const q: Record<string, any> = { ...route.query, tab: 'etl' }
   delete q.etlView
   delete q.taskId
+  if (!q.etlSub) q.etlSub = 'task-mgmt'
   router.replace({ query: q })
 }
 

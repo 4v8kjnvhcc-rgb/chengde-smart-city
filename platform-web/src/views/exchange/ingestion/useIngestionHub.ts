@@ -4,7 +4,9 @@ import { ElMessage } from 'element-plus'
 
 export interface GuideStep { stepNo: number; stepName: string; stepDesc: string; requiredFlag: number; jumpModule?: string }
 export interface Project { id: number; projectCode: string; projectName: string; boundOrgId: number; systemName: string; status: string }
-export interface DataSource { id: number; projectId: number; sourceCode: string; sourceName: string; sourceType: string; connStatus: string; tableCount: number; connConfigJson?: string }
+export interface DataSource { id: number; projectId: number; sourceCode: string; sourceName: string; sourceType: string; connStatus: string; tableCount: number; connConfigJson?: string; sourceSchema?: string; probeAt?: string; probeMessage?: string; syncStatus?: string }
+export interface ProbeColumn { columnName: string; dataType: string; columnSize: number; nullable: boolean; remarks?: string; sortOrder: number }
+export interface ProbeTable { sourceTable: string; columns: ProbeColumn[]; primaryKeys: string[]; rowCount: number }
 export interface DataTable { id: number; sourceId: number; tableCode: string; tableName: string; modelingMode: string; columnCount: number }
 export interface DataColumn { id: number; tableId: number; columnCode: string; columnName: string; dataType: string; nullableFlag: number; semanticDesc?: string; lengthVal?: number; componentType?: string; requiredTip?: string; builtInFlag?: number }
 export interface Dict { id: number; dictCode: string; dictName: string; dictType: string; itemCount: number; status: string }
@@ -70,6 +72,8 @@ export const ingestionApi = {
   createDataSource: (body: Record<string, unknown>) => api.post<number>('/exchange/ingestion/data-sources', body),
   updateDataSource: (id: number, body: Record<string, unknown>) => api.put<void>(`/exchange/ingestion/data-sources/${id}`, body),
   testDataSource: (id: number) => api.post<Record<string, unknown>>(`/exchange/ingestion/data-sources/${id}/test`),
+  probeDataSource: (id: number) => api.post<{ sourceId: number; schema: string; tableCount: number; tables: ProbeTable[] }>(`/exchange/ingestion/data-sources/${id}/probe`),
+  registerTables: (id: number, body: Record<string, unknown>) => api.post<Record<string, unknown>>(`/exchange/ingestion/data-sources/${id}/register-tables`, body),
   tables: (sourceId?: number) => api.get<DataTable[]>('/exchange/ingestion/register/tables', { params: { sourceId } }),
   createTable: (body: Record<string, unknown>) => api.post<number>('/exchange/ingestion/register/tables', body),
   columns: (tableId: number) => api.get<DataColumn[]>(`/exchange/ingestion/register/tables/${tableId}/columns`),

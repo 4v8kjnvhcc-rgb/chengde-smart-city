@@ -2,6 +2,7 @@ package com.chengde.smartcity.masterdata.service;
 
 import com.chengde.smartcity.common.exception.BusinessException;
 import com.chengde.smartcity.masterdata.service.SharePathSupportService.ColumnDef;
+import com.chengde.smartcity.masterdata.support.DataLayerSupport;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.LinkedHashSet;
@@ -52,7 +53,12 @@ public class FusionSqlCompiler {
             throw new BusinessException(400, "仅支持 writeMode=TRUNCATE_INSERT");
         }
 
-        List<ColumnDef> sourceCols = shareSupport.inspectColumns(sourceTable);
+        String sourceDb = DataLayerSupport.databaseForLayer(DataLayerSupport.layerForTableName(sourceTable));
+        String targetDb = DataLayerSupport.databaseForLayer(DataLayerSupport.layerForTableName(targetTable));
+        String sourceQualified = DataLayerSupport.qualify(sourceDb, sourceTable);
+        String targetQualified = DataLayerSupport.qualify(targetDb, targetTable);
+
+        List<ColumnDef> sourceCols = shareSupport.inspectColumns(sourceDb, sourceTable);
         if (sourceCols.isEmpty()) {
             throw new BusinessException(404, "源表不存在或无字段: " + sourceTable);
         }
@@ -86,7 +92,7 @@ public class FusionSqlCompiler {
         String whereSql = compileFilter(str(fusionSpec.get("filterSql"), null), allowed);
 
         StringBuilder ddl = new StringBuilder();
-        ddl.append("CREATE TABLE IF NOT EXISTS `").append(targetTable).append("` (\n");
+        ddl.append("CREATE TABLE IF NOT EXISTS ").append(targetQualified).append(" (\n");
         ddl.append("  id BIGINT PRIMARY KEY AUTO_INCREMENT,\n");
         for (SelectItem item : items) {
             ddl.append("  `").append(item.as()).append("` ").append(item.sqlType()).append(" NULL,\n");
@@ -95,7 +101,7 @@ public class FusionSqlCompiler {
         ddl.append(") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
 
         StringBuilder insert = new StringBuilder();
-        insert.append("INSERT INTO `").append(targetTable).append("` (");
+        insert.append("INSERT INTO ").append(targetQualified).append(" (");
         for (int i = 0; i < items.size(); i++) {
             if (i > 0) insert.append(", ");
             insert.append("`").append(items.get(i).as()).append("`");
@@ -105,13 +111,26 @@ public class FusionSqlCompiler {
             if (i > 0) insert.append(", ");
             insert.append(items.get(i).exprSql()).append(" AS `").append(items.get(i).as()).append("`");
         }
-        insert.append(", NOW() FROM `").append(sourceTable).append("`");
+        insert.append(", NOW() FROM ").append(sourceQualified);
         if (whereSql != null) {
             insert.append(" WHERE ").append(whereSql);
         }
 
+        // Carte KTR 用：纯 SELECT，列别名与目标表列名一致，NOW() 显式别名 fused_at。
+        StringBuilder select = new StringBuilder("SELECT ");
+        for (int i = 0; i < items.size(); i++) {
+            if (i > 0) select.append(", ");
+            select.append(items.get(i).exprSql()).append(" AS `").append(items.get(i).as()).append("`");
+        }
+        select.append(", NOW() AS `fused_at` FROM ").append(sourceQualified);
+        if (whereSql != null) {
+            select.append(" WHERE ").append(whereSql);
+        }
+
         Map<String, Object> preview = new LinkedHashMap<>();
         preview.put("sourceTable", sourceTable);
+        preview.put("sourceDatabase", sourceDb);
+        preview.put("targetDatabase", targetDb);
         preview.put("targetTable", targetTable);
         preview.put("writeMode", writeMode);
         preview.put("columns", items.stream().map(i -> Map.of(
@@ -123,7 +142,8 @@ public class FusionSqlCompiler {
         preview.put("ddlSql", ddl.toString());
         preview.put("insertSql", insert.toString());
 
-        return new CompileResult(sourceTable, targetTable, writeMode, ddl.toString(), insert.toString(), preview);
+        return new CompileResult(sourceTable, targetTable, sourceDb, targetDb, writeMode,
+                ddl.toString(), insert.toString(), select.toString(), preview);
     }
 
     private CompiledExpr compileExpr(String expr, Set<String> allowed) {
@@ -193,8 +213,10 @@ public class FusionSqlCompiler {
         return String.valueOf(v).trim();
     }
 
-    public record CompileResult(String sourceTable, String targetTable, String writeMode,
-                                String ddlSql, String insertSql, Map<String, Object> preview) {
+    public record CompileResult(String sourceTable, String targetTable,
+                                String sourceDatabase, String targetDatabase,
+                                String writeMode, String ddlSql, String insertSql, String selectSql,
+                                Map<String, Object> preview) {
     }
 
     private record SelectItem(String exprSql, String as, String sqlType) {

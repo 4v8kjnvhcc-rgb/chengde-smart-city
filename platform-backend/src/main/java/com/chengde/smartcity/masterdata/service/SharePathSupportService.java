@@ -8,6 +8,7 @@ import com.chengde.smartcity.exchange.entity.IngIngestTask;
 import com.chengde.smartcity.exchange.mapper.IngDataSourceMapper;
 import com.chengde.smartcity.exchange.mapper.IngDataTableMapper;
 import com.chengde.smartcity.exchange.mapper.IngIngestTaskMapper;
+import com.chengde.smartcity.masterdata.support.DataLayerSupport;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.sql.Connection;
@@ -58,7 +59,7 @@ public class SharePathSupportService {
             if (task == null) {
                 continue;
             }
-            if (!tableExists(table.getPhysicalTableName())) {
+            if (!tableExists(null, table.getPhysicalTableName())) {
                 continue;
             }
             IngDataSource source = dataSourceMapper.selectById(table.getSourceId());
@@ -77,7 +78,7 @@ public class SharePathSupportService {
             row.put("ingestTaskId", task.getId());
             row.put("ingestTaskStatus", task.getStatus());
             row.put("collectedRows", task.getCollectedRows());
-            row.put("physicalRows", countRowsQuiet(table.getPhysicalTableName()));
+            row.put("physicalRows", countRowsQuiet(null, table.getPhysicalTableName()));
             row.put("entryCode", sourceEntryCode(source, table));
             out.add(row);
         }
@@ -104,7 +105,7 @@ public class SharePathSupportService {
         if (task == null) {
             throw new BusinessException(409, "表尚未完成资源采集汇聚: " + table.getTableCode());
         }
-        if (!tableExists(table.getPhysicalTableName())) {
+        if (!tableExists(null, table.getPhysicalTableName())) {
             throw new BusinessException(404, "物理表不存在: " + table.getPhysicalTableName());
         }
         return new EligibleTable(source, table, task);
@@ -161,16 +162,21 @@ public class SharePathSupportService {
     }
 
     public List<ColumnDef> inspectColumns(String tableName) {
+        return inspectColumns(null, tableName);
+    }
+
+    public List<ColumnDef> inspectColumns(String database, String tableName) {
         String table = requireIdentifier(tableName, "physicalTableName");
+        String db = resolveDatabase(database, tableName);
         List<ColumnDef> columns = new ArrayList<>();
         try (Connection connection = platformDataSource.getConnection()) {
             DatabaseMetaData metadata = connection.getMetaData();
-            try (ResultSet tables = metadata.getTables(connection.getCatalog(), null, table, new String[]{"TABLE"})) {
+            try (ResultSet tables = metadata.getTables(db, null, table, new String[]{"TABLE"})) {
                 if (!tables.next()) {
                     return columns;
                 }
             }
-            try (ResultSet rs = metadata.getColumns(connection.getCatalog(), null, table, null)) {
+            try (ResultSet rs = metadata.getColumns(db, null, table, null)) {
                 while (rs.next()) {
                     columns.add(new ColumnDef(
                             rs.getString("COLUMN_NAME"),
@@ -199,9 +205,9 @@ public class SharePathSupportService {
         out.put("ingestTaskId", sample.ingestTask().getId());
         out.put("ingestTaskStatus", sample.ingestTask().getStatus());
         out.put("collectedRows", sample.ingestTask().getCollectedRows());
-        out.put("physicalRows", countRows(sample.table().getPhysicalTableName()));
+        out.put("physicalRows", countRows(null, sample.table().getPhysicalTableName()));
         out.put("entryCode", sourceEntryCode(sample));
-        out.put("columns", inspectColumns(sample.table().getPhysicalTableName()).stream().map(c -> {
+        out.put("columns", inspectColumns(null, sample.table().getPhysicalTableName()).stream().map(c -> {
             Map<String, Object> m = new LinkedHashMap<>();
             m.put("name", c.name());
             m.put("typeName", c.typeName());
@@ -212,10 +218,16 @@ public class SharePathSupportService {
     }
 
     public long countRows(String tableName) {
+        return countRows(null, tableName);
+    }
+
+    public long countRows(String database, String tableName) {
         String table = requireIdentifier(tableName, "physicalTableName");
+        String db = resolveDatabase(database, tableName);
+        String qualified = DataLayerSupport.qualify(db, table);
         try (Connection connection = platformDataSource.getConnection();
              Statement statement = connection.createStatement();
-             ResultSet rs = statement.executeQuery("SELECT COUNT(*) FROM `" + table + "`")) {
+             ResultSet rs = statement.executeQuery("SELECT COUNT(*) FROM " + qualified)) {
             return rs.next() ? rs.getLong(1) : 0;
         } catch (Exception ex) {
             throw new BusinessException(500, "读取表失败: " + ex.getMessage());
@@ -223,20 +235,29 @@ public class SharePathSupportService {
     }
 
     public long countRowsQuiet(String tableName) {
+        return countRowsQuiet(null, tableName);
+    }
+
+    public long countRowsQuiet(String database, String tableName) {
         try {
-            return countRows(tableName);
+            return countRows(database, tableName);
         } catch (Exception ex) {
             return -1;
         }
     }
 
     public boolean tableExists(String tableName) {
+        return tableExists(null, tableName);
+    }
+
+    public boolean tableExists(String database, String tableName) {
         if (tableName == null || !IDENT.matcher(tableName).matches()) {
             return false;
         }
+        String db = resolveDatabase(database, tableName);
         try (Connection connection = platformDataSource.getConnection()) {
             DatabaseMetaData metadata = connection.getMetaData();
-            try (ResultSet tables = metadata.getTables(connection.getCatalog(), null, tableName, new String[]{"TABLE"})) {
+            try (ResultSet tables = metadata.getTables(db, null, tableName, new String[]{"TABLE"})) {
                 return tables.next();
             }
         } catch (Exception ex) {
@@ -268,6 +289,13 @@ public class SharePathSupportService {
                 .eq(IngIngestTask::getStatus, "SUCCESS")
                 .orderByDesc(IngIngestTask::getId)
                 .last("LIMIT 1"));
+    }
+
+    private String resolveDatabase(String database, String tableName) {
+        if (database != null && !database.isBlank()) {
+            return database.trim();
+        }
+        return DataLayerSupport.databaseForLayer(DataLayerSupport.layerForTableName(tableName));
     }
 
     private static String shortHash(String raw) {

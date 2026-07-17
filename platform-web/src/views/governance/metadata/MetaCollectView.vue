@@ -1,16 +1,37 @@
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref, watch } from 'vue'
 import api from '@/api/http'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import PageCard from '@/components/common/PageCard.vue'
+import { LAYER_OPTIONS } from './meta-labels'
 
-interface Connector { id: number; connectorName: string; sourceType: string }
-interface MetaModel { id: number; modelNameZh: string; status: string }
+interface DataSource {
+  id: number
+  sourceCode?: string
+  sourceName: string
+  sourceType?: string
+  layerHint: string
+  platformLayer?: boolean
+  databaseName?: string
+}
+
+interface SourceTable {
+  sourceTable?: string
+  tableName?: string
+}
+
+interface MetaModel {
+  id: number
+  modelNameZh: string
+  status: string
+}
+
 interface Task {
   id: number
   taskCode: string
   taskName: string
-  connectorId: number
+  ingDataSourceId?: number
+  connectorId?: number
   modelId?: number
   cronExpr?: string
   scopeType: string
@@ -19,28 +40,49 @@ interface Task {
   lastMessage?: string
 }
 
-const connectors = ref<Connector[]>([])
+const LAYER_GROUP_ORDER = ['EXTERNAL', 'ODS', 'DWD', 'DWS', 'ADS']
+
+const dataSources = ref<DataSource[]>([])
 const models = ref<MetaModel[]>([])
 const tasks = ref<Task[]>([])
-const filter = reactive({ sourceType: '', keyword: '' })
+
+const sourceTables = ref<SourceTable[]>([])
+const tablesLoading = ref(false)
+const selectedTableNames = ref<string[]>([])
+
+const cronEnabled = ref(false)
+const cronMode = ref<'hour' | 'day' | 'week' | 'month' | 'custom'>('day')
+const cronHour = ref(2)
+const cronMinute = ref(0)
+const cronWeekDay = ref(1)
+const cronMonthDay = ref(1)
+
+const form = reactive({
+  taskName: '',
+  ingDataSourceId: undefined as number | undefined,
+  modelId: undefined as number | undefined,
+  scopeType: 'FULL' as 'FULL' | 'TABLE',
+  cronExpr: '',
+})
+
 const editVisible = ref(false)
 const editing = ref<Task | null>(null)
+const editCronEnabled = ref(false)
+const editCronMode = ref<'hour' | 'day' | 'week' | 'month' | 'custom'>('day')
+const editCronHour = ref(2)
+const editCronMinute = ref(0)
+const editCronWeekDay = ref(1)
+const editCronMonthDay = ref(1)
 const editForm = reactive({
   taskName: '',
   modelId: undefined as number | undefined,
   cronExpr: '',
-  scopeType: 'FULL',
+  scopeType: 'FULL' as 'FULL' | 'TABLE',
   tableList: '',
 })
-
-const form = reactive({
-  taskName: '',
-  connectorId: undefined as number | undefined,
-  modelId: undefined as number | undefined,
-  cronExpr: '0 0 2 * * ?',
-  scopeType: 'FULL',
-  tableList: '',
-})
+const editSelectedTables = ref<string[]>([])
+const editSourceTables = ref<SourceTable[]>([])
+const editTablesLoading = ref(false)
 
 const connectorForm = reactive({
   connectorName: '',
@@ -51,89 +93,227 @@ const connectorForm = reactive({
   jdbcDatabase: '',
 })
 
-const cronMode = ref<'hour' | 'day' | 'week' | 'month' | 'custom'>('day')
-const cronHour = ref(2)
-const cronMinute = ref(0)
-const cronWeekDay = ref(1)
-const cronMonthDay = ref(1)
+const layerLabel = (layer: string) => {
+  if (layer === 'EXTERNAL') return '外部数据源'
+  return LAYER_OPTIONS.find(o => o.value === layer)?.label || layer
+}
 
-const cronPreview = computed(() => {
-  if (cronMode.value === 'custom') return form.cronExpr
-  const m = cronMinute.value
-  const h = cronHour.value
-  if (cronMode.value === 'hour') return `0 ${m} * * * ?`
-  if (cronMode.value === 'day') return `0 ${m} ${h} * * ?`
-  if (cronMode.value === 'week') return `0 ${m} ${h} ? * ${cronWeekDay.value}`
-  return `0 ${m} ${h} ${cronMonthDay.value} * ?`
+const groupedDataSources = computed(() => {
+  const groups: { layer: string; label: string; items: DataSource[] }[] = []
+  for (const layer of LAYER_GROUP_ORDER) {
+    const items = dataSources.value.filter(ds => ds.layerHint === layer)
+    if (items.length) {
+      groups.push({ layer, label: layerLabel(layer), items })
+    }
+  }
+  return groups
 })
 
+const dataSourceNameMap = computed(() => {
+  const map = new Map<number, string>()
+  for (const ds of dataSources.value) {
+    map.set(ds.id, ds.sourceName)
+  }
+  return map
+})
+
+const modelNameMap = computed(() => {
+  const map = new Map<number, string>()
+  for (const m of models.value) {
+    map.set(m.id, m.modelNameZh)
+  }
+  return map
+})
+
+const tableOptions = computed(() =>
+  sourceTables.value.map(t => {
+    const name = t.sourceTable || t.tableName || ''
+    return { label: name, value: name }
+  }).filter(o => o.value),
+)
+
+const editTableOptions = computed(() =>
+  editSourceTables.value.map(t => {
+    const name = t.sourceTable || t.tableName || ''
+    return { label: name, value: name }
+  }).filter(o => o.value),
+)
+
+function tableNameOf(t: SourceTable) {
+  return t.sourceTable || t.tableName || ''
+}
+
+function buildCronExpr(mode: typeof cronMode.value, minute: number, hour: number, weekDay: number, monthDay: number, custom: string) {
+  if (mode === 'custom') return custom
+  const m = minute
+  const h = hour
+  if (mode === 'hour') return `0 ${m} * * * ?`
+  if (mode === 'day') return `0 ${m} ${h} * * ?`
+  if (mode === 'week') return `0 ${m} ${h} ? * ${weekDay}`
+  return `0 ${m} ${h} ${monthDay} * ?`
+}
+
+const cronPreview = computed(() =>
+  buildCronExpr(cronMode.value, cronMinute.value, cronHour.value, cronWeekDay.value, cronMonthDay.value, form.cronExpr),
+)
+
+const editCronPreview = computed(() =>
+  buildCronExpr(editCronMode.value, editCronMinute.value, editCronHour.value, editCronWeekDay.value, editCronMonthDay.value, editForm.cronExpr),
+)
+
 function applyCronPreview() {
-  if (cronMode.value !== 'custom') form.cronExpr = cronPreview.value
+  if (cronMode.value !== 'custom') {
+    form.cronExpr = cronPreview.value
+  }
 }
 
-async function loadConnectors() {
-  const ov = await api.get('/governance/platform/metadata/overview')
-  connectors.value = ov.data.connectors || []
+function applyEditCronPreview() {
+  if (editCronMode.value !== 'custom') {
+    editForm.cronExpr = editCronPreview.value
+  }
 }
 
-async function loadTasks() {
-  tasks.value = (await api.get('/governance/platform/metadata/collect/tasks', {
-    params: {
-      sourceType: filter.sourceType || undefined,
-      keyword: filter.keyword || undefined,
-    },
-  })).data || []
+function parseTableList(raw?: string | null): string[] {
+  if (!raw) return []
+  const trimmed = raw.trim()
+  if (!trimmed) return []
+  if (trimmed.startsWith('[')) {
+    try {
+      const arr = JSON.parse(trimmed)
+      if (Array.isArray(arr)) return arr.map(String)
+    } catch { /* fall through */ }
+  }
+  return trimmed.split(/[,，\s]+/).map(s => s.trim()).filter(Boolean)
+}
+
+function formatTableList(names: string[]) {
+  return names.length ? JSON.stringify(names) : ''
+}
+
+async function loadDataSources() {
+  dataSources.value = (await api.get('/governance/platform/metadata/collect/data-sources')).data || []
 }
 
 async function loadModels() {
   models.value = (await api.get('/governance/platform/metadata/models', { params: { status: 'PUBLISHED' } })).data || []
 }
 
-async function load() {
-  await loadConnectors()
-  await loadTasks()
+async function loadTasks() {
+  tasks.value = (await api.get('/governance/platform/metadata/collect/tasks')).data || []
 }
 
-async function createConnector() {
-  if (!connectorForm.connectorName) return
-  await api.post('/governance/connectors', { ...connectorForm })
-  ElMessage.success('适配器已创建')
-  connectorForm.connectorName = ''
-  connectorForm.jdbcUrl = ''
-  connectorForm.jdbcUser = ''
-  connectorForm.jdbcPassword = ''
-  connectorForm.jdbcDatabase = ''
-  await loadConnectors()
+async function loadSourceTables(sourceId: number) {
+  tablesLoading.value = true
+  sourceTables.value = []
+  try {
+    sourceTables.value = (await api.get(`/governance/platform/metadata/collect/data-sources/${sourceId}/tables`)).data || []
+  } finally {
+    tablesLoading.value = false
+  }
 }
+
+watch(() => form.ingDataSourceId, async (id) => {
+  selectedTableNames.value = []
+  sourceTables.value = []
+  if (!id) return
+  await loadSourceTables(id)
+})
+
+watch(() => form.scopeType, (scope) => {
+  if (scope === 'FULL') {
+    selectedTableNames.value = []
+  }
+})
+
+watch(cronEnabled, (on) => {
+  if (on) applyCronPreview()
+})
 
 async function createTask() {
-  if (!form.taskName || !form.connectorId) return
-  applyCronPreview()
-  await api.post('/governance/platform/metadata/collect/tasks', { ...form })
+  if (!form.taskName.trim()) {
+    ElMessage.warning('请填写任务名称')
+    return
+  }
+  if (!form.ingDataSourceId) {
+    ElMessage.warning('请选择数据源')
+    return
+  }
+  if (form.scopeType === 'TABLE' && !selectedTableNames.value.length) {
+    ElMessage.warning('请至少选择一张表')
+    return
+  }
+  const cronExpr = cronEnabled.value
+    ? (cronMode.value === 'custom' ? form.cronExpr : cronPreview.value)
+    : null
+  await api.post('/governance/platform/metadata/collect/tasks', {
+    taskName: form.taskName.trim(),
+    ingDataSourceId: form.ingDataSourceId,
+    modelId: form.modelId || null,
+    scopeType: form.scopeType,
+    tableList: form.scopeType === 'TABLE' ? formatTableList(selectedTableNames.value) : null,
+    cronExpr,
+  })
   ElMessage.success('采集任务已创建')
   form.taskName = ''
+  form.modelId = undefined
+  form.scopeType = 'FULL'
+  selectedTableNames.value = []
+  cronEnabled.value = false
   await loadTasks()
 }
 
 async function runTask(id: number) {
   const res = await api.post(`/governance/platform/metadata/collect/tasks/${id}/run`)
-  ElMessage.success(res.data.message || '采集完成')
+  ElMessage.success(res.data?.message || '采集完成')
   await loadTasks()
 }
 
-function openEdit(row: Task) {
+function initEditCronFromExpr(expr?: string) {
+  editCronEnabled.value = !!expr
+  if (!expr) {
+    editForm.cronExpr = ''
+    editCronMode.value = 'day'
+    return
+  }
+  editForm.cronExpr = expr
+  editCronMode.value = 'custom'
+}
+
+async function openEdit(row: Task) {
   editing.value = row
   editForm.taskName = row.taskName
   editForm.modelId = row.modelId
-  editForm.cronExpr = row.cronExpr || ''
-  editForm.scopeType = row.scopeType
+  editForm.scopeType = (row.scopeType === 'TABLE' ? 'TABLE' : 'FULL') as 'FULL' | 'TABLE'
+  initEditCronFromExpr(row.cronExpr)
+  const names = parseTableList(row.tableList)
+  editSelectedTables.value = names
   editForm.tableList = row.tableList || ''
   editVisible.value = true
+  editSourceTables.value = []
+  if (row.ingDataSourceId && editForm.scopeType === 'TABLE') {
+    editTablesLoading.value = true
+    try {
+      const tables: SourceTable[] = (await api.get(`/governance/platform/metadata/collect/data-sources/${row.ingDataSourceId}/tables`)).data || []
+      editSourceTables.value = tables
+      editSelectedTables.value = names.filter(n => tables.some(t => tableNameOf(t) === n))
+    } finally {
+      editTablesLoading.value = false
+    }
+  }
 }
 
 async function saveEdit() {
   if (!editing.value) return
-  await api.put(`/governance/platform/metadata/collect/tasks/${editing.value.id}`, { ...editForm })
+  const cronExpr = editCronEnabled.value
+    ? (editCronMode.value === 'custom' ? editForm.cronExpr : editCronPreview.value)
+    : null
+  await api.put(`/governance/platform/metadata/collect/tasks/${editing.value.id}`, {
+    taskName: editForm.taskName.trim(),
+    modelId: editForm.modelId || null,
+    scopeType: editForm.scopeType,
+    tableList: editForm.scopeType === 'TABLE' ? formatTableList(editSelectedTables.value) : null,
+    cronExpr,
+  })
   ElMessage.success('任务已更新')
   editVisible.value = false
   await loadTasks()
@@ -146,89 +326,138 @@ async function removeTask(row: Task) {
   await loadTasks()
 }
 
+async function createConnector() {
+  if (!connectorForm.connectorName) return
+  await api.post('/governance/connectors', { ...connectorForm })
+  ElMessage.success('适配器已创建')
+  connectorForm.connectorName = ''
+  connectorForm.jdbcUrl = ''
+  connectorForm.jdbcUser = ''
+  connectorForm.jdbcPassword = ''
+  connectorForm.jdbcDatabase = ''
+}
+
 onMounted(async () => {
-  await loadModels()
-  await load()
+  await Promise.all([loadDataSources(), loadModels(), loadTasks()])
 })
 </script>
 
 <template>
-  <PageCard title="M090 元数据采集">
-    <el-form inline class="portal-inline-form portal-inline-form--block">
-      <el-form-item label="适配器" class="portal-field-lg"><el-input v-model="connectorForm.connectorName" /></el-form-item>
-      <el-form-item label="类型" class="portal-field-sm">
-        <el-select v-model="connectorForm.sourceType"><el-option label="MySQL" value="MySQL" /><el-option label="PostgreSQL" value="PostgreSQL" /></el-select>
+  <PageCard title="元数据采集">
+    <el-form label-width="96px" class="meta-collect-form">
+      <el-form-item label="任务名称" required>
+        <el-input v-model="form.taskName" placeholder="采集任务名称" style="max-width:360px" />
       </el-form-item>
-      <el-form-item label="JDBC URL" class="portal-field-xl"><el-input v-model="connectorForm.jdbcUrl" placeholder="可选" /></el-form-item>
-      <el-form-item label="库名" class="portal-field-sm"><el-input v-model="connectorForm.jdbcDatabase" /></el-form-item>
-      <el-form-item label="用户" class="portal-field-sm"><el-input v-model="connectorForm.jdbcUser" /></el-form-item>
-      <el-form-item label="密码" class="portal-field-sm"><el-input v-model="connectorForm.jdbcPassword" type="password" show-password /></el-form-item>
-      <el-form-item class="portal-form-actions"><el-button @click="createConnector">新增适配器</el-button></el-form-item>
-    </el-form>
-    <el-form inline class="portal-inline-form portal-inline-form--block">
-      <el-form-item label="数据源类型" class="portal-field-sm">
-        <el-select v-model="filter.sourceType" clearable @change="loadTasks">
-          <el-option label="MySQL" value="MySQL" /><el-option label="PostgreSQL" value="PostgreSQL" />
+      <el-form-item label="数据源" required>
+        <el-select
+          v-model="form.ingDataSourceId"
+          filterable
+          clearable
+          placeholder="选择登记数据源或平台分层库"
+          style="max-width:480px"
+        >
+          <el-option-group v-for="g in groupedDataSources" :key="g.layer" :label="g.label">
+            <el-option
+              v-for="ds in g.items"
+              :key="ds.id"
+              :label="`${ds.sourceName}${ds.databaseName ? ' · ' + ds.databaseName : ''}`"
+              :value="ds.id"
+            />
+          </el-option-group>
         </el-select>
       </el-form-item>
-      <el-form-item label="关键字" class="portal-field-md"><el-input v-model="filter.keyword" clearable @keyup.enter="loadTasks" /></el-form-item>
-      <el-form-item class="portal-form-actions"><el-button @click="loadTasks">筛选</el-button></el-form-item>
-    </el-form>
-    <el-form inline class="portal-inline-form portal-inline-form--block">
-      <el-form-item label="任务名" class="portal-field-lg"><el-input v-model="form.taskName" /></el-form-item>
-      <el-form-item label="适配器" class="portal-field-lg">
-        <el-select v-model="form.connectorId" clearable>
-          <el-option v-for="c in connectors" :key="c.id" :label="c.connectorName" :value="c.id" />
-        </el-select>
+      <el-form-item label="采集范围">
+        <el-radio-group v-model="form.scopeType">
+          <el-radio value="FULL">整库</el-radio>
+          <el-radio value="TABLE">选表</el-radio>
+        </el-radio-group>
       </el-form-item>
-      <el-form-item label="已发布模型" class="portal-field-lg">
-        <el-select v-model="form.modelId" clearable>
+      <el-form-item v-if="form.scopeType === 'TABLE'" label="选择表">
+        <div v-loading="tablesLoading" style="width:100%;max-width:560px">
+          <el-select
+            v-model="selectedTableNames"
+            multiple
+            filterable
+            collapse-tags
+            collapse-tags-tooltip
+            placeholder="请先选择数据源"
+            style="width:100%"
+            :disabled="!form.ingDataSourceId"
+          >
+            <el-option v-for="o in tableOptions" :key="o.value" :label="o.label" :value="o.value" />
+          </el-select>
+          <div v-if="form.ingDataSourceId && !tablesLoading && !tableOptions.length" class="meta-hint">
+            未探测到可用表，请确认数据源连接正常
+          </div>
+        </div>
+      </el-form-item>
+      <el-form-item label="元模型">
+        <el-select v-model="form.modelId" clearable filterable placeholder="可选，绑定已发布模型" style="max-width:360px">
           <el-option v-for="m in models" :key="m.id" :label="m.modelNameZh" :value="m.id" />
         </el-select>
       </el-form-item>
-      <el-form-item label="范围" class="portal-field-sm">
-        <el-select v-model="form.scopeType"><el-option label="整库" value="FULL" /><el-option label="选表" value="TABLE" /></el-select>
+      <el-form-item label="定时调度">
+        <el-switch v-model="cronEnabled" active-text="启用定时" inactive-text="手动执行" />
       </el-form-item>
-      <el-form-item v-if="form.scopeType === 'TABLE'" label="表清单" class="portal-field-xl">
-        <el-input v-model="form.tableList" placeholder="逗号分隔" />
+      <template v-if="cronEnabled">
+        <el-form inline class="portal-inline-form portal-inline-form--block">
+          <el-form-item label="频率" class="portal-field-sm">
+            <el-select v-model="cronMode" @change="applyCronPreview">
+              <el-option label="每小时" value="hour" />
+              <el-option label="每天" value="day" />
+              <el-option label="每周" value="week" />
+              <el-option label="每月" value="month" />
+              <el-option label="自定义" value="custom" />
+            </el-select>
+          </el-form-item>
+          <el-form-item v-if="cronMode !== 'custom'" label="分" class="portal-field-xs">
+            <el-input-number v-model="cronMinute" :min="0" :max="59" size="small" @change="applyCronPreview" />
+          </el-form-item>
+          <el-form-item v-if="['day', 'week', 'month'].includes(cronMode)" label="时" class="portal-field-xs">
+            <el-input-number v-model="cronHour" :min="0" :max="23" size="small" @change="applyCronPreview" />
+          </el-form-item>
+          <el-form-item v-if="cronMode === 'week'" label="周几" class="portal-field-xs">
+            <el-input-number v-model="cronWeekDay" :min="1" :max="7" size="small" @change="applyCronPreview" />
+          </el-form-item>
+          <el-form-item v-if="cronMode === 'month'" label="日" class="portal-field-xs">
+            <el-input-number v-model="cronMonthDay" :min="1" :max="28" size="small" @change="applyCronPreview" />
+          </el-form-item>
+          <el-form-item label="Cron" class="portal-field-cron">
+            <el-input v-model="form.cronExpr" :readonly="cronMode !== 'custom'" />
+          </el-form-item>
+        </el-form>
+      </template>
+      <el-form-item>
+        <el-button type="primary" @click="createTask">创建任务</el-button>
       </el-form-item>
-      <el-form-item class="portal-form-actions"><el-button type="primary" @click="createTask">创建任务</el-button></el-form-item>
     </el-form>
-    <el-form inline class="portal-inline-form portal-inline-form--block">
-      <el-form-item label="调度" class="portal-field-sm">
-        <el-select v-model="cronMode" @change="applyCronPreview">
-          <el-option label="每小时" value="hour" /><el-option label="每天" value="day" />
-          <el-option label="每周" value="week" /><el-option label="每月" value="month" /><el-option label="自定义" value="custom" />
-        </el-select>
-      </el-form-item>
-      <el-form-item v-if="cronMode !== 'custom'" label="分" class="portal-field-xs">
-        <el-input-number v-model="cronMinute" :min="0" :max="59" size="small" @change="applyCronPreview" />
-      </el-form-item>
-      <el-form-item v-if="['day','week','month'].includes(cronMode)" label="时" class="portal-field-xs">
-        <el-input-number v-model="cronHour" :min="0" :max="23" size="small" @change="applyCronPreview" />
-      </el-form-item>
-      <el-form-item v-if="cronMode === 'week'" label="周几" class="portal-field-xs">
-        <el-input-number v-model="cronWeekDay" :min="1" :max="7" size="small" @change="applyCronPreview" />
-      </el-form-item>
-      <el-form-item v-if="cronMode === 'month'" label="日" class="portal-field-xs">
-        <el-input-number v-model="cronMonthDay" :min="1" :max="28" size="small" @change="applyCronPreview" />
-      </el-form-item>
-      <el-form-item label="Cron" class="portal-field-cron">
-        <el-input v-model="form.cronExpr" :readonly="cronMode !== 'custom'" />
-      </el-form-item>
-      <el-form-item class="portal-form-actions"><el-button @click="applyCronPreview">生成</el-button></el-form-item>
-    </el-form>
+
+    <el-divider content-position="left">采集任务</el-divider>
     <el-table :data="tasks" stripe size="small">
-      <el-table-column prop="taskName" label="任务" />
-      <el-table-column prop="scopeType" label="范围" width="80" />
-      <el-table-column prop="cronExpr" label="调度" width="130" />
+      <el-table-column prop="taskName" label="任务" min-width="140" />
+      <el-table-column label="数据源" min-width="120">
+        <template #default="{ row }">
+          {{ row.ingDataSourceId ? (dataSourceNameMap.get(row.ingDataSourceId) || '—') : '—' }}
+        </template>
+      </el-table-column>
+      <el-table-column label="范围" width="80">
+        <template #default="{ row }">{{ $statusLabel(row.scopeType) }}</template>
+      </el-table-column>
+      <el-table-column label="模型" min-width="100">
+        <template #default="{ row }">
+          {{ row.modelId ? (modelNameMap.get(row.modelId) || '—') : '—' }}
+        </template>
+      </el-table-column>
+      <el-table-column label="调度" width="130">
+        <template #default="{ row }">{{ row.cronExpr || '手动' }}</template>
+      </el-table-column>
       <el-table-column label="状态" width="90">
         <template #default="{ row }">
           <el-tag :type="$statusTagType(row.status)" size="small">{{ $statusLabel(row.status) }}</el-tag>
         </template>
       </el-table-column>
-      <el-table-column prop="lastMessage" label="最近结果" min-width="180" />
-      <el-table-column label="操作" width="160">
+      <el-table-column prop="lastMessage" label="最近结果" min-width="160" show-overflow-tooltip />
+      <el-table-column label="操作" width="180" fixed="right">
         <template #default="{ row }">
           <el-button link type="primary" @click="runTask(row.id)">执行</el-button>
           <el-button link @click="openEdit(row)">编辑</el-button>
@@ -236,19 +465,98 @@ onMounted(async () => {
         </template>
       </el-table-column>
     </el-table>
-    <el-dialog v-model="editVisible" title="编辑采集任务" width="520px">
-      <el-form label-width="90px">
-        <el-form-item label="任务名"><el-input v-model="editForm.taskName" /></el-form-item>
-        <el-form-item label="模型">
-          <el-select v-model="editForm.modelId" clearable>
+
+    <el-collapse style="margin-top:20px">
+      <el-collapse-item title="高级：适配器" name="adapter">
+        <el-form inline class="portal-inline-form portal-inline-form--block">
+          <el-form-item label="适配器" class="portal-field-lg">
+            <el-input v-model="connectorForm.connectorName" placeholder="名称" />
+          </el-form-item>
+          <el-form-item label="类型" class="portal-field-sm">
+            <el-select v-model="connectorForm.sourceType">
+              <el-option label="MySQL" value="MySQL" />
+              <el-option label="PostgreSQL" value="PostgreSQL" />
+            </el-select>
+          </el-form-item>
+          <el-form-item label="JDBC URL" class="portal-field-xl">
+            <el-input v-model="connectorForm.jdbcUrl" placeholder="可选" />
+          </el-form-item>
+          <el-form-item label="库名" class="portal-field-sm">
+            <el-input v-model="connectorForm.jdbcDatabase" />
+          </el-form-item>
+          <el-form-item label="用户" class="portal-field-sm">
+            <el-input v-model="connectorForm.jdbcUser" />
+          </el-form-item>
+          <el-form-item label="密码" class="portal-field-sm">
+            <el-input v-model="connectorForm.jdbcPassword" type="password" show-password />
+          </el-form-item>
+          <el-form-item class="portal-form-actions">
+            <el-button @click="createConnector">新增适配器</el-button>
+          </el-form-item>
+        </el-form>
+        <div class="meta-hint">常规采集请使用上方「登记数据源」；适配器仅用于特殊 JDBC 连接器场景。</div>
+      </el-collapse-item>
+    </el-collapse>
+
+    <!-- 编辑对话框 -->
+    <el-dialog v-model="editVisible" title="编辑采集任务" width="560px" destroy-on-close>
+      <el-form label-width="96px">
+        <el-form-item label="任务名称">
+          <el-input v-model="editForm.taskName" />
+        </el-form-item>
+        <el-form-item label="数据源">
+          <el-input
+            :model-value="editing?.ingDataSourceId ? (dataSourceNameMap.get(editing.ingDataSourceId) || '—') : '—'"
+            disabled
+          />
+        </el-form-item>
+        <el-form-item label="采集范围">
+          <el-radio-group v-model="editForm.scopeType">
+            <el-radio value="FULL">整库</el-radio>
+            <el-radio value="TABLE">选表</el-radio>
+          </el-radio-group>
+        </el-form-item>
+        <el-form-item v-if="editForm.scopeType === 'TABLE'" label="选择表">
+          <div v-loading="editTablesLoading" style="width:100%">
+            <el-select
+              v-model="editSelectedTables"
+              multiple
+              filterable
+              collapse-tags
+              style="width:100%"
+            >
+              <el-option v-for="o in editTableOptions" :key="'e' + o.value" :label="o.label" :value="o.value" />
+            </el-select>
+          </div>
+        </el-form-item>
+        <el-form-item label="元模型">
+          <el-select v-model="editForm.modelId" clearable filterable style="width:100%">
             <el-option v-for="m in models" :key="m.id" :label="m.modelNameZh" :value="m.id" />
           </el-select>
         </el-form-item>
-        <el-form-item label="Cron"><el-input v-model="editForm.cronExpr" /></el-form-item>
-        <el-form-item label="范围">
-          <el-select v-model="editForm.scopeType"><el-option label="整库" value="FULL" /><el-option label="选表" value="TABLE" /></el-select>
+        <el-form-item label="定时调度">
+          <el-switch v-model="editCronEnabled" active-text="启用" inactive-text="手动" />
         </el-form-item>
-        <el-form-item v-if="editForm.scopeType === 'TABLE'" label="表清单"><el-input v-model="editForm.tableList" /></el-form-item>
+        <template v-if="editCronEnabled">
+          <el-form-item label="频率">
+            <el-select v-model="editCronMode" @change="applyEditCronPreview">
+              <el-option label="每小时" value="hour" />
+              <el-option label="每天" value="day" />
+              <el-option label="每周" value="week" />
+              <el-option label="每月" value="month" />
+              <el-option label="自定义" value="custom" />
+            </el-select>
+          </el-form-item>
+          <el-form-item v-if="editCronMode !== 'custom'" label="分">
+            <el-input-number v-model="editCronMinute" :min="0" :max="59" size="small" @change="applyEditCronPreview" />
+          </el-form-item>
+          <el-form-item v-if="['day', 'week', 'month'].includes(editCronMode)" label="时">
+            <el-input-number v-model="editCronHour" :min="0" :max="23" size="small" @change="applyEditCronPreview" />
+          </el-form-item>
+          <el-form-item label="Cron">
+            <el-input v-model="editForm.cronExpr" :readonly="editCronMode !== 'custom'" />
+          </el-form-item>
+        </template>
       </el-form>
       <template #footer>
         <el-button @click="editVisible = false">取消</el-button>
@@ -257,3 +565,14 @@ onMounted(async () => {
     </el-dialog>
   </PageCard>
 </template>
+
+<style scoped>
+.meta-collect-form {
+  max-width: 720px;
+}
+.meta-hint {
+  font-size: 12px;
+  color: var(--el-text-color-secondary);
+  margin-top: 6px;
+}
+</style>

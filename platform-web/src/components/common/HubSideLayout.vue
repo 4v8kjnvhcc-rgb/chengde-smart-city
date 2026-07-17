@@ -24,10 +24,13 @@ const props = defineProps<{
 
 const emit = defineEmits<{
   'update:modelValue': [value: string]
+  /** 每次点击都会触发（含重复点击当前项），便于父级强制切回列表等 */
+  select: [value: string]
 }>()
 
 function onSelect(key: string) {
   emit('update:modelValue', key)
+  emit('select', key)
 }
 
 function parentKeyOf(leaf: string, list: HubNavItem[]): string | null {

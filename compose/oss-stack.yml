@@ -52,6 +52,26 @@ services:
       timeout: 5s
       retries: 8
 
+  # 独立业务源库：模拟部门真实库，与 smart_city / openmetadata_db 物理隔离，端口 3308
+  source-mysql:
+    image: mysql:8.0
+    container_name: sc_source_mysql
+    profiles: [source, governance, etl]
+    environment:
+      MYSQL_ROOT_PASSWORD: source_root
+      MYSQL_DATABASE: biz_source
+    ports:
+      - "3308:3306"
+    command: --character-set-server=utf8mb4 --collation-server=utf8mb4_unicode_ci --default-authentication-plugin=mysql_native_password
+    volumes:
+      - sc_source_mysql_data:/var/lib/mysql
+      - ./init-source-mysql.sql:/docker-entrypoint-initdb.d/01-init.sql:ro
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-psource_root"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+
   oss-mysql:
     image: mysql:8.0
     container_name: sc_oss_mysql
@@ -187,6 +207,9 @@ services:
       SPRING_DATASOURCE_URL: jdbc:mysql://oss-mysql:3306/dolphinscheduler?useUnicode=true&characterEncoding=UTF-8&useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=Asia/Shanghai
       SPRING_DATASOURCE_USERNAME: root
       SPRING_DATASOURCE_PASSWORD: oss_root
+      # 本机联调常 >90% 内存，放宽/关闭负载保护，否则 Master 拒消费命令导致实例挂起
+      MASTER_SERVER_LOAD_PROTECTION_ENABLED: "false"
+      WORKER_SERVER_LOAD_PROTECTION_ENABLED: "false"
     volumes:
       - ./libs/ds/mysql-connector-j-8.0.33.jar:/opt/dolphinscheduler/libs/standalone-server/mysql-connector-j-8.0.33.jar:ro
     depends_on:
@@ -212,6 +235,7 @@ services:
       PENTAHO_PASSWORD: cluster
     volumes:
       - ./kettle-repository:/opt/pentaho/repository
+      - ./libs/ds/mysql-connector-j-8.0.33.jar:/home/default/pentaho/data-integration/lib/mysql-connector-j-8.0.33.jar:ro
     healthcheck:
       test: ["CMD-SHELL", "curl -sf http://localhost:8080 || exit 1"]
       interval: 20s
@@ -250,3 +274,4 @@ volumes:
   sc_oss_seaweed_data:
   sc_oss_mongo_data:
   sc_oss_mysql_data:
+  sc_source_mysql_data:

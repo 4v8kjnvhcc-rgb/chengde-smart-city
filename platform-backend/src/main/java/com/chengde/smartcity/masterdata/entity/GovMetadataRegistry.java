@@ -14,11 +14,21 @@ public class GovMetadataRegistry {
     private String entryType;
     private String parentCode;
     private String omRef;
+    private String omEntityId;
+    private String omSyncStatus;
+    private LocalDateTime omSyncedAt;
     private Long modelId;
     private Long runId;
     private Long dataSourceId;
     private Long sourceTableId;
     private String physicalTableName;
+    private String databaseName;
+    private String schemaName;
+    private String dataLayer;
+    private String businessDomain;
+    private String ownerName;
+    private String conformStatus;
+    private String conformReport;
     private String description;
     private String tags;
     private String keywords;
@@ -39,6 +49,12 @@ public class GovMetadataRegistry {
     public void setParentCode(String parentCode) { this.parentCode = parentCode; }
     public String getOmRef() { return omRef; }
     public void setOmRef(String omRef) { this.omRef = omRef; }
+    public String getOmEntityId() { return omEntityId; }
+    public void setOmEntityId(String omEntityId) { this.omEntityId = omEntityId; }
+    public String getOmSyncStatus() { return omSyncStatus; }
+    public void setOmSyncStatus(String omSyncStatus) { this.omSyncStatus = omSyncStatus; }
+    public LocalDateTime getOmSyncedAt() { return omSyncedAt; }
+    public void setOmSyncedAt(LocalDateTime omSyncedAt) { this.omSyncedAt = omSyncedAt; }
     public Long getModelId() { return modelId; }
     public void setModelId(Long modelId) { this.modelId = modelId; }
     public Long getRunId() { return runId; }
@@ -49,6 +65,20 @@ public class GovMetadataRegistry {
     public void setSourceTableId(Long sourceTableId) { this.sourceTableId = sourceTableId; }
     public String getPhysicalTableName() { return physicalTableName; }
     public void setPhysicalTableName(String physicalTableName) { this.physicalTableName = physicalTableName; }
+    public String getDatabaseName() { return databaseName; }
+    public void setDatabaseName(String databaseName) { this.databaseName = databaseName; }
+    public String getSchemaName() { return schemaName; }
+    public void setSchemaName(String schemaName) { this.schemaName = schemaName; }
+    public String getDataLayer() { return dataLayer; }
+    public void setDataLayer(String dataLayer) { this.dataLayer = dataLayer; }
+    public String getBusinessDomain() { return businessDomain; }
+    public void setBusinessDomain(String businessDomain) { this.businessDomain = businessDomain; }
+    public String getOwnerName() { return ownerName; }
+    public void setOwnerName(String ownerName) { this.ownerName = ownerName; }
+    public String getConformStatus() { return conformStatus; }
+    public void setConformStatus(String conformStatus) { this.conformStatus = conformStatus; }
+    public String getConformReport() { return conformReport; }
+    public void setConformReport(String conformReport) { this.conformReport = conformReport; }
     public String getDescription() { return description; }
     public void setDescription(String description) { this.description = description; }
     public String getTags() { return tags; }

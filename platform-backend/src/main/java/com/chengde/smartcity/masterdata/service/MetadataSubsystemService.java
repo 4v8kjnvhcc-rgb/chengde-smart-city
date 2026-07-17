@@ -3,7 +3,17 @@ package com.chengde.smartcity.masterdata.service;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.chengde.smartcity.audit.AuditService;
 import com.chengde.smartcity.common.exception.BusinessException;
+import com.chengde.smartcity.exchange.entity.IngDataColumn;
+import com.chengde.smartcity.exchange.entity.IngDataSource;
+import com.chengde.smartcity.exchange.entity.IngDataTable;
+import com.chengde.smartcity.exchange.entity.IngIngestTask;
+import com.chengde.smartcity.exchange.mapper.IngDataColumnMapper;
+import com.chengde.smartcity.exchange.mapper.IngDataSourceMapper;
+import com.chengde.smartcity.exchange.mapper.IngDataTableMapper;
+import com.chengde.smartcity.exchange.mapper.IngIngestTaskMapper;
 import com.chengde.smartcity.integration.config.IntegrationProperties;
+import com.chengde.smartcity.integration.jdbc.JdbcProbeService;
+import com.chengde.smartcity.masterdata.support.DataLayerSupport;
 import com.chengde.smartcity.integration.openmetadata.OpenMetadataClient;
 import com.chengde.smartcity.masterdata.entity.GovMetaChangeNotice;
 import com.chengde.smartcity.masterdata.entity.GovMetaCollectRun;
@@ -45,6 +55,9 @@ import java.util.Set;
 import java.util.UUID;
 import java.util.stream.Collectors;
 import javax.sql.DataSource;
+import java.util.Locale;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -52,7 +65,12 @@ import org.springframework.transaction.annotation.Transactional;
 @Service
 public class MetadataSubsystemService {
 
+    private static final Logger log = LoggerFactory.getLogger(MetadataSubsystemService.class);
     private static final int JDBC_TABLE_LIMIT = 50;
+    private static final long PLATFORM_ODS_ID = -1L;
+    private static final long PLATFORM_DWD_ID = -2L;
+    private static final long PLATFORM_DWS_ID = -3L;
+    private static final long PLATFORM_ADS_ID = -4L;
 
     private final GovMetaModelMapper modelMapper;
     private final GovMetaCollectTaskMapper taskMapper;
@@ -68,6 +86,11 @@ public class MetadataSubsystemService {
     private final IntegrationProperties integrationProperties;
     private final OpenMetadataClient openMetadataClient;
     private final DataSource dataSource;
+    private final IngDataSourceMapper ingDataSourceMapper;
+    private final IngDataTableMapper ingDataTableMapper;
+    private final IngDataColumnMapper ingDataColumnMapper;
+    private final IngIngestTaskMapper ingIngestTaskMapper;
+    private final JdbcProbeService jdbcProbeService;
     private final ObjectMapper objectMapper = new ObjectMapper();
 
     public MetadataSubsystemService(GovMetaModelMapper modelMapper,
@@ -83,6 +106,11 @@ public class MetadataSubsystemService {
                                     AuditService auditService,
                                     IntegrationProperties integrationProperties,
                                     OpenMetadataClient openMetadataClient,
+                                    IngDataSourceMapper ingDataSourceMapper,
+                                    IngDataTableMapper ingDataTableMapper,
+                                    IngDataColumnMapper ingDataColumnMapper,
+                                    IngIngestTaskMapper ingIngestTaskMapper,
+                                    JdbcProbeService jdbcProbeService,
                                     @Autowired(required = false) DataSource dataSource) {
         this.modelMapper = modelMapper;
         this.taskMapper = taskMapper;
@@ -97,6 +125,11 @@ public class MetadataSubsystemService {
         this.auditService = auditService;
         this.integrationProperties = integrationProperties;
         this.openMetadataClient = openMetadataClient;
+        this.ingDataSourceMapper = ingDataSourceMapper;
+        this.ingDataTableMapper = ingDataTableMapper;
+        this.ingDataColumnMapper = ingDataColumnMapper;
+        this.ingIngestTaskMapper = ingIngestTaskMapper;
+        this.jdbcProbeService = jdbcProbeService;
         this.dataSource = dataSource;
     }
 
@@ -182,6 +215,7 @@ public class MetadataSubsystemService {
         out.put("right", right);
         out.put("sameType", left.getModelType() != null && left.getModelType().equals(right.getModelType()));
         out.put("sameContent", String.valueOf(left.getContentJson()).equals(String.valueOf(right.getContentJson())));
+        out.put("fieldDiff", diffContentJsonFields(left.getContentJson(), right.getContentJson()));
         out.put("diffFields", List.of(
                 Map.of("field", "modelNameZh", "left", nvl(left.getModelNameZh()), "right", nvl(right.getModelNameZh())),
                 Map.of("field", "status", "left", nvl(left.getStatus()), "right", nvl(right.getStatus())),
@@ -235,9 +269,24 @@ public class MetadataSubsystemService {
 
     @Transactional
     public Long createTask(UserPrincipal operator, Map<String, Object> body) {
+        Long ingDataSourceId = longVal(body.get("ingDataSourceId"));
         Long connectorId = longVal(body.get("connectorId"));
-        if (connectorId == null || connectorMapper.selectById(connectorId) == null) {
-            throw new BusinessException(400, "connectorId invalid");
+        GovOmConnector connector = null;
+        if (ingDataSourceId != null && isPlatformLayerId(ingDataSourceId)) {
+            connector = findOrCreatePlatformLayerConnector(ingDataSourceId, operator);
+            connectorId = connector.getId();
+        } else if (ingDataSourceId != null) {
+            IngDataSource ingDs = ingDataSourceMapper.selectById(ingDataSourceId);
+            if (ingDs == null) {
+                throw new BusinessException(404, "登记数据源不存在");
+            }
+            connector = findOrCreateConnectorFromIngSource(ingDs, operator);
+            connectorId = connector.getId();
+        } else if (connectorId != null) {
+            connector = connectorMapper.selectById(connectorId);
+        }
+        if (connectorId == null || connector == null) {
+            throw new BusinessException(400, "ingDataSourceId 或 connectorId 必填");
         }
         Long modelId = longVal(body.get("modelId"));
         if (modelId != null) {
@@ -250,10 +299,11 @@ public class MetadataSubsystemService {
         t.setTaskCode(str(body.get("taskCode"), "MCT_" + UUID.randomUUID().toString().substring(0, 8).toUpperCase()));
         t.setTaskName(required(body.get("taskName"), "taskName"));
         t.setConnectorId(connectorId);
+        t.setIngDataSourceId(ingDataSourceId);
         t.setModelId(modelId);
-        t.setCronExpr(str(body.get("cronExpr"), null));
-        t.setScopeType(str(body.get("scopeType"), "FULL"));
-        t.setTableList(str(body.get("tableList"), null));
+        t.setCronExpr(normalizeOptionalCron(body.get("cronExpr")));
+        t.setScopeType(str(body.get("scopeType"), normalizeTableList(body.get("tableList")) == null ? "FULL" : "TABLE"));
+        t.setTableList(normalizeTableList(body.get("tableList")));
         t.setStatus("READY");
         t.setCreatedBy(operator.getUsername());
         taskMapper.insert(t);
@@ -327,6 +377,14 @@ public class MetadataSubsystemService {
             }
         }
         GovOmConnector connector = connectorMapper.selectById(task.getConnectorId());
+        if (connector == null && task.getIngDataSourceId() != null) {
+            IngDataSource ingDs = ingDataSourceMapper.selectById(task.getIngDataSourceId());
+            if (ingDs != null) {
+                connector = findOrCreateConnectorFromIngSource(ingDs, operator);
+                task.setConnectorId(connector.getId());
+                taskMapper.updateById(task);
+            }
+        }
         if (connector == null) {
             throw new BusinessException(404, "适配器不存在");
         }
@@ -347,14 +405,27 @@ public class MetadataSubsystemService {
         boolean omUsed = false;
         boolean jdbcUsed = false;
         try {
-            List<Map<String, Object>> schema = probeJdbcSchema(connector, task);
+            List<Map<String, Object>> schema;
+            if (task.getIngDataSourceId() != null && isPlatformLayerId(task.getIngDataSourceId())) {
+                schema = probePlatformLayerSchema(task.getIngDataSourceId(), task);
+            } else if (task.getIngDataSourceId() != null) {
+                IngDataSource ingDs = ingDataSourceMapper.selectById(task.getIngDataSourceId());
+                schema = ingDs == null ? List.of() : probeIngDataSourceSchema(ingDs, task);
+            } else {
+                schema = probeJdbcSchema(connector, task);
+            }
             if (!schema.isEmpty()) {
                 jdbcUsed = true;
                 tableCount = upsertTableAndColumns(task, run.getId(), connector, schema);
                 Map<String, Object> diff = buildRunDiff(task.getId(), run.getId());
-                message = "JDBC采集 tables=" + tableCount + " diff=" + toJson(diff);
-                run.setLogText(run.getLogText() + "\njdbc tables=" + tableCount);
-                run.setSummary(toJson(diff));
+                Map<String, Object> compact = compactRunDiff(diff);
+                message = "JDBC采集 tables=" + tableCount
+                        + " added=" + compact.get("addedCount")
+                        + " removed=" + compact.get("removedCount")
+                        + " changed=" + compact.get("changedCount");
+                // 完整 diff 明细写入 log_text（TEXT），summary 仅存压缩 JSON，避免 VARCHAR 截断
+                run.setLogText(run.getLogText() + "\njdbc tables=" + tableCount + "\ndiff=" + toJson(diff));
+                run.setSummary(clip(toJson(compact), 480));
             } else if (integrationProperties.isEnabled() && openMetadataClient.isHealthy()) {
                 Map<String, Object> om = openMetadataClient.ingestService(connector.getConnectorName());
                 message = "OpenMetadata sync: " + om.getOrDefault("status", "TRIGGERED");
@@ -363,32 +434,32 @@ public class MetadataSubsystemService {
                 omUsed = true;
                 run.setLogText(run.getLogText() + "\nom=" + message + "\ntablesSample=" + tableCount);
                 upsertCollectResults(task, run.getId(), tableCount);
-                run.setSummary(message);
+                run.setSummary(clip(message, 480));
             } else {
                 tableCount = 5 + (int) (Math.random() * 20);
                 message = "metadata sync ok, tables=" + tableCount;
                 run.setLogText(run.getLogText() + "\nlocalFallback tables=" + tableCount);
                 upsertCollectResults(task, run.getId(), tableCount);
-                run.setSummary(message);
+                run.setSummary(clip(message, 480));
             }
             run.setStatus("SUCCESS");
             run.setTableCount(tableCount);
             if (run.getSummary() == null) {
-                run.setSummary(message);
+                run.setSummary(clip(message, 480));
             }
             run.setEndedAt(LocalDateTime.now());
             runMapper.updateById(run);
 
             task.setStatus("READY");
-            task.setLastMessage(message);
+            task.setLastMessage(clip(message, 480));
             taskMapper.updateById(task);
 
             connector.setLastSyncAt(LocalDateTime.now());
-            connector.setLastMessage(message);
+            connector.setLastMessage(clip(message, 480));
             connectorMapper.updateById(connector);
 
             auditService.log(operator.getUserId(), operator.getUsername(), operator.getOrgId(),
-                    "META_COLLECT_RUN", "gov_meta_collect_run", String.valueOf(run.getId()), message);
+                    "META_COLLECT_RUN", "gov_meta_collect_run", String.valueOf(run.getId()), clip(message, 480));
             Map<String, Object> out = new LinkedHashMap<>();
             out.put("runId", run.getId());
             out.put("status", "SUCCESS");
@@ -398,18 +469,19 @@ public class MetadataSubsystemService {
             out.put("jdbcUsed", jdbcUsed);
             return out;
         } catch (Exception e) {
+            String err = clip(e.getMessage(), 480);
             run.setStatus("FAILED");
-            run.setSummary(e.getMessage());
+            run.setSummary(err);
             run.setEndedAt(LocalDateTime.now());
-            run.setLogText(run.getLogText() + "\nerror=" + e.getMessage());
+            run.setLogText(clip(run.getLogText() + "\nerror=" + e.getMessage(), 8000));
             runMapper.updateById(run);
             task.setStatus("READY");
-            task.setLastMessage("FAILED: " + e.getMessage());
+            task.setLastMessage(clip("FAILED: " + err, 480));
             taskMapper.updateById(task);
             if (!integrationProperties.isDemoFallback()) {
-                throw new BusinessException(503, "元数据采集失败: " + e.getMessage());
+                throw new BusinessException(503, "元数据采集失败: " + err);
             }
-            return Map.of("runId", run.getId(), "status", "FAILED", "message", e.getMessage());
+            return Map.of("runId", run.getId(), "status", "FAILED", "message", err);
         }
     }
 
@@ -516,9 +588,15 @@ public class MetadataSubsystemService {
             if (body.containsKey("entryType")) e.setEntryType(str(body.get("entryType"), e.getEntryType()));
             if (body.containsKey("description")) e.setDescription(str(body.get("description"), null));
             if (body.containsKey("omRef")) e.setOmRef(str(body.get("omRef"), null));
-            if (body.containsKey("tags")) e.setTags(str(body.get("tags"), null));
+            if (body.containsKey("tags")) e.setTags(normalizeTags(body.get("tags")));
             if (body.containsKey("keywords")) e.setKeywords(str(body.get("keywords"), null));
             if (body.containsKey("securityLevel")) e.setSecurityLevel(str(body.get("securityLevel"), null));
+            if (body.containsKey("businessDomain")) e.setBusinessDomain(str(body.get("businessDomain"), null));
+            if (body.containsKey("ownerName")) e.setOwnerName(str(body.get("ownerName"), null));
+            if (body.containsKey("dataLayer")
+                    && (e.getDatabaseName() == null || e.getDatabaseName().isBlank())) {
+                e.setDataLayer(str(body.get("dataLayer"), null));
+            }
             if (body.containsKey("status")) e.setStatus(str(body.get("status"), e.getStatus()));
             e.setChangeFlag("CHANGED");
             e.setUpdatedAt(LocalDateTime.now());
@@ -534,9 +612,12 @@ public class MetadataSubsystemService {
             e.setOmRef(str(body.get("omRef"), null));
             e.setModelId(longVal(body.get("modelId")));
             e.setDescription(str(body.get("description"), null));
-            e.setTags(str(body.get("tags"), null));
+            e.setTags(normalizeTags(body.get("tags")));
             e.setKeywords(str(body.get("keywords"), null));
             e.setSecurityLevel(str(body.get("securityLevel"), null));
+            e.setBusinessDomain(str(body.get("businessDomain"), null));
+            e.setOwnerName(str(body.get("ownerName"), null));
+            e.setDataLayer(str(body.get("dataLayer"), null));
             e.setChangeFlag("NEW");
             e.setStatus("ACTIVE");
             registryMapper.insert(e);
@@ -944,11 +1025,13 @@ public class MetadataSubsystemService {
                 tbl.setChangeFlag("NEW");
                 tbl.setDescription("JDBC采集");
                 tbl.setStatus("ACTIVE");
+                enrichRegistryLayerFields(tbl, tableName, connector, task);
                 registryMapper.insert(tbl);
             } else {
                 tbl.setRunId(runId);
                 tbl.setChangeFlag("CHANGED");
                 tbl.setUpdatedAt(LocalDateTime.now());
+                enrichRegistryLayerFields(tbl, tableName, connector, task);
                 registryMapper.updateById(tbl);
             }
             tableCount++;
@@ -982,6 +1065,8 @@ public class MetadataSubsystemService {
                     }
                 }
             }
+            applyConformity(tbl, task.getModelId());
+            registryMapper.updateById(tbl);
         }
         return tableCount;
     }
@@ -1025,6 +1110,46 @@ public class MetadataSubsystemService {
         diff.put("changed", changed);
         diff.put("prevRunId", prev == null ? null : prev.getId());
         return diff;
+    }
+
+    /**
+     * 压缩 diff 供 summary 落库：保留计数 + 少量样例编码，避免整表 entryCode 列表撑爆 VARCHAR(512)。
+     */
+    @SuppressWarnings("unchecked")
+    private Map<String, Object> compactRunDiff(Map<String, Object> diff) {
+        List<String> added = (List<String>) diff.getOrDefault("added", List.of());
+        List<String> removed = (List<String>) diff.getOrDefault("removed", List.of());
+        List<String> changed = (List<String>) diff.getOrDefault("changed", List.of());
+        Map<String, Object> compact = new LinkedHashMap<>();
+        compact.put("addedCount", added.size());
+        compact.put("removedCount", removed.size());
+        compact.put("changedCount", changed.size());
+        compact.put("added", sampleCodes(added, 8));
+        compact.put("removed", sampleCodes(removed, 8));
+        compact.put("changed", sampleCodes(changed, 8));
+        compact.put("prevRunId", diff.get("prevRunId"));
+        compact.put("truncated", added.size() > 8 || removed.size() > 8 || changed.size() > 8);
+        return compact;
+    }
+
+    private List<String> sampleCodes(List<String> codes, int limit) {
+        if (codes == null || codes.isEmpty()) {
+            return List.of();
+        }
+        if (codes.size() <= limit) {
+            return codes;
+        }
+        return new ArrayList<>(codes.subList(0, limit));
+    }
+
+    private String clip(String raw, int max) {
+        if (raw == null) {
+            return null;
+        }
+        if (raw.length() <= max) {
+            return raw;
+        }
+        return raw.substring(0, Math.max(0, max - 3)) + "...";
     }
 
     private void upsertCollectResults(GovMetaCollectTask task, Long runId, int tableCount) {
@@ -1299,5 +1424,733 @@ public class MetadataSubsystemService {
     private Long longVal(Object v) {
         if (v == null || String.valueOf(v).isBlank()) return null;
         return Long.valueOf(String.valueOf(v));
+    }
+
+    // ---- 分层库 / 采集数据源 / 汇聚登记 ----
+
+    public List<Map<String, Object>> listCollectDataSources() {
+        List<Map<String, Object>> out = new ArrayList<>();
+        List<IngDataSource> sources = ingDataSourceMapper.selectList(new LambdaQueryWrapper<IngDataSource>()
+                .eq(IngDataSource::getConnStatus, "OK")
+                .orderByAsc(IngDataSource::getId));
+        for (IngDataSource ds : sources) {
+            Map<String, Object> row = new LinkedHashMap<>();
+            row.put("id", ds.getId());
+            row.put("sourceCode", ds.getSourceCode());
+            row.put("sourceName", ds.getSourceName());
+            row.put("sourceType", ds.getSourceType());
+            row.put("layerHint", "EXTERNAL");
+            row.put("platformLayer", false);
+            row.put("databaseName", parseIngDatabase(ds));
+            out.add(row);
+        }
+        out.add(platformLayerSource(PLATFORM_ODS_ID, "PLATFORM_ODS", "平台 ODS 层", DataLayerSupport.ODS, "ODS"));
+        out.add(platformLayerSource(PLATFORM_DWD_ID, "PLATFORM_DWD", "平台 DWD 层", DataLayerSupport.DWD, "DWD"));
+        out.add(platformLayerSource(PLATFORM_DWS_ID, "PLATFORM_DWS", "平台 DWS 层", DataLayerSupport.DWS, "DWS"));
+        out.add(platformLayerSource(PLATFORM_ADS_ID, "PLATFORM_ADS", "平台 ADS 层", DataLayerSupport.ADS, "ADS"));
+        return out;
+    }
+
+    public List<Map<String, Object>> listCollectDataSourceTables(Long dataSourceId) {
+        if (dataSourceId == null) {
+            throw new BusinessException(400, "dataSourceId 必填");
+        }
+        if (isPlatformLayerId(dataSourceId)) {
+            return listPlatformLayerTables(platformLayerDatabase(dataSourceId));
+        }
+        IngDataSource ds = ingDataSourceMapper.selectById(dataSourceId);
+        if (ds == null) {
+            throw new BusinessException(404, "登记数据源不存在");
+        }
+        JdbcProbeService.ConnConfig conn = jdbcProbeService.parse(ds.getSourceType(), ds.getConnConfigJson());
+        return jdbcProbeService.listTables(conn);
+    }
+
+    public Map<String, Object> listModelBindings(Long modelId) {
+        requireModel(modelId);
+        List<GovMetadataRegistry> tables = registryMapper.selectList(new LambdaQueryWrapper<GovMetadataRegistry>()
+                .eq(GovMetadataRegistry::getModelId, modelId)
+                .eq(GovMetadataRegistry::getEntryType, "TABLE")
+                .ne(GovMetadataRegistry::getStatus, "OFFLINE")
+                .orderByAsc(GovMetadataRegistry::getEntryCode));
+        List<GovMetaCollectTask> tasks = taskMapper.selectList(new LambdaQueryWrapper<GovMetaCollectTask>()
+                .eq(GovMetaCollectTask::getModelId, modelId)
+                .ne(GovMetaCollectTask::getStatus, "DELETED")
+                .orderByDesc(GovMetaCollectTask::getId));
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("tables", tables);
+        out.put("collectTasks", tasks);
+        return out;
+    }
+
+    @Transactional
+    public Long createModelFromEntry(UserPrincipal operator, Map<String, Object> body) {
+        Long entryId = longVal(body.get("entryId"));
+        if (entryId == null) {
+            throw new BusinessException(400, "entryId 必填");
+        }
+        GovMetadataRegistry entry = registryMapper.selectById(entryId);
+        if (entry == null || !"TABLE".equalsIgnoreCase(entry.getEntryType())) {
+            throw new BusinessException(404, "TABLE 条目不存在");
+        }
+        List<Map<String, Object>> fields = buildModelFieldsFromEntry(entry);
+        Map<String, Object> modelBody = new LinkedHashMap<>();
+        modelBody.put("modelNameZh", entry.getEntryName() + " 模型");
+        modelBody.put("modelType", "TABLE");
+        modelBody.put("contentJson", toJson(fields));
+        return createModel(operator, modelBody);
+    }
+
+    @Transactional
+    public Map<String, Object> recheckModelConformity(UserPrincipal operator, Long modelId) {
+        requireModel(modelId);
+        List<GovMetadataRegistry> tables = registryMapper.selectList(new LambdaQueryWrapper<GovMetadataRegistry>()
+                .eq(GovMetadataRegistry::getModelId, modelId)
+                .eq(GovMetadataRegistry::getEntryType, "TABLE")
+                .ne(GovMetadataRegistry::getStatus, "OFFLINE"));
+        int pass = 0;
+        int partial = 0;
+        int fail = 0;
+        for (GovMetadataRegistry tbl : tables) {
+            applyConformity(tbl, modelId);
+            registryMapper.updateById(tbl);
+            String st = tbl.getConformStatus();
+            if ("PASS".equals(st)) {
+                pass++;
+            } else if ("PARTIAL".equals(st)) {
+                partial++;
+            } else if ("FAIL".equals(st)) {
+                fail++;
+            }
+        }
+        auditService.log(operator.getUserId(), operator.getUsername(), operator.getOrgId(),
+                "META_MODEL_RECHECK", "gov_meta_model", String.valueOf(modelId),
+                "pass=" + pass + " partial=" + partial + " fail=" + fail);
+        return Map.of("modelId", modelId, "tableCount", tables.size(),
+                "pass", pass, "partial", partial, "fail", fail);
+    }
+
+    public Map<String, Object> catalogInventory() {
+        List<GovMetadataRegistry> tables = registryMapper.selectList(new LambdaQueryWrapper<GovMetadataRegistry>()
+                .eq(GovMetadataRegistry::getEntryType, "TABLE")
+                .ne(GovMetadataRegistry::getStatus, "OFFLINE"));
+        Map<String, Long> byLayer = new LinkedHashMap<>();
+        long idleCount = 0;
+        List<String> idleEntryCodes = new ArrayList<>();
+        for (GovMetadataRegistry t : tables) {
+            String layer = t.getDataLayer() == null || t.getDataLayer().isBlank() ? "UNKNOWN" : t.getDataLayer();
+            byLayer.merge(layer, 1L, Long::sum);
+            if (!hasDownstreamLineage(t.getEntryCode())) {
+                idleCount++;
+                if (idleEntryCodes.size() < 200) {
+                    idleEntryCodes.add(t.getEntryCode());
+                }
+            }
+        }
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("byLayer", byLayer);
+        out.put("tableCount", tables.size());
+        out.put("idleCount", idleCount);
+        out.put("idleEntryCodes", idleEntryCodes);
+        return out;
+    }
+
+    @Transactional
+    public Long rollbackVersion(UserPrincipal operator, Long versionId) {
+        GovMetaVersion version = versionMapper.selectById(versionId);
+        if (version == null) {
+            throw new BusinessException(404, "版本不存在");
+        }
+        Map<String, Object> snap = parseSnapshot(version.getSnapshotJson());
+        if ("MODEL".equalsIgnoreCase(version.getTargetType())) {
+            GovMetaModel model = requireModel(version.getTargetId());
+            if ("PUBLISHED".equals(model.getStatus())) {
+                model.setStatus("DRAFT");
+            }
+            if (snap.containsKey("modelNameZh")) {
+                model.setModelNameZh(String.valueOf(snap.get("modelNameZh")));
+            }
+            if (snap.containsKey("modelType")) {
+                model.setModelType(String.valueOf(snap.get("modelType")));
+            }
+            if (snap.containsKey("contentJson")) {
+                model.setContentJson(String.valueOf(snap.get("contentJson")));
+            }
+            modelMapper.updateById(model);
+            snapshotVersion(operator, "MODEL", model.getId(), toJson(model),
+                    "自版本 v" + version.getVersionNo() + " 回滚");
+            auditService.log(operator.getUserId(), operator.getUsername(), operator.getOrgId(),
+                    "META_VERSION_ROLLBACK", "gov_meta_model", String.valueOf(model.getId()),
+                    "fromVersion=" + versionId);
+            return model.getId();
+        }
+        if ("ENTRY".equalsIgnoreCase(version.getTargetType())) {
+            GovMetadataRegistry entry = registryMapper.selectById(version.getTargetId());
+            if (entry == null) {
+                throw new BusinessException(404, "条目不存在");
+            }
+            applySnapshotToEntry(entry, snap);
+            entry.setChangeFlag("CHANGED");
+            entry.setUpdatedAt(LocalDateTime.now());
+            registryMapper.updateById(entry);
+            snapshotVersion(operator, "ENTRY", entry.getId(), toJson(entry),
+                    "自版本 v" + version.getVersionNo() + " 回滚");
+            auditService.log(operator.getUserId(), operator.getUsername(), operator.getOrgId(),
+                    "META_VERSION_ROLLBACK", "gov_metadata_registry", String.valueOf(entry.getId()),
+                    "fromVersion=" + versionId);
+            return entry.getId();
+        }
+        throw new BusinessException(400, "不支持的回滚类型: " + version.getTargetType());
+    }
+
+    public Map<String, Object> analyzeOfflineAssess(String entryCode) {
+        if (entryCode == null || entryCode.isBlank()) {
+            throw new BusinessException(400, "entryCode 必填");
+        }
+        boolean hasDownstream = hasDownstreamLineage(entryCode.trim());
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("entryCode", entryCode.trim());
+        out.put("hasDownstream", hasDownstream);
+        out.put("canOffline", !hasDownstream);
+        return out;
+    }
+
+    public List<Map<String, Object>> analyzeTasks(String entryCode) {
+        if (entryCode == null || entryCode.isBlank()) {
+            throw new BusinessException(400, "entryCode 必填");
+        }
+        GovMetadataRegistry entry = registryMapper.selectOne(new LambdaQueryWrapper<GovMetadataRegistry>()
+                .eq(GovMetadataRegistry::getEntryCode, entryCode.trim()).last("limit 1"));
+        if (entry == null) {
+            return List.of();
+        }
+        LambdaQueryWrapper<IngIngestTask> q = new LambdaQueryWrapper<IngIngestTask>()
+                .orderByDesc(IngIngestTask::getId);
+        if (entry.getSourceTableId() != null) {
+            q.eq(IngIngestTask::getTableId, entry.getSourceTableId());
+        } else if (entry.getPhysicalTableName() != null && !entry.getPhysicalTableName().isBlank()) {
+            q.eq(IngIngestTask::getTargetTable, entry.getPhysicalTableName());
+        } else {
+            return List.of();
+        }
+        List<IngIngestTask> tasks = ingIngestTaskMapper.selectList(q);
+        List<Map<String, Object>> out = new ArrayList<>();
+        for (IngIngestTask task : tasks) {
+            Map<String, Object> row = new LinkedHashMap<>();
+            row.put("ingestTaskId", task.getId());
+            row.put("taskCode", task.getTaskCode());
+            row.put("taskName", task.getTaskName());
+            row.put("status", task.getStatus());
+            row.put("targetTable", task.getTargetTable());
+            row.put("collectedRows", task.getCollectedRows());
+            row.put("lastRunAt", task.getLastRunAt());
+            out.add(row);
+        }
+        return out;
+    }
+
+    @Transactional
+    public void registerAfterCollect(UserPrincipal operator, Long tableId, String odsTable) {
+        IngDataTable table = ingDataTableMapper.selectById(tableId);
+        if (table == null) {
+            return;
+        }
+        IngDataSource ds = ingDataSourceMapper.selectById(table.getSourceId());
+        if (ds == null) {
+            return;
+        }
+        String sourceCode = stableEntryCode("SRC_ING_" + ds.getId());
+        GovMetadataRegistry sourceEntry = upsertRegistryEntry(sourceCode, ds.getSourceName(), "SOURCE",
+                null, operator, "汇聚登记数据源");
+        sourceEntry.setDataSourceId(ds.getId());
+        registryMapper.updateById(sourceEntry);
+
+        String tableCode = stableEntryCode("TBL_ING_" + ds.getId() + "_" + odsTable);
+        GovMetadataRegistry tbl = upsertRegistryEntry(tableCode, table.getTableName(), "TABLE",
+                sourceCode, operator, "汇聚产出表");
+        tbl.setParentCode(sourceCode);
+        tbl.setDataSourceId(ds.getId());
+        tbl.setSourceTableId(tableId);
+        tbl.setPhysicalTableName(odsTable);
+        tbl.setDatabaseName(DataLayerSupport.ODS);
+        tbl.setSchemaName(DataLayerSupport.ODS);
+        tbl.setDataLayer("ODS");
+        registryMapper.updateById(tbl);
+
+        List<IngDataColumn> columns = ingDataColumnMapper.selectList(new LambdaQueryWrapper<IngDataColumn>()
+                .eq(IngDataColumn::getTableId, tableId).orderByAsc(IngDataColumn::getSortOrder));
+        for (IngDataColumn col : columns) {
+            String colCode = stableEntryCode("COL_" + tableCode + "_" + col.getColumnCode());
+            GovMetadataRegistry ce = upsertRegistryEntry(colCode, col.getColumnCode(), "COLUMN",
+                    tableCode, operator, col.getDataType());
+            ce.setParentCode(tableCode);
+            ce.setDataSourceId(ds.getId());
+            ce.setSourceTableId(tableId);
+            ce.setPhysicalTableName(odsTable);
+            ce.setDatabaseName(DataLayerSupport.ODS);
+            ce.setSchemaName(DataLayerSupport.ODS);
+            ce.setDataLayer("ODS");
+            registryMapper.updateById(ce);
+        }
+        // 汇聚血缘：数据源 → ODS 表
+        GovMetaRelation existRel = relationMapper.selectOne(new LambdaQueryWrapper<GovMetaRelation>()
+                .eq(GovMetaRelation::getFromCode, sourceCode)
+                .eq(GovMetaRelation::getToCode, tableCode)
+                .eq(GovMetaRelation::getRelationType, "LINEAGE")
+                .last("limit 1"));
+        if (existRel == null) {
+            GovMetaRelation r = new GovMetaRelation();
+            r.setFromCode(sourceCode);
+            r.setToCode(tableCode);
+            r.setRelationType("LINEAGE");
+            r.setLabel("Kettle汇聚");
+            r.setStatus("ACTIVE");
+            relationMapper.insert(r);
+        }
+        auditService.log(operator.getUserId(), operator.getUsername(), operator.getOrgId(),
+                "META_REGISTER_AFTER_COLLECT", "gov_metadata_registry", String.valueOf(tbl.getId()), tableCode);
+    }
+
+    private GovOmConnector findOrCreateConnectorFromIngSource(IngDataSource ds, UserPrincipal operator) {
+        String code = "ING_CONN_" + ds.getId();
+        GovOmConnector existing = connectorMapper.selectOne(new LambdaQueryWrapper<GovOmConnector>()
+                .eq(GovOmConnector::getConnectorCode, code).last("limit 1"));
+        if (existing != null) {
+            return existing;
+        }
+        JdbcProbeService.ConnConfig conn = jdbcProbeService.parse(ds.getSourceType(), ds.getConnConfigJson());
+        GovOmConnector c = new GovOmConnector();
+        c.setConnectorCode(code);
+        c.setConnectorName(ds.getSourceName() + " (登记)");
+        c.setSourceType(ds.getSourceType());
+        c.setJdbcUrl(jdbcProbeService.jdbcUrl(conn));
+        c.setJdbcUser(conn.username);
+        c.setJdbcPassword(conn.password);
+        c.setJdbcDatabase(conn.database);
+        c.setStatus("ACTIVE");
+        c.setCreatedBy(operator.getUsername());
+        connectorMapper.insert(c);
+        return c;
+    }
+
+    private GovOmConnector findOrCreatePlatformLayerConnector(Long platformSourceId, UserPrincipal operator) {
+        String database = platformLayerDatabase(platformSourceId);
+        String code = "PLATFORM_CONN_" + database;
+        GovOmConnector existing = connectorMapper.selectOne(new LambdaQueryWrapper<GovOmConnector>()
+                .eq(GovOmConnector::getConnectorCode, code).last("limit 1"));
+        if (existing != null) {
+            return existing;
+        }
+        String jdbcUrl = buildPlatformJdbcUrl(database);
+        GovOmConnector c = new GovOmConnector();
+        c.setConnectorCode(code);
+        c.setConnectorName("平台分层库 " + database);
+        c.setSourceType("MYSQL");
+        c.setJdbcUrl(jdbcUrl);
+        c.setJdbcDatabase(database);
+        c.setStatus("ACTIVE");
+        c.setCreatedBy(operator == null ? "system" : operator.getUsername());
+        if (dataSource != null) {
+            try (Connection conn = dataSource.getConnection()) {
+                c.setJdbcUser(conn.getMetaData().getUserName());
+            } catch (Exception ignored) {
+            }
+        }
+        connectorMapper.insert(c);
+        return c;
+    }
+
+    private List<Map<String, Object>> probePlatformLayerSchema(Long platformSourceId, GovMetaCollectTask task) {
+        String database = platformLayerDatabase(platformSourceId);
+        Set<String> allowed = parseTableList(task);
+        List<Map<String, Object>> tables = new ArrayList<>();
+        for (Map<String, Object> raw : listPlatformLayerTables(database)) {
+            String tableName = String.valueOf(raw.getOrDefault("sourceTable", ""));
+            if (tableName.isBlank()) {
+                continue;
+            }
+            if (!allowed.isEmpty() && !allowed.contains(tableName)) {
+                continue;
+            }
+            if (tables.size() >= JDBC_TABLE_LIMIT) {
+                break;
+            }
+            tables.add(convertProbeTable(raw));
+        }
+        return tables;
+    }
+
+    private String buildPlatformJdbcUrl(String database) {
+        if (dataSource == null) {
+            return "jdbc:mysql://localhost:3306/" + database;
+        }
+        try (Connection conn = dataSource.getConnection()) {
+            String url = conn.getMetaData().getURL();
+            if (url == null || url.isBlank()) {
+                return "jdbc:mysql://localhost:3306/" + database;
+            }
+            int slash = url.lastIndexOf('/');
+            if (slash < 0) {
+                return url;
+            }
+            String prefix = url.substring(0, slash + 1);
+            int q = url.indexOf('?', slash);
+            String query = q > 0 ? url.substring(q) : "";
+            return prefix + database + query;
+        } catch (Exception e) {
+            return "jdbc:mysql://localhost:3306/" + database;
+        }
+    }
+
+    private List<Map<String, Object>> probeIngDataSourceSchema(IngDataSource ds, GovMetaCollectTask task) {
+        try {
+            JdbcProbeService.ConnConfig conn = jdbcProbeService.parse(ds.getSourceType(), ds.getConnConfigJson());
+            Set<String> allowed = parseTableList(task);
+            List<Map<String, Object>> tables = new ArrayList<>();
+            if (allowed.isEmpty()) {
+                for (Map<String, Object> raw : jdbcProbeService.listTables(conn)) {
+                    if (tables.size() >= JDBC_TABLE_LIMIT) {
+                        break;
+                    }
+                    tables.add(convertProbeTable(raw));
+                }
+                return tables;
+            }
+            for (String tableName : allowed) {
+                Map<String, Object> desc = jdbcProbeService.describeTable(conn, tableName);
+                tables.add(convertProbeTable(desc));
+            }
+            return tables;
+        } catch (Exception e) {
+            log.warn("登记数据源 JDBC 探测失败 sourceId={}: {}", ds.getId(), e.getMessage());
+            return Collections.emptyList();
+        }
+    }
+
+    @SuppressWarnings("unchecked")
+    private Map<String, Object> convertProbeTable(Map<String, Object> raw) {
+        Map<String, Object> table = new LinkedHashMap<>();
+        table.put("tableName", raw.get("sourceTable"));
+        List<Map<String, String>> cols = new ArrayList<>();
+        Object colObj = raw.get("columns");
+        if (colObj instanceof List<?> list) {
+            for (Object item : list) {
+                if (!(item instanceof Map<?, ?> m)) {
+                    continue;
+                }
+                Map<String, String> col = new LinkedHashMap<>();
+                Object name = m.get("columnName");
+                Object type = m.get("dataType");
+                col.put("columnName", name == null ? "" : String.valueOf(name));
+                col.put("dataType", type == null ? "" : String.valueOf(type));
+                cols.add(col);
+            }
+        }
+        table.put("columns", cols);
+        return table;
+    }
+
+    private void enrichRegistryLayerFields(GovMetadataRegistry tbl, String tableName,
+                                           GovOmConnector connector, GovMetaCollectTask task) {
+        String db = connector.getJdbcDatabase();
+        if (db == null || db.isBlank()) {
+            db = DataLayerSupport.CONTROL;
+        }
+        if (DataLayerSupport.isPlatformLayerDb(db)) {
+            tbl.setDatabaseName(db);
+            tbl.setSchemaName(db);
+            tbl.setDataLayer(DataLayerSupport.layerForDatabase(db));
+        } else if (task.getIngDataSourceId() != null) {
+            tbl.setDatabaseName(db);
+            tbl.setSchemaName(db);
+            tbl.setDataLayer(DataLayerSupport.layerForTableName(tableName));
+        } else {
+            String layer = DataLayerSupport.layerForTableName(tableName);
+            tbl.setDataLayer(layer);
+            tbl.setDatabaseName(DataLayerSupport.databaseForLayer(layer));
+            tbl.setSchemaName(tbl.getDatabaseName());
+        }
+        tbl.setPhysicalTableName(tableName);
+        if (task.getIngDataSourceId() != null) {
+            tbl.setDataSourceId(task.getIngDataSourceId());
+        }
+    }
+
+    private void applyConformity(GovMetadataRegistry tbl, Long modelId) {
+        if (modelId == null) {
+            tbl.setConformStatus("SKIP");
+            tbl.setConformReport(null);
+            return;
+        }
+        GovMetaModel model = modelMapper.selectById(modelId);
+        if (model == null || model.getContentJson() == null || model.getContentJson().isBlank()) {
+            tbl.setConformStatus("SKIP");
+            return;
+        }
+        List<String> modelFields = extractFieldNames(model.getContentJson());
+        List<GovMetadataRegistry> cols = registryMapper.selectList(new LambdaQueryWrapper<GovMetadataRegistry>()
+                .eq(GovMetadataRegistry::getParentCode, tbl.getEntryCode())
+                .eq(GovMetadataRegistry::getEntryType, "COLUMN"));
+        Set<String> physicalCols = cols.stream()
+                .map(GovMetadataRegistry::getEntryName)
+                .filter(n -> n != null && !n.isBlank())
+                .map(n -> n.toLowerCase(Locale.ROOT))
+                .collect(Collectors.toSet());
+        List<String> missing = new ArrayList<>();
+        List<String> matched = new ArrayList<>();
+        for (String field : modelFields) {
+            if (physicalCols.contains(field.toLowerCase(Locale.ROOT))) {
+                matched.add(field);
+            } else {
+                missing.add(field);
+            }
+        }
+        String status;
+        if (missing.isEmpty()) {
+            status = "PASS";
+        } else if (matched.isEmpty()) {
+            status = "FAIL";
+        } else {
+            status = "PARTIAL";
+        }
+        tbl.setConformStatus(status);
+        tbl.setConformReport(toJson(Map.of(
+                "modelId", modelId,
+                "matched", matched,
+                "missing", missing,
+                "modelFieldCount", modelFields.size(),
+                "physicalColumnCount", physicalCols.size()
+        )));
+    }
+
+    private List<Map<String, Object>> buildModelFieldsFromEntry(GovMetadataRegistry entry) {
+        List<GovMetadataRegistry> cols = registryMapper.selectList(new LambdaQueryWrapper<GovMetadataRegistry>()
+                .eq(GovMetadataRegistry::getParentCode, entry.getEntryCode())
+                .eq(GovMetadataRegistry::getEntryType, "COLUMN")
+                .orderByAsc(GovMetadataRegistry::getEntryCode));
+        List<Map<String, Object>> fields = new ArrayList<>();
+        if (!cols.isEmpty()) {
+            for (GovMetadataRegistry c : cols) {
+                Map<String, Object> f = new LinkedHashMap<>();
+                f.put("code", c.getEntryName());
+                f.put("name", c.getEntryName());
+                f.put("type", nvl(c.getDescription()));
+                f.put("required", false);
+                fields.add(f);
+            }
+            return fields;
+        }
+        if (entry.getPhysicalTableName() != null && dataSource != null) {
+            String db = entry.getDatabaseName() != null ? entry.getDatabaseName()
+                    : DataLayerSupport.databaseForLayer(DataLayerSupport.layerForTableName(entry.getPhysicalTableName()));
+            try (Connection conn = dataSource.getConnection()) {
+                DatabaseMetaData md = conn.getMetaData();
+                try (ResultSet rs = md.getColumns(db, null, entry.getPhysicalTableName(), null)) {
+                    while (rs.next()) {
+                        Map<String, Object> f = new LinkedHashMap<>();
+                        f.put("code", rs.getString("COLUMN_NAME"));
+                        f.put("name", rs.getString("COLUMN_NAME"));
+                        f.put("type", rs.getString("TYPE_NAME"));
+                        f.put("required", false);
+                        fields.add(f);
+                    }
+                }
+            } catch (Exception e) {
+                log.warn("从物理表构建模型字段失败 entry={}: {}", entry.getEntryCode(), e.getMessage());
+            }
+        }
+        return fields;
+    }
+
+    private Map<String, Object> platformLayerSource(Long id, String code, String name, String database, String layer) {
+        Map<String, Object> row = new LinkedHashMap<>();
+        row.put("id", id);
+        row.put("sourceCode", code);
+        row.put("sourceName", name);
+        row.put("sourceType", "MYSQL");
+        row.put("layerHint", layer);
+        row.put("platformLayer", true);
+        row.put("databaseName", database);
+        return row;
+    }
+
+    private boolean isPlatformLayerId(Long id) {
+        return id != null && (id == PLATFORM_ODS_ID || id == PLATFORM_DWD_ID
+                || id == PLATFORM_DWS_ID || id == PLATFORM_ADS_ID);
+    }
+
+    private String platformLayerDatabase(Long id) {
+        if (id == PLATFORM_ODS_ID) {
+            return DataLayerSupport.ODS;
+        }
+        if (id == PLATFORM_DWD_ID) {
+            return DataLayerSupport.DWD;
+        }
+        if (id == PLATFORM_DWS_ID) {
+            return DataLayerSupport.DWS;
+        }
+        if (id == PLATFORM_ADS_ID) {
+            return DataLayerSupport.ADS;
+        }
+        throw new BusinessException(400, "非平台分层数据源");
+    }
+
+    private List<Map<String, Object>> listPlatformLayerTables(String database) {
+        if (dataSource == null) {
+            return List.of();
+        }
+        List<Map<String, Object>> out = new ArrayList<>();
+        try (Connection conn = dataSource.getConnection()) {
+            String sql = "SELECT TABLE_NAME FROM information_schema.TABLES "
+                    + "WHERE TABLE_SCHEMA = ? AND TABLE_TYPE = 'BASE TABLE' ORDER BY TABLE_NAME LIMIT ?";
+            try (PreparedStatement ps = conn.prepareStatement(sql)) {
+                ps.setString(1, database);
+                ps.setInt(2, JDBC_TABLE_LIMIT);
+                try (ResultSet rs = ps.executeQuery()) {
+                    while (rs.next()) {
+                        String tableName = rs.getString("TABLE_NAME");
+                        Map<String, Object> row = new LinkedHashMap<>();
+                        row.put("sourceTable", tableName);
+                        row.put("columns", loadColumns(conn, database, tableName));
+                        row.put("primaryKeys", List.of());
+                        row.put("rowCount", -1L);
+                        out.add(row);
+                    }
+                }
+            }
+        } catch (Exception e) {
+            log.warn("平台分层库探表失败 db={}: {}", database, e.getMessage());
+        }
+        return out;
+    }
+
+    private String parseIngDatabase(IngDataSource ds) {
+        try {
+            JdbcProbeService.ConnConfig conn = jdbcProbeService.parse(ds.getSourceType(), ds.getConnConfigJson());
+            return conn.database;
+        } catch (Exception e) {
+            return null;
+        }
+    }
+
+    private String normalizeTableList(Object raw) {
+        if (raw == null) {
+            return null;
+        }
+        if (raw instanceof List<?> list) {
+            if (list.isEmpty()) {
+                return null;
+            }
+            return list.stream().map(String::valueOf).map(String::trim).filter(s -> !s.isBlank())
+                    .collect(Collectors.joining(","));
+        }
+        String s = String.valueOf(raw).trim();
+        if (s.startsWith("[") && s.endsWith("]")) {
+            try {
+                List<String> parsed = objectMapper.readValue(s, new TypeReference<List<String>>() {});
+                return parsed.stream().filter(v -> v != null && !v.isBlank()).collect(Collectors.joining(","));
+            } catch (Exception ignored) {
+            }
+        }
+        return s.isBlank() ? null : s;
+    }
+
+    private String normalizeOptionalCron(Object raw) {
+        if (raw == null || String.valueOf(raw).isBlank()) {
+            return null;
+        }
+        return String.valueOf(raw).trim();
+    }
+
+    private String normalizeTags(Object raw) {
+        if (raw == null) {
+            return null;
+        }
+        if (raw instanceof List<?> list) {
+            return list.stream().map(String::valueOf).map(String::trim).filter(s -> !s.isBlank())
+                    .collect(Collectors.joining(","));
+        }
+        return str(raw, null);
+    }
+
+    private boolean hasDownstreamLineage(String entryCode) {
+        Long cnt = relationMapper.selectCount(new LambdaQueryWrapper<GovMetaRelation>()
+                .eq(GovMetaRelation::getFromCode, entryCode)
+                .eq(GovMetaRelation::getRelationType, "LINEAGE")
+                .eq(GovMetaRelation::getStatus, "ACTIVE"));
+        return cnt != null && cnt > 0;
+    }
+
+    private GovMetadataRegistry upsertRegistryEntry(String entryCode, String entryName, String entryType,
+                                                    String parentCode, UserPrincipal operator, String description) {
+        GovMetadataRegistry e = registryMapper.selectOne(new LambdaQueryWrapper<GovMetadataRegistry>()
+                .eq(GovMetadataRegistry::getEntryCode, entryCode).last("limit 1"));
+        if (e == null) {
+            e = new GovMetadataRegistry();
+            e.setEntryCode(entryCode);
+            e.setEntryName(entryName);
+            e.setEntryType(entryType);
+            e.setParentCode(parentCode);
+            e.setDescription(description);
+            e.setChangeFlag("NEW");
+            e.setStatus("ACTIVE");
+            e.setUpdatedAt(LocalDateTime.now());
+            registryMapper.insert(e);
+        } else {
+            e.setEntryName(entryName);
+            e.setEntryType(entryType);
+            if (parentCode != null) {
+                e.setParentCode(parentCode);
+            }
+            e.setDescription(description);
+            e.setChangeFlag("CHANGED");
+            e.setUpdatedAt(LocalDateTime.now());
+            registryMapper.updateById(e);
+        }
+        return e;
+    }
+
+    private String stableEntryCode(String raw) {
+        String code = raw.toUpperCase(Locale.ROOT).replaceAll("[^A-Z0-9_]", "_");
+        if (code.length() <= 64) {
+            return code;
+        }
+        return code.substring(0, 55) + "_" + Math.abs(raw.hashCode() % 100000);
+    }
+
+    private void applySnapshotToEntry(GovMetadataRegistry entry, Map<String, Object> snap) {
+        if (snap.containsKey("entryName")) {
+            entry.setEntryName(String.valueOf(snap.get("entryName")));
+        }
+        if (snap.containsKey("description")) {
+            entry.setDescription(String.valueOf(snap.get("description")));
+        }
+        if (snap.containsKey("tags")) {
+            entry.setTags(String.valueOf(snap.get("tags")));
+        }
+        if (snap.containsKey("keywords")) {
+            entry.setKeywords(String.valueOf(snap.get("keywords")));
+        }
+        if (snap.containsKey("securityLevel")) {
+            entry.setSecurityLevel(String.valueOf(snap.get("securityLevel")));
+        }
+        if (snap.containsKey("businessDomain")) {
+            entry.setBusinessDomain(String.valueOf(snap.get("businessDomain")));
+        }
+        if (snap.containsKey("ownerName")) {
+            entry.setOwnerName(String.valueOf(snap.get("ownerName")));
+        }
+        if (snap.containsKey("dataLayer") && (entry.getDatabaseName() == null || entry.getDatabaseName().isBlank())) {
+            entry.setDataLayer(String.valueOf(snap.get("dataLayer")));
+        }
+        if (snap.containsKey("databaseName")) {
+            entry.setDatabaseName(String.valueOf(snap.get("databaseName")));
+        }
+        if (snap.containsKey("schemaName")) {
+            entry.setSchemaName(String.valueOf(snap.get("schemaName")));
+        }
+        if (snap.containsKey("physicalTableName")) {
+            entry.setPhysicalTableName(String.valueOf(snap.get("physicalTableName")));
+        }
     }
 }

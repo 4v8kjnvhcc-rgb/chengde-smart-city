@@ -89,7 +89,37 @@ public class MetadataSubsystemController {
         return ApiResponse.ok(service.importModels(principal, body));
     }
 
-    @GetMapping("/collect/tasks")
+    @GetMapping("/models/{id}/bindings")
+    @PreAuthorize("isAuthenticated()")
+    public ApiResponse<Map<String, Object>> modelBindings(@PathVariable Long id) {
+        return ApiResponse.ok(service.listModelBindings(id));
+    }
+
+    @PostMapping("/models/from-entry")
+    @PreAuthorize("isAuthenticated()")
+    public ApiResponse<Long> createModelFromEntry(@AuthenticationPrincipal UserPrincipal principal,
+                                                  @RequestBody Map<String, Object> body) {
+        return ApiResponse.ok(service.createModelFromEntry(principal, body));
+    }
+
+    @PostMapping("/models/{id}/recheck")
+    @PreAuthorize("isAuthenticated()")
+    public ApiResponse<Map<String, Object>> recheckModel(@AuthenticationPrincipal UserPrincipal principal,
+                                                         @PathVariable Long id) {
+        return ApiResponse.ok(service.recheckModelConformity(principal, id));
+    }
+
+    @GetMapping("/collect/data-sources")
+    @PreAuthorize("isAuthenticated()")
+    public ApiResponse<List<Map<String, Object>>> collectDataSources() {
+        return ApiResponse.ok(service.listCollectDataSources());
+    }
+
+    @GetMapping("/collect/data-sources/{id}/tables")
+    @PreAuthorize("isAuthenticated()")
+    public ApiResponse<List<Map<String, Object>>> collectDataSourceTables(@PathVariable Long id) {
+        return ApiResponse.ok(service.listCollectDataSourceTables(id));
+    }
     @PreAuthorize("isAuthenticated()")
     public ApiResponse<List<GovMetaCollectTask>> collectTasks(@RequestParam(required = false) String status,
                                                               @RequestParam(required = false) String sourceType,
@@ -189,6 +219,13 @@ public class MetadataSubsystemController {
         return ApiResponse.ok(service.compareVersions(leftId, rightId));
     }
 
+    @PostMapping("/versions/{id}/rollback")
+    @PreAuthorize("isAuthenticated()")
+    public ApiResponse<Long> rollbackVersion(@AuthenticationPrincipal UserPrincipal principal,
+                                             @PathVariable Long id) {
+        return ApiResponse.ok(service.rollbackVersion(principal, id));
+    }
+
     @GetMapping("/catalog")
     @PreAuthorize("isAuthenticated()")
     public ApiResponse<Map<String, Object>> catalog() {
@@ -201,6 +238,12 @@ public class MetadataSubsystemController {
                                                                 @RequestParam(required = false) String type,
                                                                 @RequestParam(required = false) String tag) {
         return ApiResponse.ok(service.searchCatalog(keyword, type, tag));
+    }
+
+    @GetMapping("/catalog/inventory")
+    @PreAuthorize("isAuthenticated()")
+    public ApiResponse<Map<String, Object>> catalogInventory() {
+        return ApiResponse.ok(service.catalogInventory());
     }
 
     @PostMapping("/catalog/{id}/offline")
@@ -221,6 +264,18 @@ public class MetadataSubsystemController {
     @PreAuthorize("isAuthenticated()")
     public ApiResponse<Map<String, Object>> analyzeImpact(@RequestParam String fromCode) {
         return ApiResponse.ok(service.analyzeImpactRecursive(fromCode));
+    }
+
+    @GetMapping("/analyze/offline-assess")
+    @PreAuthorize("isAuthenticated()")
+    public ApiResponse<Map<String, Object>> analyzeOfflineAssess(@RequestParam String entryCode) {
+        return ApiResponse.ok(service.analyzeOfflineAssess(entryCode));
+    }
+
+    @GetMapping("/analyze/tasks")
+    @PreAuthorize("isAuthenticated()")
+    public ApiResponse<List<Map<String, Object>>> analyzeTasks(@RequestParam String entryCode) {
+        return ApiResponse.ok(service.analyzeTasks(entryCode));
     }
 
     @PostMapping("/relations")

@@ -13,6 +13,11 @@ public class IngDataTable {
     private String tableCode;
     private String tableName;
     private String physicalTableName;
+    private String sourceSchema;
+    private String sourceTable;
+    private Long sourceRowCount;
+    private String primaryKeyCols;
+    private String omFqn;
     private String modelingMode;
     private Integer columnCount;
     private String status;
@@ -30,6 +35,16 @@ public class IngDataTable {
     public void setTableName(String tableName) { this.tableName = tableName; }
     public String getPhysicalTableName() { return physicalTableName; }
     public void setPhysicalTableName(String physicalTableName) { this.physicalTableName = physicalTableName; }
+    public String getSourceSchema() { return sourceSchema; }
+    public void setSourceSchema(String sourceSchema) { this.sourceSchema = sourceSchema; }
+    public String getSourceTable() { return sourceTable; }
+    public void setSourceTable(String sourceTable) { this.sourceTable = sourceTable; }
+    public Long getSourceRowCount() { return sourceRowCount; }
+    public void setSourceRowCount(Long sourceRowCount) { this.sourceRowCount = sourceRowCount; }
+    public String getPrimaryKeyCols() { return primaryKeyCols; }
+    public void setPrimaryKeyCols(String primaryKeyCols) { this.primaryKeyCols = primaryKeyCols; }
+    public String getOmFqn() { return omFqn; }
+    public void setOmFqn(String omFqn) { this.omFqn = omFqn; }
     public String getModelingMode() { return modelingMode; }
     public void setModelingMode(String modelingMode) { this.modelingMode = modelingMode; }
     public Integer getColumnCount() { return columnCount; }

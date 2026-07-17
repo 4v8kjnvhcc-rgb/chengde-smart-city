@@ -218,12 +218,7 @@ public class ExchangeDemoService {
 
     @Transactional
     public Map<String, Object> runKettle(UserPrincipal operator, Long id) {
-        if (integrationProperties.isEnabled() && kettleClient.isHealthy()) {
-            Map<String, Object> res = kettleClient.runJob(id);
-            auditService.log(operator.getUserId(), operator.getUsername(), operator.getOrgId(),
-                    "KETTLE_RUN", "kettle-carte", String.valueOf(id), String.valueOf(res.get("message")));
-            return res;
-        }
+        // M215 遗留演示作业（非真实主链）：仅更新本地台账，真实 Carte 抽取走登记→汇聚链路。
         BizKettleJob job = kettleJobMapper.selectById(id);
         if (job == null) {
             throw new BusinessException(404, "Kettle 作业不存在");

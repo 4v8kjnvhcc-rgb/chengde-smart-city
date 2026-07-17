@@ -36,9 +36,14 @@ import com.chengde.smartcity.masterdata.mapper.GovQualityTaskDetailMapper;
 import com.chengde.smartcity.masterdata.mapper.GovQualityTaskMapper;
 import com.chengde.smartcity.masterdata.mapper.GovQualityTaskRunMapper;
 import com.chengde.smartcity.masterdata.mapper.RcThemeLibraryMapper;
+import com.chengde.smartcity.integration.config.IntegrationProperties;
+import com.chengde.smartcity.integration.kettle.KettleClient;
+import com.chengde.smartcity.integration.kettle.KettleKtrCompiler;
+import com.chengde.smartcity.masterdata.service.DsOrchestrationService;
 import com.chengde.smartcity.masterdata.service.FusionSqlCompiler.CompileResult;
 import com.chengde.smartcity.masterdata.service.SharePathSupportService.ColumnDef;
 import com.chengde.smartcity.masterdata.service.SharePathSupportService.EligibleTable;
+import com.chengde.smartcity.masterdata.support.DataLayerSupport;
 import com.chengde.smartcity.security.UserPrincipal;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.math.BigDecimal;
@@ -91,6 +96,11 @@ public class ProcessedShareGoldenPathService {
     private final CatalogSubscriptionService catalogSubscriptionService;
     private final ResourceCenterPlatformService resourceCenterPlatformService;
     private final DataSource platformDataSource;
+    private final KettleClient kettleClient;
+    private final KettleKtrCompiler ktrCompiler;
+    private final IntegrationProperties integrationProperties;
+    private final OpenMetadataSyncService openMetadataSyncService;
+    private final DsOrchestrationService dsOrchestrationService;
 
     public ProcessedShareGoldenPathService(SharePathSupportService shareSupport,
                                            FusionSqlCompiler fusionSqlCompiler,
@@ -115,7 +125,12 @@ public class ProcessedShareGoldenPathService {
                                            CatalogResourceService catalogResourceService,
                                            CatalogSubscriptionService catalogSubscriptionService,
                                            ResourceCenterPlatformService resourceCenterPlatformService,
-                                           DataSource platformDataSource) {
+                                           DataSource platformDataSource,
+                                           KettleClient kettleClient,
+                                           KettleKtrCompiler ktrCompiler,
+                                           IntegrationProperties integrationProperties,
+                                           OpenMetadataSyncService openMetadataSyncService,
+                                           DsOrchestrationService dsOrchestrationService) {
         this.shareSupport = shareSupport;
         this.fusionSqlCompiler = fusionSqlCompiler;
         this.connectorMapper = connectorMapper;
@@ -140,6 +155,11 @@ public class ProcessedShareGoldenPathService {
         this.catalogSubscriptionService = catalogSubscriptionService;
         this.resourceCenterPlatformService = resourceCenterPlatformService;
         this.platformDataSource = platformDataSource;
+        this.kettleClient = kettleClient;
+        this.ktrCompiler = ktrCompiler;
+        this.integrationProperties = integrationProperties;
+        this.openMetadataSyncService = openMetadataSyncService;
+        this.dsOrchestrationService = dsOrchestrationService;
     }
 
     public List<Map<String, Object>> eligibleTables() {
@@ -227,15 +247,26 @@ public class ProcessedShareGoldenPathService {
         task.setUpdatedAt(now);
         governanceTaskMapper.updateById(task);
 
+        boolean useKettle = integrationProperties.isEnabled();
         try {
-            long producedRows = executeCompiled(compiled);
+            long producedRows;
+            String engineNote;
+            if (useKettle) {
+                String transName = "FUSION_" + task.getId() + "_" + System.currentTimeMillis();
+                producedRows = executeCompiledViaKettle(operator, compiled, transName, run);
+                engineNote = "Carte(" + transName + ")";
+            } else {
+                producedRows = executeCompiled(compiled);
+                engineNote = "SQL";
+            }
             LocalDateTime ended = LocalDateTime.now();
             run.setStatus("SUCCESS");
             run.setEndedAt(ended);
             run.setSuccessNodes(4);
             run.setRowCount((int) Math.min(producedRows, Integer.MAX_VALUE));
             run.setLineCount((int) Math.min(producedRows, Integer.MAX_VALUE));
-            run.setMessage("INPUT " + compiled.sourceTable() + " -> OUTPUT " + compiled.targetTable()
+            run.setProducedRows(producedRows);
+            run.setMessage("[" + engineNote + "] INPUT " + compiled.sourceTable() + " -> OUTPUT " + compiled.targetTable()
                     + "，产出 " + producedRows + " 行");
             governanceRunMapper.updateById(run);
             task.setStatus("READY");
@@ -302,11 +333,19 @@ public class ProcessedShareGoldenPathService {
             String sourceEntry = shareSupport.sourceEntryCode(sample);
             ensureLineage(sourceEntry, producedEntry);
 
+            // 真实同步 OM：产出 DWS 表 upsert；并写 Source→DWS 表级血缘（含对账台账）
+            Map<String, Object> omResult = openMetadataSyncService.syncTable(producedEntry, producedTable,
+                    toColumnMaps(columns), false);
+            Map<String, Object> omLineage = openMetadataSyncService.writeLineage(sourceEntry, producedEntry,
+                    "加工融合 " + sample.table().getPhysicalTableName() + " -> " + producedTable);
+
             run.setStatus("SUCCESS");
             run.setEndedAt(LocalDateTime.now());
             run.setTableCount(1);
-            run.setSummary("产出元数据入账成功，表1，字段" + columns.size());
-            run.setLogText(run.getLogText() + "\nentryCode=" + producedEntry);
+            run.setSummary("产出元数据入账成功，表1，字段" + columns.size() + "，OM=" + omResult.get("syncStatus"));
+            run.setLogText(run.getLogText() + "\nentryCode=" + producedEntry
+                    + "\nomFqn=" + omResult.getOrDefault("fqn", "-")
+                    + "\nlineage=" + omLineage.get("syncStatus"));
             metaRunMapper.updateById(run);
             task.setStatus("READY");
             task.setLastRunAt(run.getEndedAt());
@@ -319,6 +358,9 @@ public class ProcessedShareGoldenPathService {
             out.put("physicalTableName", producedTable);
             out.put("columnCount", columns.size());
             out.put("lineageFrom", sourceEntry);
+            out.put("omSyncStatus", omResult.get("syncStatus"));
+            out.put("omFqn", omResult.get("fqn"));
+            out.put("lineageSyncStatus", omLineage.get("syncStatus"));
             out.put("searchable", findEntry(producedEntry) != null);
             out.put("status", "SUCCESS");
             return out;
@@ -595,16 +637,72 @@ public class ProcessedShareGoldenPathService {
     }
 
     private long executeCompiled(CompileResult compiled) {
+        String targetQ = DataLayerSupport.qualify(compiled.targetDatabase(), compiled.targetTable());
         try (Connection connection = platformDataSource.getConnection();
              Statement statement = connection.createStatement()) {
+            statement.executeUpdate("DROP TABLE IF EXISTS " + targetQ);
             statement.executeUpdate(compiled.ddlSql());
-            statement.executeUpdate("TRUNCATE TABLE `" + compiled.targetTable() + "`");
             statement.executeUpdate(compiled.insertSql());
-            try (ResultSet rs = statement.executeQuery("SELECT COUNT(*) FROM `" + compiled.targetTable() + "`")) {
+            try (ResultSet rs = statement.executeQuery("SELECT COUNT(*) FROM " + targetQ)) {
                 return rs.next() ? rs.getLong(1) : 0;
             }
         } catch (Exception ex) {
             throw new BusinessException(500, "融合入库执行失败: " + ex.getMessage());
+        }
+    }
+
+    /**
+     * 由 Carte 真实执行加工：平台侧先建 DWS 目标表 DDL，Carte 完成 ODS(源) -> DWS(目标) 的
+     * TableInput(白名单 SELECT) -> TableOutput(TRUNCATE 写入)。失败即抛出真实原因。
+     */
+    private long executeCompiledViaKettle(UserPrincipal operator, CompileResult compiled, String transName, GovGovernanceTaskRun run) {
+        String targetQ = DataLayerSupport.qualify(compiled.targetDatabase(), compiled.targetTable());
+        // 1) 平台侧建目标表结构（Carte 不负责建表）
+        try (Connection connection = platformDataSource.getConnection();
+             Statement statement = connection.createStatement()) {
+            statement.executeUpdate("DROP TABLE IF EXISTS " + targetQ);
+            statement.executeUpdate(compiled.ddlSql());
+        } catch (Exception ex) {
+            throw new BusinessException(500, "创建目标表失败: " + ex.getMessage());
+        }
+        if (!kettleClient.isHealthy()) {
+            throw new BusinessException(502, "Kettle Carte 不可用，无法以 KETTLE 引擎执行加工");
+        }
+        // 2) 源=ODS 分层库，目标=DWS 等分层库（Carte 可达地址）
+        KettleKtrCompiler.SourceConn src = new KettleKtrCompiler.SourceConn();
+        src.host = integrationProperties.getKettle().getTargetHost();
+        src.port = integrationProperties.getKettle().getTargetPort();
+        src.database = compiled.sourceDatabase();
+        src.username = integrationProperties.getKettle().getTargetUser();
+        src.password = integrationProperties.getKettle().getTargetPassword();
+        // selectSql 已含全限定 FROM，但 Table Input 连接在源库时可改用裸表名；保留编译结果
+        String selectSql = compiled.selectSql();
+        String ktr = ktrCompiler.compileCopy(transName, src, selectSql,
+                compiled.targetDatabase(), compiled.targetTable(), true);
+        run.setKettleTransName(transName);
+        governanceRunMapper.updateById(run);
+
+        Map<String, Object> add = kettleClient.addTrans(transName, ktr);
+        if (!"SUCCESS".equals(add.get("status"))) {
+            throw new BusinessException(502, "注册加工转换失败: " + add.get("message"));
+        }
+        // 通过 DS SHELL 启动并等待 Carte trans 完成
+        dsOrchestrationService.runKettleTrans(operator, transName, "FUSION_" + run.getTaskId());
+
+        Map<String, Object> st = kettleClient.getTransStatus(transName);
+        String status = String.valueOf(st.get("status"));
+
+        kettleClient.removeTrans(transName);
+        if (!"FINISHED".equals(status)) {
+            throw new BusinessException(502, "Carte 加工未成功，状态=" + status);
+        }
+        // 3) 回读真实产出行数
+        try (Connection connection = platformDataSource.getConnection();
+             Statement statement = connection.createStatement();
+             ResultSet rs = statement.executeQuery("SELECT COUNT(*) FROM " + targetQ)) {
+            return rs.next() ? rs.getLong(1) : 0;
+        } catch (Exception ex) {
+            throw new BusinessException(500, "回读产出行数失败: " + ex.getMessage());
         }
     }
 
@@ -749,6 +847,13 @@ public class ProcessedShareGoldenPathService {
         entry.setParentCode(parentCode);
         entry.setRunId(runId);
         entry.setPhysicalTableName(physicalTable);
+        if (physicalTable != null && !physicalTable.isBlank()) {
+            String layer = DataLayerSupport.layerForTableName(physicalTable);
+            String db = DataLayerSupport.databaseForLayer(layer);
+            entry.setDataLayer(layer);
+            entry.setDatabaseName(db);
+            entry.setSchemaName(db);
+        }
         entry.setDescription(description);
         entry.setTags("加工共享,主题库");
         entry.setKeywords(physicalTable);
@@ -998,6 +1103,17 @@ public class ProcessedShareGoldenPathService {
     private GovCatalogAuthorization findAuthorization(Long subscriptionId) {
         return authorizationMapper.selectOne(new LambdaQueryWrapper<GovCatalogAuthorization>()
                 .eq(GovCatalogAuthorization::getSubscriptionId, subscriptionId).last("LIMIT 1"));
+    }
+
+    private List<Map<String, Object>> toColumnMaps(List<ColumnDef> columns) {
+        List<Map<String, Object>> out = new ArrayList<>();
+        for (ColumnDef c : columns) {
+            Map<String, Object> m = new LinkedHashMap<>();
+            m.put("columnName", c.name());
+            m.put("dataType", c.typeName());
+            out.add(m);
+        }
+        return out;
     }
 
     private static String stringValue(Object value, String defaultValue) {

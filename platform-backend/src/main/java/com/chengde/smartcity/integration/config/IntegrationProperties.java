@@ -53,24 +53,59 @@ public class IntegrationProperties {
         private String url = "http://localhost:12345/dolphinscheduler";
         private String user = "admin";
         private String password = "dolphinscheduler123";
+        private String token = "";
+        private String tenantCode = "default";
         public String getUrl() { return url; }
         public void setUrl(String url) { this.url = url; }
         public String getUser() { return user; }
         public void setUser(String user) { this.user = user; }
         public String getPassword() { return password; }
         public void setPassword(String password) { this.password = password; }
+        public String getToken() { return token; }
+        public void setToken(String token) { this.token = token; }
+        public String getTenantCode() { return tenantCode; }
+        public void setTenantCode(String tenantCode) { this.tenantCode = tenantCode; }
     }
 
     public static class Kettle {
         private String url = "http://localhost:8081";
         private String user = "cluster";
         private String password = "cluster";
+        // Carte 视角下平台 ODS/DWS 目标库连接（容器内通过 host-gateway 访问宿主机 smart_city）
+        private String targetHost = "host.docker.internal";
+        private int targetPort = 3306;
+        private String targetDatabase = "smart_city_ods";
+        private String targetUser = "root";
+        private String targetPassword = "";
+
+        // Carte API 在容器网络中的可达地址（给 DS 的 SHELL 调用）
+        private String carteHost = "kettle-carte";
+        private int cartePort = 8080;
+
+        // 源库 host:port -> Carte 可达 host:port 的映射（如 localhost:3308 -> source-mysql:3306）
+        private java.util.Map<String, String> hostMap = new java.util.LinkedHashMap<>();
         public String getUrl() { return url; }
         public void setUrl(String url) { this.url = url; }
         public String getUser() { return user; }
         public void setUser(String user) { this.user = user; }
         public String getPassword() { return password; }
         public void setPassword(String password) { this.password = password; }
+        public String getTargetHost() { return targetHost; }
+        public void setTargetHost(String targetHost) { this.targetHost = targetHost; }
+        public int getTargetPort() { return targetPort; }
+        public void setTargetPort(int targetPort) { this.targetPort = targetPort; }
+        public String getTargetDatabase() { return targetDatabase; }
+        public void setTargetDatabase(String targetDatabase) { this.targetDatabase = targetDatabase; }
+        public String getTargetUser() { return targetUser; }
+        public void setTargetUser(String targetUser) { this.targetUser = targetUser; }
+        public String getTargetPassword() { return targetPassword; }
+        public void setTargetPassword(String targetPassword) { this.targetPassword = targetPassword; }
+        public String getCarteHost() { return carteHost; }
+        public void setCarteHost(String carteHost) { this.carteHost = carteHost; }
+        public int getCartePort() { return cartePort; }
+        public void setCartePort(int cartePort) { this.cartePort = cartePort; }
+        public java.util.Map<String, String> getHostMap() { return hostMap; }
+        public void setHostMap(java.util.Map<String, String> hostMap) { this.hostMap = hostMap; }
     }
 
     public static class Storage {

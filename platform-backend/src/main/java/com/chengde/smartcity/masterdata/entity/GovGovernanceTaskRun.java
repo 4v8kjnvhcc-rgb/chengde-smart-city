@@ -12,6 +12,9 @@ public class GovGovernanceTaskRun {
     private Long taskId;
     private String transName; // Kettle转换名称
     private String status;
+    private String kettleTransName;
+    private Long producedRows;
+    private Long dsInstanceId;
     private LocalDateTime startedAt;
     private LocalDateTime endedAt;
     private Integer totalNodes;
@@ -31,6 +34,12 @@ public class GovGovernanceTaskRun {
     public void setTransName(String transName) { this.transName = transName; }
     public String getStatus() { return status; }
     public void setStatus(String status) { this.status = status; }
+    public String getKettleTransName() { return kettleTransName; }
+    public void setKettleTransName(String kettleTransName) { this.kettleTransName = kettleTransName; }
+    public Long getProducedRows() { return producedRows; }
+    public void setProducedRows(Long producedRows) { this.producedRows = producedRows; }
+    public Long getDsInstanceId() { return dsInstanceId; }
+    public void setDsInstanceId(Long dsInstanceId) { this.dsInstanceId = dsInstanceId; }
     public LocalDateTime getStartedAt() { return startedAt; }
     public void setStartedAt(LocalDateTime startedAt) { this.startedAt = startedAt; }
     public LocalDateTime getEndedAt() { return endedAt; }

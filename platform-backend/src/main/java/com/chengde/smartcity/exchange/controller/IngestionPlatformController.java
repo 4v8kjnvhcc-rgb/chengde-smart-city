@@ -26,6 +26,7 @@ import com.chengde.smartcity.exchange.service.CollectUploadService;
 import com.chengde.smartcity.exchange.service.IngestAssetGovernService;
 import com.chengde.smartcity.exchange.service.IngestCatalogService;
 import com.chengde.smartcity.exchange.service.IngestionPlatformService;
+import com.chengde.smartcity.exchange.service.KettleCollectService;
 import com.chengde.smartcity.exchange.service.PipelineDesignService;
 import com.chengde.smartcity.exchange.service.RegisterService;
 import com.chengde.smartcity.security.UserPrincipal;
@@ -54,18 +55,21 @@ public class IngestionPlatformController {
     private final PipelineDesignService pipelineDesignService;
     private final IngestCatalogService catalogService;
     private final IngestAssetGovernService assetGovernService;
+    private final KettleCollectService kettleCollectService;
 
     public IngestionPlatformController(IngestionPlatformService service, RegisterService registerService,
                                        CollectUploadService collectUploadService,
                                        PipelineDesignService pipelineDesignService,
                                        IngestCatalogService catalogService,
-                                       IngestAssetGovernService assetGovernService) {
+                                       IngestAssetGovernService assetGovernService,
+                                       KettleCollectService kettleCollectService) {
         this.service = service;
         this.registerService = registerService;
         this.collectUploadService = collectUploadService;
         this.pipelineDesignService = pipelineDesignService;
         this.catalogService = catalogService;
         this.assetGovernService = assetGovernService;
+        this.kettleCollectService = kettleCollectService;
     }
 
     @GetMapping("/stats/base")
@@ -119,12 +123,29 @@ public class IngestionPlatformController {
     }
 
     @PostMapping("/data-sources/{id}/test")
+    @PreAuthorize("isAuthenticated()")
     public ApiResponse<Map<String, Object>> testDataSource(@AuthenticationPrincipal UserPrincipal principal,
                                                           @PathVariable Long id) {
         return ApiResponse.ok(service.testDataSource(principal, id));
     }
 
+    @PostMapping("/data-sources/{id}/probe")
+    @PreAuthorize("isAuthenticated()")
+    public ApiResponse<Map<String, Object>> probeDataSource(@AuthenticationPrincipal UserPrincipal principal,
+                                                            @PathVariable Long id) {
+        return ApiResponse.ok(service.probeDataSource(principal, id));
+    }
+
+    @PostMapping("/data-sources/{id}/register-tables")
+    @PreAuthorize("isAuthenticated()")
+    public ApiResponse<Map<String, Object>> registerTables(@AuthenticationPrincipal UserPrincipal principal,
+                                                           @PathVariable Long id,
+                                                           @RequestBody Map<String, Object> body) {
+        return ApiResponse.ok(service.registerTables(principal, id, body));
+    }
+
     @PutMapping("/data-sources/{id}")
+    @PreAuthorize("isAuthenticated()")
     public ApiResponse<Void> updateDataSource(@AuthenticationPrincipal UserPrincipal principal,
                                               @PathVariable Long id,
                                               @RequestBody Map<String, Object> body) {
@@ -264,6 +285,13 @@ public class IngestionPlatformController {
     public ApiResponse<Long> createTable(@AuthenticationPrincipal UserPrincipal principal,
                                          @RequestBody Map<String, Object> body) {
         return ApiResponse.ok(registerService.createTable(principal, body));
+    }
+
+    @PostMapping("/register/tables/{id}/collect")
+    @PreAuthorize("isAuthenticated()")
+    public ApiResponse<Map<String, Object>> collectTable(@AuthenticationPrincipal UserPrincipal principal,
+                                                         @PathVariable Long id) {
+        return ApiResponse.ok(kettleCollectService.collectTable(principal, id));
     }
 
     @GetMapping("/register/tables/{id}/columns")

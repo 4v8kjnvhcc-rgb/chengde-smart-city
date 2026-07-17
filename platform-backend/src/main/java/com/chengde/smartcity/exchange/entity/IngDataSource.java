@@ -16,6 +16,11 @@ public class IngDataSource {
     private String connStatus;
     private Integer tableCount;
     private String connConfigJson;
+    private String sourceSchema;
+    private LocalDateTime probeAt;
+    private String probeMessage;
+    private String omServiceName;
+    private String syncStatus;
     private LocalDateTime createdAt;
 
     public Long getId() { return id; }
@@ -34,6 +39,16 @@ public class IngDataSource {
     public void setTableCount(Integer tableCount) { this.tableCount = tableCount; }
     public String getConnConfigJson() { return connConfigJson; }
     public void setConnConfigJson(String connConfigJson) { this.connConfigJson = connConfigJson; }
+    public String getSourceSchema() { return sourceSchema; }
+    public void setSourceSchema(String sourceSchema) { this.sourceSchema = sourceSchema; }
+    public LocalDateTime getProbeAt() { return probeAt; }
+    public void setProbeAt(LocalDateTime probeAt) { this.probeAt = probeAt; }
+    public String getProbeMessage() { return probeMessage; }
+    public void setProbeMessage(String probeMessage) { this.probeMessage = probeMessage; }
+    public String getOmServiceName() { return omServiceName; }
+    public void setOmServiceName(String omServiceName) { this.omServiceName = omServiceName; }
+    public String getSyncStatus() { return syncStatus; }
+    public void setSyncStatus(String syncStatus) { this.syncStatus = syncStatus; }
     public LocalDateTime getCreatedAt() { return createdAt; }
     public void setCreatedAt(LocalDateTime createdAt) { this.createdAt = createdAt; }
 }
