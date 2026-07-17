@@ -1,0 +1,37 @@
+---
+description: 后端 Java 编译卫生：禁止缺 import、禁 Lombok、改完须能编译
+alwaysApply: true
+---
+
+# Java 编译卫生（禁止重复踩坑）
+
+本仓库 **无 Lombok**。改完 Java 后，声称可运行前须保证 `mvn compile` 能过。
+
+## 硬性检查（每次改 Service/Controller 必做）
+
+1. **用到的每个类型都必须有 import**  
+   - 字段类型、构造参数、方法返回值、局部变量 —— 缺一不可  
+   - 常见漏网：`XxxMapper`（只 import 了 Entity 忘了 Mapper）
+2. **禁止** `@Slf4j` / `@Data` / `@RequiredArgsConstructor` 等 Lombok  
+   - 日志用：`private static final Logger log = LoggerFactory.getLogger(Xxx.class);`
+3. **新增依赖注入**：同步改字段 + 构造函数赋值 + import，三处一起改完再收工
+4. **不要**只改半截：加了 `BizCollectTaskMapper collectTaskMapper` 却忘了  
+   `import com.chengde.smartcity.exchange.mapper.BizCollectTaskMapper;`
+
+## 已知复发错误（已修过多次，禁止再犯）
+
+```
+找不到符号: 类 BizCollectTaskMapper
+位置: SupplyDemandService
+```
+
+原因：使用了 `BizCollectTaskMapper` 但未 import。正确写法见同包  
+`AssessmentService` / `ExchangeDemoService`。
+
+## 自检口令
+
+改完 `platform-backend/**/*.java` 后至少确认：
+
+- [ ] 文件顶部 import 列表覆盖所有非 `java.lang` / 同包类型
+- [ ] 无 Lombok 注解
+- [ ] IDE/编译器无「找不到符号」再结束任务

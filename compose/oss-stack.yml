@@ -210,6 +210,8 @@ services:
     environment:
       PENTAHO_USER: cluster
       PENTAHO_PASSWORD: cluster
+    volumes:
+      - ./kettle-repository:/opt/pentaho/repository
     healthcheck:
       test: ["CMD-SHELL", "curl -sf http://localhost:8080 || exit 1"]
       interval: 20s

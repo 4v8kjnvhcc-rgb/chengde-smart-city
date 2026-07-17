@@ -1,0 +1,49 @@
+# 承德大数据归集平台 - Cursor 开发规则
+# ============================================
+
+## 项目基本信息
+- 项目路径: E:\myProject\承德
+- 后端: Spring Boot 3.2 + MyBatis-Plus + MySQL 8 + Flyway
+- 前端: Vue 3 + Element Plus + TypeScript + Vite
+- 包名: com.chengde.smartcity
+
+## 修改范围约束（最重要）
+1. **每次任务只能修改用户明确指定的文件**，不要修改未提及的文件
+2. **如果需要修改其他文件，必须先询问用户确认**
+3. **绝对不要修改以下文件**（除非用户明确要求）:
+   - `src/router/index.ts`（路由配置）
+   - `src/utils/menu.ts`（菜单工具）
+   - `src/layouts/MainLayout.vue`（主布局）
+   - `db/migration/V1~V19*.sql`（已有迁移脚本）
+   - `application.yml` / `application-dev.yml`
+4. **新增文件时，放在正确的目录下**:
+   - Entity: `platform-backend/src/main/java/com/chengde/smartcity/{module}/entity/`
+   - Mapper: `platform-backend/src/main/java/com/chengde/smartcity/{module}/mapper/`
+   - Service: `platform-backend/src/main/java/com/chengde/smartcity/{module}/service/`
+   - Controller: `platform-backend/src/main/java/com/chengde/smartcity/{module}/controller/`
+   - Vue页面: `platform-web/src/views/{module}/`
+   - Flyway: `platform-backend/src/main/resources/db/migration/`
+
+## 代码规范
+1. Java类必须加 `@Slf4j` 和 `@Service` / `@RestController` 注解
+2. 所有API接口必须加 `@PreAuthorize` 权限注解
+3. Entity类必须继承 BaseEntity（如果有的话），加 `@TableName` 注解
+4. Controller返回统一用 `Result<T>` 包装
+5. Vue组件必须用 `<script setup lang="ts">` 语法
+6. 前端API调用统一通过 `@/utils/request.ts` 发送
+7. 数据库迁移脚本必须以 `V{递增编号}__{描述}.sql` 命名
+
+## API契约约束
+1. Controller的返回结构必须与API契约文件一致
+2. 如果需要修改API返回结构，必须先告知用户更新契约文件
+3. 前端按契约文件定义的字段名调用API，不要自行猜测字段名
+
+## Git提交规范
+1. 每完成一个原子任务后，提示用户提交Git
+2. 提交信息格式: `[模块名] 任务描述`
+3. 不要自动执行git commit，让用户确认后再提交
+
+## 错误处理
+1. 如果遇到编译错误，先尝试修复编译错误，不要跳过
+2. 如果需要添加新依赖，必须告知用户并等待确认
+3. 如果发现现有代码有bug，记录下来告知用户，不要擅自修复

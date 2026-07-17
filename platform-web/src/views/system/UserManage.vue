@@ -157,6 +157,7 @@ async function disableUser(row: UserRow) {
 function statusLabel(s: number) {
   return s === 1 ? '启用' : '禁用'
 }
+void statusLabel
 
 onMounted(load)
 </script>
@@ -177,11 +178,9 @@ onMounted(load)
         <el-table-column prop="username" label="用户名" min-width="120" />
         <el-table-column prop="displayName" label="姓名" min-width="120" />
         <el-table-column prop="orgId" label="机构ID" width="100" />
-        <el-table-column prop="status" label="状态" width="100">
+        <el-table-column label="状态" width="100">
           <template #default="{ row }">
-            <el-tag :type="row.status === 1 ? 'success' : 'info'" size="small">
-              {{ statusLabel(row.status) }}
-            </el-tag>
+            <el-tag :type="row.status === 1 ? 'success' : 'info'" size="small">{{ $statusLabel(row.status) }}</el-tag>
           </template>
         </el-table-column>
         <el-table-column label="操作" width="180" fixed="right">

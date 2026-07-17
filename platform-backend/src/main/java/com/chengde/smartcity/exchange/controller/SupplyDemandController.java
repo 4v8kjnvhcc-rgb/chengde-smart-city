@@ -11,6 +11,7 @@ import com.chengde.smartcity.exchange.service.SupplyDemandService;
 import com.chengde.smartcity.security.UserPrincipal;
 import java.util.List;
 import java.util.Map;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -31,8 +32,33 @@ public class SupplyDemandController {
     }
 
     @GetMapping("/templates")
-    public ApiResponse<List<BizDemandTemplate>> templates() {
-        return ApiResponse.ok(service.listTemplates());
+    public ApiResponse<List<BizDemandTemplate>> templates(@RequestParam(required = false, defaultValue = "active") String scope) {
+        if ("all".equalsIgnoreCase(scope)) {
+            return ApiResponse.ok(service.listTemplates());
+        }
+        return ApiResponse.ok(service.listActiveTemplates());
+    }
+
+    @PostMapping("/templates")
+    @PreAuthorize("hasAuthority('system:exchange:supply-config')")
+    public ApiResponse<Long> createTemplate(@AuthenticationPrincipal UserPrincipal principal,
+                                            @RequestBody Map<String, Object> body) {
+        return ApiResponse.ok(service.createTemplate(principal, body));
+    }
+
+    @PostMapping("/templates/{id}")
+    @PreAuthorize("hasAuthority('system:exchange:supply-config')")
+    public ApiResponse<Void> updateTemplate(@AuthenticationPrincipal UserPrincipal principal,
+                                            @PathVariable Long id,
+                                            @RequestBody Map<String, Object> body) {
+        service.updateTemplate(principal, id, body);
+        return ApiResponse.ok(null);
+    }
+
+    @GetMapping("/duties")
+    public ApiResponse<List<com.chengde.smartcity.exchange.entity.BizDataDuty>> duties(
+            @RequestParam(required = false) Long demandId) {
+        return ApiResponse.ok(service.listDuties(demandId));
     }
 
     @GetMapping("/demands")
@@ -75,11 +101,72 @@ public class SupplyDemandController {
         return ApiResponse.ok(null);
     }
 
+    @PostMapping("/demands/{id}/supervise")
+    public ApiResponse<Void> supervise(@AuthenticationPrincipal UserPrincipal principal,
+                                       @PathVariable Long id,
+                                       @RequestBody Map<String, Object> body) {
+        service.superviseDemand(principal, id, body);
+        return ApiResponse.ok(null);
+    }
+
+    @PostMapping("/demands/{id}/analysis-settings")
+    public ApiResponse<Map<String, Object>> analysisSettings(@AuthenticationPrincipal UserPrincipal principal,
+                                                             @PathVariable Long id,
+                                                             @RequestBody Map<String, Object> body) {
+        return ApiResponse.ok(service.applyAnalysisSettings(principal, id, body));
+    }
+
+    @GetMapping("/resource-search")
+    public ApiResponse<Map<String, Object>> resourceSearch(@RequestParam(required = false) String keyword,
+                                                           @RequestParam(required = false) String resourceType) {
+        return ApiResponse.ok(service.searchResources(keyword, resourceType));
+    }
+
     @PostMapping("/demands/{id}/confirm")
     public ApiResponse<Map<String, Object>> confirm(@AuthenticationPrincipal UserPrincipal principal,
                                                     @PathVariable Long id,
                                                     @RequestBody Map<String, Object> body) {
         return ApiResponse.ok(service.confirmDemand(principal, id, body));
+    }
+
+    @PostMapping("/demands/{id}/confirm-return")
+    public ApiResponse<Void> confirmReturn(@AuthenticationPrincipal UserPrincipal principal,
+                                           @PathVariable Long id,
+                                           @RequestBody Map<String, Object> body) {
+        service.confirmReturnDemand(principal, id, body);
+        return ApiResponse.ok(null);
+    }
+
+    @PostMapping("/demands/{id}/confirm-feedback")
+    public ApiResponse<Void> confirmFeedback(@AuthenticationPrincipal UserPrincipal principal,
+                                             @PathVariable Long id,
+                                             @RequestBody Map<String, Object> body) {
+        service.confirmFeedback(principal, id, body);
+        return ApiResponse.ok(null);
+    }
+
+    @PostMapping("/demands/{id}/complete")
+    public ApiResponse<Void> complete(@AuthenticationPrincipal UserPrincipal principal,
+                                      @PathVariable Long id,
+                                      @RequestBody(required = false) Map<String, Object> body) {
+        service.completeDemand(principal, id, body == null ? Map.of() : body);
+        return ApiResponse.ok(null);
+    }
+
+    @PostMapping("/demands/{id}/cancel")
+    public ApiResponse<Void> cancel(@AuthenticationPrincipal UserPrincipal principal,
+                                    @PathVariable Long id,
+                                    @RequestBody(required = false) Map<String, Object> body) {
+        service.cancelDemand(principal, id, body == null ? Map.of() : body);
+        return ApiResponse.ok(null);
+    }
+
+    @PostMapping("/demands/{id}/update")
+    public ApiResponse<Void> update(@AuthenticationPrincipal UserPrincipal principal,
+                                    @PathVariable Long id,
+                                    @RequestBody Map<String, Object> body) {
+        service.updateDemand(principal, id, body);
+        return ApiResponse.ok(null);
     }
 
     @PostMapping("/demands/{id}/reject")
@@ -100,8 +187,17 @@ public class SupplyDemandController {
         return ApiResponse.ok(service.supplyView(demandId));
     }
 
+    @GetMapping("/list-center")
+    public ApiResponse<Map<String, Object>> listCenter(@RequestParam(required = false, defaultValue = "dept-catalog") String listType) {
+        return ApiResponse.ok(service.listCenter(listType));
+    }
+
     @GetMapping("/catalog-manifest")
-    public ApiResponse<List<BizCatalogItem>> catalogManifest() {
+    public ApiResponse<List<BizCatalogItem>> catalogManifest(
+            @RequestParam(required = false, defaultValue = "all") String scope) {
+        if ("published".equalsIgnoreCase(scope)) {
+            return ApiResponse.ok(service.publishedCatalogs());
+        }
         return ApiResponse.ok(service.catalogManifest());
     }
 

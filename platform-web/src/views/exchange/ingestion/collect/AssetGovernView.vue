@@ -83,14 +83,18 @@ onMounted(reload)
         <el-table-column prop="jobCode" label="作业" />
         <el-table-column prop="scheduleCron" label="周期" width="120" />
         <el-table-column prop="backupPath" label="路径" min-width="180" />
-        <el-table-column prop="status" label="状态" width="90" />
+        <el-table-column label="状态" width="90">
+          <template #default="{ row }">{{ $statusLabel(row.status) }}</template>
+        </el-table-column>
       </el-table>
 
       <el-table v-if="module === 'm074'" :data="archiveJobs" stripe>
         <el-table-column prop="jobCode" label="作业" />
         <el-table-column prop="archivePath" label="归档路径" min-width="180" />
         <el-table-column prop="retentionDays" label="保留天" width="90" />
-        <el-table-column prop="status" label="状态" width="90" />
+        <el-table-column label="状态" width="90">
+          <template #default="{ row }">{{ $statusLabel(row.status) }}</template>
+        </el-table-column>
       </el-table>
 
       <template v-if="module === 'm076'">

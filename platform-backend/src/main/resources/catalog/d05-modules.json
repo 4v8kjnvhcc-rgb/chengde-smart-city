@@ -617,7 +617,7 @@
       "implType": "纯自研",
       "description": "数据来源",
       "implStatus": "poc",
-      "implRoute": "/exchange/assessment",
+      "implRoute": "/exchange/application?system=assessment&module=data-source",
       "externalUrl": null
     },
     {
@@ -632,7 +632,7 @@
       "implType": "纯自研",
       "description": "评价周期",
       "implStatus": "poc",
-      "implRoute": "/exchange/assessment",
+      "implRoute": "/exchange/application?system=assessment&module=period",
       "externalUrl": null
     },
     {
@@ -647,7 +647,7 @@
       "implType": "纯自研",
       "description": "指标体系",
       "implStatus": "poc",
-      "implRoute": "/exchange/assessment",
+      "implRoute": "/exchange/application?system=assessment&module=indicator",
       "externalUrl": null
     },
     {
@@ -662,7 +662,7 @@
       "implType": "纯自研",
       "description": "评价执行",
       "implStatus": "poc",
-      "implRoute": "/exchange/assessment",
+      "implRoute": "/exchange/application?system=assessment&module=execution",
       "externalUrl": null
     },
     {
@@ -767,7 +767,7 @@
       "implType": "纯自研",
       "description": "基础库分析",
       "implStatus": "poc",
-      "implRoute": "/exchange/portal?tab=situation",
+      "implRoute": "/exchange/application?system=base-stats",
       "externalUrl": null
     },
     {
@@ -782,7 +782,7 @@
       "implType": "纯自研",
       "description": "重点领域",
       "implStatus": "poc",
-      "implRoute": "/exchange/portal?tab=situation",
+      "implRoute": "/exchange/application?system=domain-stats",
       "externalUrl": null
     },
     {

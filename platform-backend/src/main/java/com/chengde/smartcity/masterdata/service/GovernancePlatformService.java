@@ -9,11 +9,13 @@ import com.chengde.smartcity.masterdata.entity.GovCatalogResource;
 import com.chengde.smartcity.masterdata.entity.GovFusionAsset;
 import com.chengde.smartcity.masterdata.entity.GovMetadataRegistry;
 import com.chengde.smartcity.masterdata.entity.GovQualityReport;
+import com.chengde.smartcity.masterdata.entity.GovQualityTaskRun;
 import com.chengde.smartcity.masterdata.entity.GovStandardItem;
 import com.chengde.smartcity.masterdata.mapper.GovCatalogResourceMapper;
 import com.chengde.smartcity.masterdata.mapper.GovFusionAssetMapper;
 import com.chengde.smartcity.masterdata.mapper.GovMetadataRegistryMapper;
 import com.chengde.smartcity.masterdata.mapper.GovQualityReportMapper;
+import com.chengde.smartcity.masterdata.mapper.GovQualityTaskRunMapper;
 import com.chengde.smartcity.masterdata.mapper.GovStandardItemMapper;
 import com.chengde.smartcity.security.UserPrincipal;
 import java.math.BigDecimal;
@@ -36,6 +38,7 @@ public class GovernancePlatformService {
     private final GovFusionAssetMapper fusionMapper;
     private final GovCatalogResourceMapper catalogMapper;
     private final GovQualityReportMapper reportMapper;
+    private final GovQualityTaskRunMapper taskRunMapper;
     private final AuditService auditService;
     private final IntegrationProperties integrationProperties;
     private final OpenMetadataClient openMetadataClient;
@@ -43,6 +46,7 @@ public class GovernancePlatformService {
     public GovernancePlatformService(MasterDataDemoService demoService, GovStandardItemMapper standardMapper,
                                      GovMetadataRegistryMapper metadataMapper, GovFusionAssetMapper fusionMapper,
                                      GovCatalogResourceMapper catalogMapper, GovQualityReportMapper reportMapper,
+                                     GovQualityTaskRunMapper taskRunMapper,
                                      AuditService auditService, IntegrationProperties integrationProperties,
                                      OpenMetadataClient openMetadataClient) {
         this.demoService = demoService;
@@ -51,6 +55,7 @@ public class GovernancePlatformService {
         this.fusionMapper = fusionMapper;
         this.catalogMapper = catalogMapper;
         this.reportMapper = reportMapper;
+        this.taskRunMapper = taskRunMapper;
         this.auditService = auditService;
         this.integrationProperties = integrationProperties;
         this.openMetadataClient = openMetadataClient;
@@ -92,8 +97,27 @@ public class GovernancePlatformService {
         r.setReportCode("RPT_" + System.currentTimeMillis());
         r.setReportName(str(body.get("reportName"), "质量分析报告"));
         r.setDimension(str(body.get("dimension"), "六性指标"));
-        r.setScore(BigDecimal.valueOf(75 + Math.random() * 25).setScale(2, RoundingMode.HALF_UP));
-        r.setExportPayload("dimension=" + r.getDimension() + ",score=" + r.getScore());
+
+        List<GovQualityTaskRun> scoredRuns = taskRunMapper.selectList(new LambdaQueryWrapper<GovQualityTaskRun>()
+                .isNotNull(GovQualityTaskRun::getScore)
+                .orderByDesc(GovQualityTaskRun::getId)
+                .last("LIMIT 20"));
+        BigDecimal score;
+        int runCount = 0;
+        if (scoredRuns == null || scoredRuns.isEmpty()) {
+            // 无运行记录时退回合理默认分（非随机）
+            score = BigDecimal.valueOf(80.00).setScale(2, RoundingMode.HALF_UP);
+        } else {
+            BigDecimal sum = BigDecimal.ZERO;
+            for (GovQualityTaskRun run : scoredRuns) {
+                sum = sum.add(run.getScore());
+                runCount++;
+            }
+            score = sum.divide(BigDecimal.valueOf(runCount), 2, RoundingMode.HALF_UP);
+        }
+        r.setScore(score);
+        r.setExportPayload("dimension=" + r.getDimension() + ",score=" + r.getScore()
+                + ",sourceRuns=" + runCount + (runCount == 0 ? ",fallback=DEFAULT_80" : ",fallback=NONE"));
         reportMapper.insert(r);
         auditService.log(operator.getUserId(), operator.getUsername(), operator.getOrgId(),
                 "QUALITY_REPORT", "gov_quality_report", String.valueOf(r.getId()), r.getReportName());

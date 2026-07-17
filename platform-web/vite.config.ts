@@ -10,9 +10,11 @@ export default defineConfig({
     },
   },
   server: {
-    // Windows Hyper-V 常占用 5141–5240，勿用 5173
+    // 固定 3000。若 EACCES：管理员执行 net stop winnat 后
+    // netsh int ipv4 add excludedportrange protocol=tcp startport=3000 numberofports=1 store=persistent
+    // 再 net start winnat（避免 Hyper-V 动态预留吞掉 3000）
     port: 3000,
-    strictPort: false,
+    strictPort: true,
     proxy: {
       '/api': {
         target: 'http://localhost:8080',

@@ -11,6 +11,7 @@ import sys
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 CATALOG = os.path.join(ROOT, "catalog")
 NAV_TS = os.path.join(ROOT, "platform-web", "src", "views", "exchange", "ingestion", "ingestion-nav.ts")
+APP_NAV_TS = os.path.join(ROOT, "platform-web", "src", "views", "exchange", "application", "application-nav.ts")
 D05_MODULES = os.path.join(
     ROOT, "platform-backend", "src", "main", "resources", "catalog", "d05-modules.json"
 )
@@ -33,6 +34,26 @@ COLLECT_NAV_LABELS = {
     "pipeline": "规范设计",
     "catalog": "指标与目录体系构建",
 }
+
+APPLICATION_NAV_LABELS = {
+    "supply-flow": "供需对接",
+    "manifest-hub": "清单中心",
+    "data-source": "评价数据来源",
+    "period": "评价周期管理",
+    "indicator": "评价指标管理",
+    "execution": "评价执行与结果",
+}
+
+APPLICATION_SYSTEM_LABELS = {
+    "supply": "数据供需对接",
+    "assessment": "考核评估系统",
+    "base-stats": "基础库统计分析",
+    "domain-stats": "重点领域统计分析",
+}
+
+D05_APPLICATION_IMPL = {f"M{n:03d}": "纯自研" for n in range(20, 31)}
+D05_APPLICATION_IMPL["M037"] = "纯自研"
+D05_APPLICATION_IMPL["M038"] = "纯自研"
 
 
 def load_json(path: str) -> dict:
@@ -107,13 +128,68 @@ def validate_collect(errors: list[str]) -> None:
                 )
 
 
+def validate_application(errors: list[str]) -> None:
+    mapping_path = os.path.join(CATALOG, "v3-to-m215.application.json")
+    if not os.path.isfile(mapping_path):
+        errors.append(f"missing {mapping_path}")
+        return
+
+    mapping = load_json(mapping_path)
+    modules = mapping.get("modules", [])
+    m_codes = {m["mCode"] for m in modules}
+    expected = {f"M{n:03d}" for n in list(range(20, 31)) + [37, 38]}
+    if m_codes != expected:
+        missing = expected - m_codes
+        extra = m_codes - expected
+        if missing:
+            errors.append(f"application mapping missing: {sorted(missing)}")
+        if extra:
+            errors.append(f"application mapping extra: {sorted(extra)}")
+
+    for m in modules:
+        code = m["mCode"]
+        impl = m.get("implMode", "")
+        if impl != D05_APPLICATION_IMPL.get(code):
+            errors.append(f"{code} implMode {impl!r} != D05 {D05_APPLICATION_IMPL.get(code)!r}")
+
+    if os.path.isfile(APP_NAV_TS):
+        nav_text = open(APP_NAV_TS, encoding="utf-8").read()
+        for key, label in APPLICATION_NAV_LABELS.items():
+            pat = rf"key:\s*'{key}'[^}}]*label:\s*'([^']+)'"
+            hit = re.search(pat, nav_text)
+            if not hit:
+                errors.append(f"application-nav missing key={key}")
+            elif hit.group(1) != label:
+                errors.append(f"application-nav {key} label {hit.group(1)!r} != {label!r}")
+        for key, label in APPLICATION_SYSTEM_LABELS.items():
+            pat = rf"key:\s*'{key}'[^}}]*label:\s*'([^']+)'"
+            hit = re.search(pat, nav_text)
+            if not hit:
+                errors.append(f"application-nav missing system key={key}")
+            elif hit.group(1) != label:
+                errors.append(f"application-nav system {key} label {hit.group(1)!r} != {label!r}")
+
+    if os.path.isfile(D05_MODULES):
+        d05 = load_json(D05_MODULES)
+        by_code = {m["mCode"]: m for m in d05.get("modules", []) if "mCode" in m}
+        for mod in modules:
+            code = mod["mCode"]
+            if code not in by_code:
+                errors.append(f"d05-modules.json missing {code}")
+                continue
+            if by_code[code].get("moduleName") != mod.get("moduleName"):
+                errors.append(f"{code} moduleName mismatch mapping vs d05-modules")
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--scope", default="collect", choices=["collect"])
+    parser.add_argument("--scope", default="collect", choices=["collect", "application"])
     args = parser.parse_args()
     errors: list[str] = []
     if args.scope == "collect":
         validate_collect(errors)
+    elif args.scope == "application":
+        validate_application(errors)
     if errors:
         for e in errors:
             print(f"[FAIL] {e}", file=sys.stderr)

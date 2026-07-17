@@ -1,0 +1,35 @@
+---
+description: 用户可见状态须显示中文，禁止直接展示 ACTIVE/PENDING 等英文码
+globs: platform-web/src/**/*.{vue,ts}
+alwaysApply: true
+---
+
+# 状态展示中文化
+
+面向用户的表格、标签、详情、筛选结果中，**禁止直接展示**后端状态英文码（如 `ACTIVE`、`PENDING`、`SUCCESS`）。
+
+## 必须遵守
+
+1. 展示统一调用 [`platform-web/src/utils/status-label.ts`](platform-web/src/utils/status-label.ts) 的 `statusLabel()`（或模板全局 `$statusLabel`）。
+2. API / 表单提交 / 条件判断仍使用英文状态码（`ACTIVE`、`PENDING` 等），只做展示层转换。
+3. 表格禁止裸写 `<el-table-column prop="status" />`；应使用：
+
+```vue
+<el-table-column label="状态" width="100">
+  <template #default="{ row }">{{ statusLabel(row.status) }}</template>
+</el-table-column>
+```
+
+或配合标签：
+
+```vue
+<el-tag :type="statusTagType(row.status)">{{ statusLabel(row.status) }}</el-tag>
+```
+
+4. 新增状态码时，同步在 `STATUS_ZH` 中补中文，并视情况更新 `statusTagType`。
+5. 其它类枚举码（共享方式、类型等）同理：展示中文、传输英文。
+
+## 禁止
+
+- `{{ row.status }}` 直接输出英文码给业务用户
+- 在按钮文案、空状态、提示框中写裸英文状态

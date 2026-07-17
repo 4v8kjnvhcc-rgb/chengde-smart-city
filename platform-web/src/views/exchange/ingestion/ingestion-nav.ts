@@ -48,9 +48,6 @@ export const DEFAULT_MODULE: Record<IngestionSystem, string> = {
 }
 
 export const LEGACY_TAB_MAP: Record<string, { system: IngestionSystem; module: string }> = {
-  stats: { system: 'register', module: 'm039' },
-  'stats-base': { system: 'register', module: 'm039' },
-  'stats-domain': { system: 'register', module: 'm039' },
   m037: { system: 'register', module: 'm039' },
   m038: { system: 'register', module: 'm039' },
   register: { system: 'register', module: 'm039' },

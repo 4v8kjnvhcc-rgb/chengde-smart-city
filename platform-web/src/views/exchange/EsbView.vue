@@ -39,7 +39,9 @@ onMounted(load)
       <el-table class="portal-table" :data="flows" stripe>
         <el-table-column prop="flowCode" label="Flow 编码" min-width="140" />
         <el-table-column prop="flowName" label="名称" min-width="180" />
-        <el-table-column prop="status" label="状态" width="120" />
+        <el-table-column label="状态" width="120">
+          <template #default="{ row }">{{ $statusLabel(row.status) }}</template>
+        </el-table-column>
         <el-table-column prop="lastResult" label="最近结果" min-width="240" />
         <el-table-column label="操作" width="120">
           <template #default="{ row }">

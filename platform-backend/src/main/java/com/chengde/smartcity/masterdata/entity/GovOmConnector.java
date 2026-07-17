@@ -12,6 +12,10 @@ public class GovOmConnector {
     private String connectorCode;
     private String connectorName;
     private String sourceType;
+    private String jdbcUrl;
+    private String jdbcUser;
+    private String jdbcPassword;
+    private String jdbcDatabase;
     private String status;
     private LocalDateTime lastSyncAt;
     private String lastMessage;
@@ -27,6 +31,14 @@ public class GovOmConnector {
     public void setConnectorName(String connectorName) { this.connectorName = connectorName; }
     public String getSourceType() { return sourceType; }
     public void setSourceType(String sourceType) { this.sourceType = sourceType; }
+    public String getJdbcUrl() { return jdbcUrl; }
+    public void setJdbcUrl(String jdbcUrl) { this.jdbcUrl = jdbcUrl; }
+    public String getJdbcUser() { return jdbcUser; }
+    public void setJdbcUser(String jdbcUser) { this.jdbcUser = jdbcUser; }
+    public String getJdbcPassword() { return jdbcPassword; }
+    public void setJdbcPassword(String jdbcPassword) { this.jdbcPassword = jdbcPassword; }
+    public String getJdbcDatabase() { return jdbcDatabase; }
+    public void setJdbcDatabase(String jdbcDatabase) { this.jdbcDatabase = jdbcDatabase; }
     public String getStatus() { return status; }
     public void setStatus(String status) { this.status = status; }
     public LocalDateTime getLastSyncAt() { return lastSyncAt; }

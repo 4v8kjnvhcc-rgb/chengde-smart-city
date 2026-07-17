@@ -20,7 +20,17 @@ export const PLATFORM_LABELS: Record<string, string> = {
 }
 
 export function visibleMenuChildren(node: MenuNode): MenuNode[] {
-  return (node.children || []).filter((c) => c.menuType !== 3)
+  return (node.children || []).filter((c) => c.menuType !== 3 && !isD05MenuExcluded(c))
+}
+
+/** D05 功能清单/模块导航不属交付界面，菜单侧一律隐藏 */
+function isD05MenuExcluded(c: MenuNode): boolean {
+  const name = c.menuName || ''
+  if (name === 'D05功能清单' || name.includes('D05')) return true
+  if (c.integrationType === 'catalog') return true
+  const p = c.path || ''
+  if (p === '/catalog' || p.startsWith('/catalog/') || p.startsWith('/modules/')) return true
+  return false
 }
 
 /** 菜单树根下的一级子节点（通常为「统一门户」下的工作台与各平台） */
@@ -94,32 +104,6 @@ export function isSystemRoute(path: string): boolean {
   )
 }
 
-function findMenuTrail(menus: MenuNode[], targetPath: string, trail: MenuNode[] = []): MenuNode[] | null {
-  for (const n of menus) {
-    const next = [...trail, n]
-    if (n.path === targetPath) return next
-    if (n.children?.length) {
-      const hit = findMenuTrail(n.children, targetPath, next)
-      if (hit) return hit
-    }
-  }
-  return null
-}
-
-function findD05Root(trail: MenuNode[]): MenuNode | undefined {
-  return trail.find((n) => n.menuName === 'D05功能清单')
-}
-
-function platformFromModuleCode(mCode: string): string | null {
-  const n = parseInt(mCode.replace(/^M/i, ''), 10)
-  if (Number.isNaN(n)) return null
-  if (n >= 1 && n <= 77) return '/exchange'
-  if (n >= 78 && n <= 138) return '/master-data'
-  if (n >= 139 && n <= 209) return '/analytics'
-  if (n >= 210 && n <= 215) return '/system'
-  return null
-}
-
 /**
  * 非系统管理路由：匹配所属子系统（平台下直接子节点，如「大数据归集」「数据融合治理」）
  */
@@ -144,35 +128,11 @@ export interface SidebarContext {
   menus: MenuNode[]
 }
 
-/** 侧栏上下文：系统管理用平台菜单；Hub 内嵌页不显示外层侧栏；D05 清单页保留 D05 树 */
+/** 侧栏上下文：系统管理用平台菜单；Hub 内嵌页不显示外层侧栏 */
 export function resolveSidebarContext(menus: MenuNode[], path: string, meta?: { hubLayout?: boolean }): SidebarContext | null {
   if (path === '/dashboard' || path === '/') return null
-  if (path === '/catalog') return null
+  if (path === '/catalog' || path.startsWith('/catalog/') || path.startsWith('/modules/')) return null
   if (isHubLayoutRoute(path, meta)) return null
-
-  const roots = getMenuRoots(menus)
-
-  if (path.startsWith('/modules/') || path.startsWith('/catalog/')) {
-    let platformPath = matchPlatformPath(path)
-    if (!platformPath && path.startsWith('/modules/')) {
-      const mCode = path.replace('/modules/', '').toUpperCase()
-      platformPath = platformFromModuleCode(mCode)
-    }
-    if (platformPath) {
-      const trail = findMenuTrail(roots, path)
-      const d05 = trail ? findD05Root(trail) : undefined
-      if (d05?.children?.length) {
-        return { title: d05.menuName, menus: visibleMenuChildren(d05) }
-      }
-      const platform = findPlatformNode(menus, platformPath)
-      if (platform) {
-        const d05Child = visibleMenuChildren(platform).find((c) => c.menuName === 'D05功能清单')
-        if (d05Child?.children?.length) {
-          return { title: d05Child.menuName, menus: visibleMenuChildren(d05Child) }
-        }
-      }
-    }
-  }
 
   if (isSystemRoute(path)) {
     const platform = findPlatformNode(menus, '/system')

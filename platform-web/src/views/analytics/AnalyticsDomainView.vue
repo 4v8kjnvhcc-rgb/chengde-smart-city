@@ -104,7 +104,9 @@ onMounted(() => {
         <el-table-column prop="dashCode" label="编码" width="140" />
         <el-table-column prop="dashName" label="名称" min-width="180" />
         <el-table-column prop="deDashboardId" label="DE Dashboard" min-width="160" />
-        <el-table-column prop="status" label="状态" width="100" />
+        <el-table-column label="状态" width="100">
+          <template #default="{ row }">{{ $statusLabel(row.status) }}</template>
+        </el-table-column>
         <el-table-column label="操作" width="160">
           <template #default="{ row }">
             <el-button link type="primary" @click="issueEmbed('dashboard', row.deDashboardId)">

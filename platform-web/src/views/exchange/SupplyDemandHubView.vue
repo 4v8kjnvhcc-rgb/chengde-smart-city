@@ -130,6 +130,7 @@ const statusTag = (s: string) => {
   if (['DISPATCHED', 'ANALYZING'].includes(s)) return 'warning'
   return 'info'
 }
+void statusTag
 
 async function loadDemands() {
   const res = await api.get('/exchange/supply/demands')
@@ -335,7 +336,7 @@ onMounted(() => { resolveTab(); loadTabData() })
             <el-table-column prop="demandType" label="类型" width="100" />
             <el-table-column prop="stage" label="阶段" width="90" />
             <el-table-column label="状态" width="110">
-              <template #default="{ row }"><el-tag :type="statusTag(row.status)">{{ row.status }}</el-tag></template>
+              <template #default="{ row }"><el-tag :type="$statusTagType(row.status)">{{ $statusLabel(row.status) }}</el-tag></template>
             </el-table-column>
             <el-table-column label="操作" width="100">
               <template #default="{ row }">
@@ -372,7 +373,9 @@ onMounted(() => { resolveTab(); loadTabData() })
           <el-table :data="demands.filter(d => ['ANALYZING','DISPATCHED','SUBMITTED'].includes(d.status))" stripe>
             <el-table-column prop="demandTitle" label="需求" min-width="160" />
             <el-table-column prop="matchedCatalogId" label="匹配目录" width="100" />
-            <el-table-column prop="status" label="状态" width="110" />
+            <el-table-column label="状态" width="110">
+          <template #default="{ row }">{{ $statusLabel(row.status) }}</template>
+        </el-table-column>
             <el-table-column label="操作" width="160">
               <template #default="{ row }">
                 <el-button link type="success" @click="confirmDemand(row.id)">确认</el-button>
@@ -391,7 +394,9 @@ onMounted(() => { resolveTab(); loadTabData() })
           <el-table v-if="supplyTasks.length" :data="supplyTasks" stripe>
             <el-table-column prop="taskType" label="类型" width="100" />
             <el-table-column prop="taskName" label="任务" min-width="200" />
-            <el-table-column prop="status" label="状态" width="100" />
+            <el-table-column label="状态" width="100">
+          <template #default="{ row }">{{ $statusLabel(row.status) }}</template>
+        </el-table-column>
             <el-table-column prop="refFlowCode" label="交换流" width="140" />
           </el-table>
           <el-empty v-else description="请选择已确认需求查看供给" />
@@ -446,7 +451,9 @@ onMounted(() => { resolveTab(); loadTabData() })
             <el-table-column prop="catalogId" label="目录ID" width="90" />
             <el-table-column prop="objectionType" label="类型" width="100" />
             <el-table-column prop="content" label="内容" min-width="200" />
-            <el-table-column prop="status" label="状态" width="100" />
+            <el-table-column label="状态" width="100">
+          <template #default="{ row }">{{ $statusLabel(row.status) }}</template>
+        </el-table-column>
             <el-table-column label="操作" width="100">
               <template #default="{ row }">
                 <el-button v-if="row.status !== 'CLOSED'" link @click="closeObjection(row.id)">关闭</el-button>
@@ -465,7 +472,9 @@ onMounted(() => { resolveTab(); loadTabData() })
             <el-table-column prop="cascadeFlag" label="级联" width="70">
               <template #default="{ row }">{{ row.cascadeFlag ? '是' : '否' }}</template>
             </el-table-column>
-            <el-table-column prop="status" label="状态" width="90" />
+            <el-table-column label="状态" width="90">
+          <template #default="{ row }">{{ $statusLabel(row.status) }}</template>
+        </el-table-column>
             <el-table-column label="操作" width="100">
               <template #default="{ row }">
                 <el-button link type="primary" @click="exportManifest(row.id)">导出</el-button>

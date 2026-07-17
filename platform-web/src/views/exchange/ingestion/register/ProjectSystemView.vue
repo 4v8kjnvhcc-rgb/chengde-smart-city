@@ -125,7 +125,9 @@ onMounted(async () => {
         <el-table-column prop="projectName" label="项目" min-width="140" />
         <el-table-column prop="systemName" label="系统" width="120" />
         <el-table-column prop="boundOrgId" label="机构ID" width="90" />
-        <el-table-column prop="status" label="状态" width="90" />
+        <el-table-column label="状态" width="90">
+          <template #default="{ row }">{{ $statusLabel(row.status) }}</template>
+        </el-table-column>
         <el-table-column v-if="canDeleteProject" label="操作" width="80">
           <template #default="{ row }">
             <el-button link type="danger" @click="deleteProject(row)">删除</el-button>

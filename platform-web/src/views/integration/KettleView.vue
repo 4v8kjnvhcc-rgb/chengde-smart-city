@@ -39,7 +39,9 @@ onMounted(load)
       <el-table class="portal-table" :data="jobs" stripe>
         <el-table-column prop="jobCode" label="作业编码" min-width="140" />
         <el-table-column prop="jobName" label="名称" min-width="180" />
-        <el-table-column prop="status" label="状态" width="120" />
+        <el-table-column label="状态" width="120">
+          <template #default="{ row }">{{ $statusLabel(row.status) }}</template>
+        </el-table-column>
         <el-table-column prop="lastMessage" label="最近结果" min-width="220" />
         <el-table-column label="操作" width="100">
           <template #default="{ row }">

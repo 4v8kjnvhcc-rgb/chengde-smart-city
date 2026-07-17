@@ -36,7 +36,9 @@ onMounted(reload)
         <el-table-column prop="templateCode" label="编码" width="160" />
         <el-table-column prop="templateName" label="名称" min-width="160" />
         <el-table-column prop="columnMappingJson" label="列映射" min-width="200" show-overflow-tooltip />
-        <el-table-column prop="status" label="状态" width="90" />
+        <el-table-column label="状态" width="90">
+          <template #default="{ row }">{{ $statusLabel(row.status) }}</template>
+        </el-table-column>
       </el-table>
     </PageCard>
   </div>

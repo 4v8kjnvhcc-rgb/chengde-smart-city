@@ -3,10 +3,12 @@ package com.chengde.smartcity.exchange.service;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.chengde.smartcity.audit.AuditService;
 import com.chengde.smartcity.common.exception.BusinessException;
+import com.chengde.smartcity.exchange.entity.IngDataTable;
 import com.chengde.smartcity.exchange.entity.IngIngestChannel;
 import com.chengde.smartcity.exchange.entity.IngIngestTask;
 import com.chengde.smartcity.exchange.entity.IngUploadRecord;
 import com.chengde.smartcity.exchange.entity.IngUploadTemplate;
+import com.chengde.smartcity.exchange.mapper.IngDataTableMapper;
 import com.chengde.smartcity.exchange.mapper.IngIngestChannelMapper;
 import com.chengde.smartcity.exchange.mapper.IngIngestTaskMapper;
 import com.chengde.smartcity.exchange.mapper.IngUploadRecordMapper;
@@ -26,16 +28,19 @@ public class CollectUploadService {
     private final IngUploadRecordMapper uploadMapper;
     private final IngIngestTaskMapper taskMapper;
     private final IngIngestChannelMapper channelMapper;
+    private final IngDataTableMapper dataTableMapper;
     private final AuditService auditService;
     private final StorageIntegrationClient storageClient;
 
     public CollectUploadService(IngUploadTemplateMapper templateMapper, IngUploadRecordMapper uploadMapper,
                                 IngIngestTaskMapper taskMapper, IngIngestChannelMapper channelMapper,
+                                IngDataTableMapper dataTableMapper,
                                 AuditService auditService, StorageIntegrationClient storageClient) {
         this.templateMapper = templateMapper;
         this.uploadMapper = uploadMapper;
         this.taskMapper = taskMapper;
         this.channelMapper = channelMapper;
+        this.dataTableMapper = dataTableMapper;
         this.auditService = auditService;
         this.storageClient = storageClient;
     }
@@ -92,11 +97,64 @@ public class CollectUploadService {
         task.setTaskCode("TASK_" + System.currentTimeMillis());
         task.setTaskName(required(body.get("taskName"), "taskName").toString());
         task.setChannelId(channelId);
+        task.setSourceId(longVal(body.get("sourceId")));
+        task.setTableId(longVal(body.get("tableId")));
+        task.setTargetTable(str(body.get("targetTable"), null));
+        task.setCollectedRows(longVal(body.get("collectedRows")));
         task.setScheduleCron(str(body.get("scheduleCron"), "0 2 * * *"));
-        task.setStatus("IDLE");
+        String status = str(body.get("status"), "IDLE");
+        task.setStatus(status);
         task.setLastRunMessage("registered type=" + ch.getChannelType());
+        if ("SUCCESS".equalsIgnoreCase(status)) {
+            task.setLastRunAt(java.time.LocalDateTime.now());
+            task.setLastRunMessage(str(body.get("lastRunMessage"), "collect success"));
+            markTableCollected(task.getTableId(), task.getTargetTable(), task.getCollectedRows());
+        }
         taskMapper.insert(task);
         return task.getId();
+    }
+
+    @Transactional
+    public void markTaskSuccess(UserPrincipal operator, Long taskId, Map<String, Object> body) {
+        IngIngestTask task = taskMapper.selectById(taskId);
+        if (task == null) {
+            throw new BusinessException(404, "汇聚任务不存在");
+        }
+        if (body != null) {
+            if (body.get("sourceId") != null) task.setSourceId(longVal(body.get("sourceId")));
+            if (body.get("tableId") != null) task.setTableId(longVal(body.get("tableId")));
+            if (body.get("targetTable") != null) task.setTargetTable(str(body.get("targetTable"), null));
+            if (body.get("collectedRows") != null) task.setCollectedRows(longVal(body.get("collectedRows")));
+        }
+        task.setStatus("SUCCESS");
+        task.setLastRunAt(java.time.LocalDateTime.now());
+        task.setLastRunMessage(body != null && body.get("lastRunMessage") != null
+                ? String.valueOf(body.get("lastRunMessage"))
+                : "collect success");
+        taskMapper.updateById(task);
+        markTableCollected(task.getTableId(), task.getTargetTable(), task.getCollectedRows());
+    }
+
+    private void markTableCollected(Long tableId, String targetTable, Long collectedRows) {
+        if (tableId == null) {
+            return;
+        }
+        IngDataTable table = dataTableMapper.selectById(tableId);
+        if (table == null) {
+            return;
+        }
+        if (targetTable != null && !targetTable.isBlank()) {
+            table.setPhysicalTableName(targetTable);
+        }
+        table.setCollectStatus("SUCCESS");
+        table.setLastCollectAt(java.time.LocalDateTime.now());
+        dataTableMapper.updateById(table);
+    }
+
+    private static Long longVal(Object v) {
+        if (v == null || String.valueOf(v).isBlank()) return null;
+        if (v instanceof Number n) return n.longValue();
+        try { return Long.valueOf(String.valueOf(v)); } catch (Exception e) { return null; }
     }
 
     private String str(Object v, String def) {

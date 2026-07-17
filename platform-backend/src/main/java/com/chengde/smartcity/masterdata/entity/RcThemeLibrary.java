@@ -11,6 +11,10 @@ public class RcThemeLibrary {
     private Long id;
     private String themeCode;
     private String themeName;
+    private String libraryKind;
+    private String zoneCode;
+    private String ownerOrg;
+    private String description;
     private String partitionKey;
     private String status;
     private String createdBy;
@@ -23,6 +27,14 @@ public class RcThemeLibrary {
     public void setThemeCode(String themeCode) { this.themeCode = themeCode; }
     public String getThemeName() { return themeName; }
     public void setThemeName(String themeName) { this.themeName = themeName; }
+    public String getLibraryKind() { return libraryKind; }
+    public void setLibraryKind(String libraryKind) { this.libraryKind = libraryKind; }
+    public String getZoneCode() { return zoneCode; }
+    public void setZoneCode(String zoneCode) { this.zoneCode = zoneCode; }
+    public String getOwnerOrg() { return ownerOrg; }
+    public void setOwnerOrg(String ownerOrg) { this.ownerOrg = ownerOrg; }
+    public String getDescription() { return description; }
+    public void setDescription(String description) { this.description = description; }
     public String getPartitionKey() { return partitionKey; }
     public void setPartitionKey(String partitionKey) { this.partitionKey = partitionKey; }
     public String getStatus() { return status; }

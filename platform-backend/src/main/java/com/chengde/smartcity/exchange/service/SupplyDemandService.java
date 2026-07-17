@@ -5,18 +5,24 @@ import com.chengde.smartcity.audit.AuditService;
 import com.chengde.smartcity.common.exception.BusinessException;
 import com.chengde.smartcity.exchange.entity.BizCatalogItem;
 import com.chengde.smartcity.exchange.entity.BizCatalogObjection;
+import com.chengde.smartcity.exchange.entity.BizCollectTask;
 import com.chengde.smartcity.exchange.entity.BizDataDemand;
+import com.chengde.smartcity.exchange.entity.BizDataDuty;
 import com.chengde.smartcity.exchange.entity.BizDemandSupplyTask;
 import com.chengde.smartcity.exchange.entity.BizDemandTemplate;
 import com.chengde.smartcity.exchange.entity.BizEsbFlow;
 import com.chengde.smartcity.exchange.entity.BizSupplyManifest;
+import com.chengde.smartcity.exchange.entity.IngDataTable;
 import com.chengde.smartcity.exchange.mapper.BizCatalogItemMapper;
 import com.chengde.smartcity.exchange.mapper.BizCatalogObjectionMapper;
+import com.chengde.smartcity.exchange.mapper.BizCollectTaskMapper;
 import com.chengde.smartcity.exchange.mapper.BizDataDemandMapper;
+import com.chengde.smartcity.exchange.mapper.BizDataDutyMapper;
 import com.chengde.smartcity.exchange.mapper.BizDemandSupplyTaskMapper;
 import com.chengde.smartcity.exchange.mapper.BizDemandTemplateMapper;
 import com.chengde.smartcity.exchange.mapper.BizEsbFlowMapper;
 import com.chengde.smartcity.exchange.mapper.BizSupplyManifestMapper;
+import com.chengde.smartcity.exchange.mapper.IngDataTableMapper;
 import com.chengde.smartcity.security.UserPrincipal;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
@@ -25,12 +31,21 @@ import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 @Service
 public class SupplyDemandService {
+
+    private static final Logger log = LoggerFactory.getLogger(SupplyDemandService.class);
+
+    private static final String PATH_AUTHORIZE = "AUTHORIZE_EXISTING";
+    private static final String PATH_COLLECT = "NEED_COLLECT";
 
     private final BizDemandTemplateMapper templateMapper;
     private final BizDataDemandMapper demandMapper;
@@ -39,12 +54,20 @@ public class SupplyDemandService {
     private final BizCatalogObjectionMapper objectionMapper;
     private final BizSupplyManifestMapper manifestMapper;
     private final BizEsbFlowMapper esbFlowMapper;
+    private final BizDataDutyMapper dutyMapper;
+    private final BizCollectTaskMapper collectTaskMapper;
+    private final IngDataTableMapper dataTableMapper;
     private final AuditService auditService;
+
+    @Value("${app.exchange.supply.dispatch-downstream:false}")
+    private boolean dispatchDownstream;
 
     public SupplyDemandService(BizDemandTemplateMapper templateMapper, BizDataDemandMapper demandMapper,
                                BizCatalogItemMapper catalogMapper, BizDemandSupplyTaskMapper supplyTaskMapper,
                                BizCatalogObjectionMapper objectionMapper, BizSupplyManifestMapper manifestMapper,
-                               BizEsbFlowMapper esbFlowMapper, AuditService auditService) {
+                               BizEsbFlowMapper esbFlowMapper, BizDataDutyMapper dutyMapper,
+                               BizCollectTaskMapper collectTaskMapper, IngDataTableMapper dataTableMapper,
+                               AuditService auditService) {
         this.templateMapper = templateMapper;
         this.demandMapper = demandMapper;
         this.catalogMapper = catalogMapper;
@@ -52,13 +75,58 @@ public class SupplyDemandService {
         this.objectionMapper = objectionMapper;
         this.manifestMapper = manifestMapper;
         this.esbFlowMapper = esbFlowMapper;
+        this.dutyMapper = dutyMapper;
+        this.collectTaskMapper = collectTaskMapper;
+        this.dataTableMapper = dataTableMapper;
         this.auditService = auditService;
     }
 
     public List<BizDemandTemplate> listTemplates() {
         return templateMapper.selectList(new LambdaQueryWrapper<BizDemandTemplate>()
+                .orderByAsc(BizDemandTemplate::getId));
+    }
+
+    public List<BizDemandTemplate> listActiveTemplates() {
+        return templateMapper.selectList(new LambdaQueryWrapper<BizDemandTemplate>()
                 .eq(BizDemandTemplate::getStatus, "ACTIVE")
                 .orderByAsc(BizDemandTemplate::getId));
+    }
+
+    @Transactional
+    public Long createTemplate(UserPrincipal operator, Map<String, Object> body) {
+        BizDemandTemplate t = new BizDemandTemplate();
+        t.setTemplateCode(str(body.get("templateCode"), "TPL_" + UUID.randomUUID().toString().substring(0, 8)));
+        t.setTemplateName(required(body.get("templateName"), "模板名称").toString());
+        t.setDemandType(str(body.get("demandType"), "STRUCTURED"));
+        t.setFieldSchema(str(body.get("fieldSchema"), "{}"));
+        t.setStatus(str(body.get("status"), "ACTIVE"));
+        templateMapper.insert(t);
+        auditService.log(operator.getUserId(), operator.getUsername(), operator.getOrgId(),
+                "DEMAND_TEMPLATE_CREATE", "biz_demand_template", String.valueOf(t.getId()), t.getTemplateName());
+        return t.getId();
+    }
+
+    @Transactional
+    public void updateTemplate(UserPrincipal operator, Long id, Map<String, Object> body) {
+        BizDemandTemplate t = templateMapper.selectById(id);
+        if (t == null) {
+            throw new BusinessException(404, "模板不存在");
+        }
+        if (body.get("templateName") != null) {
+            t.setTemplateName(String.valueOf(body.get("templateName")));
+        }
+        if (body.get("demandType") != null) {
+            t.setDemandType(String.valueOf(body.get("demandType")));
+        }
+        if (body.get("fieldSchema") != null) {
+            t.setFieldSchema(String.valueOf(body.get("fieldSchema")));
+        }
+        if (body.get("status") != null) {
+            t.setStatus(String.valueOf(body.get("status")));
+        }
+        templateMapper.updateById(t);
+        auditService.log(operator.getUserId(), operator.getUsername(), operator.getOrgId(),
+                "DEMAND_TEMPLATE_UPDATE", "biz_demand_template", String.valueOf(id), t.getTemplateName());
     }
 
     public List<BizDataDemand> listDemands(String stage, String status) {
@@ -72,6 +140,14 @@ public class SupplyDemandService {
         return demandMapper.selectList(q);
     }
 
+    public List<BizDataDuty> listDuties(Long demandId) {
+        LambdaQueryWrapper<BizDataDuty> q = new LambdaQueryWrapper<BizDataDuty>().orderByDesc(BizDataDuty::getId);
+        if (demandId != null) {
+            q.eq(BizDataDuty::getDemandId, demandId);
+        }
+        return dutyMapper.selectList(q);
+    }
+
     @Transactional
     public Long createDemand(UserPrincipal operator, Map<String, Object> body) {
         BizDataDemand demand = new BizDataDemand();
@@ -79,6 +155,12 @@ public class SupplyDemandService {
         demand.setRequesterOrg(str(body.get("requesterOrg"), "机构" + operator.getOrgId()));
         demand.setDemandType(str(body.get("demandType"), "STRUCTURED"));
         demand.setTemplateCode(str(body.get("templateCode"), null));
+        demand.setDemandContent(str(body.get("demandContent"), null));
+        if (body.get("modelFields") != null) {
+            demand.setModelFields(body.get("modelFields") instanceof String
+                    ? String.valueOf(body.get("modelFields"))
+                    : toJson(castMap(body.get("modelFields"))));
+        }
         Object catalogId = body.get("targetCatalogId");
         if (catalogId != null) {
             demand.setTargetCatalogId(Long.valueOf(String.valueOf(catalogId)));
@@ -107,38 +189,50 @@ public class SupplyDemandService {
     @Transactional
     public Map<String, Object> analyzeDemand(UserPrincipal operator, Long id) {
         BizDataDemand demand = getDemand(id);
-        if (!"SUBMITTED".equals(demand.getStatus()) && !"ANALYZING".equals(demand.getStatus())) {
+        if (!"SUBMITTED".equals(demand.getStatus()) && !"ANALYZING".equals(demand.getStatus())
+                && !"RETURNED".equals(demand.getStatus()) && !"SUPERVISING".equals(demand.getStatus())) {
             throw new BusinessException(400, "当前状态不可分析");
         }
-        List<BizCatalogItem> catalogs = catalogMapper.selectList(new LambdaQueryWrapper<BizCatalogItem>()
-                .eq(BizCatalogItem::getPublishStatus, "PUBLISHED"));
-        BizCatalogItem best = null;
-        double bestScore = 0;
         String keyword = demand.getDemandTitle().toLowerCase();
-        List<Map<String, Object>> candidates = new ArrayList<>();
-        for (BizCatalogItem c : catalogs) {
-            double score = matchScore(keyword, c.getTitle(), c.getDescription());
-            Map<String, Object> row = new HashMap<>();
-            row.put("catalogId", c.getId());
-            row.put("catalogCode", c.getCatalogCode());
-            row.put("title", c.getTitle());
-            row.put("score", score);
-            candidates.add(row);
-            if (score > bestScore) {
-                bestScore = score;
-                best = c;
-            }
+        List<Map<String, Object>> candidates = searchResourceCandidates(keyword);
+
+        Map<String, Object> best = candidates.isEmpty() ? null : candidates.get(0);
+        double bestScore = best == null ? 0 : ((Number) best.get("score")).doubleValue();
+        BizCatalogItem bestCatalog = null;
+        if (best != null && "CATALOG".equals(best.get("resourceType"))) {
+            bestCatalog = catalogMapper.selectById(Long.valueOf(String.valueOf(best.get("resourceId"))));
+        } else if (demand.getMatchedCatalogId() != null) {
+            bestCatalog = catalogMapper.selectById(demand.getMatchedCatalogId());
         }
+
         demand.setStage("ANALYZE");
         demand.setStatus("ANALYZING");
         if (best != null && bestScore >= 30) {
-            demand.setMatchedCatalogId(best.getId());
+            if ("CATALOG".equals(best.get("resourceType"))) {
+                demand.setMatchedCatalogId(Long.valueOf(String.valueOf(best.get("resourceId"))));
+            }
             demand.setMatchScore(BigDecimal.valueOf(bestScore).setScale(2, RoundingMode.HALF_UP));
-            demand.setAnalysisNote("智能匹配目录：" + best.getTitle() + "，相关度 " + bestScore + "%");
+            demand.setFulfillPath(PATH_AUTHORIZE);
+            demand.setEvalStatus("MATCHED");
+            demand.setShareAttr(str(demand.getShareAttr(), "CONDITIONAL"));
+            demand.setAnalysisNote("智能匹配" + best.get("resourceType") + "：" + best.get("title")
+                    + "，相关度 " + bestScore + "%；建议路径：已在中台授权共享");
+        } else if (best != null && bestScore > 0) {
+            demand.setMatchScore(BigDecimal.valueOf(bestScore).setScale(2, RoundingMode.HALF_UP));
+            demand.setFulfillPath(PATH_COLLECT);
+            demand.setEvalStatus("PARTIAL");
+            demand.setShareAttr(str(demand.getShareAttr(), "RESTRICTED"));
+            demand.setAnalysisNote("弱匹配" + best.get("resourceType") + "：" + best.get("title")
+                    + "（" + bestScore + "%），建议人工确认或归集补数");
         } else {
-            demand.setAnalysisNote("未找到高相关目录，建议人工分发");
+            demand.setAnalysisNote("未找到高相关目录/库表/接口，建议路径：未在中台需归集补数");
             demand.setMatchScore(BigDecimal.ZERO);
+            demand.setFulfillPath(PATH_COLLECT);
+            demand.setEvalStatus("UNMATCHED");
+            demand.setShareAttr(str(demand.getShareAttr(), "INTERNAL"));
         }
+        Map<String, Object> graph = buildRelationGraph(demand, bestCatalog, candidates);
+        demand.setAnalysisPayload(toJson(Map.of("candidates", candidates.stream().limit(10).toList(), "relationGraph", graph)));
         demandMapper.updateById(demand);
         auditService.log(operator.getUserId(), operator.getUsername(), operator.getOrgId(),
                 "DEMAND_ANALYZE", "biz_data_demand", String.valueOf(id), demand.getAnalysisNote());
@@ -146,23 +240,125 @@ public class SupplyDemandService {
         out.put("demandId", id);
         out.put("matchedCatalogId", demand.getMatchedCatalogId());
         out.put("matchScore", demand.getMatchScore());
+        out.put("fulfillPath", demand.getFulfillPath());
+        out.put("evalStatus", demand.getEvalStatus());
+        out.put("shareAttr", demand.getShareAttr());
         out.put("analysisNote", demand.getAnalysisNote());
-        out.put("candidates", candidates.stream().sorted((a, b) ->
-                Double.compare((Double) b.get("score"), (Double) a.get("score"))).limit(5).toList());
-        out.put("relationGraph", buildRelationGraph(demand, best));
+        out.put("candidates", candidates.stream().limit(10).toList());
+        out.put("relationGraph", graph);
+        return out;
+    }
+
+    /** 资源目录/库表/接口快速查询（数据管理员分析入口） */
+    public Map<String, Object> searchResources(String keyword, String resourceType) {
+        String kw = keyword == null ? "" : keyword.trim().toLowerCase();
+        List<Map<String, Object>> all = searchResourceCandidates(kw.isBlank() ? "*" : kw);
+        if (resourceType != null && !resourceType.isBlank() && !"ALL".equalsIgnoreCase(resourceType)) {
+            all = all.stream().filter(r -> resourceType.equalsIgnoreCase(String.valueOf(r.get("resourceType")))).toList();
+        }
+        return Map.of("keyword", keyword == null ? "" : keyword, "total", all.size(), "items", all.stream().limit(30).toList());
+    }
+
+    @Transactional
+    public void superviseDemand(UserPrincipal operator, Long id, Map<String, Object> body) {
+        BizDataDemand demand = getDemand(id);
+        if (!Set.of("ANALYZING", "DISPATCHED", "SUPERVISING").contains(demand.getStatus())) {
+            throw new BusinessException(400, "仅分析中/已分发需求可督办");
+        }
+        String note = required(body.get("superviseNote"), "督办说明").toString();
+        demand.setStatus("SUPERVISING");
+        demand.setStage("ANALYZE");
+        demand.setSuperviseNote(note);
+        demand.setSuperviseAt(java.time.LocalDateTime.now());
+        demand.setSuperviseBy(operator.getUsername());
+        String prev = demand.getAnalysisNote() == null ? "" : demand.getAnalysisNote() + " | ";
+        demand.setAnalysisNote(prev + "督办：" + note);
+        demandMapper.updateById(demand);
+        auditService.log(operator.getUserId(), operator.getUsername(), operator.getOrgId(),
+                "DEMAND_SUPERVISE", "biz_data_demand", String.valueOf(id), note);
+    }
+
+    /**
+     * 一键设置信息项评估状态 / 共享属性，并可绑定匹配资源。
+     */
+    @Transactional
+    public Map<String, Object> applyAnalysisSettings(UserPrincipal operator, Long id, Map<String, Object> body) {
+        BizDataDemand demand = getDemand(id);
+        if (body.get("evalStatus") != null) {
+            String eval = String.valueOf(body.get("evalStatus")).toUpperCase();
+            if (!Set.of("PENDING", "MATCHED", "PARTIAL", "UNMATCHED").contains(eval)) {
+                throw new BusinessException(400, "evalStatus 非法");
+            }
+            demand.setEvalStatus(eval);
+        }
+        if (body.get("shareAttr") != null) {
+            String share = String.valueOf(body.get("shareAttr")).toUpperCase();
+            if (!Set.of("OPEN", "CONDITIONAL", "RESTRICTED", "INTERNAL").contains(share)) {
+                throw new BusinessException(400, "shareAttr 非法");
+            }
+            demand.setShareAttr(share);
+        }
+        if (body.get("fulfillPath") != null) {
+            String path = String.valueOf(body.get("fulfillPath"));
+            if (!PATH_AUTHORIZE.equals(path) && !PATH_COLLECT.equals(path)) {
+                throw new BusinessException(400, "fulfillPath 非法");
+            }
+            demand.setFulfillPath(path);
+        }
+        if (body.get("matchedCatalogId") != null && !String.valueOf(body.get("matchedCatalogId")).isBlank()) {
+            demand.setMatchedCatalogId(Long.valueOf(String.valueOf(body.get("matchedCatalogId"))));
+        }
+        if (body.get("resourceType") != null && body.get("resourceId") != null
+                && "CATALOG".equalsIgnoreCase(String.valueOf(body.get("resourceType")))) {
+            demand.setMatchedCatalogId(Long.valueOf(String.valueOf(body.get("resourceId"))));
+        }
+        if (body.get("matchScore") != null) {
+            demand.setMatchScore(new BigDecimal(String.valueOf(body.get("matchScore"))));
+        }
+        if (demand.getStatus().equals("SUBMITTED") || demand.getStatus().equals("RETURNED")) {
+            demand.setStatus("ANALYZING");
+            demand.setStage("ANALYZE");
+        }
+        String tip = "一键设置：评估=" + demand.getEvalStatus() + "，共享=" + demand.getShareAttr();
+        demand.setAnalysisNote(str(demand.getAnalysisNote(), tip));
+        demandMapper.updateById(demand);
+        auditService.log(operator.getUserId(), operator.getUsername(), operator.getOrgId(),
+                "DEMAND_ANALYSIS_APPLY", "biz_data_demand", String.valueOf(id), tip);
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("demandId", id);
+        out.put("evalStatus", demand.getEvalStatus());
+        out.put("shareAttr", demand.getShareAttr());
+        out.put("fulfillPath", demand.getFulfillPath());
+        out.put("matchedCatalogId", demand.getMatchedCatalogId());
+        out.put("matchScore", demand.getMatchScore());
         return out;
     }
 
     @Transactional
     public void dispatchDemand(UserPrincipal operator, Long id, Map<String, Object> body) {
         BizDataDemand demand = getDemand(id);
+        if (!Set.of("ANALYZING", "DISPATCHED", "SUBMITTED", "SUPERVISING").contains(demand.getStatus())) {
+            throw new BusinessException(400, "当前状态不可分发");
+        }
         demand.setAssigneeOrg(required(body.get("assigneeOrg"), "assigneeOrg").toString());
+        String path = str(body.get("fulfillPath"), demand.getFulfillPath());
+        if (path == null || path.isBlank()) {
+            path = demand.getMatchedCatalogId() != null ? PATH_AUTHORIZE : PATH_COLLECT;
+        }
+        if (!PATH_AUTHORIZE.equals(path) && !PATH_COLLECT.equals(path)) {
+            throw new BusinessException(400, "fulfillPath 须为 AUTHORIZE_EXISTING 或 NEED_COLLECT");
+        }
+        demand.setFulfillPath(path);
         demand.setStatus("DISPATCHED");
         demand.setStage("ANALYZE");
-        demand.setAnalysisNote(str(body.get("analysisNote"), "已分发至 " + demand.getAssigneeOrg()));
+        String note = str(body.get("analysisNote"), null);
+        if (note == null) {
+            note = "已分发至 " + demand.getAssigneeOrg() + "；履约路径=" + path;
+        }
+        demand.setAnalysisNote(note);
         demandMapper.updateById(demand);
         auditService.log(operator.getUserId(), operator.getUsername(), operator.getOrgId(),
-                "DEMAND_DISPATCH", "biz_data_demand", String.valueOf(id), demand.getAssigneeOrg());
+                "DEMAND_DISPATCH", "biz_data_demand", String.valueOf(id), demand.getAssigneeOrg() + "/" + path);
     }
 
     @Transactional
@@ -179,12 +375,26 @@ public class SupplyDemandService {
     @Transactional
     public Map<String, Object> confirmDemand(UserPrincipal operator, Long id, Map<String, Object> body) {
         BizDataDemand demand = getDemand(id);
+        if (!Set.of("DISPATCHED", "ANALYZING", "SUPERVISING").contains(demand.getStatus())) {
+            throw new BusinessException(400, "仅已分析/已分发/督办中的需求可确认");
+        }
+        String path = str(body.get("fulfillPath"), demand.getFulfillPath());
+        if (path == null || path.isBlank()) {
+            path = demand.getMatchedCatalogId() != null ? PATH_AUTHORIZE : PATH_COLLECT;
+        }
+        demand.setFulfillPath(path);
         demand.setStatus("CONFIRMED");
         demand.setStage("CONFIRM");
         demand.setConfirmNote(str(body.get("confirmNote"), "需求已确认，生成供给任务"));
-        demand.setSupplyMode(str(body.get("supplyMode"), "EXCHANGE"));
+        demand.setSupplyMode(str(body.get("supplyMode"), PATH_COLLECT.equals(path) ? "COLLECT" : "EXCHANGE"));
         demandMapper.updateById(demand);
-        List<BizDemandSupplyTask> tasks = createSupplyTasks(demand);
+
+        BizDataDuty duty = createDataDuty(operator, demand, path);
+        List<BizDemandSupplyTask> tasks = createSupplyTasks(demand, path);
+        if (dispatchDownstream) {
+            dispatchDownstreamTasks(operator, demand, tasks);
+        }
+
         BizSupplyManifest manifest = new BizSupplyManifest();
         manifest.setManifestType("SUPPLY_DEMAND");
         manifest.setRefId(demand.getId());
@@ -192,16 +402,147 @@ public class SupplyDemandService {
         manifest.setStatus("ACTIVE");
         manifest.setAuthLevel(str(body.get("authLevel"), "DEPT"));
         manifest.setCascadeFlag(intVal(body.get("cascadeFlag"), 0));
-        manifest.setExportPayload("demandId=" + demand.getId() + ",tasks=" + tasks.size());
+        manifest.setExportPayload("demandId=" + demand.getId() + ",path=" + path + ",tasks=" + tasks.size()
+                + ",dutyId=" + duty.getId());
         manifestMapper.insert(manifest);
         auditService.log(operator.getUserId(), operator.getUsername(), operator.getOrgId(),
                 "DEMAND_CONFIRM", "biz_data_demand", String.valueOf(id), demand.getConfirmNote());
-        return Map.of("demandId", id, "tasks", tasks, "manifestId", manifest.getId());
+
+        Map<String, Object> integrations = buildIntegrationSummary(demand, duty, tasks);
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("demandId", id);
+        out.put("fulfillPath", path);
+        out.put("dutyId", duty.getId());
+        out.put("duty", duty);
+        out.put("tasks", tasks);
+        out.put("manifestId", manifest.getId());
+        out.put("dispatchDownstream", dispatchDownstream);
+        out.put("integrations", integrations);
+        return out;
+    }
+
+    /** 供数部门退回（确认环节） */
+    @Transactional
+    public void confirmReturnDemand(UserPrincipal operator, Long id, Map<String, Object> body) {
+        BizDataDemand demand = getDemand(id);
+        if (!Set.of("DISPATCHED", "ANALYZING", "SUPERVISING").contains(demand.getStatus())) {
+            throw new BusinessException(400, "当前状态不可退回");
+        }
+        String note = str(body.get("confirmNote"), "供数部门退回，请补充材料");
+        demand.setStatus("RETURNED");
+        demand.setStage("MANAGE");
+        demand.setConfirmNote(note);
+        demand.setConfirmFeedback(str(body.get("confirmFeedback"), note));
+        demandMapper.updateById(demand);
+        auditService.log(operator.getUserId(), operator.getUsername(), operator.getOrgId(),
+                "DEMAND_CONFIRM_RETURN", "biz_data_demand", String.valueOf(id), note);
+    }
+
+    /** 督查反馈（供数/主管部门在确认环节反馈） */
+    @Transactional
+    public void confirmFeedback(UserPrincipal operator, Long id, Map<String, Object> body) {
+        BizDataDemand demand = getDemand(id);
+        if (!Set.of("DISPATCHED", "ANALYZING", "SUPERVISING", "CONFIRMED").contains(demand.getStatus())) {
+            throw new BusinessException(400, "当前状态不可填写督查反馈");
+        }
+        String feedback = required(body.get("confirmFeedback"), "督查反馈").toString();
+        demand.setConfirmFeedback(feedback);
+        if ("SUPERVISING".equals(demand.getStatus()) || "DISPATCHED".equals(demand.getStatus())) {
+            // 反馈后保持可确认，标记已响应督办
+            String prev = demand.getConfirmNote() == null ? "" : demand.getConfirmNote() + " | ";
+            demand.setConfirmNote(prev + "已反馈督查");
+        }
+        demandMapper.updateById(demand);
+        auditService.log(operator.getUserId(), operator.getUsername(), operator.getOrgId(),
+                "DEMAND_CONFIRM_FEEDBACK", "biz_data_demand", String.valueOf(id), feedback);
+    }
+
+    /** 整体办结 */
+    @Transactional
+    public void completeDemand(UserPrincipal operator, Long id, Map<String, Object> body) {
+        BizDataDemand demand = getDemand(id);
+        if (!"CONFIRMED".equals(demand.getStatus())) {
+            throw new BusinessException(400, "仅已确认需求可办结");
+        }
+        demand.setStatus("COMPLETED");
+        demand.setStage("SUPPLY");
+        demand.setConfirmNote(str(body.get("confirmNote"), demand.getConfirmNote()));
+        if (body.get("confirmFeedback") != null) {
+            demand.setConfirmFeedback(String.valueOf(body.get("confirmFeedback")));
+        }
+        demandMapper.updateById(demand);
+        auditService.log(operator.getUserId(), operator.getUsername(), operator.getOrgId(),
+                "DEMAND_COMPLETE", "biz_data_demand", String.valueOf(id), "办结");
+    }
+
+    /** 整体撤销（非已办结） */
+    @Transactional
+    public void cancelDemand(UserPrincipal operator, Long id, Map<String, Object> body) {
+        BizDataDemand demand = getDemand(id);
+        if (Set.of("COMPLETED", "CANCELLED", "WITHDRAWN").contains(demand.getStatus())) {
+            throw new BusinessException(400, "当前状态不可撤销");
+        }
+        demand.setStatus("CANCELLED");
+        demand.setConfirmNote(str(body.get("confirmNote"), "需求已撤销"));
+        demandMapper.updateById(demand);
+        auditService.log(operator.getUserId(), operator.getUsername(), operator.getOrgId(),
+                "DEMAND_CANCEL", "biz_data_demand", String.valueOf(id), demand.getConfirmNote());
+    }
+
+    /** 整体修改（办结/撤销前） */
+    @Transactional
+    public void updateDemand(UserPrincipal operator, Long id, Map<String, Object> body) {
+        BizDataDemand demand = getDemand(id);
+        if (Set.of("COMPLETED", "CANCELLED", "WITHDRAWN", "REJECTED").contains(demand.getStatus())) {
+            throw new BusinessException(400, "当前状态不可修改");
+        }
+        if (body.get("demandTitle") != null && !String.valueOf(body.get("demandTitle")).isBlank()) {
+            demand.setDemandTitle(String.valueOf(body.get("demandTitle")));
+        }
+        if (body.get("requesterOrg") != null) {
+            demand.setRequesterOrg(String.valueOf(body.get("requesterOrg")));
+        }
+        if (body.get("assigneeOrg") != null) {
+            demand.setAssigneeOrg(String.valueOf(body.get("assigneeOrg")));
+        }
+        if (body.get("demandType") != null) {
+            demand.setDemandType(String.valueOf(body.get("demandType")));
+        }
+        if (body.get("demandContent") != null) {
+            demand.setDemandContent(String.valueOf(body.get("demandContent")));
+        }
+        if (body.get("modelFields") != null) {
+            demand.setModelFields(body.get("modelFields") instanceof String
+                    ? String.valueOf(body.get("modelFields"))
+                    : toJson(castMap(body.get("modelFields"))));
+        }
+        if (body.get("templateCode") != null) {
+            demand.setTemplateCode(String.valueOf(body.get("templateCode")));
+        }
+        if (body.get("fulfillPath") != null) {
+            String path = String.valueOf(body.get("fulfillPath"));
+            if (!PATH_AUTHORIZE.equals(path) && !PATH_COLLECT.equals(path)) {
+                throw new BusinessException(400, "fulfillPath 非法");
+            }
+            demand.setFulfillPath(path);
+        }
+        if (body.get("confirmNote") != null) {
+            demand.setConfirmNote(String.valueOf(body.get("confirmNote")));
+        }
+        if (body.get("shareAttr") != null) {
+            demand.setShareAttr(String.valueOf(body.get("shareAttr")));
+        }
+        demandMapper.updateById(demand);
+        auditService.log(operator.getUserId(), operator.getUsername(), operator.getOrgId(),
+                "DEMAND_UPDATE", "biz_data_demand", String.valueOf(id), demand.getDemandTitle());
     }
 
     @Transactional
     public void rejectDemand(UserPrincipal operator, Long id, Map<String, Object> body) {
         BizDataDemand demand = getDemand(id);
+        if (!Set.of("DISPATCHED", "ANALYZING", "SUPERVISING").contains(demand.getStatus())) {
+            throw new BusinessException(400, "仅已分析/已分发/督办中的需求可驳回");
+        }
         demand.setStatus("REJECTED");
         demand.setStage("CONFIRM");
         demand.setConfirmNote(str(body.get("confirmNote"), "需求已驳回"));
@@ -222,22 +563,156 @@ public class SupplyDemandService {
     public Map<String, Object> supplyView(Long demandId) {
         BizDataDemand demand = getDemand(demandId);
         List<BizDemandSupplyTask> tasks = listSupplyTasks(demandId);
+        List<BizDataDuty> duties = listDuties(demandId);
         BizCatalogItem catalog = demand.getMatchedCatalogId() != null
                 ? catalogMapper.selectById(demand.getMatchedCatalogId()) : null;
-        List<BizEsbFlow> flows = esbFlowMapper.selectList(new LambdaQueryWrapper<BizEsbFlow>().last("LIMIT 3"));
+        List<BizEsbFlow> flows = esbFlowMapper.selectList(new LambdaQueryWrapper<BizEsbFlow>().last("LIMIT 20"));
+
+        List<Map<String, Object>> exchangeJobs = tasks.stream()
+                .filter(t -> "EXCHANGE".equals(t.getTaskType()) || "COLLECT".equals(t.getTaskType()))
+                .map(t -> {
+                    Map<String, Object> m = new LinkedHashMap<>();
+                    m.put("taskId", t.getId());
+                    m.put("taskType", t.getTaskType());
+                    m.put("taskName", t.getTaskName());
+                    m.put("status", t.getStatus());
+                    m.put("flowCode", t.getRefFlowCode());
+                    return m;
+                }).toList();
+        List<Map<String, Object>> apiEndpoints = new ArrayList<>();
+        for (BizDemandSupplyTask t : tasks) {
+            if ("SHARE".equals(t.getTaskType()) || "EXCHANGE".equals(t.getTaskType())) {
+                Map<String, Object> m = new LinkedHashMap<>();
+                m.put("name", t.getTaskName());
+                m.put("endpoint", catalog != null
+                        ? "/api/v1/exchange/catalog/" + catalog.getId()
+                        : "/api/v1/exchange/supply/supply-view/" + demandId);
+                m.put("method", "GET");
+                m.put("status", t.getStatus());
+                apiEndpoints.add(m);
+            }
+        }
+        for (BizEsbFlow f : flows.stream().limit(5).toList()) {
+            Map<String, Object> m = new LinkedHashMap<>();
+            m.put("name", f.getFlowName());
+            m.put("endpoint", "/esb/flows/" + f.getFlowCode());
+            m.put("method", "INVOKE");
+            m.put("status", f.getStatus());
+            apiEndpoints.add(m);
+        }
+        List<Map<String, Object>> sharePages = new ArrayList<>();
+        Map<String, Object> portalPage = new LinkedHashMap<>();
+        portalPage.put("title", "通用共享页面");
+        portalPage.put("url", catalog != null ? "/exchange/portal?tab=catalog&id=" + catalog.getId() : "/exchange/portal?tab=catalog");
+        portalPage.put("openMode", "same_tab");
+        sharePages.add(portalPage);
+        if (catalog != null) {
+            Map<String, Object> catPage = new LinkedHashMap<>();
+            catPage.put("title", "目录详情 · " + catalog.getTitle());
+            catPage.put("url", "/exchange/portal?tab=catalog");
+            catPage.put("openMode", "same_tab");
+            sharePages.add(catPage);
+        }
+
         Map<String, Object> out = new LinkedHashMap<>();
         out.put("demand", demand);
         out.put("tasks", tasks);
+        out.put("duties", duties);
         out.put("catalog", catalog);
         out.put("exchangeFlows", flows);
+        out.put("exchangeJobs", exchangeJobs);
+        out.put("apiEndpoints", apiEndpoints);
+        out.put("sharePages", sharePages);
         out.put("sharePageUrl", catalog != null ? "/exchange/portal?tab=catalog" : null);
         out.put("apiEndpoint", catalog != null ? "/api/v1/exchange/catalog/" + catalog.getId() : null);
         return out;
     }
 
+    /** 清单中心聚合：部门目录 / 服务 / 开放 / 异议 */
+    public Map<String, Object> listCenter(String listType) {
+        Map<String, Object> out = new LinkedHashMap<>();
+        String type = str(listType, "dept-catalog");
+        if ("dept-catalog".equals(type) || "catalog".equals(type)) {
+            out.put("listType", "dept-catalog");
+            out.put("title", "部门目录清单");
+            out.put("items", publishedCatalogs());
+        } else if ("service-list".equals(type) || "service".equals(type)) {
+            out.put("listType", "service-list");
+            out.put("title", "服务清单");
+            List<Map<String, Object>> services = new ArrayList<>();
+            for (BizEsbFlow f : esbFlowMapper.selectList(new LambdaQueryWrapper<>())) {
+                Map<String, Object> row = new LinkedHashMap<>();
+                row.put("code", f.getFlowCode());
+                row.put("title", f.getFlowName());
+                row.put("status", f.getStatus());
+                row.put("type", "API/交换流");
+                row.put("updatedAt", f.getUpdatedAt());
+                services.add(row);
+            }
+            for (BizSupplyManifest m : listManifests("SERVICE")) {
+                Map<String, Object> row = new LinkedHashMap<>();
+                row.put("code", "SVC-" + m.getId());
+                row.put("title", m.getTitle());
+                row.put("status", m.getStatus());
+                row.put("type", "服务清单");
+                row.put("authLevel", m.getAuthLevel());
+                services.add(row);
+            }
+            out.put("items", services);
+        } else if ("open-list".equals(type) || "open".equals(type)) {
+            out.put("listType", "open-list");
+            out.put("title", "开放清单");
+            List<Map<String, Object>> opens = new ArrayList<>();
+            for (BizCatalogItem c : publishedCatalogs()) {
+                Map<String, Object> row = new LinkedHashMap<>();
+                row.put("code", c.getCatalogCode());
+                row.put("title", c.getTitle());
+                row.put("status", c.getPublishStatus());
+                row.put("shareAttr", "OPEN");
+                row.put("description", c.getDescription());
+                opens.add(row);
+            }
+            for (BizSupplyManifest m : listManifests(null)) {
+                if ("OPEN".equalsIgnoreCase(m.getAuthLevel()) || "CATALOG".equals(m.getManifestType())
+                        || "SUPPLY_DEMAND".equals(m.getManifestType())) {
+                    Map<String, Object> row = new LinkedHashMap<>();
+                    row.put("code", m.getManifestType() + "-" + m.getId());
+                    row.put("title", m.getTitle());
+                    row.put("status", m.getStatus());
+                    row.put("shareAttr", m.getAuthLevel());
+                    row.put("description", m.getExportPayload());
+                    opens.add(row);
+                }
+            }
+            out.put("items", opens);
+        } else if ("objection".equals(type)) {
+            out.put("listType", "objection");
+            out.put("title", "异议清单");
+            out.put("items", listObjections(null));
+        } else {
+            out.put("listType", type);
+            out.put("items", List.of());
+        }
+        return out;
+    }
+
+    @SuppressWarnings("unchecked")
+    private Map<String, Object> castMap(Object v) {
+        if (v instanceof Map<?, ?> m) {
+            return (Map<String, Object>) m;
+        }
+        return Map.of("value", String.valueOf(v));
+    }
+
     public List<BizCatalogItem> catalogManifest() {
         return catalogMapper.selectList(new LambdaQueryWrapper<BizCatalogItem>()
-                .in(BizCatalogItem::getPublishStatus, "PUBLISHED", "OFFLINE")
+                .in(BizCatalogItem::getPublishStatus, "PUBLISHED", "OFFLINE", "DRAFT")
+                .orderByDesc(BizCatalogItem::getId));
+    }
+
+    public List<BizCatalogItem> publishedCatalogs() {
+        return catalogMapper.selectList(new LambdaQueryWrapper<BizCatalogItem>()
+                .eq(BizCatalogItem::getPublishStatus, "PUBLISHED")
                 .orderByDesc(BizCatalogItem::getId));
     }
 
@@ -357,9 +832,56 @@ public class SupplyDemandService {
         return payload;
     }
 
-    private List<BizDemandSupplyTask> createSupplyTasks(BizDataDemand demand) {
+    private Map<String, Object> buildIntegrationSummary(BizDataDemand demand, BizDataDuty duty,
+                                                        List<BizDemandSupplyTask> tasks) {
+        Map<String, Object> catalog = new LinkedHashMap<>();
+        catalog.put("system", "目录系统");
+        catalog.put("matchedCatalogId", demand.getMatchedCatalogId());
+        catalog.put("dutyId", duty.getId());
+        catalog.put("status", duty.getStatus());
+
+        Map<String, Object> collect = new LinkedHashMap<>();
+        collect.put("system", "数据归集系统");
+        collect.put("tasks", tasks.stream().filter(t -> "COLLECT".equals(t.getTaskType())).map(t -> Map.of(
+                "taskId", t.getId(), "taskName", t.getTaskName(), "status", t.getStatus(),
+                "ref", t.getRefFlowCode() == null ? "" : t.getRefFlowCode()
+        )).toList());
+
+        Map<String, Object> exchange = new LinkedHashMap<>();
+        exchange.put("system", "共享交换系统");
+        exchange.put("tasks", tasks.stream().filter(t -> "EXCHANGE".equals(t.getTaskType()) || "SHARE".equals(t.getTaskType()))
+                .map(t -> Map.of(
+                        "taskId", t.getId(), "taskType", t.getTaskType(), "taskName", t.getTaskName(),
+                        "status", t.getStatus(), "ref", t.getRefFlowCode() == null ? "" : t.getRefFlowCode()
+                )).toList());
+
+        Map<String, Object> integrations = new LinkedHashMap<>();
+        integrations.put("catalog", catalog);
+        integrations.put("collect", collect);
+        integrations.put("exchange", exchange);
+        integrations.put("message", "已转换为数据责任，并生成归集/共享/交换任务台账");
+        return integrations;
+    }
+
+    private BizDataDuty createDataDuty(UserPrincipal operator, BizDataDemand demand, String path) {
+        BizDataDuty duty = new BizDataDuty();
+        duty.setDemandId(demand.getId());
+        duty.setDutyOrg(str(demand.getAssigneeOrg(), demand.getRequesterOrg()));
+        duty.setDutyType(PATH_COLLECT.equals(path) ? "COLLECT" : "AUTHORIZE");
+        duty.setCatalogId(demand.getMatchedCatalogId() != null ? demand.getMatchedCatalogId() : demand.getTargetCatalogId());
+        duty.setFulfillPath(path);
+        duty.setStatus("ACTIVE");
+        duty.setRemark("确认生成数据责任：" + demand.getDemandTitle());
+        duty.setCreatedBy(operator.getUsername());
+        dutyMapper.insert(duty);
+        return duty;
+    }
+
+    private List<BizDemandSupplyTask> createSupplyTasks(BizDataDemand demand, String path) {
         List<BizDemandSupplyTask> tasks = new ArrayList<>();
-        tasks.add(insertTask(demand.getId(), "COLLECT", "归集任务-" + demand.getDemandTitle(), "PENDING", null));
+        if (PATH_COLLECT.equals(path)) {
+            tasks.add(insertTask(demand.getId(), "COLLECT", "归集任务-" + demand.getDemandTitle(), "PENDING", null));
+        }
         tasks.add(insertTask(demand.getId(), "SHARE", "共享页面-" + demand.getDemandTitle(), "PENDING", null));
         BizEsbFlow flow = esbFlowMapper.selectOne(new LambdaQueryWrapper<BizEsbFlow>().last("LIMIT 1"));
         String flowCode = flow != null ? flow.getFlowCode() : "MF_DEMO_001";
@@ -367,6 +889,34 @@ public class SupplyDemandService {
         demand.setStage("SUPPLY");
         demandMapper.updateById(demand);
         return tasks;
+    }
+
+    private void dispatchDownstreamTasks(UserPrincipal operator, BizDataDemand demand, List<BizDemandSupplyTask> tasks) {
+        for (BizDemandSupplyTask t : tasks) {
+            try {
+                if ("COLLECT".equals(t.getTaskType())) {
+                    BizCollectTask ct = new BizCollectTask();
+                    ct.setTaskName(t.getTaskName());
+                    ct.setAssetId(demand.getMatchedCatalogId());
+                    ct.setScheduleCron(null);
+                    ct.setStatus("PENDING");
+                    ct.setLastMessage("由供需确认生成 demandId=" + demand.getId());
+                    ct.setCreatedBy(operator.getUsername());
+                    collectTaskMapper.insert(ct);
+                    t.setStatus("DISPATCHED");
+                    t.setRefFlowCode("COLLECT#" + ct.getId());
+                    supplyTaskMapper.updateById(t);
+                } else if ("EXCHANGE".equals(t.getTaskType()) && t.getRefFlowCode() != null) {
+                    t.setStatus("LINKED");
+                    supplyTaskMapper.updateById(t);
+                } else if ("SHARE".equals(t.getTaskType())) {
+                    t.setStatus("READY");
+                    supplyTaskMapper.updateById(t);
+                }
+            } catch (Exception ex) {
+                log.warn("downstream dispatch failed for task {}: {}", t.getId(), ex.getMessage());
+            }
+        }
     }
 
     private BizDemandSupplyTask insertTask(Long demandId, String type, String name, String status, String flowCode) {
@@ -407,22 +957,105 @@ public class SupplyDemandService {
         manifestMapper.insert(m);
     }
 
-    private Map<String, Object> buildRelationGraph(BizDataDemand demand, BizCatalogItem catalog) {
+    private List<Map<String, Object>> searchResourceCandidates(String keyword) {
+        String kw = keyword == null ? "" : keyword.trim().toLowerCase();
+        boolean wildcard = kw.isBlank() || "*".equals(kw);
+        List<Map<String, Object>> candidates = new ArrayList<>();
+
+        List<BizCatalogItem> catalogs = catalogMapper.selectList(new LambdaQueryWrapper<BizCatalogItem>()
+                .eq(BizCatalogItem::getPublishStatus, "PUBLISHED"));
+        for (BizCatalogItem c : catalogs) {
+            double score = wildcard ? 40 : matchScore(kw, c.getTitle(), c.getDescription());
+            if (score <= 0 && !wildcard) continue;
+            Map<String, Object> row = new LinkedHashMap<>();
+            row.put("resourceType", "CATALOG");
+            row.put("resourceId", c.getId());
+            row.put("resourceCode", c.getCatalogCode());
+            row.put("title", c.getTitle());
+            row.put("subtitle", c.getDescription());
+            row.put("score", score);
+            row.put("suggestedEvalStatus", score >= 30 ? "MATCHED" : "PARTIAL");
+            row.put("suggestedShareAttr", score >= 50 ? "OPEN" : "CONDITIONAL");
+            candidates.add(row);
+        }
+
+        List<IngDataTable> tables = dataTableMapper.selectList(new LambdaQueryWrapper<IngDataTable>().last("LIMIT 200"));
+        for (IngDataTable t : tables) {
+            double score = wildcard ? 25 : matchScore(kw, t.getTableName(), t.getTableCode());
+            if (score <= 0 && !wildcard) continue;
+            Map<String, Object> row = new LinkedHashMap<>();
+            row.put("resourceType", "TABLE");
+            row.put("resourceId", t.getId());
+            row.put("resourceCode", t.getTableCode());
+            row.put("title", t.getTableName());
+            row.put("subtitle", "库表 · 列数=" + t.getColumnCount());
+            row.put("score", score);
+            row.put("suggestedEvalStatus", score >= 30 ? "MATCHED" : "PARTIAL");
+            row.put("suggestedShareAttr", "RESTRICTED");
+            candidates.add(row);
+        }
+
+        List<BizEsbFlow> flows = esbFlowMapper.selectList(new LambdaQueryWrapper<>());
+        for (BizEsbFlow f : flows) {
+            double score = wildcard ? 20 : matchScore(kw, f.getFlowName(), f.getFlowCode());
+            if (score <= 0 && !wildcard) continue;
+            Map<String, Object> row = new LinkedHashMap<>();
+            row.put("resourceType", "API");
+            row.put("resourceId", f.getId());
+            row.put("resourceCode", f.getFlowCode());
+            row.put("title", f.getFlowName());
+            row.put("subtitle", "接口/交换流 · " + f.getStatus());
+            row.put("score", score);
+            row.put("suggestedEvalStatus", score >= 30 ? "MATCHED" : "PARTIAL");
+            row.put("suggestedShareAttr", "CONDITIONAL");
+            candidates.add(row);
+        }
+
+        candidates.sort((a, b) -> Double.compare(((Number) b.get("score")).doubleValue(), ((Number) a.get("score")).doubleValue()));
+        return candidates;
+    }
+
+    private Map<String, Object> buildRelationGraph(BizDataDemand demand, BizCatalogItem catalog,
+                                                   List<Map<String, Object>> candidates) {
         List<Map<String, Object>> nodes = new ArrayList<>();
         List<Map<String, Object>> edges = new ArrayList<>();
-        nodes.add(Map.of("id", "demand-" + demand.getId(), "label", demand.getDemandTitle(), "type", "DEMAND"));
+        String demandNode = "demand-" + demand.getId();
+        nodes.add(Map.of("id", demandNode, "label", demand.getDemandTitle(), "type", "DEMAND"));
         if (catalog != null) {
-            nodes.add(Map.of("id", "catalog-" + catalog.getId(), "label", catalog.getTitle(), "type", "CATALOG"));
-            edges.add(Map.of("from", "demand-" + demand.getId(), "to", "catalog-" + catalog.getId(), "label", "匹配"));
+            String cid = "catalog-" + catalog.getId();
+            nodes.add(Map.of("id", cid, "label", catalog.getTitle(), "type", "CATALOG"));
+            edges.add(Map.of("from", demandNode, "to", cid, "label", "目录匹配"));
         }
         if (demand.getTargetCatalogId() != null && (catalog == null || !demand.getTargetCatalogId().equals(catalog.getId()))) {
             BizCatalogItem target = catalogMapper.selectById(demand.getTargetCatalogId());
             if (target != null) {
-                nodes.add(Map.of("id", "catalog-" + target.getId(), "label", target.getTitle(), "type", "CATALOG"));
-                edges.add(Map.of("from", "demand-" + demand.getId(), "to", "catalog-" + target.getId(), "label", "申请"));
+                String tid = "catalog-" + target.getId();
+                nodes.add(Map.of("id", tid, "label", target.getTitle(), "type", "CATALOG"));
+                edges.add(Map.of("from", demandNode, "to", tid, "label", "申请目标"));
             }
         }
+        int added = 0;
+        for (Map<String, Object> c : candidates) {
+            if (added >= 5) break;
+            String type = String.valueOf(c.get("resourceType"));
+            if ("CATALOG".equals(type) && catalog != null
+                    && String.valueOf(catalog.getId()).equals(String.valueOf(c.get("resourceId")))) {
+                continue;
+            }
+            String nid = type.toLowerCase() + "-" + c.get("resourceId");
+            nodes.add(Map.of("id", nid, "label", String.valueOf(c.get("title")), "type", type));
+            edges.add(Map.of("from", demandNode, "to", nid, "label", "相关度 " + c.get("score") + "%"));
+            added++;
+        }
         return Map.of("nodes", nodes, "edges", edges);
+    }
+
+    private String toJson(Map<String, Object> map) {
+        try {
+            return new com.fasterxml.jackson.databind.ObjectMapper().writeValueAsString(map);
+        } catch (Exception e) {
+            return String.valueOf(map);
+        }
     }
 
     private double matchScore(String keyword, String title, String desc) {

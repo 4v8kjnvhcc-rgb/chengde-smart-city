@@ -720,7 +720,9 @@ onMounted(() => {
 
           <el-table v-if="selectedChannel" :data="[selectedChannel]" stripe size="small" style="margin-top:8px">
 
-            <el-table-column prop="status" label="状态" width="90" />
+            <el-table-column label="状态" width="90">
+          <template #default="{ row }">{{ $statusLabel(row.status) }}</template>
+        </el-table-column>
 
             <el-table-column prop="lastMessage" label="最近执行" min-width="240" />
 
@@ -798,7 +800,9 @@ onMounted(() => {
 
             <el-table-column prop="rowCount" label="行数" width="80" />
 
-            <el-table-column prop="status" label="状态" width="100" />
+            <el-table-column label="状态" width="100">
+          <template #default="{ row }">{{ $statusLabel(row.status) }}</template>
+        </el-table-column>
 
           </el-table>
 
@@ -952,7 +956,9 @@ onMounted(() => {
 
         <el-table-column prop="scheduleCron" label="定时调度(Cron)" width="140" />
 
-        <el-table-column prop="status" label="状态" width="90" />
+        <el-table-column label="状态" width="90">
+          <template #default="{ row }">{{ $statusLabel(row.status) }}</template>
+        </el-table-column>
 
         <el-table-column prop="lastRunMessage" label="最近日志" min-width="200" show-overflow-tooltip />
 

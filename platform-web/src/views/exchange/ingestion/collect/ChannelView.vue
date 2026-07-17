@@ -50,7 +50,9 @@ onMounted(reload)
       <el-table :data="channels" stripe>
         <el-table-column prop="channelName" label="通道" min-width="160" />
         <el-table-column prop="channelType" label="类型" width="100" />
-        <el-table-column prop="status" label="状态" width="90" />
+        <el-table-column label="状态" width="90">
+          <template #default="{ row }">{{ $statusLabel(row.status) }}</template>
+        </el-table-column>
         <el-table-column prop="configJson" label="配置" min-width="180" show-overflow-tooltip />
         <el-table-column prop="lastMessage" label="最近执行" min-width="200" />
         <el-table-column label="操作" width="80">
@@ -75,7 +77,9 @@ onMounted(reload)
         <el-table-column prop="taskCode" label="编码" width="160" />
         <el-table-column prop="taskName" label="任务" min-width="140" />
         <el-table-column prop="scheduleCron" label="Cron" width="120" />
-        <el-table-column prop="status" label="状态" width="90" />
+        <el-table-column label="状态" width="90">
+          <template #default="{ row }">{{ $statusLabel(row.status) }}</template>
+        </el-table-column>
         <el-table-column prop="lastRunMessage" label="日志" min-width="200" show-overflow-tooltip />
       </el-table>
     </PageCard>

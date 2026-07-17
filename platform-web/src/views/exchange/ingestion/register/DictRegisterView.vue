@@ -147,7 +147,9 @@ onMounted(reload)
         <el-table-column prop="dictName" label="名称" min-width="160" />
         <el-table-column prop="dictType" label="类型" width="100" />
         <el-table-column prop="itemCount" label="项数" width="80" />
-        <el-table-column prop="status" label="状态" width="90" />
+        <el-table-column label="状态" width="90">
+          <template #default="{ row }">{{ $statusLabel(row.status) }}</template>
+        </el-table-column>
         <el-table-column v-if="isManage" label="操作" width="120">
           <template #default="{ row }">
             <el-button link type="primary" @click="openItems(row)">查看/编辑</el-button>

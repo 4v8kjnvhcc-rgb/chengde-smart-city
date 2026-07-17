@@ -12,6 +12,10 @@ public class IngIngestTask {
     private String taskCode;
     private String taskName;
     private Long channelId;
+    private Long sourceId;
+    private Long tableId;
+    private String targetTable;
+    private Long collectedRows;
     private String scheduleCron;
     private String status;
     private LocalDateTime lastRunAt;
@@ -26,6 +30,14 @@ public class IngIngestTask {
     public void setTaskName(String taskName) { this.taskName = taskName; }
     public Long getChannelId() { return channelId; }
     public void setChannelId(Long channelId) { this.channelId = channelId; }
+    public Long getSourceId() { return sourceId; }
+    public void setSourceId(Long sourceId) { this.sourceId = sourceId; }
+    public Long getTableId() { return tableId; }
+    public void setTableId(Long tableId) { this.tableId = tableId; }
+    public String getTargetTable() { return targetTable; }
+    public void setTargetTable(String targetTable) { this.targetTable = targetTable; }
+    public Long getCollectedRows() { return collectedRows; }
+    public void setCollectedRows(Long collectedRows) { this.collectedRows = collectedRows; }
     public String getScheduleCron() { return scheduleCron; }
     public void setScheduleCron(String scheduleCron) { this.scheduleCron = scheduleCron; }
     public String getStatus() { return status; }

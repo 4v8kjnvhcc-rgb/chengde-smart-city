@@ -68,6 +68,14 @@ def filter_collect(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return [r for r in rows if "数据资源采集汇聚" in r.get("subsystem", "")]
 
 
+def filter_application(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return [
+        r for r in rows
+        if r.get("system") == "数据共享交换平台-应用平台"
+        and 44 <= int(r.get("rowIndex", 0)) <= 62
+    ]
+
+
 def dedupe_modules(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Merge continuation rows (empty module change, extra description) by moduleName."""
     out: list[dict[str, Any]] = []
@@ -87,7 +95,7 @@ def dedupe_modules(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
 def main() -> None:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--scope", default="all", choices=["all", "collect"])
+    parser.add_argument("--scope", default="all", choices=["all", "collect", "application"])
     parser.add_argument("--out", default=None)
     args = parser.parse_args()
 
@@ -96,6 +104,9 @@ def main() -> None:
         rows = filter_collect(rows)
         rows = dedupe_modules(rows)
         out_path = args.out or os.path.join(CATALOG_DIR, "v3-catalog.collect.json")
+    elif args.scope == "application":
+        rows = filter_application(rows)
+        out_path = args.out or os.path.join(CATALOG_DIR, "v3-catalog.application.json")
     else:
         out_path = args.out or os.path.join(CATALOG_DIR, "v3-catalog.normalized.json")
 

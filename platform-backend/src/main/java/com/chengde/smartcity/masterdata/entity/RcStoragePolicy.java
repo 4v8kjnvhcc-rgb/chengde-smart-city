@@ -12,6 +12,8 @@ public class RcStoragePolicy {
     private String policyName;
     private String actionType;
     private Integer retentionDays;
+    private Long themeId;
+    private Long managedTableId;
     private String status;
 
     public Long getId() { return id; }
@@ -24,6 +26,10 @@ public class RcStoragePolicy {
     public void setActionType(String actionType) { this.actionType = actionType; }
     public Integer getRetentionDays() { return retentionDays; }
     public void setRetentionDays(Integer retentionDays) { this.retentionDays = retentionDays; }
+    public Long getThemeId() { return themeId; }
+    public void setThemeId(Long themeId) { this.themeId = themeId; }
+    public Long getManagedTableId() { return managedTableId; }
+    public void setManagedTableId(Long managedTableId) { this.managedTableId = managedTableId; }
     public String getStatus() { return status; }
     public void setStatus(String status) { this.status = status; }
 }

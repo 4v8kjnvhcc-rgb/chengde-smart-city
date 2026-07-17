@@ -221,7 +221,9 @@ onMounted(() => { resolveTab(); loadAll() })
             <el-table-column prop="periodCode" label="编码" width="120" />
             <el-table-column prop="periodName" label="名称" min-width="160" />
             <el-table-column prop="cycleType" label="类型" width="90" />
-            <el-table-column prop="status" label="状态" width="90" />
+            <el-table-column label="状态" width="90">
+          <template #default="{ row }">{{ $statusLabel(row.status) }}</template>
+        </el-table-column>
             <el-table-column label="操作" width="100">
               <template #default="{ row }">
                 <el-button v-if="row.status !== 'ACTIVE'" link type="primary" @click="activatePeriod(row.id)">
@@ -285,7 +287,9 @@ onMounted(() => { resolveTab(); loadAll() })
             <el-table-column prop="targetName" label="考核对象" min-width="140" />
             <el-table-column prop="targetType" label="类型" width="90" />
             <el-table-column prop="totalScore" label="总分" width="80" />
-            <el-table-column prop="status" label="状态" width="100" />
+            <el-table-column label="状态" width="100">
+          <template #default="{ row }">{{ $statusLabel(row.status) }}</template>
+        </el-table-column>
             <el-table-column label="操作" width="160">
               <template #default="{ row }">
                 <el-button link type="primary" @click="showResults(row.id)">明细</el-button>

@@ -5,6 +5,7 @@ import 'element-plus/dist/index.css'
 import * as ElementPlusIconsVue from '@element-plus/icons-vue'
 import App from './App.vue'
 import router from './router'
+import { statusLabel, statusTagType } from './utils/status-label'
 import './styles/variables.css'
 import './styles/global.css'
 import './styles/element-overrides.css'
@@ -14,6 +15,8 @@ const app = createApp(App)
 for (const [key, component] of Object.entries(ElementPlusIconsVue)) {
   app.component(key, component)
 }
+app.config.globalProperties.$statusLabel = statusLabel
+app.config.globalProperties.$statusTagType = statusTagType
 app.use(createPinia())
 app.use(router)
 app.use(ElementPlus)

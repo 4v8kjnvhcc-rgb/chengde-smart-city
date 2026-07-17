@@ -86,7 +86,9 @@ onMounted(load)
         <el-table-column prop="themeCode" label="编码" min-width="140" />
         <el-table-column prop="themeName" label="名称" min-width="160" />
         <el-table-column prop="partitionKey" label="分区" width="120" />
-        <el-table-column prop="status" label="状态" width="100" />
+        <el-table-column label="状态" width="100">
+          <template #default="{ row }">{{ $statusLabel(row.status) }}</template>
+        </el-table-column>
       </el-table>
     </PageCard>
     <PageCard title="备份恢复">
@@ -104,7 +106,9 @@ onMounted(load)
       <el-table class="portal-table" :data="backups" stripe>
         <el-table-column prop="jobName" label="任务" min-width="160" />
         <el-table-column prop="themeId" label="主题ID" width="100" />
-        <el-table-column prop="status" label="状态" width="100" />
+        <el-table-column label="状态" width="100">
+          <template #default="{ row }">{{ $statusLabel(row.status) }}</template>
+        </el-table-column>
         <el-table-column prop="lastMessage" label="结果" min-width="220" />
         <el-table-column label="操作" width="100">
           <template #default="{ row }">

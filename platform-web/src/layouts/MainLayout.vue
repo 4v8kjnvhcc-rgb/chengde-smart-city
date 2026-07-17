@@ -10,6 +10,13 @@ const auth = useAuthStore()
 const route = useRoute()
 
 const isHubPage = computed(() => route.path === '/dashboard' || route.path === '/')
+const hideAppHeader = computed(() => Boolean((route.meta as { hideAppHeader?: boolean }).hideAppHeader))
+const flushMain = computed(() => Boolean((route.meta as { flushMain?: boolean }).flushMain))
+const mainClasses = computed(() => ({
+  'portal-main--hub': isHubPage.value,
+  'portal-main--flush-header': hideAppHeader.value && flushMain.value,
+  'portal-main--no-app-header': hideAppHeader.value && !flushMain.value,
+}))
 
 const sidebarContext = computed(() =>
   resolveSidebarContext(auth.menus, route.path, route.meta as { hubLayout?: boolean }),
@@ -27,8 +34,8 @@ const sidebarMenus = computed(() => sidebarContext.value?.menus ?? [])
       <AppSidebar :menus="sidebarMenus" />
     </el-aside>
     <el-container class="portal-main-wrap" :class="{ 'portal-main-wrap--hub': isHubPage }">
-      <AppHeader :show-back-hub="!isHubPage" :hub-theme="isHubPage" />
-      <el-main class="portal-main" :class="{ 'portal-main--hub': isHubPage }">
+      <AppHeader v-if="!hideAppHeader" :show-back-hub="!isHubPage" :hub-theme="isHubPage" />
+      <el-main class="portal-main" :class="mainClasses">
         <router-view />
       </el-main>
     </el-container>
@@ -124,6 +131,15 @@ const sidebarMenus = computed(() => sidebarContext.value?.menus ?? [])
 }
 .portal-main {
   padding: 20px;
+}
+.portal-main--flush-header {
+  padding: 0;
+  min-height: 100vh;
+  box-sizing: border-box;
+}
+.portal-main--no-app-header {
+  min-height: 100vh;
+  box-sizing: border-box;
 }
 .portal-main--hub {
   display: flex;

@@ -147,7 +147,9 @@ onMounted(async () => {
           <el-table-column prop="dashCode" label="编码" width="140" />
           <el-table-column prop="dashName" label="名称" />
           <el-table-column prop="deDashboardId" label="DE Dashboard" />
-          <el-table-column prop="status" label="状态" width="90" />
+          <el-table-column label="状态" width="90">
+          <template #default="{ row }">{{ $statusLabel(row.status) }}</template>
+        </el-table-column>
         </el-table>
       </PageCard>
     </HubSideLayout>

@@ -84,6 +84,65 @@ public class OpenMetadataClient {
         }
     }
 
+    public List<Map<String, Object>> listIngestionPipelines(int limit) {
+        if (!props.isEnabled()) {
+            return List.of();
+        }
+        try {
+            ensureToken();
+            String url = props.getOm().getUrl() + "/services/ingestionPipelines?limit=" + Math.max(1, Math.min(limit, 100));
+            ResponseEntity<String> res = rest.exchange(url, HttpMethod.GET, authEntity(null), String.class);
+            return parseDataArray(res.getBody());
+        } catch (Exception e) {
+            return List.of();
+        }
+    }
+
+    public Map<String, Object> stopIngestionPipeline(String pipelineName) {
+        if (!props.isEnabled()) {
+            return Map.of("status", "SKIPPED", "reason", "integration disabled");
+        }
+        try {
+            ensureToken();
+            String url = props.getOm().getUrl() + "/services/ingestionPipelines/name/" + pipelineName + "/toggleIngestion";
+            ResponseEntity<String> res = rest.exchange(url, HttpMethod.POST, authEntity(Map.of()), String.class);
+            return parseObject(res.getBody());
+        } catch (Exception e) {
+            return Map.of("status", "STOP_REQUESTED", "pipeline", pipelineName, "message", e.getMessage());
+        }
+    }
+
+    public List<Map<String, Object>> listTables(String database, int limit) {
+        if (!props.isEnabled()) {
+            return List.of();
+        }
+        try {
+            ensureToken();
+            String url = props.getOm().getUrl() + "/tables?limit=" + Math.max(1, Math.min(limit, 100));
+            if (database != null && !database.isBlank()) {
+                url += "&database=" + database;
+            }
+            ResponseEntity<String> res = rest.exchange(url, HttpMethod.GET, authEntity(null), String.class);
+            return parseDataArray(res.getBody());
+        } catch (Exception e) {
+            return List.of();
+        }
+    }
+
+    public Map<String, Object> getLineage(String fqn) {
+        if (!props.isEnabled() || fqn == null || fqn.isBlank()) {
+            return Map.of();
+        }
+        try {
+            ensureToken();
+            String url = props.getOm().getUrl() + "/lineage/table/name/" + fqn + "?upstreamDepth=2&downstreamDepth=2";
+            ResponseEntity<String> res = rest.exchange(url, HttpMethod.GET, authEntity(null), String.class);
+            return parseObject(res.getBody());
+        } catch (Exception e) {
+            return Map.of("status", "UNAVAILABLE", "fqn", fqn, "message", e.getMessage());
+        }
+    }
+
     private void ensureToken() {
         if (jwtToken != null) {
             return;

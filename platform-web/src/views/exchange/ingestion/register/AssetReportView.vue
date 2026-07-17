@@ -68,7 +68,9 @@ onMounted(() => withLoad(async () => {
           <h4 class="chart-title">TOP 任务</h4>
           <el-table :data="report.topTasks as Record<string,unknown>[]" stripe size="small">
             <el-table-column prop="taskName" label="任务" />
-            <el-table-column prop="status" label="状态" width="80" />
+            <el-table-column label="状态" width="80">
+          <template #default="{ row }">{{ $statusLabel(row.status) }}</template>
+        </el-table-column>
           </el-table>
         </el-col>
       </el-row>

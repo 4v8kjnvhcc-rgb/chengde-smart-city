@@ -56,7 +56,9 @@ onMounted(reload)
         <el-table-column prop="nullRate" label="空值率" width="90" />
         <el-table-column prop="domainCheck" label="值域" width="100" />
         <el-table-column prop="entityType" label="实体" width="100" />
-        <el-table-column prop="status" label="状态" width="90" />
+        <el-table-column label="状态" width="90">
+          <template #default="{ row }">{{ $statusLabel(row.status) }}</template>
+        </el-table-column>
       </el-table>
 
       <template v-if="module === 'm062'">
@@ -72,7 +74,9 @@ onMounted(reload)
           <el-table-column prop="defName" label="名称" width="140" />
           <el-table-column prop="businessDesc" label="业务描述" min-width="160" />
           <el-table-column prop="techDesc" label="技术描述" min-width="160" />
-          <el-table-column prop="status" label="状态" width="90" />
+          <el-table-column label="状态" width="90">
+          <template #default="{ row }">{{ $statusLabel(row.status) }}</template>
+        </el-table-column>
         </el-table>
       </template>
 
@@ -80,7 +84,9 @@ onMounted(reload)
         <el-button @click="runPipeline('READ')">生成账单</el-button>
         <el-table :data="jobs.filter(j => j.jobType === 'READ')" stripe style="margin-top:12px">
           <el-table-column prop="jobName" label="读取任务" />
-          <el-table-column prop="status" label="状态" width="90" />
+          <el-table-column label="状态" width="90">
+          <template #default="{ row }">{{ $statusLabel(row.status) }}</template>
+        </el-table-column>
           <el-table-column prop="billAmount" label="账单(元)" width="100" />
         </el-table>
       </template>
@@ -98,7 +104,9 @@ onMounted(reload)
           <el-table-column prop="matchedPct" label="匹配%" width="90" />
           <el-table-column prop="diffRows" label="差异行" width="90" />
           <el-table-column prop="alertLevel" label="告警" width="90" />
-          <el-table-column prop="status" label="状态" width="90" />
+          <el-table-column label="状态" width="90">
+          <template #default="{ row }">{{ $statusLabel(row.status) }}</template>
+        </el-table-column>
         </el-table>
         <el-alert v-if="reconcileResult" :title="JSON.stringify(reconcileResult)" type="info" style="margin-top:12px" />
       </template>

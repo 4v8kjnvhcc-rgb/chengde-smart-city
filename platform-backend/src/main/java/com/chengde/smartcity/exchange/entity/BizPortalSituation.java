@@ -13,6 +13,7 @@ public class BizPortalSituation {
     private String domainRoute;
     private String modelMCode;
     private String summaryMetric;
+    private String boardUrl;
     private Integer sortOrder;
 
     public Long getId() { return id; }
@@ -27,6 +28,8 @@ public class BizPortalSituation {
     public void setModelMCode(String modelMCode) { this.modelMCode = modelMCode; }
     public String getSummaryMetric() { return summaryMetric; }
     public void setSummaryMetric(String summaryMetric) { this.summaryMetric = summaryMetric; }
+    public String getBoardUrl() { return boardUrl; }
+    public void setBoardUrl(String boardUrl) { this.boardUrl = boardUrl; }
     public Integer getSortOrder() { return sortOrder; }
     public void setSortOrder(Integer sortOrder) { this.sortOrder = sortOrder; }
 }

@@ -14,7 +14,7 @@
 
 1. 启动 **MySQL 8.4** 与 **Redis**（见 [`platform-backend/README.md`](platform-backend/README.md)）
 2. 执行 `scripts/setup_smart_city.sql`，配置 `local.env`
-3. 后端：`platform-backend\mvnw.cmd spring-boot:run "-Dspring-boot.run.profiles=dev"`
+3. 后端：`cd platform-backend  .\mvnw.cmd spring-boot:run "-Dspring-boot.run.profiles=dev"`
 4. 前端：`cd platform-web && npm run dev`
 5. 登录 `http://localhost:3000`，`sys_admin` / `Test@12345`
 
@@ -82,3 +82,12 @@ python scripts/normalize_v3_catalog.py --scope collect
 python scripts/validate_d05_consistency.py --scope collect
 powershell -File scripts/smoke_ingestion.ps1 -CollectOnly
 ```
+
+重启后端操作：
+netstat -ano | findstr XXXX
+taskkill /F /PID XXXX
+
+cd E:\myProject\承德
+docker compose -f compose/oss-stack.yml --profile etl up -d
+绝对路径：
+docker compose -f E:\myProject\承德\compose\oss-stack.yml --profile etl up -d

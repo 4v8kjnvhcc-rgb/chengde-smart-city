@@ -1,0 +1,168 @@
+{
+  "scope": "application",
+  "description": "应用平台 M020～M030、M037～M038；语义基线 D05 §1.2 + 功能清单.xlsx 第44～62行",
+  "guideDoc": "D17-系统优化流程及方式.md",
+  "xlsxRowRange": [44, 62],
+  "modules": [
+    {
+      "mCode": "M020",
+      "moduleName": "数据需求管理",
+      "featureDesc": "需求发布管理",
+      "implMode": "纯自研",
+      "applicationSystem": "supply",
+      "applicationPage": "supply-flow",
+      "sectionKey": "demand",
+      "ownerView": "application/SupplyDemandView.vue",
+      "ownerApi": "/exchange/supply/demands",
+      "status": "match"
+    },
+    {
+      "mCode": "M021",
+      "moduleName": "数据需求分析",
+      "featureDesc": "需求分析分发",
+      "implMode": "纯自研",
+      "applicationSystem": "supply",
+      "applicationPage": "supply-flow",
+      "sectionKey": "analysis",
+      "ownerView": "application/SupplyDemandView.vue",
+      "ownerApi": "/exchange/supply/demands/{id}/analyze",
+      "status": "match"
+    },
+    {
+      "mCode": "M022",
+      "moduleName": "数据需求确认",
+      "featureDesc": "需求确认",
+      "implMode": "纯自研",
+      "applicationSystem": "supply",
+      "applicationPage": "supply-flow",
+      "sectionKey": "confirm",
+      "ownerView": "application/SupplyDemandView.vue",
+      "ownerApi": "/exchange/supply/demands/{id}/confirm",
+      "status": "match"
+    },
+    {
+      "mCode": "M023",
+      "moduleName": "数据供给查看",
+      "featureDesc": "供给查看",
+      "implMode": "纯自研",
+      "applicationSystem": "supply",
+      "applicationPage": "supply-flow",
+      "sectionKey": "supply",
+      "ownerView": "application/SupplyDemandView.vue",
+      "ownerApi": "/exchange/supply/supply-view/{id}",
+      "status": "match"
+    },
+    {
+      "mCode": "M024",
+      "moduleName": "目录清单",
+      "featureDesc": "目录清单",
+      "implMode": "纯自研",
+      "applicationSystem": "supply",
+      "applicationPage": "manifest-hub",
+      "sectionKey": "catalog",
+      "ownerView": "application/SupplyDemandView.vue",
+      "ownerApi": "/exchange/supply/catalog-manifest",
+      "status": "match"
+    },
+    {
+      "mCode": "M025",
+      "moduleName": "异议清单",
+      "featureDesc": "异议清单",
+      "implMode": "纯自研",
+      "applicationSystem": "supply",
+      "applicationPage": "manifest-hub",
+      "sectionKey": "objection",
+      "ownerView": "application/SupplyDemandView.vue",
+      "ownerApi": "/exchange/supply/objections",
+      "status": "match"
+    },
+    {
+      "mCode": "M026",
+      "moduleName": "供需清单",
+      "featureDesc": "供需清单",
+      "implMode": "纯自研",
+      "applicationSystem": "supply",
+      "applicationPage": "manifest-hub",
+      "sectionKey": "manifest",
+      "ownerView": "application/SupplyDemandView.vue",
+      "ownerApi": "/exchange/supply/manifests",
+      "status": "match"
+    },
+    {
+      "mCode": "M027",
+      "moduleName": "评价数据来源",
+      "featureDesc": "评价数据来源",
+      "implMode": "纯自研",
+      "applicationSystem": "assessment",
+      "applicationPage": "data-source",
+      "ownerView": "application/AssessmentView.vue",
+      "ownerApi": "/exchange/assessment/data-sources",
+      "status": "match"
+    },
+    {
+      "mCode": "M028",
+      "moduleName": "评价周期管理",
+      "featureDesc": "评价周期",
+      "implMode": "纯自研",
+      "applicationSystem": "assessment",
+      "applicationPage": "period",
+      "ownerView": "application/AssessmentView.vue",
+      "ownerApi": "/exchange/assessment/periods",
+      "status": "match"
+    },
+    {
+      "mCode": "M029",
+      "moduleName": "评价指标管理",
+      "featureDesc": "指标体系",
+      "implMode": "纯自研",
+      "applicationSystem": "assessment",
+      "applicationPage": "indicator",
+      "ownerView": "application/AssessmentView.vue",
+      "ownerApi": "/exchange/assessment/indicators",
+      "status": "match"
+    },
+    {
+      "mCode": "M030",
+      "moduleName": "评价执行与结果",
+      "featureDesc": "评价方法",
+      "implMode": "纯自研",
+      "applicationSystem": "assessment",
+      "applicationPage": "execution",
+      "ownerView": "application/AssessmentView.vue",
+      "ownerApi": "/exchange/assessment/executions",
+      "status": "match"
+    },
+    {
+      "mCode": "M037",
+      "moduleName": "基础库统计分析",
+      "featureDesc": "基础库分析",
+      "implMode": "纯自研",
+      "applicationSystem": "base-stats",
+      "applicationPage": "base-stats",
+      "ownerView": "application/StatsAnalysisView.vue",
+      "ownerApi": "/exchange/application/stats/base",
+      "xlsxTopics": ["人口结构分析", "人口增长趋势分析", "人口流动分析", "户籍人口与常住人口比较分析", "经济运行相关统计分析", "产业结构分析", "就业率和失业率分析"],
+      "status": "match"
+    },
+    {
+      "mCode": "M038",
+      "moduleName": "重点领域统计分析",
+      "featureDesc": "重点领域",
+      "implMode": "纯自研",
+      "applicationSystem": "domain-stats",
+      "applicationPage": "domain-stats",
+      "ownerView": "application/StatsAnalysisView.vue",
+      "ownerApi": "/exchange/application/stats/domain",
+      "xlsxTopics": ["人口参保统计分析", "高龄津贴统计分析", "特困人员与低保补助统计分析", "行政许可与处罚统计分析"],
+      "status": "match"
+    }
+  ],
+  "boundaryItems": [
+    {
+      "xlsxRow": 48,
+      "moduleName": "数据清单中心",
+      "note": "xlsx 聚合项；实现拆分为 M024 目录清单 / M025 异议清单 / M026 供需清单",
+      "status": "boundary-split"
+    }
+  ]
+}

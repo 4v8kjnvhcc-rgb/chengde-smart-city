@@ -68,7 +68,9 @@ onMounted(reload)
         <el-table-column prop="ruleExpr" label="识别规则" min-width="180" />
         <el-table-column prop="tagDesc" label="描述" min-width="160" />
         <el-table-column prop="hitCount" label="命中数" width="90" />
-        <el-table-column prop="status" label="状态" width="90" />
+        <el-table-column label="状态" width="90">
+          <template #default="{ row }">{{ $statusLabel(row.status) }}</template>
+        </el-table-column>
         <el-table-column v-if="isManage" label="操作" width="90">
           <template #default="{ row }">
             <el-button link type="primary" @click="openDialog(row)">编辑</el-button>

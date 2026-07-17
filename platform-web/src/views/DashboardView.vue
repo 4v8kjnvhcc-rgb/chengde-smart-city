@@ -114,19 +114,51 @@ function linksOf(platformPath: string): PortalLink[] {
   return portalLinks.value.filter((l) => l.platformPath === platformPath)
 }
 
+/** 应用平台统一入口：供需/考核等子能力在 Hub 内 4 Tab 切换，门户抽屉不再平铺 */
+const APPLICATION_ENTRY_PATHS = new Set(['/exchange/application', '/exchange/assessment'])
+
+function isApplicationEntry(path: string | undefined | null): boolean {
+  if (!path) return false
+  return APPLICATION_ENTRY_PATHS.has(path) || path.startsWith('/exchange/application/')
+}
+
 function getCardItems(node: MenuNode): CardItem[] {
-  const menus: CardItem[] = visibleMenuChildren(node).map((child) => ({
-    kind: 'menu',
-    key: `m-${child.id}`,
-    title: child.menuName,
-    node: child,
-  }))
-  const links: CardItem[] = linksOf(node.path).map((link) => ({
-    kind: 'link',
-    key: `l-${link.id}`,
-    title: link.title,
-    link,
-  }))
+  const menus: CardItem[] = []
+  let applicationPushed = false
+
+  for (const child of visibleMenuChildren(node)) {
+    if (node.path === '/exchange' && isApplicationEntry(child.path)) {
+      if (applicationPushed) continue
+      applicationPushed = true
+      menus.push({
+        kind: 'menu',
+        key: 'm-application',
+        title: '应用平台',
+        node: {
+          ...child,
+          menuName: '应用平台',
+          path: '/exchange/application',
+          children: [],
+        },
+      })
+      continue
+    }
+    menus.push({
+      kind: 'menu',
+      key: `m-${child.id}`,
+      title: child.menuName,
+      node: child,
+    })
+  }
+
+  const links: CardItem[] = linksOf(node.path)
+    .filter((link) => !(node.path === '/exchange' && isApplicationEntry(link.url)))
+    .map((link) => ({
+      kind: 'link',
+      key: `l-${link.id}`,
+      title: link.title,
+      link,
+    }))
   return [...menus, ...links]
 }
 
@@ -198,9 +230,6 @@ onMounted(async () => {
   <div class="portal-drawer">
     <div class="portal-drawer__header">
       <h1 class="portal-drawer__title">承德高新区智慧城市数据中台</h1>
-      <el-button type="primary" plain class="d05-search-btn" @click="router.push('/catalog')">
-        D05 全量功能检索（M001～M215）
-      </el-button>
     </div>
 
     <div v-if="platforms.length" class="cards-row">
@@ -229,7 +258,7 @@ onMounted(async () => {
           @click="toggleDrawer(index)"
         >
           <div class="card-icon-wrap">
-            <el-icon :size="54">
+            <el-icon :size="44">
               <component :is="platformIcons[node.path] || Connection" />
             </el-icon>
           </div>
@@ -283,9 +312,6 @@ onMounted(async () => {
   margin-bottom: 20px;
   flex-shrink: 0;
 }
-.d05-search-btn {
-  margin-top: 16px;
-}
 .portal-drawer__title {
   font-size: 56px;
   font-weight: 600;
@@ -307,10 +333,10 @@ onMounted(async () => {
   margin-top: 40px;
 }
 
-/* 原宽 222px，加宽 30% → 289px */
+/* 原宽 289px，缩小 10% → 260px */
 .drawer-card {
-  flex: 0 0 289px;
-  width: 289px;
+  flex: 0 0 260px;
+  width: 260px;
   align-self: flex-start;
   max-height: 100%;
   display: flex;
@@ -324,11 +350,11 @@ onMounted(async () => {
     height 400ms cubic-bezier(0.16, 1, 0.3, 1);
 }
 .drawer-card:not(.is-open) {
-  height: 252px;
+  height: 202px;
 }
 .drawer-card.is-open {
   align-self: flex-start;
-  width: 289px;
+  width: 260px;
   flex: 0 0 auto;
   height: auto;
 }
@@ -341,22 +367,22 @@ onMounted(async () => {
   flex: 0 0 100%;
   min-height: 0;
   box-sizing: border-box;
-  padding: 24px 18px;
+  padding: 16px 14px;
   cursor: pointer;
   user-select: none;
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  gap: 18px;
+  gap: 12px;
   background: var(--card-header-bg);
   border: none;
   outline: none;
   transition: flex 400ms cubic-bezier(0.16, 1, 0.3, 1), padding 300ms ease;
 }
 .drawer-card.is-open .card-header {
-  flex: 0 0 252px;
-  height: 252px;
+  flex: 0 0 202px;
+  height: 202px;
 }
 .card-header:focus-visible {
   outline: 2px solid var(--card-accent);
@@ -364,9 +390,9 @@ onMounted(async () => {
 }
 
 .card-icon-wrap {
-  width: 84px;
-  height: 84px;
-  border-radius: 15px;
+  width: 68px;
+  height: 68px;
+  border-radius: 12px;
   display: flex;
   align-items: center;
   justify-content: center;
@@ -381,7 +407,7 @@ onMounted(async () => {
 .card-title {
   width: 100%;
   height: 2.8em;
-  font-size: 24px;
+  font-size: 20px;
   font-weight: 500;
   text-align: center;
   line-height: 1.4;
@@ -530,11 +556,11 @@ onMounted(async () => {
     align-items: center;
   }
   .drawer-card:not(.is-open) {
-    height: 252px;
+    height: 202px;
   }
   .drawer-card.is-open {
     flex: 0 0 auto;
-    width: 289px;
+    width: 260px;
     height: auto;
   }
 }

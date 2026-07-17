@@ -42,7 +42,9 @@ onMounted(load)
       <el-table class="portal-table" :data="workflows" stripe>
         <el-table-column prop="workflowCode" label="工作流编码" min-width="160" />
         <el-table-column prop="workflowName" label="名称" min-width="200" />
-        <el-table-column prop="status" label="状态" width="120" />
+        <el-table-column label="状态" width="120">
+          <template #default="{ row }">{{ $statusLabel(row.status) }}</template>
+        </el-table-column>
         <el-table-column prop="lastRunAt" label="最近执行" min-width="170" />
         <el-table-column prop="lastMessage" label="结果" min-width="180" />
         <el-table-column label="操作" width="100">

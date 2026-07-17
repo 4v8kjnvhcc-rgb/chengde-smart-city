@@ -71,6 +71,10 @@ public class MasterDataDemoService {
         c.setConnectorCode(str(body.get("connectorCode"), "OM_CONN_" + UUID.randomUUID().toString().substring(0, 8)));
         c.setConnectorName(required(body.get("connectorName"), "connectorName"));
         c.setSourceType(str(body.get("sourceType"), "MySQL"));
+        if (body.containsKey("jdbcUrl")) c.setJdbcUrl(str(body.get("jdbcUrl"), null));
+        if (body.containsKey("jdbcUser")) c.setJdbcUser(str(body.get("jdbcUser"), null));
+        if (body.containsKey("jdbcPassword")) c.setJdbcPassword(str(body.get("jdbcPassword"), null));
+        if (body.containsKey("jdbcDatabase")) c.setJdbcDatabase(str(body.get("jdbcDatabase"), null));
         c.setStatus("ACTIVE");
         c.setCreatedBy(operator.getUsername());
         connectorMapper.insert(c);

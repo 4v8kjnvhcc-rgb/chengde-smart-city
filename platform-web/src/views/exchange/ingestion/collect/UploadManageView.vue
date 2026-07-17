@@ -64,7 +64,9 @@ onMounted(reload)
         <el-table-column prop="fileName" label="文件" min-width="180" />
         <el-table-column prop="templateCode" label="模板" width="140" />
         <el-table-column prop="rowCount" label="行数" width="80" />
-        <el-table-column prop="status" label="状态" width="100" />
+        <el-table-column label="状态" width="100">
+          <template #default="{ row }">{{ $statusLabel(row.status) }}</template>
+        </el-table-column>
         <el-table-column prop="previewJson" label="预览" min-width="160" show-overflow-tooltip />
       </el-table>
     </PageCard>

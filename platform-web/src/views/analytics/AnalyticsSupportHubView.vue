@@ -136,7 +136,9 @@ onMounted(() => { resolveTab(); load() })
           <el-table-column prop="appName" label="名称" />
           <el-table-column prop="appType" label="类型" width="80" />
           <el-table-column prop="endpointUrl" label="入口" />
-          <el-table-column prop="status" label="状态" width="90" />
+          <el-table-column label="状态" width="90">
+          <template #default="{ row }">{{ $statusLabel(row.status) }}</template>
+        </el-table-column>
         </el-table>
       </PageCard>
 
@@ -168,7 +170,9 @@ onMounted(() => { resolveTab(); load() })
           <el-table-column prop="serviceName" label="名称" />
           <el-table-column prop="servicePath" label="路径" />
           <el-table-column prop="protocol" label="协议" width="80" />
-          <el-table-column prop="status" label="状态" width="90" />
+          <el-table-column label="状态" width="90">
+          <template #default="{ row }">{{ $statusLabel(row.status) }}</template>
+        </el-table-column>
         </el-table>
       </PageCard>
 
@@ -201,7 +205,9 @@ onMounted(() => { resolveTab(); load() })
           <el-table-column prop="integrationName" label="名称" />
           <el-table-column prop="targetSystem" label="目标系统" width="140" />
           <el-table-column prop="endpoint" label="端点" min-width="200" />
-          <el-table-column prop="status" label="状态" width="90" />
+          <el-table-column label="状态" width="90">
+          <template #default="{ row }">{{ $statusLabel(row.status) }}</template>
+        </el-table-column>
           <el-table-column prop="lastMessage" label="最近检测" min-width="140" />
           <el-table-column label="操作" width="80">
             <template #default="{ row }">

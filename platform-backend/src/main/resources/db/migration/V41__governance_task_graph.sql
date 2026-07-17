@@ -1,0 +1,55 @@
+-- C1：治理 ETL 任务编排（画布 + 运行 + 节点日志）
+
+CREATE TABLE IF NOT EXISTS gov_governance_task (
+  id BIGINT PRIMARY KEY AUTO_INCREMENT,
+  task_code VARCHAR(64) NOT NULL,
+  task_name VARCHAR(128) NOT NULL,
+  description VARCHAR(512) NULL,
+  graph_json MEDIUMTEXT NULL COMMENT 'VueFlow nodes/edges JSON',
+  status VARCHAR(32) NOT NULL DEFAULT 'DRAFT' COMMENT 'DRAFT/READY/LOCKED/RUNNING/STOPPED',
+  locked_by VARCHAR(64) NULL,
+  locked_at DATETIME NULL,
+  last_run_at DATETIME NULL,
+  last_message VARCHAR(512) NULL,
+  created_by VARCHAR(64) NULL,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+  UNIQUE KEY uk_gov_task_code (task_code),
+  KEY idx_gov_task_status (status)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS gov_governance_task_run (
+  id BIGINT PRIMARY KEY AUTO_INCREMENT,
+  task_id BIGINT NOT NULL,
+  status VARCHAR(32) NOT NULL DEFAULT 'RUNNING' COMMENT 'RUNNING/SUCCESS/FAILED/STOPPED',
+  started_at DATETIME NOT NULL,
+  ended_at DATETIME NULL,
+  total_nodes INT NOT NULL DEFAULT 0,
+  success_nodes INT NOT NULL DEFAULT 0,
+  failed_nodes INT NOT NULL DEFAULT 0,
+  row_count INT NOT NULL DEFAULT 0,
+  message VARCHAR(512) NULL,
+  triggered_by VARCHAR(64) NULL,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  KEY idx_gov_run_task (task_id),
+  KEY idx_gov_run_started (started_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE IF NOT EXISTS gov_governance_node_log (
+  id BIGINT PRIMARY KEY AUTO_INCREMENT,
+  run_id BIGINT NOT NULL,
+  task_id BIGINT NOT NULL,
+  node_id VARCHAR(64) NOT NULL,
+  node_type VARCHAR(32) NOT NULL COMMENT 'INPUT/FILTER/FIELD_PROCESS/DEDUPLICATE/MASK/OUTPUT',
+  node_name VARCHAR(128) NULL,
+  status VARCHAR(32) NOT NULL DEFAULT 'PENDING' COMMENT 'PENDING/RUNNING/SUCCESS/FAILED/SKIPPED/STOPPED',
+  started_at DATETIME NULL,
+  ended_at DATETIME NULL,
+  input_rows INT NOT NULL DEFAULT 0,
+  output_rows INT NOT NULL DEFAULT 0,
+  message VARCHAR(512) NULL,
+  detail_json TEXT NULL,
+  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  KEY idx_gov_nlog_run (run_id),
+  KEY idx_gov_nlog_task (task_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;

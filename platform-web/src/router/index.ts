@@ -67,7 +67,7 @@ const router = createRouter({
           path: 'exchange/ingestion',
           name: 'exchange-ingestion',
           component: () => import('@/views/exchange/ingestion/IngestionHubView.vue'),
-          meta: { title: '大数据归集平台', hubLayout: true },
+          meta: { title: '大数据归集平台', hubLayout: true, hideAppHeader: true },
         },
         {
           path: 'exchange/esb',
@@ -78,14 +78,24 @@ const router = createRouter({
         {
           path: 'exchange/application',
           name: 'exchange-application',
-          component: () => import('@/views/exchange/SupplyDemandHubView.vue'),
-          meta: { title: '供需对接平台', hubLayout: true },
+          component: () => import('@/views/exchange/application/ApplicationHubView.vue'),
+          meta: { title: '应用平台', hubLayout: true, hideAppHeader: true, flushMain: true },
         },
         {
           path: 'exchange/assessment',
-          name: 'exchange-assessment',
-          component: () => import('@/views/exchange/AssessmentView.vue'),
-          meta: { title: '考核评估', hubLayout: true },
+          redirect: { name: 'exchange-application', query: { system: 'assessment', module: 'execution' } },
+        },
+        {
+          path: 'system/exchange/application/supply-config',
+          name: 'system-supply-config',
+          component: () => import('@/views/system/SupplyConfigView.vue'),
+          meta: { title: '供需配置' },
+        },
+        {
+          path: 'system/exchange/application/assessment-config',
+          name: 'system-assessment-config',
+          component: () => import('@/views/system/AssessmentConfigView.vue'),
+          meta: { title: '考核评估配置' },
         },
         {
           path: 'exchange/portal',
@@ -172,20 +182,17 @@ const router = createRouter({
         {
           path: 'catalog',
           name: 'catalog-global',
-          component: () => import('@/views/catalog/GlobalCatalogView.vue'),
-          meta: { title: 'D05全量检索' },
+          redirect: '/dashboard',
         },
         {
           path: 'catalog/:platform',
           name: 'catalog-platform',
-          component: () => import('@/views/catalog/PlatformCatalogView.vue'),
-          meta: { title: 'D05功能清单' },
+          redirect: '/dashboard',
         },
         {
           path: 'modules/:mCode',
           name: 'module-detail',
-          component: () => import('@/views/catalog/ModuleDetailView.vue'),
-          meta: { title: '模块详情' },
+          redirect: '/dashboard',
         },
         {
           path: ':pathMatch(.*)*',

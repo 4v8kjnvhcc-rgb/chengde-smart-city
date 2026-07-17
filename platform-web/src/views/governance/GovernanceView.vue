@@ -158,7 +158,9 @@ onMounted(load)
         <el-table-column prop="ruleCode" label="编码" min-width="120" />
         <el-table-column prop="ruleName" label="名称" min-width="160" />
         <el-table-column prop="ruleType" label="类型" width="140" />
-        <el-table-column prop="status" label="状态" width="100" />
+        <el-table-column label="状态" width="100">
+          <template #default="{ row }">{{ $statusLabel(row.status) }}</template>
+        </el-table-column>
       </el-table>
       <el-divider />
       <el-form inline>
@@ -174,7 +176,9 @@ onMounted(load)
       </el-form>
       <el-table class="portal-table" :data="tasks" stripe>
         <el-table-column prop="taskName" label="任务" min-width="160" />
-        <el-table-column prop="status" label="状态" width="100" />
+        <el-table-column label="状态" width="100">
+          <template #default="{ row }">{{ $statusLabel(row.status) }}</template>
+        </el-table-column>
         <el-table-column prop="lastScore" label="评分" width="100" />
         <el-table-column prop="lastMessage" label="结果" min-width="180" />
         <el-table-column label="操作" width="100">

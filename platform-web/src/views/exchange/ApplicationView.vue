@@ -135,7 +135,9 @@ onMounted(load)
       <el-table class="portal-table" :data="demands" stripe>
         <el-table-column prop="demandTitle" label="需求" min-width="160" />
         <el-table-column prop="requesterOrg" label="申请方" min-width="120" />
-        <el-table-column prop="status" label="状态" width="120" />
+        <el-table-column label="状态" width="120">
+          <template #default="{ row }">{{ $statusLabel(row.status) }}</template>
+        </el-table-column>
         <el-table-column prop="confirmNote" label="确认说明" min-width="200" />
         <el-table-column label="操作" width="100">
           <template #default="{ row }">

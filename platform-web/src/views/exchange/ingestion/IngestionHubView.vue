@@ -47,7 +47,8 @@ const pageTitle = computed(() => `大数据归集平台 · ${systemTitle(system.
 function syncFromRoute() {
   const legacyTab = String(route.query.tab || '').toLowerCase()
   if (legacyTab === 'stats' || legacyTab === 'm037' || legacyTab === 'm038' || legacyTab === 'stats-base' || legacyTab === 'stats-domain') {
-    router.replace({ path: '/exchange/portal', query: { tab: 'situation' } })
+    const sys = legacyTab === 'stats-domain' || legacyTab === 'm038' ? 'domain-stats' : 'base-stats'
+    router.replace({ path: '/exchange/application', query: { system: sys } })
     return
   }
   const resolved = resolveIngestionNav(route.query as Record<string, unknown>)
@@ -76,11 +77,12 @@ onMounted(syncFromRoute)
 </script>
 
 <template>
-  <div>
-    <PageHeader
-      :title="pageTitle"
-      description="数据资产登记管理与数据资源采集汇聚（对齐 D05 第二章）"
-    />
+  <div class="ingestion-hub">
+    <PageHeader :title="pageTitle" description="数据资产登记管理与数据资源采集汇聚">
+      <button type="button" class="hub-back" @click="router.push('/dashboard')">
+        返回总览
+      </button>
+    </PageHeader>
     <div class="ingestion-system-bar">
       <el-radio-group :model-value="system" @change="onSystemChange">
         <el-radio-button value="register">数据资产登记管理</el-radio-button>
@@ -97,6 +99,35 @@ onMounted(syncFromRoute)
 </template>
 
 <style scoped>
+.ingestion-hub :deep(.page-header__title) {
+  font-size: 18px;
+  font-weight: 600;
+  color: #1f2937;
+  letter-spacing: 0.02em;
+}
+.ingestion-hub :deep(.page-header__desc) {
+  font-size: 13px;
+  color: #6b7280;
+}
+.hub-back {
+  appearance: none;
+  border: 1px solid #c5d4eb;
+  background: #f5f8fd;
+  color: #1d4f91;
+  font-size: 13px;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+  padding: 0 14px;
+  height: 32px;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: color 150ms ease, background 150ms ease, border-color 150ms ease;
+}
+.hub-back:hover {
+  color: #0d47a1;
+  background: #e8f0fb;
+  border-color: #9bb8e0;
+}
 .ingestion-system-bar {
   display: flex;
   align-items: center;

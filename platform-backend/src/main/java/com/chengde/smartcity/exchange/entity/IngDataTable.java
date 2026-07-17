@@ -12,9 +12,12 @@ public class IngDataTable {
     private Long sourceId;
     private String tableCode;
     private String tableName;
+    private String physicalTableName;
     private String modelingMode;
     private Integer columnCount;
     private String status;
+    private String collectStatus;
+    private LocalDateTime lastCollectAt;
     private LocalDateTime createdAt;
 
     public Long getId() { return id; }
@@ -25,12 +28,18 @@ public class IngDataTable {
     public void setTableCode(String tableCode) { this.tableCode = tableCode; }
     public String getTableName() { return tableName; }
     public void setTableName(String tableName) { this.tableName = tableName; }
+    public String getPhysicalTableName() { return physicalTableName; }
+    public void setPhysicalTableName(String physicalTableName) { this.physicalTableName = physicalTableName; }
     public String getModelingMode() { return modelingMode; }
     public void setModelingMode(String modelingMode) { this.modelingMode = modelingMode; }
     public Integer getColumnCount() { return columnCount; }
     public void setColumnCount(Integer columnCount) { this.columnCount = columnCount; }
     public String getStatus() { return status; }
     public void setStatus(String status) { this.status = status; }
+    public String getCollectStatus() { return collectStatus; }
+    public void setCollectStatus(String collectStatus) { this.collectStatus = collectStatus; }
+    public LocalDateTime getLastCollectAt() { return lastCollectAt; }
+    public void setLastCollectAt(LocalDateTime lastCollectAt) { this.lastCollectAt = lastCollectAt; }
     public LocalDateTime getCreatedAt() { return createdAt; }
     public void setCreatedAt(LocalDateTime createdAt) { this.createdAt = createdAt; }
 }
