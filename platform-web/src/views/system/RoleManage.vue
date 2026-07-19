@@ -35,11 +35,10 @@ function buildTree(rows: MenuRow[]): TreeNode[] {
   const map = new Map<number, TreeNode>()
   const roots: TreeNode[] = []
   for (const r of rows) {
-    if (r.menuType === 3) continue
-    map.set(r.id, { id: r.id, label: r.menuName, children: [] })
+    const suffix = r.menuType === 3 ? ' [按钮]' : ''
+    map.set(r.id, { id: r.id, label: `${r.menuName}${suffix}`, children: [] })
   }
   for (const r of rows) {
-    if (r.menuType === 3) continue
     const node = map.get(r.id)!
     if (!r.parentId || r.parentId === 0 || !map.has(r.parentId)) {
       roots.push(node)

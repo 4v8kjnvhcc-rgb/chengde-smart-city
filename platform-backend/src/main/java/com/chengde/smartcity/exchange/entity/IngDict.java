@@ -10,7 +10,12 @@ public class IngDict {
     private Long id;
     private String dictCode;
     private String dictName;
+    /** GB国标 / DB地标 / HB行标 / TB团标 / CUSTOM自定义 */
     private String dictType;
+    private String standardNo;
+    private String publisher;
+    private String versionNo;
+    private String remark;
     private Integer itemCount;
     private String status;
 
@@ -22,6 +27,14 @@ public class IngDict {
     public void setDictName(String dictName) { this.dictName = dictName; }
     public String getDictType() { return dictType; }
     public void setDictType(String dictType) { this.dictType = dictType; }
+    public String getStandardNo() { return standardNo; }
+    public void setStandardNo(String standardNo) { this.standardNo = standardNo; }
+    public String getPublisher() { return publisher; }
+    public void setPublisher(String publisher) { this.publisher = publisher; }
+    public String getVersionNo() { return versionNo; }
+    public void setVersionNo(String versionNo) { this.versionNo = versionNo; }
+    public String getRemark() { return remark; }
+    public void setRemark(String remark) { this.remark = remark; }
     public Integer getItemCount() { return itemCount; }
     public void setItemCount(Integer itemCount) { this.itemCount = itemCount; }
     public String getStatus() { return status; }

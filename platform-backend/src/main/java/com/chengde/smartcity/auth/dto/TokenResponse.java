@@ -6,6 +6,6 @@ public record TokenResponse(
         long accessTokenExpiresInSeconds,
         UserInfo user
 ) {
-    public record UserInfo(Long id, String username, String displayName, Long orgId) {
+    public record UserInfo(Long id, String username, String displayName, Long orgId, String orgName) {
     }
 }

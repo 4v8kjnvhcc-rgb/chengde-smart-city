@@ -2,6 +2,7 @@ package com.chengde.smartcity.exchange.controller;
 
 import com.chengde.smartcity.common.api.ApiResponse;
 import com.chengde.smartcity.exchange.entity.IngAssetTag;
+import com.chengde.smartcity.exchange.entity.IngAssetTagBinding;
 import com.chengde.smartcity.exchange.entity.IngCategoryNode;
 import com.chengde.smartcity.exchange.entity.IngDataColumn;
 import com.chengde.smartcity.exchange.entity.IngDataDefinition;
@@ -22,13 +23,17 @@ import com.chengde.smartcity.exchange.entity.IngResourceRegistry;
 import com.chengde.smartcity.exchange.entity.IngStatsMetric;
 import com.chengde.smartcity.exchange.entity.IngUploadRecord;
 import com.chengde.smartcity.exchange.entity.IngUploadTemplate;
+import com.chengde.smartcity.exchange.service.AssetReportService;
 import com.chengde.smartcity.exchange.service.CollectUploadService;
+import com.chengde.smartcity.exchange.service.ExcelManualUploadService;
 import com.chengde.smartcity.exchange.service.IngestAssetGovernService;
 import com.chengde.smartcity.exchange.service.IngestCatalogService;
 import com.chengde.smartcity.exchange.service.IngestionPlatformService;
 import com.chengde.smartcity.exchange.service.KettleCollectService;
+import com.chengde.smartcity.exchange.service.LineageService;
 import com.chengde.smartcity.exchange.service.PipelineDesignService;
 import com.chengde.smartcity.exchange.service.RegisterService;
+import com.chengde.smartcity.exchange.service.TableIngestEngine;
 import com.chengde.smartcity.security.UserPrincipal;
 import java.util.List;
 import java.util.Map;
@@ -51,25 +56,37 @@ public class IngestionPlatformController {
 
     private final IngestionPlatformService service;
     private final RegisterService registerService;
+    private final AssetReportService assetReportService;
+    private final LineageService lineageService;
     private final CollectUploadService collectUploadService;
+    private final ExcelManualUploadService excelManualUploadService;
     private final PipelineDesignService pipelineDesignService;
     private final IngestCatalogService catalogService;
     private final IngestAssetGovernService assetGovernService;
     private final KettleCollectService kettleCollectService;
+    private final TableIngestEngine tableIngestEngine;
 
     public IngestionPlatformController(IngestionPlatformService service, RegisterService registerService,
+                                       AssetReportService assetReportService,
+                                       LineageService lineageService,
                                        CollectUploadService collectUploadService,
+                                       ExcelManualUploadService excelManualUploadService,
                                        PipelineDesignService pipelineDesignService,
                                        IngestCatalogService catalogService,
                                        IngestAssetGovernService assetGovernService,
-                                       KettleCollectService kettleCollectService) {
+                                       KettleCollectService kettleCollectService,
+                                       TableIngestEngine tableIngestEngine) {
         this.service = service;
         this.registerService = registerService;
+        this.assetReportService = assetReportService;
+        this.lineageService = lineageService;
         this.collectUploadService = collectUploadService;
+        this.excelManualUploadService = excelManualUploadService;
         this.pipelineDesignService = pipelineDesignService;
         this.catalogService = catalogService;
         this.assetGovernService = assetGovernService;
         this.kettleCollectService = kettleCollectService;
+        this.tableIngestEngine = tableIngestEngine;
     }
 
     @GetMapping("/stats/base")
@@ -88,19 +105,27 @@ public class IngestionPlatformController {
     }
 
     @GetMapping("/register/overview")
-    public ApiResponse<Map<String, Object>> registerOverview() {
-        return ApiResponse.ok(service.registerOverview());
+    public ApiResponse<Map<String, Object>> registerOverview(@AuthenticationPrincipal UserPrincipal principal) {
+        return ApiResponse.ok(service.registerOverview(principal));
     }
 
     @GetMapping("/projects")
-    public ApiResponse<List<IngProject>> projects() {
-        return ApiResponse.ok(service.listProjects());
+    public ApiResponse<List<IngProject>> projects(@AuthenticationPrincipal UserPrincipal principal) {
+        return ApiResponse.ok(service.listProjects(principal));
     }
 
     @PostMapping("/projects")
     public ApiResponse<Long> createProject(@AuthenticationPrincipal UserPrincipal principal,
                                            @RequestBody Map<String, Object> body) {
         return ApiResponse.ok(service.createProject(principal, body));
+    }
+
+    @PutMapping("/projects/{id}")
+    public ApiResponse<Void> updateProject(@AuthenticationPrincipal UserPrincipal principal,
+                                           @PathVariable Long id,
+                                           @RequestBody Map<String, Object> body) {
+        service.updateProject(principal, id, body);
+        return ApiResponse.ok(null);
     }
 
     @DeleteMapping("/projects/{id}")
@@ -112,8 +137,9 @@ public class IngestionPlatformController {
     }
 
     @GetMapping("/data-sources")
-    public ApiResponse<List<IngDataSource>> dataSources(@RequestParam(required = false) Long projectId) {
-        return ApiResponse.ok(service.listDataSources(projectId));
+    public ApiResponse<List<IngDataSource>> dataSources(@AuthenticationPrincipal UserPrincipal principal,
+                                                        @RequestParam(required = false) Long projectId) {
+        return ApiResponse.ok(service.listDataSources(principal, projectId));
     }
 
     @PostMapping("/data-sources")
@@ -150,6 +176,14 @@ public class IngestionPlatformController {
                                               @PathVariable Long id,
                                               @RequestBody Map<String, Object> body) {
         service.updateDataSource(principal, id, body);
+        return ApiResponse.ok(null);
+    }
+
+    @DeleteMapping("/data-sources/{id}")
+    @PreAuthorize("isAuthenticated()")
+    public ApiResponse<Void> deleteDataSource(@AuthenticationPrincipal UserPrincipal principal,
+                                              @PathVariable Long id) {
+        service.deleteDataSource(principal, id);
         return ApiResponse.ok(null);
     }
 
@@ -256,29 +290,73 @@ public class IngestionPlatformController {
     }
 
     @GetMapping("/register/asset-report")
+    @PreAuthorize("isAuthenticated()")
     public ApiResponse<Map<String, Object>> assetReport() {
-        return ApiResponse.ok(registerService.assetReport());
+        return ApiResponse.ok(assetReportService.dashboard());
+    }
+
+    @GetMapping("/register/asset-report/projects/{projectId}/tables")
+    @PreAuthorize("isAuthenticated()")
+    public ApiResponse<List<Map<String, Object>>> assetReportProjectTables(@PathVariable Long projectId) {
+        return ApiResponse.ok(assetReportService.projectTables(projectId));
+    }
+
+    @GetMapping("/register/asset-report/tables/{id}/detail")
+    @PreAuthorize("isAuthenticated()")
+    public ApiResponse<Map<String, Object>> assetReportTableDetail(@PathVariable Long id) {
+        return ApiResponse.ok(assetReportService.tableDetail(id));
+    }
+
+    @GetMapping("/register/asset-report/scripts/{id}/detail")
+    @PreAuthorize("isAuthenticated()")
+    public ApiResponse<Map<String, Object>> assetReportScriptDetail(@PathVariable Long id) {
+        return ApiResponse.ok(assetReportService.scriptDetail(id));
+    }
+
+    @GetMapping("/register/asset-report/workflows/{id}/detail")
+    @PreAuthorize("isAuthenticated()")
+    public ApiResponse<Map<String, Object>> assetReportWorkflowDetail(@PathVariable Long id) {
+        return ApiResponse.ok(assetReportService.workflowDetail(id));
+    }
+
+    @GetMapping("/register/asset-report/workflows/runs/{runId}/monitor")
+    @PreAuthorize("isAuthenticated()")
+    public ApiResponse<Map<String, Object>> assetReportWorkflowRunMonitor(@PathVariable Long runId) {
+        return ApiResponse.ok(assetReportService.workflowRunMonitor(runId));
     }
 
     @GetMapping("/register/lineage")
-    public ApiResponse<Map<String, Object>> lineage(@RequestParam(required = false) String projectScope) {
-        return ApiResponse.ok(registerService.lineageGraph(projectScope));
+    @PreAuthorize("isAuthenticated()")
+    public ApiResponse<Map<String, Object>> lineage(@RequestParam(required = false) Long projectId,
+                                                    @RequestParam(required = false) String keyword,
+                                                    @RequestParam(required = false) Long categoryTagId,
+                                                    @RequestParam(required = false) String projectScope) {
+        // projectScope 兼容旧参数：若未传 projectId 则忽略
+        return ApiResponse.ok(lineageService.panorama(projectId, keyword, categoryTagId));
     }
 
     @GetMapping("/register/lineage/drill")
+    @PreAuthorize("isAuthenticated()")
     public ApiResponse<Map<String, Object>> lineageDrill(@RequestParam String nodeId) {
-        return ApiResponse.ok(registerService.lineageDrill(nodeId));
+        return ApiResponse.ok(lineageService.drill(nodeId));
     }
 
     @GetMapping("/register/lineage/fields")
-    public ApiResponse<List<com.chengde.smartcity.exchange.entity.IngColumnLineage>> fieldLineage(
-            @RequestParam String tableNode) {
-        return ApiResponse.ok(registerService.fieldLineage(tableNode));
+    @PreAuthorize("isAuthenticated()")
+    public ApiResponse<Map<String, Object>> fieldLineage(@RequestParam String tableNode) {
+        return ApiResponse.ok(lineageService.fieldLineage(tableNode));
+    }
+
+    @GetMapping("/register/lineage/table-meta")
+    @PreAuthorize("isAuthenticated()")
+    public ApiResponse<Map<String, Object>> lineageTableMeta(@RequestParam String tableNode) {
+        return ApiResponse.ok(lineageService.tableMeta(tableNode));
     }
 
     @GetMapping("/register/tables")
-    public ApiResponse<List<IngDataTable>> tables(@RequestParam(required = false) Long sourceId) {
-        return ApiResponse.ok(registerService.listTables(sourceId));
+    public ApiResponse<List<IngDataTable>> tables(@AuthenticationPrincipal UserPrincipal principal,
+                                                  @RequestParam(required = false) Long sourceId) {
+        return ApiResponse.ok(registerService.listTables(principal, sourceId));
     }
 
     @PostMapping("/register/tables")
@@ -326,17 +404,20 @@ public class IngestionPlatformController {
     }
 
     @GetMapping("/register/tags")
-    public ApiResponse<List<IngAssetTag>> tags() {
-        return ApiResponse.ok(registerService.listTags());
+    @PreAuthorize("isAuthenticated()")
+    public ApiResponse<?> tags(@RequestParam(required = false, defaultValue = "false") boolean tree) {
+        return ApiResponse.ok(registerService.listTags(tree));
     }
 
     @PostMapping("/register/tags")
+    @PreAuthorize("hasAuthority('system:tag:edit')")
     public ApiResponse<Long> createTag(@AuthenticationPrincipal UserPrincipal principal,
                                        @RequestBody Map<String, Object> body) {
         return ApiResponse.ok(registerService.createTag(principal, body));
     }
 
     @PutMapping("/register/tags/{id}")
+    @PreAuthorize("hasAuthority('system:tag:edit')")
     public ApiResponse<Void> updateTag(@AuthenticationPrincipal UserPrincipal principal,
                                        @PathVariable Long id,
                                        @RequestBody Map<String, Object> body) {
@@ -345,8 +426,57 @@ public class IngestionPlatformController {
     }
 
     @PostMapping("/register/tags/match")
+    @PreAuthorize("isAuthenticated()")
     public ApiResponse<Map<String, Object>> matchTags(@AuthenticationPrincipal UserPrincipal principal) {
         return ApiResponse.ok(registerService.matchTags(principal));
+    }
+
+    @GetMapping("/register/tags/{id}/suggest-rule")
+    @PreAuthorize("isAuthenticated()")
+    public ApiResponse<Map<String, Object>> suggestTagRule(@PathVariable Long id) {
+        return ApiResponse.ok(registerService.suggestRuleFromBindings(id));
+    }
+
+    @PostMapping("/register/tags/{id}/apply-suggested-rule")
+    @PreAuthorize("isAuthenticated()")
+    public ApiResponse<Map<String, Object>> applySuggestedTagRule(@AuthenticationPrincipal UserPrincipal principal,
+                                                                  @PathVariable Long id,
+                                                                  @RequestBody(required = false) Map<String, Object> body) {
+        return ApiResponse.ok(registerService.applySuggestedRule(principal, id, body == null ? Map.of() : body));
+    }
+
+    @GetMapping("/register/tag-bindings")
+    @PreAuthorize("isAuthenticated()")
+    public ApiResponse<List<IngAssetTagBinding>> tagBindings(@RequestParam String assetType,
+                                                             @RequestParam Long assetId) {
+        return ApiResponse.ok(registerService.listTagBindings(assetType, assetId));
+    }
+
+    @GetMapping("/register/tag-bindings/by-tag")
+    @PreAuthorize("isAuthenticated()")
+    public ApiResponse<List<IngAssetTagBinding>> tagBindingsByTag(@RequestParam Long tagId) {
+        return ApiResponse.ok(registerService.listTagBindingsByTag(tagId));
+    }
+
+    @GetMapping("/register/tables/{id}/tag-match-context")
+    @PreAuthorize("isAuthenticated()")
+    public ApiResponse<Map<String, Object>> tagMatchContext(@PathVariable Long id) {
+        return ApiResponse.ok(registerService.tagMatchContext(id));
+    }
+
+    @PostMapping("/register/tag-bindings")
+    @PreAuthorize("isAuthenticated()")
+    public ApiResponse<Long> bindTag(@AuthenticationPrincipal UserPrincipal principal,
+                                     @RequestBody Map<String, Object> body) {
+        return ApiResponse.ok(registerService.bindTag(principal, body));
+    }
+
+    @DeleteMapping("/register/tag-bindings")
+    @PreAuthorize("isAuthenticated()")
+    public ApiResponse<Void> unbindTag(@AuthenticationPrincipal UserPrincipal principal,
+                                       @RequestBody Map<String, Object> body) {
+        registerService.unbindTag(principal, body);
+        return ApiResponse.ok(null);
     }
 
     @PutMapping("/dicts/{id}")
@@ -419,16 +549,85 @@ public class IngestionPlatformController {
     }
 
     @PostMapping("/collect/templates")
+    @PreAuthorize("isAuthenticated()")
     public ApiResponse<Long> createTemplate(@AuthenticationPrincipal UserPrincipal principal,
                                             @RequestBody Map<String, Object> body) {
+        if (body != null && body.get("bindings") != null) {
+            return ApiResponse.ok(excelManualUploadService.saveTemplate(principal, body));
+        }
         return ApiResponse.ok(collectUploadService.createTemplate(principal, body));
     }
 
+    @GetMapping("/collect/templates/{templateCode}/bindings")
+    @PreAuthorize("isAuthenticated()")
+    public ApiResponse<List<Map<String, Object>>> templateBindings(@PathVariable String templateCode) {
+        return ApiResponse.ok(excelManualUploadService.describeTemplate(templateCode));
+    }
+
+    @DeleteMapping("/collect/templates/{id}")
+    @PreAuthorize("isAuthenticated()")
+    public ApiResponse<Void> deleteTemplate(@AuthenticationPrincipal UserPrincipal principal,
+                                            @PathVariable Long id) {
+        collectUploadService.deleteTemplate(principal, id);
+        return ApiResponse.ok(null);
+    }
+
+    @PutMapping("/collect/templates/{id}/status")
+    @PreAuthorize("isAuthenticated()")
+    public ApiResponse<Void> updateTemplateStatus(@AuthenticationPrincipal UserPrincipal principal,
+                                                  @PathVariable Long id,
+                                                  @RequestBody Map<String, Object> body) {
+        Object st = body == null ? null : body.get("status");
+        collectUploadService.updateTemplateStatus(principal, id, st == null ? "" : String.valueOf(st));
+        return ApiResponse.ok(null);
+    }
+
     @PostMapping("/collect/uploads/file")
+    @PreAuthorize("isAuthenticated()")
     public ApiResponse<Long> uploadFile(@AuthenticationPrincipal UserPrincipal principal,
                                         @RequestParam("file") MultipartFile file,
                                         @RequestParam(required = false) String templateCode) {
         return ApiResponse.ok(collectUploadService.uploadFile(principal, file, templateCode));
+    }
+
+    /** 选文件：解析 sheet 列表（不落 ODS） */
+    @PostMapping("/collect/uploads/inspect")
+    @PreAuthorize("isAuthenticated()")
+    public ApiResponse<Map<String, Object>> inspectUpload(@AuthenticationPrincipal UserPrincipal principal,
+                                                          @RequestParam("file") MultipartFile file) {
+        return ApiResponse.ok(excelManualUploadService.inspect(principal, file));
+    }
+
+    /** 指定表头行读取列名（建模板用） */
+    @PostMapping("/collect/uploads/preview-header")
+    @PreAuthorize("isAuthenticated()")
+    public ApiResponse<Map<String, Object>> previewHeader(@AuthenticationPrincipal UserPrincipal principal,
+                                                          @RequestBody Map<String, Object> body) {
+        return ApiResponse.ok(excelManualUploadService.previewHeader(principal, body));
+    }
+
+    /** 按模板预览：校验字段一致后返回数据行 */
+    @PostMapping("/collect/uploads/preview")
+    @PreAuthorize("isAuthenticated()")
+    public ApiResponse<Map<String, Object>> previewUpload(@AuthenticationPrincipal UserPrincipal principal,
+                                                          @RequestBody Map<String, Object> body) {
+        return ApiResponse.ok(excelManualUploadService.preview(principal, body));
+    }
+
+    /** 确认写入 smart_city_ods（同一文件可多次 commit 不同 sheet） */
+    @PostMapping("/collect/uploads/commit")
+    @PreAuthorize("isAuthenticated()")
+    public ApiResponse<Map<String, Object>> commitUpload(@AuthenticationPrincipal UserPrincipal principal,
+                                                         @RequestBody Map<String, Object> body) {
+        return ApiResponse.ok(excelManualUploadService.commitToOds(principal, body));
+    }
+
+    /** 结束上传会话（释放临时文件） */
+    @PostMapping("/collect/uploads/finish")
+    @PreAuthorize("isAuthenticated()")
+    public ApiResponse<Map<String, Object>> finishUpload(@AuthenticationPrincipal UserPrincipal principal,
+                                                         @RequestBody Map<String, Object> body) {
+        return ApiResponse.ok(excelManualUploadService.finishSession(principal, body));
     }
 
     @GetMapping("/collect/tasks")
@@ -440,6 +639,70 @@ public class IngestionPlatformController {
     public ApiResponse<Long> createTask(@AuthenticationPrincipal UserPrincipal principal,
                                         @RequestBody Map<String, Object> body) {
         return ApiResponse.ok(collectUploadService.createTask(principal, body));
+    }
+
+    @GetMapping("/collect/jobs")
+    @PreAuthorize("isAuthenticated()")
+    public ApiResponse<List<IngIngestTask>> jobs(@RequestParam(required = false) String accessMode) {
+        return ApiResponse.ok(collectUploadService.listJobs(accessMode));
+    }
+
+    @GetMapping("/collect/jobs/{id}")
+    @PreAuthorize("isAuthenticated()")
+    public ApiResponse<IngIngestTask> job(@PathVariable Long id) {
+        return ApiResponse.ok(collectUploadService.getJob(id));
+    }
+
+    @PostMapping("/collect/jobs")
+    @PreAuthorize("isAuthenticated()")
+    public ApiResponse<Long> createJob(@AuthenticationPrincipal UserPrincipal principal,
+                                       @RequestBody Map<String, Object> body) {
+        return ApiResponse.ok(collectUploadService.createTask(principal, body));
+    }
+
+    @PutMapping("/collect/jobs/{id}")
+    @PreAuthorize("isAuthenticated()")
+    public ApiResponse<Void> updateJob(@AuthenticationPrincipal UserPrincipal principal,
+                                       @PathVariable Long id,
+                                       @RequestBody Map<String, Object> body) {
+        collectUploadService.updateJob(principal, id, body);
+        return ApiResponse.ok(null);
+    }
+
+    @DeleteMapping("/collect/jobs/{id}")
+    @PreAuthorize("isAuthenticated()")
+    public ApiResponse<Void> deleteJob(@AuthenticationPrincipal UserPrincipal principal,
+                                       @PathVariable Long id) {
+        collectUploadService.deleteJob(principal, id);
+        return ApiResponse.ok(null);
+    }
+
+    @PostMapping("/collect/jobs/{id}/run")
+    @PreAuthorize("isAuthenticated()")
+    public ApiResponse<Map<String, Object>> runJob(@AuthenticationPrincipal UserPrincipal principal,
+                                                   @PathVariable Long id) {
+        return ApiResponse.ok(tableIngestEngine.runJob(principal, id));
+    }
+
+    @PostMapping("/collect/jobs/{id}/reset")
+    @PreAuthorize("isAuthenticated()")
+    public ApiResponse<Void> resetJob(@AuthenticationPrincipal UserPrincipal principal,
+                                      @PathVariable Long id) {
+        collectUploadService.resetStuckJob(principal, id);
+        return ApiResponse.ok(null);
+    }
+
+    @PostMapping("/collect/jobs/preview")
+    @PreAuthorize("isAuthenticated()")
+    public ApiResponse<Map<String, Object>> previewJob(@RequestBody Map<String, Object> body) {
+        return ApiResponse.ok(tableIngestEngine.preview(body));
+    }
+
+    @GetMapping("/collect/jobs/mapping-suggest")
+    @PreAuthorize("isAuthenticated()")
+    public ApiResponse<List<Map<String, Object>>> mappingSuggest(@RequestParam Long tableId,
+                                                                 @RequestParam(required = false, defaultValue = "NAME") String mode) {
+        return ApiResponse.ok(tableIngestEngine.suggestMapping(tableId, mode));
     }
 
     @GetMapping("/collect/probe-reports")

@@ -12,6 +12,7 @@ public class IngDataTable {
     private Long sourceId;
     private String tableCode;
     private String tableName;
+    private String usageDesc;
     private String physicalTableName;
     private String sourceSchema;
     private String sourceTable;
@@ -20,6 +21,12 @@ public class IngDataTable {
     private String omFqn;
     private String modelingMode;
     private Integer columnCount;
+    private Long storageBytes;
+    private Long storageBytesToday;
+    private LocalDateTime dataChangedAt;
+    private String ddlSql;
+    private String advancedSettingsJson;
+    private Integer partitionFlag;
     private String status;
     private String collectStatus;
     private LocalDateTime lastCollectAt;
@@ -33,6 +40,8 @@ public class IngDataTable {
     public void setTableCode(String tableCode) { this.tableCode = tableCode; }
     public String getTableName() { return tableName; }
     public void setTableName(String tableName) { this.tableName = tableName; }
+    public String getUsageDesc() { return usageDesc; }
+    public void setUsageDesc(String usageDesc) { this.usageDesc = usageDesc; }
     public String getPhysicalTableName() { return physicalTableName; }
     public void setPhysicalTableName(String physicalTableName) { this.physicalTableName = physicalTableName; }
     public String getSourceSchema() { return sourceSchema; }
@@ -49,6 +58,18 @@ public class IngDataTable {
     public void setModelingMode(String modelingMode) { this.modelingMode = modelingMode; }
     public Integer getColumnCount() { return columnCount; }
     public void setColumnCount(Integer columnCount) { this.columnCount = columnCount; }
+    public Long getStorageBytes() { return storageBytes; }
+    public void setStorageBytes(Long storageBytes) { this.storageBytes = storageBytes; }
+    public Long getStorageBytesToday() { return storageBytesToday; }
+    public void setStorageBytesToday(Long storageBytesToday) { this.storageBytesToday = storageBytesToday; }
+    public LocalDateTime getDataChangedAt() { return dataChangedAt; }
+    public void setDataChangedAt(LocalDateTime dataChangedAt) { this.dataChangedAt = dataChangedAt; }
+    public String getDdlSql() { return ddlSql; }
+    public void setDdlSql(String ddlSql) { this.ddlSql = ddlSql; }
+    public String getAdvancedSettingsJson() { return advancedSettingsJson; }
+    public void setAdvancedSettingsJson(String advancedSettingsJson) { this.advancedSettingsJson = advancedSettingsJson; }
+    public Integer getPartitionFlag() { return partitionFlag; }
+    public void setPartitionFlag(Integer partitionFlag) { this.partitionFlag = partitionFlag; }
     public String getStatus() { return status; }
     public void setStatus(String status) { this.status = status; }
     public String getCollectStatus() { return collectStatus; }

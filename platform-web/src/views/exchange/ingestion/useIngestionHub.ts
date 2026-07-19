@@ -3,20 +3,99 @@ import api from '@/api/http'
 import { ElMessage } from 'element-plus'
 
 export interface GuideStep { stepNo: number; stepName: string; stepDesc: string; requiredFlag: number; jumpModule?: string }
-export interface Project { id: number; projectCode: string; projectName: string; boundOrgId: number; systemName: string; status: string }
-export interface DataSource { id: number; projectId: number; sourceCode: string; sourceName: string; sourceType: string; connStatus: string; tableCount: number; connConfigJson?: string; sourceSchema?: string; probeAt?: string; probeMessage?: string; syncStatus?: string }
+export interface Project {
+  id: number
+  projectCode: string
+  projectName: string
+  boundOrgId: number
+  boundOrgName?: string
+  systemName: string
+  status: string
+  createdBy?: string
+}
+export interface DataSource {
+  id: number
+  projectId: number
+  sourceCode: string
+  sourceName: string
+  systemName?: string
+  sourceType: string
+  connStatus: string
+  tableCount: number
+  connConfigJson?: string
+  sourceSchema?: string
+  probeAt?: string
+  probeMessage?: string
+  syncStatus?: string
+}
 export interface ProbeColumn { columnName: string; dataType: string; columnSize: number; nullable: boolean; remarks?: string; sortOrder: number }
 export interface ProbeTable { sourceTable: string; columns: ProbeColumn[]; primaryKeys: string[]; rowCount: number }
-export interface DataTable { id: number; sourceId: number; tableCode: string; tableName: string; modelingMode: string; columnCount: number }
+export interface DataTable {
+  id: number
+  sourceId: number
+  tableCode: string
+  tableName: string
+  modelingMode: string
+  columnCount: number
+  sourceTable?: string
+  physicalTableName?: string
+}
 export interface DataColumn { id: number; tableId: number; columnCode: string; columnName: string; dataType: string; nullableFlag: number; semanticDesc?: string; lengthVal?: number; componentType?: string; requiredTip?: string; builtInFlag?: number }
-export interface Dict { id: number; dictCode: string; dictName: string; dictType: string; itemCount: number; status: string }
-export interface DictItem { id: number; dictId: number; itemKey: string; itemValue: string; sortOrder: number; status: string }
+export interface Dict {
+  id: number
+  dictCode: string
+  dictName: string
+  dictType: string
+  standardNo?: string
+  publisher?: string
+  versionNo?: string
+  remark?: string
+  itemCount: number
+  status: string
+}
+export interface DictItem {
+  id: number
+  dictId: number
+  itemKey: string
+  itemValue: string
+  bizUsage?: string
+  sortOrder: number
+  status: string
+}
 export interface LineageEdge { id: number; fromNode: string; toNode: string; fromLabel: string; toLabel: string; edgeType: string; fieldMapping?: string }
 export interface ColumnLineage { id: number; tableNode: string; columnCode: string; columnName: string; upstreamTable?: string; upstreamColumn?: string; downstreamTable?: string; downstreamColumn?: string }
 export interface UploadTemplate { id: number; templateCode: string; templateName: string; columnMappingJson: string; status: string }
-export interface Upload { id: number; templateCode: string; fileName: string; rowCount: number; status: string; previewJson?: string }
+export interface Upload {
+  id: number
+  templateCode: string
+  fileName: string
+  sheetName?: string
+  targetTable?: string
+  rowCount: number
+  status: string
+  previewJson?: string
+}
 export interface Channel { id: number; channelCode: string; channelName: string; channelType: string; status: string; lastMessage?: string; configJson?: string }
-export interface IngestTask { id: number; taskCode: string; taskName: string; channelId: number; scheduleCron: string; status: string; lastRunMessage?: string }
+export interface IngestTask {
+  id: number
+  taskCode: string
+  taskName: string
+  channelId: number
+  accessMode?: string
+  sourceId?: number
+  tableId?: number
+  targetTable?: string
+  configJson?: string
+  writeMode?: string
+  watermarkValue?: string
+  enabled?: number
+  collectedRows?: number
+  scheduleCron: string
+  status: string
+  lastRunAt?: string
+  lastRunMessage?: string
+  errorDetail?: string
+}
 export interface PipelineJob { id: number; jobCode: string; jobName: string; jobType: string; status: string; billAmount?: number; resultJson?: string }
 export interface ProbeReport { id: number; reportCode: string; sourceName: string; nullRate: number; domainCheck: string; entityType: string; status: string }
 export interface DataDefinition { id: number; defCode: string; defName: string; businessDesc: string; techDesc: string; status: string }
@@ -24,7 +103,34 @@ export interface ReconcileLog { id: number; batchNo: string; matchedPct: number;
 export interface Registry { id: number; registryCode: string; title: string; categoryPath: string; secretLevel: string; publishStatus: string; approvalStatus: string }
 export interface CategoryNode { id: number; nodeCode: string; nodeName: string; parentId: number; secretLevel: string; sortOrder: number }
 export interface Policy { id: number; policyCode: string; policyName: string; policyType: string; ruleExpr?: string; lifecycleStage?: string }
-export interface AssetTag { id: number; tagCode: string; tagName: string; ruleExpr: string; tagDesc?: string; hitCount: number; status: string }
+export interface AssetTag {
+  id: number
+  tagCode: string
+  tagName: string
+  ruleExpr?: string
+  tagDesc?: string
+  hitCount: number
+  status: string
+  parentId?: number | null
+  level?: number | null
+  tagSource?: string
+  stdCode?: string
+  children?: AssetTag[]
+}
+export interface AssetTagTreeResult {
+  standardTree: AssetTag[]
+  customTags: AssetTag[]
+}
+export interface AssetTagBinding {
+  id: number
+  tagId: number
+  assetType: 'TABLE' | 'COLUMN' | string
+  assetId: number
+  tagName?: string
+  stdCode?: string
+  assetLabel?: string
+  createdAt?: string
+}
 export interface HealthMetric { metricLabel: string; metricValue: string; alertLevel: string }
 
 export function useIngestionLoading() {
@@ -62,15 +168,53 @@ export const ingestionApi = {
   guides: () => api.get<GuideStep[]>('/exchange/ingestion/guides'),
   registerOverview: () => api.get<Record<string, unknown>>('/exchange/ingestion/register/overview'),
   assetReport: () => api.get<Record<string, unknown>>('/exchange/ingestion/register/asset-report'),
-  lineage: (projectScope?: string) => api.get<{ nodes: { id: string; label: string; type: string }[]; edges: LineageEdge[] }>('/exchange/ingestion/register/lineage', { params: { projectScope } }),
-  lineageDrill: (nodeId: string) => api.get<{ focusNode: string; nodes: { id: string; label: string; type: string }[]; edges: LineageEdge[]; upstream: LineageEdge[]; downstream: LineageEdge[] }>('/exchange/ingestion/register/lineage/drill', { params: { nodeId } }),
-  fieldLineage: (tableNode: string) => api.get<ColumnLineage[]>('/exchange/ingestion/register/lineage/fields', { params: { tableNode } }),
+  assetReportProjectTables: (projectId: number) =>
+    api.get<Record<string, unknown>[]>(`/exchange/ingestion/register/asset-report/projects/${projectId}/tables`),
+  assetReportTableDetail: (id: number) =>
+    api.get<Record<string, unknown>>(`/exchange/ingestion/register/asset-report/tables/${id}/detail`),
+  assetReportScriptDetail: (id: number) =>
+    api.get<Record<string, unknown>>(`/exchange/ingestion/register/asset-report/scripts/${id}/detail`),
+  assetReportWorkflowDetail: (id: number) =>
+    api.get<Record<string, unknown>>(`/exchange/ingestion/register/asset-report/workflows/${id}/detail`),
+  assetReportWorkflowRunMonitor: (runId: number) =>
+    api.get<Record<string, unknown>>(`/exchange/ingestion/register/asset-report/workflows/runs/${runId}/monitor`),
+  lineage: (params?: { projectId?: number; keyword?: string; categoryTagId?: number }) =>
+    api.get<{
+      projectId: number
+      projectName: string
+      nodes: Array<Record<string, unknown>>
+      edges: Array<Record<string, unknown>>
+      categories: Array<{ tagId: number; tagName: string }>
+      tableCount: number
+      isolatedCount: number
+    }>('/exchange/ingestion/register/lineage', { params }),
+  lineageDrill: (nodeId: string) =>
+    api.get<{
+      focusNode: string
+      focusMeta: Record<string, unknown>
+      nodes: Array<Record<string, unknown>>
+      edges: Array<Record<string, unknown>>
+      upstream: Array<Record<string, unknown>>
+      downstream: Array<Record<string, unknown>>
+      hasMore: boolean
+    }>('/exchange/ingestion/register/lineage/drill', { params: { nodeId } }),
+  fieldLineage: (tableNode: string) =>
+    api.get<{
+      tableNode: string
+      fields: ColumnLineage[]
+      fieldEdges: Array<{ from: string; to: string; direction: string }>
+      focusMeta: Record<string, unknown>
+    }>('/exchange/ingestion/register/lineage/fields', { params: { tableNode } }),
+  lineageTableMeta: (tableNode: string) =>
+    api.get<Record<string, unknown>>('/exchange/ingestion/register/lineage/table-meta', { params: { tableNode } }),
   projects: () => api.get<Project[]>('/exchange/ingestion/projects'),
   createProject: (body: Record<string, unknown>) => api.post<number>('/exchange/ingestion/projects', body),
+  updateProject: (id: number, body: Record<string, unknown>) => api.put<void>(`/exchange/ingestion/projects/${id}`, body),
   deleteProject: (id: number) => api.delete<void>(`/exchange/ingestion/projects/${id}`),
   dataSources: (projectId?: number) => api.get<DataSource[]>('/exchange/ingestion/data-sources', { params: { projectId } }),
   createDataSource: (body: Record<string, unknown>) => api.post<number>('/exchange/ingestion/data-sources', body),
   updateDataSource: (id: number, body: Record<string, unknown>) => api.put<void>(`/exchange/ingestion/data-sources/${id}`, body),
+  deleteDataSource: (id: number) => api.delete<void>(`/exchange/ingestion/data-sources/${id}`),
   testDataSource: (id: number) => api.post<Record<string, unknown>>(`/exchange/ingestion/data-sources/${id}/test`),
   probeDataSource: (id: number) => api.post<{ sourceId: number; schema: string; tableCount: number; tables: ProbeTable[] }>(`/exchange/ingestion/data-sources/${id}/probe`),
   registerTables: (id: number, body: Record<string, unknown>) => api.post<Record<string, unknown>>(`/exchange/ingestion/data-sources/${id}/register-tables`, body),
@@ -93,19 +237,107 @@ export const ingestionApi = {
   importDict: (csvText: string) => api.post<Record<string, unknown>>('/exchange/ingestion/dicts/import', { csvText }),
   exportDict: (ids: number[]) => api.post<string>('/exchange/ingestion/dicts/export', { ids }),
   tags: () => api.get<AssetTag[]>('/exchange/ingestion/register/tags'),
+  tagTree: () => api.get<AssetTagTreeResult>('/exchange/ingestion/register/tags', { params: { tree: true } }),
   createTag: (body: Record<string, unknown>) => api.post<number>('/exchange/ingestion/register/tags', body),
   updateTag: (id: number, body: Record<string, unknown>) => api.put<void>(`/exchange/ingestion/register/tags/${id}`, body),
   matchTags: () => api.post<Record<string, unknown>>('/exchange/ingestion/register/tags/match'),
+  suggestTagRule: (id: number) => api.get<Record<string, unknown>>(`/exchange/ingestion/register/tags/${id}/suggest-rule`),
+  applySuggestedTagRule: (id: number, body?: { ruleExpr?: string }) =>
+    api.post<Record<string, unknown>>(`/exchange/ingestion/register/tags/${id}/apply-suggested-rule`, body || {}),
+  tagBindings: (assetType: string, assetId: number) =>
+    api.get<AssetTagBinding[]>('/exchange/ingestion/register/tag-bindings', { params: { assetType, assetId } }),
+  tagBindingsByTag: (tagId: number) =>
+    api.get<AssetTagBinding[]>('/exchange/ingestion/register/tag-bindings/by-tag', { params: { tagId } }),
+  tagMatchContext: (tableId: number) =>
+    api.get<{
+      tableId: number
+      columns: DataColumn[]
+      tableTagIds: number[]
+      columnTagMap: Record<string, number[]>
+    }>(`/exchange/ingestion/register/tables/${tableId}/tag-match-context`),
+  bindTag: (body: { tagId: number; assetType: string; assetId: number }) =>
+    api.post<number>('/exchange/ingestion/register/tag-bindings', body),
+  unbindTag: (body: { tagId: number; assetType: string; assetId: number }) =>
+    api.delete<void>('/exchange/ingestion/register/tag-bindings', { data: body }),
   templates: () => api.get<UploadTemplate[]>('/exchange/ingestion/collect/templates'),
   createTemplate: (body: Record<string, unknown>) => api.post<number>('/exchange/ingestion/collect/templates', body),
+  deleteTemplate: (id: number) => api.delete<void>(`/exchange/ingestion/collect/templates/${id}`),
+  updateTemplateStatus: (id: number, status: 'ACTIVE' | 'INACTIVE') =>
+    api.put<void>(`/exchange/ingestion/collect/templates/${id}/status`, { status }),
+  templateBindings: (templateCode: string) =>
+    api.get<Array<{
+      sheetName: string
+      headerRow: number
+      columns: string[]
+      targetTable: string
+      tableId?: number
+      tableName?: string
+      tableCode?: string
+    }>>(`/exchange/ingestion/collect/templates/${encodeURIComponent(templateCode)}/bindings`),
   uploads: () => api.get<Upload[]>('/exchange/ingestion/uploads'),
   upload: (body: Record<string, unknown>) => api.post<number>('/exchange/ingestion/uploads', body),
   uploadFile: (form: FormData) => api.post<number>('/exchange/ingestion/collect/uploads/file', form),
+  inspectUpload: (form: FormData) =>
+    api.post<{
+      uploadToken: string
+      fileName: string
+      sheets: string[]
+      suggestedSheet: string
+      suggestedTable: string
+    }>('/exchange/ingestion/collect/uploads/inspect', form),
+  previewHeader: (body: Record<string, unknown>) =>
+    api.post<{
+      sheetName: string
+      headerRow: number
+      columns: string[]
+      sampleRows: Record<string, string>[]
+      suggestedTable: string
+    }>('/exchange/ingestion/collect/uploads/preview-header', body),
+  previewUpload: (body: Record<string, unknown>) =>
+    api.post<{
+      sheetName: string
+      headerRow: number
+      columns: string[]
+      rows: Record<string, string>[]
+      previewRows: number
+      truncated: boolean
+      targetTable: string
+      writeMode: string
+    }>('/exchange/ingestion/collect/uploads/preview', body),
+  commitUpload: (body: Record<string, unknown>) =>
+    api.post<{
+      uploadId: number
+      targetTable: string
+      odsDatabase: string
+      rowCount: number
+      sheetName: string
+      writeMode?: string
+      tableId?: number
+      committedSheets?: string[]
+      remainingSheets?: string[]
+      uploadToken?: string
+      message: string
+    }>('/exchange/ingestion/collect/uploads/commit', body),
+  finishUpload: (body: Record<string, unknown>) =>
+    api.post<{ message: string; ok: boolean }>('/exchange/ingestion/collect/uploads/finish', body),
   channels: (channelType?: string) => api.get<Channel[]>('/exchange/ingestion/channels', { params: { channelType } }),
   updateChannel: (id: number, body: Record<string, unknown>) => api.put<void>(`/exchange/ingestion/channels/${id}`, body),
   runChannel: (id: number) => api.post<Record<string, unknown>>(`/exchange/ingestion/channels/${id}/run`),
   tasks: (channelId?: number) => api.get<IngestTask[]>('/exchange/ingestion/collect/tasks', { params: { channelId } }),
   createTask: (body: Record<string, unknown>) => api.post<number>('/exchange/ingestion/collect/tasks', body),
+  jobs: (accessMode?: string) => api.get<IngestTask[]>('/exchange/ingestion/collect/jobs', { params: { accessMode } }),
+  getJob: (id: number) => api.get<IngestTask>(`/exchange/ingestion/collect/jobs/${id}`),
+  createJob: (body: Record<string, unknown>) => api.post<number>('/exchange/ingestion/collect/jobs', body),
+  updateJob: (id: number, body: Record<string, unknown>) => api.put<void>(`/exchange/ingestion/collect/jobs/${id}`, body),
+  deleteJob: (id: number) => api.delete<void>(`/exchange/ingestion/collect/jobs/${id}`),
+  runJob: (id: number) => api.post<Record<string, unknown>>(`/exchange/ingestion/collect/jobs/${id}/run`),
+  resetJob: (id: number) => api.post<void>(`/exchange/ingestion/collect/jobs/${id}/reset`),
+  previewJob: (body: Record<string, unknown>) => api.post<Record<string, unknown>>('/exchange/ingestion/collect/jobs/preview', body),
+  mappingSuggest: (tableId: number, mode?: string) =>
+    api.get<Array<{ source: string; target: string; dataType?: string; length?: number; columnName?: string }>>(
+      '/exchange/ingestion/collect/jobs/mapping-suggest',
+      { params: { tableId, mode } },
+    ),
   pipelineJobs: (jobType?: string) => api.get<PipelineJob[]>('/exchange/ingestion/pipeline-jobs', { params: { jobType } }),
   runPipeline: (body: Record<string, unknown>) => api.post<number>('/exchange/ingestion/pipeline-jobs/run', body),
   probeReports: () => api.get<ProbeReport[]>('/exchange/ingestion/collect/probe-reports'),

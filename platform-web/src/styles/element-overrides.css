@@ -135,6 +135,11 @@
   width: 180px;
 }
 
+/* 工具栏多按钮间距：与「登记项目」project-actions 一致（gap 12px） */
 .portal-inline-form .portal-form-actions .el-form-item__content {
   margin-left: 0 !important;
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 12px;
 }

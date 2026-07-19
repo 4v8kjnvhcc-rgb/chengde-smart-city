@@ -31,20 +31,17 @@ public class GovernanceTaskService {
     private final GovGovernanceTaskMapper taskMapper;
     private final GovGovernanceTaskRunMapper runMapper;
     private final GovGovernanceNodeLogMapper nodeLogMapper;
-    private final GovernanceExecuteService executeService;
     private final KettleExecuteService kettleExecuteService;
     private final TaskVariableService variableService;
 
     public GovernanceTaskService(GovGovernanceTaskMapper taskMapper,
                                  GovGovernanceTaskRunMapper runMapper,
                                  GovGovernanceNodeLogMapper nodeLogMapper,
-                                 GovernanceExecuteService executeService,
                                  KettleExecuteService kettleExecuteService,
                                  TaskVariableService variableService) {
         this.taskMapper = taskMapper;
         this.runMapper = runMapper;
         this.nodeLogMapper = nodeLogMapper;
-        this.executeService = executeService;
         this.kettleExecuteService = kettleExecuteService;
         this.variableService = variableService;
     }
@@ -52,9 +49,16 @@ public class GovernanceTaskService {
     public List<Map<String, Object>> list() {
         List<GovGovernanceTask> tasks = taskMapper.selectList(new LambdaQueryWrapper<GovGovernanceTask>()
                 .orderByDesc(GovGovernanceTask::getId));
+        Map<Long, GovGovernanceTaskRun> latestRunByTask = latestRunsByTask();
         List<Map<String, Object>> out = new ArrayList<>();
         for (GovGovernanceTask t : tasks) {
-            out.add(toTaskMap(t, false));
+            Map<String, Object> m = toTaskMap(t, false);
+            GovGovernanceTaskRun latest = latestRunByTask.get(t.getId());
+            if (latest != null) {
+                m.put("lastRunStatus", latest.getStatus());
+                m.put("lastRunId", latest.getId());
+            }
+            out.add(m);
         }
         return out;
     }
@@ -69,12 +73,34 @@ public class GovernanceTaskService {
         if (name == null || name.isBlank()) {
             throw new BusinessException(400, "taskName 不能为空");
         }
+        String sourceConn = str(body.get("sourceConnection"), null);
+        String sourceTable = str(body.get("sourceTable"), null);
+        String targetConn = str(body.get("targetConnection"), null);
+        String targetTable = str(body.get("targetTable"), null);
+        List<String> rules = parseRules(body.get("rules"));
+
+        String graphJson = str(body.get("graphJson"), null);
+        if (graphJson == null || graphJson.isBlank() || emptyGraph().equals(graphJson.trim())) {
+            if (sourceConn != null || targetConn != null || !rules.isEmpty()) {
+                graphJson = buildInitGraph(sourceConn, sourceTable, targetConn, targetTable, rules);
+            } else {
+                graphJson = emptyGraph();
+            }
+        }
+
+        boolean configured = hasConfiguredGraph(graphJson)
+                || (sourceConn != null && targetConn != null);
+        String status = str(body.get("status"), configured ? "CONFIGURED" : "DRAFT");
+        if ("READY".equalsIgnoreCase(status)) {
+            status = "CONFIGURED";
+        }
+
         GovGovernanceTask task = new GovGovernanceTask();
         task.setTaskCode(str(body.get("taskCode"), genCode()));
         task.setTaskName(name.trim());
         task.setDescription(str(body.get("description"), null));
-        task.setGraphJson(str(body.get("graphJson"), emptyGraph()));
-        task.setStatus(str(body.get("status"), "DRAFT"));
+        task.setGraphJson(graphJson);
+        task.setStatus(status);
         task.setEngineType(str(body.get("engineType"), "KETTLE"));
         if (operator != null) {
             task.setCreatedBy(operator.getUsername());
@@ -82,7 +108,14 @@ public class GovernanceTaskService {
         task.setCreatedAt(LocalDateTime.now());
         task.setUpdatedAt(LocalDateTime.now());
         taskMapper.insert(task);
-        log.info("governance task created id={} code={}", task.getId(), task.getTaskCode());
+
+        if (boolVal(body.get("scheduleEnabled"), false)) {
+            applySchedule(task, body);
+            task.setUpdatedAt(LocalDateTime.now());
+            taskMapper.updateById(task);
+        }
+
+        log.info("governance task created id={} code={} status={}", task.getId(), task.getTaskCode(), task.getStatus());
         return task.getId();
     }
 
@@ -125,7 +158,7 @@ public class GovernanceTaskService {
         Map<String, Object> m = new LinkedHashMap<>();
         m.put("taskId", task.getId());
         m.put("taskName", task.getTaskName());
-        m.put("status", task.getStatus());
+        m.put("status", normalizeLifecycleStatus(task.getStatus()));
         m.put("lockedBy", task.getLockedBy());
         m.put("graphJson", task.getGraphJson());
         return m;
@@ -146,8 +179,8 @@ public class GovernanceTaskService {
             throw new BusinessException(400, "graphJson 不能为空");
         }
         task.setGraphJson(g instanceof String ? (String) g : String.valueOf(g));
-        if ("DRAFT".equals(task.getStatus())) {
-            task.setStatus("READY");
+        if ("DRAFT".equals(task.getStatus()) || "READY".equals(task.getStatus())) {
+            task.setStatus("CONFIGURED");
         }
         task.setUpdatedAt(LocalDateTime.now());
         taskMapper.updateById(task);
@@ -183,7 +216,8 @@ public class GovernanceTaskService {
                 && !privileged) {
             throw new BusinessException(403, "仅锁定人、系统管理员或租户所有者可解锁");
         }
-        task.setStatus(task.getGraphJson() != null && !task.getGraphJson().isBlank() ? "READY" : "DRAFT");
+        task.setStatus(task.getGraphJson() != null && !task.getGraphJson().isBlank()
+                && hasConfiguredGraph(task.getGraphJson()) ? "CONFIGURED" : "DRAFT");
         task.setLockedBy(null);
         task.setLockedAt(null);
         task.setUpdatedAt(LocalDateTime.now());
@@ -229,18 +263,22 @@ public class GovernanceTaskService {
 
     public Map<String, Object> run(UserPrincipal operator, Long id, Map<String, String> runtimeVariables) {
         GovGovernanceTask task = requireTask(id);
-        if ("IN_MEMORY".equalsIgnoreCase(task.getEngineType())) {
-            return executeService.executeTask(operator, id);
+        // 产品侧仅 Kettle；历史 IN_MEMORY 强制改走 Kettle
+        if (!kettleExecuteService.isCarteAvailable()) {
+            throw new BusinessException(503,
+                    "Kettle Carte 不可用，请启动 compose profile etl 并设置 INTEGRATION_ENABLED=true");
+        }
+        if (task.getEngineType() == null || "IN_MEMORY".equalsIgnoreCase(task.getEngineType())) {
+            task.setEngineType("KETTLE");
+            task.setUpdatedAt(LocalDateTime.now());
+            taskMapper.updateById(task);
         }
         Map<String, String> params = variableService.getVariableParams(id, runtimeVariables);
         return kettleExecuteService.executeTask(id, params);
     }
 
     public Map<String, Object> stop(UserPrincipal operator, Long id) {
-        GovGovernanceTask task = requireTask(id);
-        if ("IN_MEMORY".equalsIgnoreCase(task.getEngineType())) {
-            return executeService.stopTask(operator, id);
-        }
+        requireTask(id);
         return kettleExecuteService.stopTask(id);
     }
 
@@ -272,6 +310,13 @@ public class GovernanceTaskService {
         if ("RUNNING".equals(task.getStatus())) {
             throw new BusinessException(400, "运行中不可修改定时");
         }
+        applySchedule(task, body);
+        task.setUpdatedAt(LocalDateTime.now());
+        taskMapper.updateById(task);
+        return toTaskMap(task, false);
+    }
+
+    private void applySchedule(GovGovernanceTask task, Map<String, Object> body) {
         boolean enabled = boolVal(body.get("scheduleEnabled"), false);
         String mode = str(body.get("scheduleMode"), "CRON");
         if (enabled) {
@@ -321,9 +366,6 @@ public class GovernanceTaskService {
             task.setIntervalValue(null);
             task.setNextRunAt(null);
         }
-        task.setUpdatedAt(LocalDateTime.now());
-        taskMapper.updateById(task);
-        return toTaskMap(task, false);
     }
 
     public void refreshNextRunAfterExecute(Long taskId) {
@@ -387,7 +429,7 @@ public class GovernanceTaskService {
         m.put("taskCode", t.getTaskCode());
         m.put("taskName", t.getTaskName());
         m.put("description", t.getDescription());
-        m.put("status", t.getStatus());
+        m.put("status", normalizeLifecycleStatus(t.getStatus()));
         m.put("lockedBy", t.getLockedBy());
         m.put("lockedAt", t.getLockedAt());
         m.put("lastRunAt", t.getLastRunAt());
@@ -448,6 +490,164 @@ public class GovernanceTaskService {
 
     private static String emptyGraph() {
         return "{\"nodes\":[],\"edges\":[]}";
+    }
+
+    /** READY 兼容为 CONFIGURED（对外统一「已配置」） */
+    private static String normalizeLifecycleStatus(String status) {
+        if (status == null) return "DRAFT";
+        if ("READY".equalsIgnoreCase(status)) return "CONFIGURED";
+        return status;
+    }
+
+    private Map<Long, GovGovernanceTaskRun> latestRunsByTask() {
+        List<GovGovernanceTaskRun> runs = runMapper.selectList(new LambdaQueryWrapper<GovGovernanceTaskRun>()
+                .orderByDesc(GovGovernanceTaskRun::getId)
+                .last("LIMIT 500"));
+        Map<Long, GovGovernanceTaskRun> map = new LinkedHashMap<>();
+        for (GovGovernanceTaskRun r : runs) {
+            if (r.getTaskId() != null && !map.containsKey(r.getTaskId())) {
+                map.put(r.getTaskId(), r);
+            }
+        }
+        return map;
+    }
+
+    @SuppressWarnings("unchecked")
+    private static List<String> parseRules(Object raw) {
+        List<String> out = new ArrayList<>();
+        if (raw == null) return out;
+        if (raw instanceof List<?> list) {
+            for (Object o : list) {
+                String s = str(o, null);
+                if (s != null && isAllowedRule(s)) out.add(s.toUpperCase());
+            }
+            return out;
+        }
+        String s = String.valueOf(raw).trim();
+        if (s.isEmpty()) return out;
+        for (String part : s.split("[,;\\s]+")) {
+            if (isAllowedRule(part)) out.add(part.toUpperCase());
+        }
+        return out;
+    }
+
+    private static boolean isAllowedRule(String s) {
+        if (s == null || s.isBlank()) return false;
+        String u = s.trim().toUpperCase();
+        return "FILTER".equals(u) || "FIELD_PROCESS".equals(u)
+                || "DEDUPLICATE".equals(u) || "MASK".equals(u);
+    }
+
+    private static boolean hasConfiguredGraph(String graphJson) {
+        if (graphJson == null || graphJson.isBlank()) return false;
+        String g = graphJson.replace(" ", "");
+        return g.contains("\"nodeType\"") || g.contains("\"nodes\":[{");
+    }
+
+    private static String buildInitGraph(String sourceConn, String sourceTable,
+                                         String targetConn, String targetTable,
+                                         List<String> rules) {
+        StringBuilder nodes = new StringBuilder("[");
+        StringBuilder edges = new StringBuilder("[");
+        int x = 80;
+        int y = 120;
+        String prevId = null;
+        int seq = 1;
+
+        String inId = "n_INPUT_" + seq++;
+        nodes.append(nodeJson(inId, "INPUT", "输入", "#409eff", x, y,
+                inputConfigJson(sourceConn, sourceTable)));
+        prevId = inId;
+        x += 180;
+
+        for (String rule : rules) {
+            String label = switch (rule) {
+                case "FILTER" -> "过滤";
+                case "FIELD_PROCESS" -> "字段处理";
+                case "DEDUPLICATE" -> "去重";
+                case "MASK" -> "脱敏";
+                default -> rule;
+            };
+            String color = switch (rule) {
+                case "FILTER" -> "#67c23a";
+                case "FIELD_PROCESS" -> "#e6a23c";
+                case "DEDUPLICATE" -> "#909399";
+                case "MASK" -> "#f56c6c";
+                default -> "#909399";
+            };
+            String id = "n_" + rule + "_" + seq++;
+            if (nodes.length() > 1) nodes.append(',');
+            nodes.append(nodeJson(id, rule, label, color, x, y, ruleDefaultConfig(rule)));
+            if (prevId != null) {
+                if (edges.length() > 1) edges.append(',');
+                edges.append("{\"id\":\"e_").append(prevId).append("_").append(id)
+                        .append("\",\"source\":\"").append(prevId)
+                        .append("\",\"target\":\"").append(id).append("\"}");
+            }
+            prevId = id;
+            x += 180;
+        }
+
+        String outId = "n_OUTPUT_" + seq;
+        if (nodes.length() > 1) nodes.append(',');
+        nodes.append(nodeJson(outId, "OUTPUT", "输出", "#626aef", x, y,
+                outputConfigJson(targetConn, targetTable)));
+        if (prevId != null) {
+            if (edges.length() > 1) edges.append(',');
+            edges.append("{\"id\":\"e_").append(prevId).append("_").append(outId)
+                    .append("\",\"source\":\"").append(prevId)
+                    .append("\",\"target\":\"").append(outId).append("\"}");
+        }
+        nodes.append(']');
+        edges.append(']');
+        return "{\"nodes\":" + nodes + ",\"edges\":" + edges + "}";
+    }
+
+    private static String inputConfigJson(String conn, String table) {
+        StringBuilder sb = new StringBuilder("{");
+        sb.append("\"inputMode\":\"TABLE\"");
+        sb.append(",\"connection\":\"").append(jsonEsc(conn != null ? conn : "")).append("\"");
+        sb.append(",\"tableName\":\"").append(jsonEsc(table != null ? table : "")).append("\"");
+        sb.append(",\"limit\":0");
+        sb.append('}');
+        return sb.toString();
+    }
+
+    private static String outputConfigJson(String conn, String table) {
+        StringBuilder sb = new StringBuilder("{");
+        sb.append("\"connection\":\"").append(jsonEsc(conn != null ? conn : "")).append("\"");
+        sb.append(",\"table\":\"").append(jsonEsc(table != null ? table : "")).append("\"");
+        sb.append(",\"outputMode\":\"INSERT\"");
+        sb.append(",\"commit\":1000");
+        sb.append('}');
+        return sb.toString();
+    }
+
+    private static String ruleDefaultConfig(String rule) {
+        return switch (rule) {
+            case "FILTER" -> "{\"mode\":\"SIMPLE\",\"field\":\"\",\"op\":\"EQ\",\"value\":\"\"}";
+            case "FIELD_PROCESS" -> "{\"mappings\":[{\"from\":\"name\",\"to\":\"name_upper\",\"expr\":\"UPPER\"}]}";
+            case "DEDUPLICATE" -> "{\"keys\":[\"id\"],\"keepStrategy\":\"FIRST\"}";
+            case "MASK" -> "{\"fields\":[\"phone\",\"idCard\"],\"maskType\":\"BLUR\",\"maskChar\":\"*\"}";
+            default -> "{}";
+        };
+    }
+
+    private static String nodeJson(String id, String type, String label, String color,
+                                   int x, int y, String configJson) {
+        return "{\"id\":\"" + id + "\",\"type\":\"default\","
+                + "\"position\":{\"x\":" + x + ",\"y\":" + y + "},"
+                + "\"label\":\"" + jsonEsc(label) + "\","
+                + "\"data\":{\"nodeType\":\"" + type + "\",\"label\":\"" + jsonEsc(label)
+                + "\",\"config\":" + configJson + "},"
+                + "\"style\":{\"border\":\"2px solid " + color
+                + "\",\"borderRadius\":\"8px\",\"padding\":\"6px 10px\","
+                + "\"fontSize\":\"12px\",\"background\":\"#fff\",\"minWidth\":\"100px\"}}";
+    }
+
+    private static String jsonEsc(String s) {
+        if (s == null) return "";
+        return s.replace("\\", "\\\\").replace("\"", "\\\"");
     }
 
     private static String str(Object v, String def) {

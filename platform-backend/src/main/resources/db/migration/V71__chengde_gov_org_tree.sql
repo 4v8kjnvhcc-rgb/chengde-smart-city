@@ -1,0 +1,145 @@
+-- 承德高新区政府组织架构入库 + 公安分局测试账号
+
+-- 根节点沿用 id=1，兼容已有用户/授权外键
+UPDATE sys_org SET org_code = '100000', org_name = '承德高新技术产业开发区', org_type = 1, sort_order = 0, status = 1 WHERE id = 1;
+
+-- 旧演示机构保留，改名避免与正式树混淆
+UPDATE sys_org SET org_name = '演示机构A（旧）', sort_order = 900 WHERE id = 2 AND org_code = 'ORG_A';
+UPDATE sys_org SET org_name = '演示机构B（旧）', sort_order = 901 WHERE id = 3 AND org_code = 'ORG_B';
+
+INSERT INTO sys_org (id, parent_id, org_code, org_name, org_type, sort_order, status) SELECT 101, 1, '100001', '承德高新技术产业开发区工作委员会', 1, 1, 1 FROM DUAL WHERE NOT EXISTS (SELECT 1 FROM sys_org WHERE id = 101 OR org_code = '100001');
+INSERT INTO sys_org (id, parent_id, org_code, org_name, org_type, sort_order, status) SELECT 102, 101, '100010', '党政综合办公室', 2, 1, 1 FROM DUAL WHERE NOT EXISTS (SELECT 1 FROM sys_org WHERE id = 102 OR org_code = '100010');
+INSERT INTO sys_org (id, parent_id, org_code, org_name, org_type, sort_order, status) SELECT 103, 101, '100020', '党群工作部（人力资源部）', 2, 2, 1 FROM DUAL WHERE NOT EXISTS (SELECT 1 FROM sys_org WHERE id = 103 OR org_code = '100020');
+INSERT INTO sys_org (id, parent_id, org_code, org_name, org_type, sort_order, status) SELECT 104, 103, '100201', '高新区总工会', 2, 1, 1 FROM DUAL WHERE NOT EXISTS (SELECT 1 FROM sys_org WHERE id = 104 OR org_code = '100201');
+INSERT INTO sys_org (id, parent_id, org_code, org_name, org_type, sort_order, status) SELECT 105, 103, '100202', '共青团承德高新区委员会', 2, 2, 1 FROM DUAL WHERE NOT EXISTS (SELECT 1 FROM sys_org WHERE id = 105 OR org_code = '100202');
+INSERT INTO sys_org (id, parent_id, org_code, org_name, org_type, sort_order, status) SELECT 106, 103, '100203', '高新区妇女联合会', 2, 3, 1 FROM DUAL WHERE NOT EXISTS (SELECT 1 FROM sys_org WHERE id = 106 OR org_code = '100203');
+INSERT INTO sys_org (id, parent_id, org_code, org_name, org_type, sort_order, status) SELECT 107, 103, '100204', '高新区工商业联合会', 2, 4, 1 FROM DUAL WHERE NOT EXISTS (SELECT 1 FROM sys_org WHERE id = 107 OR org_code = '100204');
+INSERT INTO sys_org (id, parent_id, org_code, org_name, org_type, sort_order, status) SELECT 108, 103, '100205', '高新区残疾人联合会', 2, 5, 1 FROM DUAL WHERE NOT EXISTS (SELECT 1 FROM sys_org WHERE id = 108 OR org_code = '100205');
+INSERT INTO sys_org (id, parent_id, org_code, org_name, org_type, sort_order, status) SELECT 109, 103, '100206', '高新区红十字会', 2, 6, 1 FROM DUAL WHERE NOT EXISTS (SELECT 1 FROM sys_org WHERE id = 109 OR org_code = '100206');
+INSERT INTO sys_org (id, parent_id, org_code, org_name, org_type, sort_order, status) SELECT 110, 103, '100207', '高新区人才服务中心', 2, 7, 1 FROM DUAL WHERE NOT EXISTS (SELECT 1 FROM sys_org WHERE id = 110 OR org_code = '100207');
+INSERT INTO sys_org (id, parent_id, org_code, org_name, org_type, sort_order, status) SELECT 111, 101, '100030', '承德市纪委监委派出高新区纪检监察工作委员会', 2, 3, 1 FROM DUAL WHERE NOT EXISTS (SELECT 1 FROM sys_org WHERE id = 111 OR org_code = '100030');
+INSERT INTO sys_org (id, parent_id, org_code, org_name, org_type, sort_order, status) SELECT 112, 101, '100040', '高新区宣传中心', 2, 4, 1 FROM DUAL WHERE NOT EXISTS (SELECT 1 FROM sys_org WHERE id = 112 OR org_code = '100040');
+INSERT INTO sys_org (id, parent_id, org_code, org_name, org_type, sort_order, status) SELECT 113, 101, '100050', '高新区信息化中心', 2, 5, 1 FROM DUAL WHERE NOT EXISTS (SELECT 1 FROM sys_org WHERE id = 113 OR org_code = '100050');
+INSERT INTO sys_org (id, parent_id, org_code, org_name, org_type, sort_order, status) SELECT 114, 1, '100002', '承德高新技术产业开发区管理委员会', 1, 2, 1 FROM DUAL WHERE NOT EXISTS (SELECT 1 FROM sys_org WHERE id = 114 OR org_code = '100002');
+INSERT INTO sys_org (id, parent_id, org_code, org_name, org_type, sort_order, status) SELECT 115, 114, '100100', '经济发展部', 2, 1, 1 FROM DUAL WHERE NOT EXISTS (SELECT 1 FROM sys_org WHERE id = 115 OR org_code = '100100');
+INSERT INTO sys_org (id, parent_id, org_code, org_name, org_type, sort_order, status) SELECT 116, 114, '100110', '科技创新部', 2, 2, 1 FROM DUAL WHERE NOT EXISTS (SELECT 1 FROM sys_org WHERE id = 116 OR org_code = '100110');
+INSERT INTO sys_org (id, parent_id, org_code, org_name, org_type, sort_order, status) SELECT 117, 116, '100301', '高新区创新创业服务中心', 2, 1, 1 FROM DUAL WHERE NOT EXISTS (SELECT 1 FROM sys_org WHERE id = 117 OR org_code = '100301');
+INSERT INTO sys_org (id, parent_id, org_code, org_name, org_type, sort_order, status) SELECT 118, 114, '100120', '财政金融部', 2, 3, 1 FROM DUAL WHERE NOT EXISTS (SELECT 1 FROM sys_org WHERE id = 118 OR org_code = '100120');
+INSERT INTO sys_org (id, parent_id, org_code, org_name, org_type, sort_order, status) SELECT 119, 118, '100401', '高新区财政国库支付中心', 2, 1, 1 FROM DUAL WHERE NOT EXISTS (SELECT 1 FROM sys_org WHERE id = 119 OR org_code = '100401');
+INSERT INTO sys_org (id, parent_id, org_code, org_name, org_type, sort_order, status) SELECT 120, 118, '100402', '高新区政府采购中心', 2, 2, 1 FROM DUAL WHERE NOT EXISTS (SELECT 1 FROM sys_org WHERE id = 120 OR org_code = '100402');
+INSERT INTO sys_org (id, parent_id, org_code, org_name, org_type, sort_order, status) SELECT 121, 114, '100130', '社会事务部', 2, 4, 1 FROM DUAL WHERE NOT EXISTS (SELECT 1 FROM sys_org WHERE id = 121 OR org_code = '100130');
+INSERT INTO sys_org (id, parent_id, org_code, org_name, org_type, sort_order, status) SELECT 122, 121, '101101', '高新区第一中学', 2, 1, 1 FROM DUAL WHERE NOT EXISTS (SELECT 1 FROM sys_org WHERE id = 122 OR org_code = '101101');
+INSERT INTO sys_org (id, parent_id, org_code, org_name, org_type, sort_order, status) SELECT 123, 121, '101102', '高新区实验中学', 2, 2, 1 FROM DUAL WHERE NOT EXISTS (SELECT 1 FROM sys_org WHERE id = 123 OR org_code = '101102');
+INSERT INTO sys_org (id, parent_id, org_code, org_name, org_type, sort_order, status) SELECT 124, 121, '101103', '高新区第一小学', 2, 3, 1 FROM DUAL WHERE NOT EXISTS (SELECT 1 FROM sys_org WHERE id = 124 OR org_code = '101103');
+INSERT INTO sys_org (id, parent_id, org_code, org_name, org_type, sort_order, status) SELECT 125, 121, '101104', '高新区第二小学', 2, 4, 1 FROM DUAL WHERE NOT EXISTS (SELECT 1 FROM sys_org WHERE id = 125 OR org_code = '101104');
+INSERT INTO sys_org (id, parent_id, org_code, org_name, org_type, sort_order, status) SELECT 126, 121, '101105', '高新区社区卫生服务中心', 2, 5, 1 FROM DUAL WHERE NOT EXISTS (SELECT 1 FROM sys_org WHERE id = 126 OR org_code = '101105');
+INSERT INTO sys_org (id, parent_id, org_code, org_name, org_type, sort_order, status) SELECT 127, 121, '101106', '高新区疾病预防控制中心', 2, 6, 1 FROM DUAL WHERE NOT EXISTS (SELECT 1 FROM sys_org WHERE id = 127 OR org_code = '101106');
+INSERT INTO sys_org (id, parent_id, org_code, org_name, org_type, sort_order, status) SELECT 128, 121, '101107', '高新区文化馆', 2, 7, 1 FROM DUAL WHERE NOT EXISTS (SELECT 1 FROM sys_org WHERE id = 128 OR org_code = '101107');
+INSERT INTO sys_org (id, parent_id, org_code, org_name, org_type, sort_order, status) SELECT 129, 121, '101108', '高新区图书馆', 2, 8, 1 FROM DUAL WHERE NOT EXISTS (SELECT 1 FROM sys_org WHERE id = 129 OR org_code = '101108');
+INSERT INTO sys_org (id, parent_id, org_code, org_name, org_type, sort_order, status) SELECT 130, 121, '101109', '高新区体育中心', 2, 9, 1 FROM DUAL WHERE NOT EXISTS (SELECT 1 FROM sys_org WHERE id = 130 OR org_code = '101109');
+INSERT INTO sys_org (id, parent_id, org_code, org_name, org_type, sort_order, status) SELECT 131, 121, '101110', '高新区法律援助中心', 2, 10, 1 FROM DUAL WHERE NOT EXISTS (SELECT 1 FROM sys_org WHERE id = 131 OR org_code = '101110');
+INSERT INTO sys_org (id, parent_id, org_code, org_name, org_type, sort_order, status) SELECT 132, 114, '100140', '应急管理部', 2, 5, 1 FROM DUAL WHERE NOT EXISTS (SELECT 1 FROM sys_org WHERE id = 132 OR org_code = '100140');
+INSERT INTO sys_org (id, parent_id, org_code, org_name, org_type, sort_order, status) SELECT 133, 132, '100701', '高新区应急综合执法大队', 2, 1, 1 FROM DUAL WHERE NOT EXISTS (SELECT 1 FROM sys_org WHERE id = 133 OR org_code = '100701');
+INSERT INTO sys_org (id, parent_id, org_code, org_name, org_type, sort_order, status) SELECT 134, 114, '100150', '行政审批服务局', 2, 6, 1 FROM DUAL WHERE NOT EXISTS (SELECT 1 FROM sys_org WHERE id = 134 OR org_code = '100150');
+INSERT INTO sys_org (id, parent_id, org_code, org_name, org_type, sort_order, status) SELECT 135, 134, '100501', '高新区公共资源交易中心', 2, 1, 1 FROM DUAL WHERE NOT EXISTS (SELECT 1 FROM sys_org WHERE id = 135 OR org_code = '100501');
+INSERT INTO sys_org (id, parent_id, org_code, org_name, org_type, sort_order, status) SELECT 136, 134, '100502', '高新区政务服务中心', 2, 2, 1 FROM DUAL WHERE NOT EXISTS (SELECT 1 FROM sys_org WHERE id = 136 OR org_code = '100502');
+INSERT INTO sys_org (id, parent_id, org_code, org_name, org_type, sort_order, status) SELECT 137, 114, '100160', '城市管理综合行政执法局', 2, 7, 1 FROM DUAL WHERE NOT EXISTS (SELECT 1 FROM sys_org WHERE id = 137 OR org_code = '100160');
+INSERT INTO sys_org (id, parent_id, org_code, org_name, org_type, sort_order, status) SELECT 138, 137, '100601', '高新区综合行政执法大队', 2, 1, 1 FROM DUAL WHERE NOT EXISTS (SELECT 1 FROM sys_org WHERE id = 138 OR org_code = '100601');
+INSERT INTO sys_org (id, parent_id, org_code, org_name, org_type, sort_order, status) SELECT 139, 114, '100170', '农业农村部', 2, 8, 1 FROM DUAL WHERE NOT EXISTS (SELECT 1 FROM sys_org WHERE id = 139 OR org_code = '100170');
+INSERT INTO sys_org (id, parent_id, org_code, org_name, org_type, sort_order, status) SELECT 140, 114, '100180', '住房和城乡建设局', 2, 9, 1 FROM DUAL WHERE NOT EXISTS (SELECT 1 FROM sys_org WHERE id = 140 OR org_code = '100180');
+INSERT INTO sys_org (id, parent_id, org_code, org_name, org_type, sort_order, status) SELECT 141, 114, '100190', '交通运输局', 2, 10, 1 FROM DUAL WHERE NOT EXISTS (SELECT 1 FROM sys_org WHERE id = 141 OR org_code = '100190');
+INSERT INTO sys_org (id, parent_id, org_code, org_name, org_type, sort_order, status) SELECT 142, 141, '101001', '承德市交警支队第五大队', 2, 1, 1 FROM DUAL WHERE NOT EXISTS (SELECT 1 FROM sys_org WHERE id = 142 OR org_code = '101001');
+INSERT INTO sys_org (id, parent_id, org_code, org_name, org_type, sort_order, status) SELECT 143, 141, '101002', '承德市交警支队第七大队', 2, 2, 1 FROM DUAL WHERE NOT EXISTS (SELECT 1 FROM sys_org WHERE id = 143 OR org_code = '101002');
+INSERT INTO sys_org (id, parent_id, org_code, org_name, org_type, sort_order, status) SELECT 144, 114, '100200', '承德市公安局高新技术产业开发区分局', 1, 11, 1 FROM DUAL WHERE NOT EXISTS (SELECT 1 FROM sys_org WHERE id = 144 OR org_code = '100200');
+INSERT INTO sys_org (id, parent_id, org_code, org_name, org_type, sort_order, status) SELECT 145, 114, '100210', '承德市市场监督管理局高新区分局', 1, 12, 1 FROM DUAL WHERE NOT EXISTS (SELECT 1 FROM sys_org WHERE id = 145 OR org_code = '100210');
+INSERT INTO sys_org (id, parent_id, org_code, org_name, org_type, sort_order, status) SELECT 146, 145, '100801', '高新区市场监管综合执法大队', 2, 1, 1 FROM DUAL WHERE NOT EXISTS (SELECT 1 FROM sys_org WHERE id = 146 OR org_code = '100801');
+INSERT INTO sys_org (id, parent_id, org_code, org_name, org_type, sort_order, status) SELECT 147, 114, '100220', '承德市自然资源和规划局高新区分局', 1, 13, 1 FROM DUAL WHERE NOT EXISTS (SELECT 1 FROM sys_org WHERE id = 147 OR org_code = '100220');
+INSERT INTO sys_org (id, parent_id, org_code, org_name, org_type, sort_order, status) SELECT 148, 114, '100230', '承德市生态环境局高新区分局', 1, 14, 1 FROM DUAL WHERE NOT EXISTS (SELECT 1 FROM sys_org WHERE id = 148 OR org_code = '100230');
+INSERT INTO sys_org (id, parent_id, org_code, org_name, org_type, sort_order, status) SELECT 149, 148, '100901', '高新区生态环境综合执法大队', 2, 1, 1 FROM DUAL WHERE NOT EXISTS (SELECT 1 FROM sys_org WHERE id = 149 OR org_code = '100901');
+INSERT INTO sys_org (id, parent_id, org_code, org_name, org_type, sort_order, status) SELECT 150, 114, '100240', '国家税务总局承德高新技术产业开发区税务局', 1, 15, 1 FROM DUAL WHERE NOT EXISTS (SELECT 1 FROM sys_org WHERE id = 150 OR org_code = '100240');
+INSERT INTO sys_org (id, parent_id, org_code, org_name, org_type, sort_order, status) SELECT 151, 114, '100250', '承德市消防救援支队高新技术产业开发区大队', 1, 16, 1 FROM DUAL WHERE NOT EXISTS (SELECT 1 FROM sys_org WHERE id = 151 OR org_code = '100250');
+INSERT INTO sys_org (id, parent_id, org_code, org_name, org_type, sort_order, status) SELECT 152, 114, '100300', '承德高新区上板城街道办事处', 1, 17, 1 FROM DUAL WHERE NOT EXISTS (SELECT 1 FROM sys_org WHERE id = 152 OR org_code = '100300');
+INSERT INTO sys_org (id, parent_id, org_code, org_name, org_type, sort_order, status) SELECT 153, 114, '100310', '承德高新区下板城街道办事处', 1, 18, 1 FROM DUAL WHERE NOT EXISTS (SELECT 1 FROM sys_org WHERE id = 153 OR org_code = '100310');
+INSERT INTO sys_org (id, parent_id, org_code, org_name, org_type, sort_order, status) SELECT 154, 114, '100320', '承德高新区大庙镇人民政府', 1, 19, 1 FROM DUAL WHERE NOT EXISTS (SELECT 1 FROM sys_org WHERE id = 154 OR org_code = '100320');
+INSERT INTO sys_org (id, parent_id, org_code, org_name, org_type, sort_order, status) SELECT 155, 114, '100330', '承德高新区太平庄乡人民政府', 1, 20, 1 FROM DUAL WHERE NOT EXISTS (SELECT 1 FROM sys_org WHERE id = 155 OR org_code = '100330');
+INSERT INTO sys_org (id, parent_id, org_code, org_name, org_type, sort_order, status) SELECT 156, 114, '100400', '承德市人民检察院高新区检察室', 2, 21, 1 FROM DUAL WHERE NOT EXISTS (SELECT 1 FROM sys_org WHERE id = 156 OR org_code = '100400');
+INSERT INTO sys_org (id, parent_id, org_code, org_name, org_type, sort_order, status) SELECT 157, 114, '100410', '承德市中级人民法院高新区人民法庭', 2, 22, 1 FROM DUAL WHERE NOT EXISTS (SELECT 1 FROM sys_org WHERE id = 157 OR org_code = '100410');
+INSERT INTO sys_org (id, parent_id, org_code, org_name, org_type, sort_order, status) SELECT 158, 114, '100500', '承德高新区投资发展集团有限公司', 1, 23, 1 FROM DUAL WHERE NOT EXISTS (SELECT 1 FROM sys_org WHERE id = 158 OR org_code = '100500');
+INSERT INTO sys_org (id, parent_id, org_code, org_name, org_type, sort_order, status) SELECT 159, 158, '101201', '承德高新区建设开发有限公司', 1, 1, 1 FROM DUAL WHERE NOT EXISTS (SELECT 1 FROM sys_org WHERE id = 159 OR org_code = '101201');
+INSERT INTO sys_org (id, parent_id, org_code, org_name, org_type, sort_order, status) SELECT 160, 158, '101202', '承德高新区科技创新投资有限公司', 1, 2, 1 FROM DUAL WHERE NOT EXISTS (SELECT 1 FROM sys_org WHERE id = 160 OR org_code = '101202');
+INSERT INTO sys_org (id, parent_id, org_code, org_name, org_type, sort_order, status) SELECT 161, 158, '101203', '承德高新区文旅发展有限公司', 1, 3, 1 FROM DUAL WHERE NOT EXISTS (SELECT 1 FROM sys_org WHERE id = 161 OR org_code = '101203');
+INSERT INTO sys_org (id, parent_id, org_code, org_name, org_type, sort_order, status) SELECT 162, 158, '101204', '国网承德高新区供电中心', 1, 4, 1 FROM DUAL WHERE NOT EXISTS (SELECT 1 FROM sys_org WHERE id = 162 OR org_code = '101204');
+
+-- 同步名称/父子（幂等）
+UPDATE sys_org SET parent_id = 1, org_name = '承德高新技术产业开发区工作委员会', org_type = 1, sort_order = 1, status = 1 WHERE org_code = '100001';
+UPDATE sys_org SET parent_id = 101, org_name = '党政综合办公室', org_type = 2, sort_order = 1, status = 1 WHERE org_code = '100010';
+UPDATE sys_org SET parent_id = 101, org_name = '党群工作部（人力资源部）', org_type = 2, sort_order = 2, status = 1 WHERE org_code = '100020';
+UPDATE sys_org SET parent_id = 103, org_name = '高新区总工会', org_type = 2, sort_order = 1, status = 1 WHERE org_code = '100201';
+UPDATE sys_org SET parent_id = 103, org_name = '共青团承德高新区委员会', org_type = 2, sort_order = 2, status = 1 WHERE org_code = '100202';
+UPDATE sys_org SET parent_id = 103, org_name = '高新区妇女联合会', org_type = 2, sort_order = 3, status = 1 WHERE org_code = '100203';
+UPDATE sys_org SET parent_id = 103, org_name = '高新区工商业联合会', org_type = 2, sort_order = 4, status = 1 WHERE org_code = '100204';
+UPDATE sys_org SET parent_id = 103, org_name = '高新区残疾人联合会', org_type = 2, sort_order = 5, status = 1 WHERE org_code = '100205';
+UPDATE sys_org SET parent_id = 103, org_name = '高新区红十字会', org_type = 2, sort_order = 6, status = 1 WHERE org_code = '100206';
+UPDATE sys_org SET parent_id = 103, org_name = '高新区人才服务中心', org_type = 2, sort_order = 7, status = 1 WHERE org_code = '100207';
+UPDATE sys_org SET parent_id = 101, org_name = '承德市纪委监委派出高新区纪检监察工作委员会', org_type = 2, sort_order = 3, status = 1 WHERE org_code = '100030';
+UPDATE sys_org SET parent_id = 101, org_name = '高新区宣传中心', org_type = 2, sort_order = 4, status = 1 WHERE org_code = '100040';
+UPDATE sys_org SET parent_id = 101, org_name = '高新区信息化中心', org_type = 2, sort_order = 5, status = 1 WHERE org_code = '100050';
+UPDATE sys_org SET parent_id = 1, org_name = '承德高新技术产业开发区管理委员会', org_type = 1, sort_order = 2, status = 1 WHERE org_code = '100002';
+UPDATE sys_org SET parent_id = 114, org_name = '经济发展部', org_type = 2, sort_order = 1, status = 1 WHERE org_code = '100100';
+UPDATE sys_org SET parent_id = 114, org_name = '科技创新部', org_type = 2, sort_order = 2, status = 1 WHERE org_code = '100110';
+UPDATE sys_org SET parent_id = 116, org_name = '高新区创新创业服务中心', org_type = 2, sort_order = 1, status = 1 WHERE org_code = '100301';
+UPDATE sys_org SET parent_id = 114, org_name = '财政金融部', org_type = 2, sort_order = 3, status = 1 WHERE org_code = '100120';
+UPDATE sys_org SET parent_id = 118, org_name = '高新区财政国库支付中心', org_type = 2, sort_order = 1, status = 1 WHERE org_code = '100401';
+UPDATE sys_org SET parent_id = 118, org_name = '高新区政府采购中心', org_type = 2, sort_order = 2, status = 1 WHERE org_code = '100402';
+UPDATE sys_org SET parent_id = 114, org_name = '社会事务部', org_type = 2, sort_order = 4, status = 1 WHERE org_code = '100130';
+UPDATE sys_org SET parent_id = 121, org_name = '高新区第一中学', org_type = 2, sort_order = 1, status = 1 WHERE org_code = '101101';
+UPDATE sys_org SET parent_id = 121, org_name = '高新区实验中学', org_type = 2, sort_order = 2, status = 1 WHERE org_code = '101102';
+UPDATE sys_org SET parent_id = 121, org_name = '高新区第一小学', org_type = 2, sort_order = 3, status = 1 WHERE org_code = '101103';
+UPDATE sys_org SET parent_id = 121, org_name = '高新区第二小学', org_type = 2, sort_order = 4, status = 1 WHERE org_code = '101104';
+UPDATE sys_org SET parent_id = 121, org_name = '高新区社区卫生服务中心', org_type = 2, sort_order = 5, status = 1 WHERE org_code = '101105';
+UPDATE sys_org SET parent_id = 121, org_name = '高新区疾病预防控制中心', org_type = 2, sort_order = 6, status = 1 WHERE org_code = '101106';
+UPDATE sys_org SET parent_id = 121, org_name = '高新区文化馆', org_type = 2, sort_order = 7, status = 1 WHERE org_code = '101107';
+UPDATE sys_org SET parent_id = 121, org_name = '高新区图书馆', org_type = 2, sort_order = 8, status = 1 WHERE org_code = '101108';
+UPDATE sys_org SET parent_id = 121, org_name = '高新区体育中心', org_type = 2, sort_order = 9, status = 1 WHERE org_code = '101109';
+UPDATE sys_org SET parent_id = 121, org_name = '高新区法律援助中心', org_type = 2, sort_order = 10, status = 1 WHERE org_code = '101110';
+UPDATE sys_org SET parent_id = 114, org_name = '应急管理部', org_type = 2, sort_order = 5, status = 1 WHERE org_code = '100140';
+UPDATE sys_org SET parent_id = 132, org_name = '高新区应急综合执法大队', org_type = 2, sort_order = 1, status = 1 WHERE org_code = '100701';
+UPDATE sys_org SET parent_id = 114, org_name = '行政审批服务局', org_type = 2, sort_order = 6, status = 1 WHERE org_code = '100150';
+UPDATE sys_org SET parent_id = 134, org_name = '高新区公共资源交易中心', org_type = 2, sort_order = 1, status = 1 WHERE org_code = '100501';
+UPDATE sys_org SET parent_id = 134, org_name = '高新区政务服务中心', org_type = 2, sort_order = 2, status = 1 WHERE org_code = '100502';
+UPDATE sys_org SET parent_id = 114, org_name = '城市管理综合行政执法局', org_type = 2, sort_order = 7, status = 1 WHERE org_code = '100160';
+UPDATE sys_org SET parent_id = 137, org_name = '高新区综合行政执法大队', org_type = 2, sort_order = 1, status = 1 WHERE org_code = '100601';
+UPDATE sys_org SET parent_id = 114, org_name = '农业农村部', org_type = 2, sort_order = 8, status = 1 WHERE org_code = '100170';
+UPDATE sys_org SET parent_id = 114, org_name = '住房和城乡建设局', org_type = 2, sort_order = 9, status = 1 WHERE org_code = '100180';
+UPDATE sys_org SET parent_id = 114, org_name = '交通运输局', org_type = 2, sort_order = 10, status = 1 WHERE org_code = '100190';
+UPDATE sys_org SET parent_id = 141, org_name = '承德市交警支队第五大队', org_type = 2, sort_order = 1, status = 1 WHERE org_code = '101001';
+UPDATE sys_org SET parent_id = 141, org_name = '承德市交警支队第七大队', org_type = 2, sort_order = 2, status = 1 WHERE org_code = '101002';
+UPDATE sys_org SET parent_id = 114, org_name = '承德市公安局高新技术产业开发区分局', org_type = 1, sort_order = 11, status = 1 WHERE org_code = '100200';
+UPDATE sys_org SET parent_id = 114, org_name = '承德市市场监督管理局高新区分局', org_type = 1, sort_order = 12, status = 1 WHERE org_code = '100210';
+UPDATE sys_org SET parent_id = 145, org_name = '高新区市场监管综合执法大队', org_type = 2, sort_order = 1, status = 1 WHERE org_code = '100801';
+UPDATE sys_org SET parent_id = 114, org_name = '承德市自然资源和规划局高新区分局', org_type = 1, sort_order = 13, status = 1 WHERE org_code = '100220';
+UPDATE sys_org SET parent_id = 114, org_name = '承德市生态环境局高新区分局', org_type = 1, sort_order = 14, status = 1 WHERE org_code = '100230';
+UPDATE sys_org SET parent_id = 148, org_name = '高新区生态环境综合执法大队', org_type = 2, sort_order = 1, status = 1 WHERE org_code = '100901';
+UPDATE sys_org SET parent_id = 114, org_name = '国家税务总局承德高新技术产业开发区税务局', org_type = 1, sort_order = 15, status = 1 WHERE org_code = '100240';
+UPDATE sys_org SET parent_id = 114, org_name = '承德市消防救援支队高新技术产业开发区大队', org_type = 1, sort_order = 16, status = 1 WHERE org_code = '100250';
+UPDATE sys_org SET parent_id = 114, org_name = '承德高新区上板城街道办事处', org_type = 1, sort_order = 17, status = 1 WHERE org_code = '100300';
+UPDATE sys_org SET parent_id = 114, org_name = '承德高新区下板城街道办事处', org_type = 1, sort_order = 18, status = 1 WHERE org_code = '100310';
+UPDATE sys_org SET parent_id = 114, org_name = '承德高新区大庙镇人民政府', org_type = 1, sort_order = 19, status = 1 WHERE org_code = '100320';
+UPDATE sys_org SET parent_id = 114, org_name = '承德高新区太平庄乡人民政府', org_type = 1, sort_order = 20, status = 1 WHERE org_code = '100330';
+UPDATE sys_org SET parent_id = 114, org_name = '承德市人民检察院高新区检察室', org_type = 2, sort_order = 21, status = 1 WHERE org_code = '100400';
+UPDATE sys_org SET parent_id = 114, org_name = '承德市中级人民法院高新区人民法庭', org_type = 2, sort_order = 22, status = 1 WHERE org_code = '100410';
+UPDATE sys_org SET parent_id = 114, org_name = '承德高新区投资发展集团有限公司', org_type = 1, sort_order = 23, status = 1 WHERE org_code = '100500';
+UPDATE sys_org SET parent_id = 158, org_name = '承德高新区建设开发有限公司', org_type = 1, sort_order = 1, status = 1 WHERE org_code = '101201';
+UPDATE sys_org SET parent_id = 158, org_name = '承德高新区科技创新投资有限公司', org_type = 1, sort_order = 2, status = 1 WHERE org_code = '101202';
+UPDATE sys_org SET parent_id = 158, org_name = '承德高新区文旅发展有限公司', org_type = 1, sort_order = 3, status = 1 WHERE org_code = '101203';
+UPDATE sys_org SET parent_id = 158, org_name = '国网承德高新区供电中心', org_type = 1, sort_order = 4, status = 1 WHERE org_code = '101204';
+
+-- 公安分局测试账号（机构管理员 + 普通用户角色）密码 Test@12345
+INSERT INTO sys_user (username, password_hash, display_name, org_id, status) SELECT 'gongan', '$2a$10$CWY2FHCAutORDZAK6auKauFUi8R.VSu4PMwnwhjuzcj5XaCqSHyZm', '高新区公安分局测试账号', o.id, 1 FROM sys_org o WHERE o.org_code = '100200' AND NOT EXISTS (SELECT 1 FROM sys_user WHERE username = 'gongan');
+UPDATE sys_user u JOIN sys_org o ON o.org_code = '100200' SET u.password_hash = '$2a$10$CWY2FHCAutORDZAK6auKauFUi8R.VSu4PMwnwhjuzcj5XaCqSHyZm', u.display_name = '高新区公安分局测试账号', u.org_id = o.id, u.status = 1 WHERE u.username = 'gongan';
+INSERT INTO sys_user_role (user_id, role_id) SELECT u.id, 2 FROM sys_user u WHERE u.username = 'gongan' AND NOT EXISTS (SELECT 1 FROM sys_user_role ur WHERE ur.user_id = u.id AND ur.role_id = 2);
+INSERT INTO sys_user_role (user_id, role_id) SELECT u.id, 3 FROM sys_user u WHERE u.username = 'gongan' AND NOT EXISTS (SELECT 1 FROM sys_user_role ur WHERE ur.user_id = u.id AND ur.role_id = 3);
+
+-- 预留自增，避免后续手工新增撞号
+ALTER TABLE sys_org AUTO_INCREMENT = 300;
+

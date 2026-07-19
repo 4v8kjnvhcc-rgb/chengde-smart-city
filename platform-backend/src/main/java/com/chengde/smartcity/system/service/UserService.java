@@ -6,6 +6,7 @@ import com.chengde.smartcity.audit.AuditService;
 import com.chengde.smartcity.common.exception.BusinessException;
 import com.chengde.smartcity.security.UserPrincipal;
 import com.chengde.smartcity.system.dto.UserCreateRequest;
+import com.chengde.smartcity.system.dto.UserListItem;
 import com.chengde.smartcity.system.dto.UserUpdateRequest;
 import com.chengde.smartcity.system.entity.SysUser;
 import com.chengde.smartcity.system.mapper.SysUserMapper;
@@ -14,7 +15,11 @@ import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import java.time.LocalDateTime;
+import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
+import java.util.Map;
+import java.util.stream.Collectors;
 
 @Service
 public class UserService {
@@ -33,15 +38,65 @@ public class UserService {
     }
 
     public Page<SysUser> page(UserPrincipal operator, int page, int size, String keyword) {
+        return page(operator, page, size, keyword, null);
+    }
+
+    public Page<SysUser> page(UserPrincipal operator, int page, int size, String keyword, Long orgId) {
         LambdaQueryWrapper<SysUser> q = new LambdaQueryWrapper<>();
         if (!operator.isSystemAdmin()) {
             q.eq(SysUser::getOrgId, operator.getOrgId());
+        } else if (orgId != null) {
+            q.eq(SysUser::getOrgId, orgId);
         }
         if (keyword != null && !keyword.isBlank()) {
             q.and(w -> w.like(SysUser::getUsername, keyword).or().like(SysUser::getDisplayName, keyword));
         }
         q.orderByDesc(SysUser::getId);
         return userMapper.selectPage(new Page<>(page, size), q);
+    }
+
+    /** 按机构分页用户，并附带角色名称（组织机构树右侧面板） */
+    public Page<UserListItem> pageWithRoles(UserPrincipal operator, int page, int size, String keyword, Long orgId) {
+        if (orgId != null) {
+            assertOrgAccess(operator, orgId);
+        }
+        Page<SysUser> raw = page(operator, page, size, keyword, orgId);
+        Page<UserListItem> out = new Page<>(raw.getCurrent(), raw.getSize(), raw.getTotal());
+        List<SysUser> records = raw.getRecords();
+        if (records == null || records.isEmpty()) {
+            out.setRecords(List.of());
+            return out;
+        }
+        List<Long> userIds = records.stream().map(SysUser::getId).toList();
+        String placeholders = userIds.stream().map(id -> "?").collect(Collectors.joining(","));
+        List<Map<String, Object>> rows = jdbcTemplate.queryForList(
+                "SELECT ur.user_id AS user_id, ur.role_id AS role_id, r.role_name AS role_name "
+                        + "FROM sys_user_role ur JOIN sys_role r ON r.id = ur.role_id "
+                        + "WHERE ur.user_id IN (" + placeholders + ") ORDER BY r.id",
+                userIds.toArray());
+        Map<Long, List<Long>> roleIdsByUser = new HashMap<>();
+        Map<Long, List<String>> roleNamesByUser = new HashMap<>();
+        for (Map<String, Object> row : rows) {
+            Long uid = ((Number) row.get("user_id")).longValue();
+            Long rid = ((Number) row.get("role_id")).longValue();
+            String rname = String.valueOf(row.get("role_name"));
+            roleIdsByUser.computeIfAbsent(uid, k -> new ArrayList<>()).add(rid);
+            roleNamesByUser.computeIfAbsent(uid, k -> new ArrayList<>()).add(rname);
+        }
+        List<UserListItem> items = new ArrayList<>();
+        for (SysUser u : records) {
+            UserListItem item = new UserListItem();
+            item.setId(u.getId());
+            item.setUsername(u.getUsername());
+            item.setDisplayName(u.getDisplayName());
+            item.setOrgId(u.getOrgId());
+            item.setStatus(u.getStatus());
+            item.setRoleIds(roleIdsByUser.getOrDefault(u.getId(), List.of()));
+            item.setRoleNames(roleNamesByUser.getOrDefault(u.getId(), List.of()));
+            items.add(item);
+        }
+        out.setRecords(items);
+        return out;
     }
 
     @Transactional
@@ -95,6 +150,23 @@ public class UserService {
         }
         auditService.log(operator.getUserId(), operator.getUsername(), operator.getOrgId(),
                 "USER_UPDATE", "sys_user", String.valueOf(id), user.getUsername());
+    }
+
+    @Transactional
+    public void resetPassword(UserPrincipal operator, Long id, String newPassword) {
+        SysUser user = userMapper.selectById(id);
+        if (user == null) {
+            throw new BusinessException(404, "用户不存在");
+        }
+        assertOrgAccess(operator, user.getOrgId());
+        validatePassword(newPassword);
+        user.setPasswordHash(passwordEncoder.encode(newPassword));
+        user.setPasswordChangedAt(LocalDateTime.now());
+        user.setFailedLoginCount(0);
+        user.setLockedUntil(null);
+        userMapper.updateById(user);
+        auditService.log(operator.getUserId(), operator.getUsername(), operator.getOrgId(),
+                "USER_RESET_PASSWORD", "sys_user", String.valueOf(id), user.getUsername());
     }
 
     /** MS1：删除语义 = 禁用账号（对齐 TC-M211-001） */

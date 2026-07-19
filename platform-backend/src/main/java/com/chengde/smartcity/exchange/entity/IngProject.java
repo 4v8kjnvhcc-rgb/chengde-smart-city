@@ -1,6 +1,7 @@
 package com.chengde.smartcity.exchange.entity;
 
 import com.baomidou.mybatisplus.annotation.IdType;
+import com.baomidou.mybatisplus.annotation.TableField;
 import com.baomidou.mybatisplus.annotation.TableId;
 import com.baomidou.mybatisplus.annotation.TableName;
 import java.time.LocalDateTime;
@@ -16,6 +17,10 @@ public class IngProject {
     private String status;
     private String createdBy;
     private LocalDateTime createdAt;
+
+    /** 列表展示用：绑定部门名称（非表字段） */
+    @TableField(exist = false)
+    private String boundOrgName;
 
     public Long getId() { return id; }
     public void setId(Long id) { this.id = id; }
@@ -33,4 +38,6 @@ public class IngProject {
     public void setCreatedBy(String createdBy) { this.createdBy = createdBy; }
     public LocalDateTime getCreatedAt() { return createdAt; }
     public void setCreatedAt(LocalDateTime createdAt) { this.createdAt = createdAt; }
+    public String getBoundOrgName() { return boundOrgName; }
+    public void setBoundOrgName(String boundOrgName) { this.boundOrgName = boundOrgName; }
 }

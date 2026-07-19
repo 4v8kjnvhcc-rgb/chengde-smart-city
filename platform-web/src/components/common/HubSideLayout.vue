@@ -124,7 +124,10 @@ const menuRemountKey = computed(() => defaultOpeneds.value.join(',') || 'root')
 .hub-side-layout {
   display: flex;
   gap: 0;
-  min-height: calc(100vh - var(--portal-header-height) - 120px);
+  /* 定高：避免主区内容把整页撑高，导致侧栏一起被滚走 */
+  height: calc(100vh - var(--portal-header-height) - 120px);
+  max-height: calc(100vh - var(--portal-header-height) - 120px);
+  min-height: 320px;
   border: 1px solid var(--portal-border);
   border-radius: var(--portal-radius);
   overflow: hidden;
@@ -133,9 +136,10 @@ const menuRemountKey = computed(() => defaultOpeneds.value.join(',') || 'root')
 .hub-side-layout__aside {
   width: var(--portal-sidebar-width);
   flex-shrink: 0;
+  align-self: stretch;
   background: var(--portal-sidebar-bg);
+  overflow-x: hidden;
   overflow-y: auto;
-  max-height: calc(100vh - var(--portal-header-height) - 120px);
 }
 .hub-side-menu {
   border-right: none;
@@ -196,8 +200,9 @@ const menuRemountKey = computed(() => defaultOpeneds.value.join(',') || 'root')
 .hub-side-layout__main {
   flex: 1;
   min-width: 0;
-  min-height: 320px;
+  min-height: 0;
   padding: 16px;
+  overflow-x: hidden;
   overflow-y: auto;
   background: var(--portal-bg);
 }
@@ -208,13 +213,14 @@ const menuRemountKey = computed(() => defaultOpeneds.value.join(',') || 'root')
   font-size: 14px;
 }
 .hub-side-layout--nested {
-  min-height: calc(100vh - var(--portal-header-height) - 160px);
+  height: calc(100vh - var(--portal-header-height) - 160px);
+  max-height: calc(100vh - var(--portal-header-height) - 160px);
+  min-height: 320px;
   border: none;
   border-radius: 0;
 }
 .hub-side-layout--nested .hub-side-layout__aside {
   width: 160px;
-  max-height: calc(100vh - var(--portal-header-height) - 160px);
 }
 .hub-side-layout--nested .hub-side-layout__main {
   padding: 0 0 0 12px;

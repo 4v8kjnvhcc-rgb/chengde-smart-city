@@ -1,5 +1,7 @@
 import { createRouter, createWebHistory } from 'vue-router'
+import { ElMessage } from 'element-plus'
 import { useAuthStore } from '@/stores/auth'
+import { canAccessRoutePath } from '@/utils/menu'
 
 const router = createRouter({
   history: createWebHistory(),
@@ -22,6 +24,18 @@ const router = createRouter({
           meta: { title: '统一门户' },
         },
         {
+          path: 'system/uum',
+          name: 'system-uum',
+          component: () => import('@/views/system/UnifiedUserHubView.vue'),
+          meta: { title: '统一用户管理' },
+        },
+        {
+          path: 'system/access',
+          name: 'system-access',
+          component: () => import('@/views/exchange/ingestion/register/AccessControlView.vue'),
+          meta: { title: '访问控制' },
+        },
+        {
           path: 'system/users',
           name: 'system-users',
           component: () => import('@/views/system/UserManage.vue'),
@@ -37,7 +51,7 @@ const router = createRouter({
           path: 'system/orgs',
           name: 'system-orgs',
           component: () => import('@/views/system/OrgManage.vue'),
-          meta: { title: '机构管理' },
+          meta: { title: '组织与账号' },
         },
         {
           path: 'system/menus',
@@ -50,6 +64,12 @@ const router = createRouter({
           name: 'system-portal-links',
           component: () => import('@/views/system/PortalLinkManage.vue'),
           meta: { title: '门户外链管理' },
+        },
+        {
+          path: 'system/tags',
+          name: 'system-tags',
+          component: () => import('@/views/system/TagLibraryManage.vue'),
+          meta: { title: '标签库' },
         },
         {
           path: 'system/audit',
@@ -86,16 +106,24 @@ const router = createRouter({
           redirect: { name: 'exchange-application', query: { system: 'assessment', module: 'execution' } },
         },
         {
-          path: 'system/exchange/application/supply-config',
-          name: 'system-supply-config',
+          path: 'exchange/application/supply-config',
+          name: 'exchange-supply-config',
           component: () => import('@/views/system/SupplyConfigView.vue'),
           meta: { title: '供需配置' },
         },
         {
-          path: 'system/exchange/application/assessment-config',
-          name: 'system-assessment-config',
+          path: 'exchange/application/assessment-config',
+          name: 'exchange-assessment-config',
           component: () => import('@/views/system/AssessmentConfigView.vue'),
           meta: { title: '考核评估配置' },
+        },
+        {
+          path: 'system/exchange/application/supply-config',
+          redirect: { name: 'exchange-supply-config' },
+        },
+        {
+          path: 'system/exchange/application/assessment-config',
+          redirect: { name: 'exchange-assessment-config' },
         },
         {
           path: 'exchange/portal',
@@ -212,17 +240,32 @@ router.beforeEach(async (to) => {
     return true
   }
   if (!auth.isLoggedIn) return '/login'
+
+  let profileOk = true
   if (!auth.menus.length && !auth.permissions.length) {
     try {
       await auth.fetchProfile()
     } catch (e: unknown) {
       const err = e as Error & { code?: number }
-      // 仅认证失败时登出；网络/接口异常不应清空会话
       if (err.code === 401) {
         await auth.logout()
         return '/login'
       }
+      profileOk = false
     }
+  }
+
+  if (auth.isSystemAdmin) return true
+
+  if (!profileOk && !auth.menus.length) {
+    if (to.path === '/dashboard' || to.path === '/') return true
+    ElMessage.warning('菜单加载失败，请刷新后重试')
+    return '/dashboard'
+  }
+
+  if (!canAccessRoutePath(to.path, auth.menus, { isSystemAdmin: auth.isSystemAdmin })) {
+    ElMessage.warning('无权访问该页面')
+    return '/dashboard'
   }
   return true
 })

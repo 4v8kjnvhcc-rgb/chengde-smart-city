@@ -32,4 +32,8 @@ public class UserPrincipal {
     public boolean isSystemAdmin() {
         return roleCodes.contains("SYSTEM_ADMIN");
     }
+
+    public boolean isDeptAdmin() {
+        return roleCodes.contains("DEPT_ADMIN");
+    }
 }

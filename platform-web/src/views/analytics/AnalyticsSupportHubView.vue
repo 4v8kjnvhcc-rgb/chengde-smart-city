@@ -110,70 +110,32 @@ onMounted(() => { resolveTab(); load() })
   <div>
     <PageHeader
       :title="`通用支撑平台 · ${tabTitle}`"
-      description="M139～M145：用户/应用/认证/服务/配置/审计/第三方对接（聚合系统管理与平台注册）"
+      description="入口在系统管理：统一用户管理（3.1.1）及审计/等保；本页为分析侧聚合导航"
     />
     <HubSideLayout v-model="tab" :items="navItems">
       <PageCard v-if="tab === 'users'" title="M139 用户中心">
-        <p>用户账号、角色与组织管理已在系统管理中实现，此处提供快捷入口。</p>
-        <el-button type="primary" @click="goSystem('/system/users')">打开用户管理</el-button>
+        <p>账号、角色、组织与访问控制已在全局系统管理「身份与权限」实现。</p>
+        <el-button type="primary" @click="goSystem('/system/uum?tab=users')">打开统一用户管理</el-button>
+        <el-button @click="goSystem('/system/users')">用户管理</el-button>
         <el-button @click="goSystem('/system/roles')">角色管理</el-button>
         <el-button @click="goSystem('/system/orgs')">组织管理</el-button>
+        <el-button @click="goSystem('/system/access')">访问控制</el-button>
       </PageCard>
 
       <PageCard v-if="tab === 'apps'" title="M140 应用中心">
-        <el-form inline>
-          <el-form-item label="应用名"><el-input v-model="appForm.appName" /></el-form-item>
-          <el-form-item label="类型">
-            <el-select v-model="appForm.appType" style="width:100px">
-              <el-option label="WEB" value="WEB" /><el-option label="API" value="API" />
-            </el-select>
-          </el-form-item>
-          <el-form-item label="入口"><el-input v-model="appForm.endpointUrl" style="width:200px" /></el-form-item>
-          <el-button type="primary" @click="createApp">注册应用</el-button>
-        </el-form>
-        <el-table v-if="overview" :data="overview.apps" stripe size="small">
-          <el-table-column prop="appCode" label="编码" width="130" />
-          <el-table-column prop="appName" label="名称" />
-          <el-table-column prop="appType" label="类型" width="80" />
-          <el-table-column prop="endpointUrl" label="入口" />
-          <el-table-column label="状态" width="90">
-          <template #default="{ row }">{{ $statusLabel(row.status) }}</template>
-        </el-table-column>
-        </el-table>
+        <p>应用注册与用户/角色授权已并入全局系统管理「统一用户管理」。</p>
+        <el-button type="primary" @click="goSystem('/system/uum?tab=apps')">打开应用中心</el-button>
       </PageCard>
 
       <PageCard v-if="tab === 'auth'" title="M141 认证中心（SSO 扩展）">
-        <el-table v-if="overview" :data="overview.configs.filter(c => c.configGroup === 'AUTH')" stripe size="small">
-          <el-table-column prop="configKey" label="配置项" width="180" />
-          <el-table-column prop="description" label="说明" />
-          <el-table-column label="值" min-width="160">
-            <template #default="{ row }">
-              <el-input v-model="row.configValue" size="small" />
-            </template>
-          </el-table-column>
-          <el-table-column label="操作" width="80">
-            <template #default="{ row }">
-              <el-button link type="primary" @click="saveConfig(row)">保存</el-button>
-            </template>
-          </el-table-column>
-        </el-table>
+        <p>认证方式与 SSO 配置已并入全局系统管理。</p>
+        <el-button type="primary" @click="goSystem('/system/uum?tab=auth')">打开认证中心</el-button>
+        <el-button @click="goSystem('/system/security')">等保开关</el-button>
       </PageCard>
 
       <PageCard v-if="tab === 'services'" title="M142 服务中心">
-        <el-form inline>
-          <el-form-item label="服务名"><el-input v-model="svcForm.serviceName" /></el-form-item>
-          <el-form-item label="路径"><el-input v-model="svcForm.servicePath" style="width:220px" /></el-form-item>
-          <el-button type="primary" @click="createService">发布服务</el-button>
-        </el-form>
-        <el-table v-if="overview" :data="overview.services" stripe size="small">
-          <el-table-column prop="serviceCode" label="编码" width="130" />
-          <el-table-column prop="serviceName" label="名称" />
-          <el-table-column prop="servicePath" label="路径" />
-          <el-table-column prop="protocol" label="协议" width="80" />
-          <el-table-column label="状态" width="90">
-          <template #default="{ row }">{{ $statusLabel(row.status) }}</template>
-        </el-table-column>
-        </el-table>
+        <p>服务注册、调用统计与审批已并入全局系统管理。</p>
+        <el-button type="primary" @click="goSystem('/system/uum?tab=services')">打开服务中心</el-button>
       </PageCard>
 
       <PageCard v-if="tab === 'config'" title="M143 系统管理">

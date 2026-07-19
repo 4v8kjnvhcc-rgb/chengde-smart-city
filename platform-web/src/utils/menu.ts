@@ -6,7 +6,8 @@ export const PLATFORM_ROUTE_MAP: Record<string, string[]> = {
   '/master-data': ['/master-data', '/governance', '/unstructured', '/resource-center', '/catalog/master-data'],
   '/analytics': ['/analytics', '/catalog/analytics'],
   '/business': ['/business'],
-  '/system': ['/system', '/integration', '/catalog/system'],
+  '/integration': ['/integration'],
+  '/system': ['/system', '/catalog/system'],
 }
 
 export const PLATFORM_PATHS = Object.keys(PLATFORM_ROUTE_MAP)
@@ -16,6 +17,7 @@ export const PLATFORM_LABELS: Record<string, string> = {
   '/master-data': '主数据平台',
   '/analytics': '大数据挖掘分析平台',
   '/business': '业务功能平台',
+  '/integration': '集成运维',
   '/system': '系统管理',
 }
 
@@ -91,24 +93,26 @@ const HUB_LAYOUT_PATHS = new Set([
   '/analytics/key-domains',
 ])
 
-/** 系统管理域：保持平台级侧栏（用户/角色/机构等并列） */
+/** 系统管理域：平台级侧栏（身份/安全/运维分组） */
 export function isSystemRoute(path: string): boolean {
   return (
     path === '/system' ||
     path.startsWith('/system/') ||
-    path === '/integration' ||
-    path.startsWith('/integration/') ||
     path === '/catalog/system' ||
     path.startsWith('/catalog/system') ||
     (path.startsWith('/modules/M21') && /^\/modules\/M21[0-5]$/.test(path))
   )
 }
 
+export function isIntegrationRoute(path: string): boolean {
+  return path === '/integration' || path.startsWith('/integration/')
+}
+
 /**
  * 非系统管理路由：匹配所属子系统（平台下直接子节点，如「大数据归集」「数据融合治理」）
  */
 export function findSubsystemRoot(menus: MenuNode[], path: string): MenuNode | undefined {
-  if (isSystemRoute(path)) return undefined
+  if (isSystemRoute(path) || isIntegrationRoute(path)) return undefined
 
   const platformPath = matchPlatformPath(path)
   if (!platformPath) return undefined
@@ -142,6 +146,14 @@ export function resolveSidebarContext(menus: MenuNode[], path: string, meta?: { 
     return { title: platform.menuName, menus: list }
   }
 
+  if (isIntegrationRoute(path)) {
+    const platform = findPlatformNode(menus, '/integration')
+    if (!platform) return null
+    const list = visibleMenuChildren(platform)
+    if (!list.length) return null
+    return { title: platform.menuName, menus: list }
+  }
+
   const subsystem = findSubsystemRoot(menus, path)
   if (!subsystem) return null
 
@@ -160,4 +172,62 @@ export function firstNavPath(node: MenuNode): string {
   }
   if (node.path && node.path !== '/' && node.menuType !== 1) return node.path
   return ''
+}
+
+/** 规范化路由 path（去 query、去尾斜杠） */
+export function normalizeRoutePath(path: string): string {
+  if (!path) return ''
+  const bare = path.split('?')[0].split('#')[0]
+  if (bare.length > 1 && bare.endsWith('/')) return bare.slice(0, -1)
+  return bare || '/'
+}
+
+/**
+ * 从菜单树收集可访问页面路径（仅 menuType=2 页面节点）。
+ * 目录节点（menuType=1）的 path 如 /system 不参与授权，避免「有系统管理目录就能进任意 /system/*」。
+ */
+export function collectAllowedMenuPaths(menus: MenuNode[]): Set<string> {
+  const paths = new Set<string>()
+  const walk = (nodes: MenuNode[]) => {
+    for (const n of nodes) {
+      if (n.menuType === 2 && n.path) {
+        const p = normalizeRoutePath(n.path)
+        if (
+          p
+          && p !== '/'
+          && !p.startsWith('/modules/')
+          && !p.startsWith('/catalog/')
+        ) {
+          paths.add(p)
+        }
+      }
+      if (n.children?.length) walk(n.children)
+    }
+  }
+  walk(menus)
+  return paths
+}
+
+/**
+ * 前端路由鉴权：登录用户是否可进入该 path。
+ * - 超级管理员放行
+ * - 工作台 /dashboard 放行
+ * - 其余须匹配本人菜单中的页面 path（精确或为其子路径）
+ */
+export function canAccessRoutePath(
+  path: string,
+  menus: MenuNode[],
+  options?: { isSystemAdmin?: boolean },
+): boolean {
+  if (options?.isSystemAdmin) return true
+  const p = normalizeRoutePath(path)
+  if (p === '/' || p === '/dashboard') return true
+  // 已废弃的目录入口，实际会 redirect 到 dashboard
+  if (p === '/catalog' || p.startsWith('/catalog/') || p.startsWith('/modules/')) return true
+
+  const allowed = collectAllowedMenuPaths(menus)
+  for (const a of allowed) {
+    if (p === a || p.startsWith(`${a}/`)) return true
+  }
+  return false
 }

@@ -203,16 +203,24 @@ function syncQuery() {
   router.replace({ query: q })
 }
 
-/** 侧栏点到任务管理等列表页时，退出画布/监控，确保列表能显示 */
+/** 侧栏 key 形如 etl.task-schedule，取子段再判断 */
+function etlSubOf(navKey: string): string | null {
+  if (!navKey.startsWith('etl.')) return null
+  return navKey.slice('etl.'.length)
+}
+
+/** 侧栏切换时退出画布/单任务监控，避免停在旧界面 */
 function resetEtlToListIfNeeded(navKey: string) {
-  if (ETL_LIST_SUBS.includes(navKey)) {
+  const sub = etlSubOf(navKey)
+  if (sub == null) return
+  if (ETL_LIST_SUBS.includes(sub) || sub === 'etl-monitor') {
     etlView.value = 'list'
     etlTaskId.value = null
   }
 }
 
 function onHubNavSelect(key: string) {
-  if (!ETL_LIST_SUBS.includes(key)) return
+  if (etlSubOf(key) == null) return
   resetEtlToListIfNeeded(key)
   syncQuery()
 }

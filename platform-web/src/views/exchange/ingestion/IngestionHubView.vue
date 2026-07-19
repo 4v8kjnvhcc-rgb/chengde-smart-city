@@ -25,7 +25,7 @@ const moduleComponents: Record<string, ReturnType<typeof defineAsyncComponent>> 
   m042: defineAsyncComponent(() => import('./register/DictRegisterView.vue')),
   m043: defineAsyncComponent(() => import('./register/TagRegisterView.vue')),
   m044: defineAsyncComponent(() => import('./register/DataItemView.vue')),
-  m045: defineAsyncComponent(() => import('./register/TagRegisterView.vue')),
+  m045: defineAsyncComponent(() => import('./register/TagManageView.vue')),
   m046: defineAsyncComponent(() => import('./register/AssetReportView.vue')),
   m047: defineAsyncComponent(() => import('./register/LineageView.vue')),
   m048: defineAsyncComponent(() => import('./register/SystemLinkView.vue')),

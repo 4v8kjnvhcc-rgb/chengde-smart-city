@@ -20,18 +20,30 @@ export interface UserInfo {
   username: string
   displayName: string
   orgId: number
+  orgName?: string
+}
+
+function readStoredUser(): UserInfo | null {
+  try {
+    const raw = localStorage.getItem('user')
+    return raw ? (JSON.parse(raw) as UserInfo) : null
+  } catch {
+    return null
+  }
 }
 
 export const useAuthStore = defineStore('auth', {
   state: () => ({
     accessToken: localStorage.getItem('accessToken') || '',
     refreshToken: localStorage.getItem('refreshToken') || '',
-    user: null as UserInfo | null,
+    user: readStoredUser() as UserInfo | null,
     menus: [] as MenuNode[],
     permissions: [] as string[],
   }),
   getters: {
     isLoggedIn: (s) => !!s.accessToken,
+    /** 超级管理员：按约定账号放行（与后端 SYSTEM_ADMIN 对齐） */
+    isSystemAdmin: (s) => s.user?.username === 'sys_admin',
   },
   actions: {
     async login(username: string, password: string, totpCode?: string) {
@@ -41,6 +53,12 @@ export const useAuthStore = defineStore('auth', {
       this.user = res.data.user
       localStorage.setItem('accessToken', this.accessToken)
       localStorage.setItem('refreshToken', this.refreshToken)
+      if (res.data.user) {
+        localStorage.setItem('user', JSON.stringify(res.data.user))
+        if (res.data.user.username) {
+          localStorage.setItem('username', res.data.user.username)
+        }
+      }
       await this.fetchProfile()
     },
     async fetchProfile() {
@@ -62,6 +80,8 @@ export const useAuthStore = defineStore('auth', {
         this.permissions = []
         localStorage.removeItem('accessToken')
         localStorage.removeItem('refreshToken')
+        localStorage.removeItem('username')
+        localStorage.removeItem('user')
       }
     },
     hasPermission(code: string) {

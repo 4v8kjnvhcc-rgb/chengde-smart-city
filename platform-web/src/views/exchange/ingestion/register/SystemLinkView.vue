@@ -7,7 +7,13 @@ const props = defineProps<{ module: string }>()
 const router = useRouter()
 
 const link = computed(() => {
-  if (props.module === 'm048') return { route: '/system/orgs', title: '访问控制管理', desc: '组织机构与数据访问授权由系统管理模块实装。' }
+  if (props.module === 'm048') {
+    return {
+      route: '/system/access',
+      title: '访问控制管理',
+      desc: '功能/资源/数据权限已迁至系统管理「身份与权限 · 访问控制」。',
+    }
+  }
   return { route: '/system/security', title: '系统维护管理', desc: '等保开关、安全策略与系统维护由系统管理模块实装。' }
 })
 </script>

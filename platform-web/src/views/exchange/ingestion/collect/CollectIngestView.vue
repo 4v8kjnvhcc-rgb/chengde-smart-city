@@ -5,8 +5,10 @@ import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 
 import PageCard from '@/components/common/PageCard.vue'
-
+import { ElMessage } from 'element-plus'
 import { collectIngestMainTab, type IngestMainTab } from '../ingestion-nav'
+import StructuredTableWizard from './StructuredTableWizard.vue'
+import ManualUploadView from './ManualUploadView.vue'
 
 import { ingestionRegisterCache } from '../ingestion-register-cache'
 
@@ -114,11 +116,36 @@ const channelForm = reactive<Record<string, string>>({})
 
 const taskForm = reactive({ channelId: undefined as number | undefined, taskName: '', scheduleCron: '0 2 * * *' })
 
-const tplForm = reactive({ templateCode: '', templateName: '', columnMappingJson: 'name→entity_name' })
+const tplForm = reactive({ templateCode: '', templateName: '' })
+const tplFileInput = ref<HTMLInputElement>()
+const tplBusy = ref(false)
+const tplToken = ref('')
+const tplFileName = ref('')
+const tplSheets = ref<string[]>([])
+const tplSheet = ref('')
+const tplHeaderRow = ref(1)
+const tplColumns = ref<string[]>([])
+const tplSelectedCols = ref<string[]>([])
+const tplTargetTable = ref('')
 
-const uploadForm = reactive({ templateCode: '', fileName: '' })
-
+const uploadForm = reactive({ templateCode: '' })
 const fileInput = ref<HTMLInputElement>()
+const uploadStep = ref(0)
+const uploadBusy = ref(false)
+const uploadToken = ref('')
+const uploadFileName = ref('')
+const sheetOptions = ref<string[]>([])
+const selectedSheet = ref('')
+const targetTable = ref('')
+const previewColumns = ref<string[]>([])
+const previewRows = ref<Record<string, string>[]>([])
+const commitResult = ref('')
+const committedSheets = ref<string[]>([])
+const remainingSheets = ref<string[]>([])
+const activeBindings = ref<Array<{ sheetName: string; headerRow: number; columns: string[]; targetTable: string }>>([])
+const activeHeaderRow = ref(1)
+/** APPEND=字段一致时增量写入；REPLACE=全量覆盖 */
+const writeMode = ref<'APPEND' | 'REPLACE'>('APPEND')
 
 
 
@@ -186,6 +213,54 @@ function loadChannelForm(ch?: Channel) {
 
   for (const f of fields) channelForm[f.key] = cfg[f.key] ?? f.defaultValue ?? ''
 
+  // 未保存过目标表时，按源表自动带出 ods_表名
+
+  if ((ch?.channelType || activeChannelType.value) === 'TABLE') {
+
+    ensureTargetTableFromSource(false)
+
+  }
+
+}
+
+
+
+/** 由源登记表推导 ODS 目标表名：ods_源物理表名 */
+function suggestOdsTableName(tb?: DataTable): string {
+
+  const raw = String(tb?.sourceTable || tb?.tableName || tb?.tableCode || '').trim()
+
+  const sanitized = raw.replace(/[^A-Za-z0-9_]/g, '')
+
+  if (!sanitized) return ''
+
+  return sanitized.toLowerCase().startsWith('ods_') ? sanitized : `ods_${sanitized}`
+
+}
+
+
+
+/**
+ * @param force 切换源表时强制覆盖；加载已有配置时仅在目标表为空时填充
+ */
+function ensureTargetTableFromSource(force: boolean) {
+
+  const sid = String(channelForm.sourceTableId || '').trim()
+
+  if (!sid) return
+
+  const tb = tables.value.find((t) => String(t.id) === sid)
+
+  const suggested = suggestOdsTableName(tb)
+
+  if (!suggested) return
+
+  if (force || !String(channelForm.targetTable || '').trim()) {
+
+    channelForm.targetTable = suggested
+
+  }
+
 }
 
 
@@ -222,13 +297,13 @@ function configFields(type: string) {
 
       return [
 
-        { key: 'syncMode', label: '同步方式', defaultValue: 'T+1', hint: 'T+1 日批 / REALTIME 近实时' },
+        { key: 'syncMode', label: '同步方式', defaultValue: 'T+1', hint: '立即执行始终即时抽数；T+1 供定时任务约定' },
 
-        { key: 'sourceTableId', label: '源表（登记）', defaultValue: '', hint: '选用登记侧已登记的物理表 ID' },
+        { key: 'sourceTableId', label: '源表（登记）', defaultValue: '', hint: '选用登记侧已登记的物理表' },
 
-        { key: 'targetTable', label: '目标表', defaultValue: '', hint: '平台侧入库表名' },
+        { key: 'targetTable', label: '目标表', defaultValue: '', hint: '默认 ods_源表名，可改' },
 
-        { key: 'mappingMode', label: '字段映射', defaultValue: 'auto', hint: 'auto 自动 / manual 手工映射' },
+        { key: 'mappingMode', label: '字段映射', defaultValue: 'auto', hint: 'auto 自动（按登记字段）' },
 
       ]
 
@@ -431,9 +506,7 @@ async function loadScopeData(scope: ViewScope, opts?: { force?: boolean; silent?
       ])
 
     } else if (scope === 'structured-upload') {
-
-      await Promise.all([loadTemplates(force), loadUploads(force)])
-
+      // ManualUploadView 自行加载模板/记录
     } else {
 
       const type = activeChannelType.value
@@ -534,15 +607,79 @@ async function saveChannelConfig() {
 
 
 
+const runBusy = ref(false)
+
+
+
 async function runChannel() {
 
   if (!selectedChannelId.value) return
 
-  await ingestionApi.runChannel(selectedChannelId.value)
+  if (activeChannelType.value === 'TABLE') {
 
-  const type = activeChannelType.value
+    const sid = String(channelForm.sourceTableId || '').trim()
 
-  if (type) await loadScopeData(currentScope(), { force: true, silent: true })
+    if (!sid) {
+
+      ElMessage.warning('请先选择源表并保存接入配置')
+
+      return
+
+    }
+
+  }
+
+  runBusy.value = true
+
+  try {
+
+    // 先落盘配置，保证后端读到最新源表/目标表
+
+    await ingestionApi.updateChannel(selectedChannelId.value, {
+
+      channelName: selectedChannel.value?.channelName,
+
+      config: { ...channelForm },
+
+    })
+
+    const res = await ingestionApi.runChannel(selectedChannelId.value)
+
+    const data = (res as { data?: Record<string, unknown> }).data || {}
+
+    if (activeChannelType.value === 'TABLE') {
+
+      const rows = data.collectedRows
+
+      ElMessage.success(
+
+        typeof rows !== 'undefined'
+
+          ? `已落入 smart_city_ods.${data.odsTable || ''}（${rows} 行）`
+
+          : String(data.message || '汇聚完成'),
+
+      )
+
+    } else {
+
+      ElMessage.success(String(data.message || '执行完成'))
+
+    }
+
+    const type = activeChannelType.value
+
+    if (type) await loadScopeData(currentScope(), { force: true, silent: true })
+
+  } catch {
+
+    // request 拦截器已提示
+
+  } finally {
+
+    runBusy.value = false
+
+  }
 
 }
 
@@ -562,67 +699,390 @@ async function createTask() {
 
 
 
-async function createTemplate() {
-
-  if (!tplForm.templateName) return
-
-  const mapping = tplForm.columnMappingJson.split(',').map((pair) => {
-
-    const [col, target] = pair.split('→').map((s) => s.trim())
-
-    return { col, target: target || col }
-
-  })
-
-  await ingestionApi.createTemplate({
-
-    templateCode: tplForm.templateCode,
-
-    templateName: tplForm.templateName,
-
-    columnMappingJson: JSON.stringify(mapping),
-
-  })
-
-  tplForm.templateName = ''
-
-  await loadTemplates(true)
-
+async function onTplFileChange(e: Event) {
+  const file = (e.target as HTMLInputElement).files?.[0]
+  if (!file) return
+  tplBusy.value = true
+  try {
+    const fd = new FormData()
+    fd.append('file', file)
+    const res = await ingestionApi.inspectUpload(fd)
+    tplToken.value = res.data.uploadToken
+    tplFileName.value = res.data.fileName
+    tplSheets.value = res.data.sheets || []
+    tplSheet.value = res.data.suggestedSheet || res.data.sheets?.[0] || ''
+    tplHeaderRow.value = 1
+    tplColumns.value = []
+    tplSelectedCols.value = []
+    tplTargetTable.value = res.data.suggestedTable || ''
+    ElMessage.success(`已识别 ${tplSheets.value.length} 个工作表，请指定表头行并选择字段`)
+  } catch {
+    ElMessage.error('解析样例文件失败')
+  } finally {
+    tplBusy.value = false
+    if (tplFileInput.value) tplFileInput.value.value = ''
+  }
 }
 
-
-
-async function doUpload() {
-
-  await ingestionApi.upload({ templateCode: uploadForm.templateCode, fileName: uploadForm.fileName || 'manual_upload.xlsx' })
-
-  await loadUploads(true)
-
+function defaultTplName(sheet: string) {
+  const base = (tplFileName.value || '数据').replace(/\.[^.]+$/, '')
+  return sheet ? `${base}_${sheet}` : base
 }
 
+async function loadTplHeader() {
+  if (!tplToken.value || !tplSheet.value) {
+    ElMessage.warning('请先上传样例文件并选择工作表')
+    return
+  }
+  tplBusy.value = true
+  try {
+    const res = await ingestionApi.previewHeader({
+      uploadToken: tplToken.value,
+      sheetName: tplSheet.value,
+      headerRow: tplHeaderRow.value,
+    })
+    tplColumns.value = res.data.columns || []
+    tplSelectedCols.value = [...tplColumns.value]
+    if (res.data.suggestedTable) tplTargetTable.value = res.data.suggestedTable
+    // 每个 sheet 一个模板：读表头后默认带出名称，可改
+    tplForm.templateName = defaultTplName(tplSheet.value)
+    tplForm.templateCode = ''
+    ElMessage.success(`已读取第 ${res.data.headerRow} 行表头，共 ${tplColumns.value.length} 列；确认后点「保存为模板」`)
+  } catch {
+    ElMessage.error('读取表头失败')
+  } finally {
+    tplBusy.value = false
+  }
+}
 
+/** 新版模板：columnMappingJson 含 bindings；旧种子仅有 col/target，不可用于上传 */
+function isUsableTemplate(t: { columnMappingJson?: string }) {
+  const j = t.columnMappingJson || ''
+  return j.includes('"bindings"') && j.includes('sheetName')
+}
+
+/** 列表展示：有 bindings 的模板（含已停用） */
+const listedTemplates = computed(() => templates.value.filter(isUsableTemplate))
+/** 上传下拉：仅启用中的模板 */
+const selectableTemplates = computed(() =>
+  listedTemplates.value.filter((t) => !t.status || t.status === 'ACTIVE'),
+)
+
+type TplBindingDetail = { sheetName: string; headerRow: number; columns: string[]; targetTable: string }
+const tplDetailVisible = ref(false)
+const tplDetailTitle = ref('')
+const tplDetailRows = ref<TplBindingDetail[]>([])
+
+function parseTplBindingsLocal(json?: string): TplBindingDetail[] {
+  if (!json) return []
+  try {
+    const root = JSON.parse(json) as { bindings?: TplBindingDetail[] }
+    return Array.isArray(root.bindings) ? root.bindings : []
+  } catch {
+    return []
+  }
+}
+
+async function showTemplateDetail(row: UploadTemplate) {
+  tplDetailTitle.value = row.templateName || row.templateCode
+  try {
+    const res = await ingestionApi.templateBindings(row.templateCode)
+    tplDetailRows.value = res.data?.length ? res.data : parseTplBindingsLocal(row.columnMappingJson)
+  } catch {
+    tplDetailRows.value = parseTplBindingsLocal(row.columnMappingJson)
+  }
+  tplDetailVisible.value = true
+}
+
+async function toggleTemplateStatus(row: UploadTemplate) {
+  const next = row.status === 'INACTIVE' ? 'ACTIVE' : 'INACTIVE'
+  try {
+    await ingestionApi.updateTemplateStatus(row.id, next)
+    if (next === 'INACTIVE' && uploadForm.templateCode === row.templateCode) {
+      uploadForm.templateCode = ''
+      activeBindings.value = []
+    }
+    ElMessage.success(next === 'INACTIVE' ? '已停用，上传时不可再选' : '已启用')
+    await loadTemplates(true)
+  } catch {
+    ElMessage.error('更新状态失败')
+  }
+}
+
+async function removeTemplate(row: UploadTemplate) {
+  try {
+    await ingestionApi.deleteTemplate(row.id)
+    if (uploadForm.templateCode === row.templateCode) {
+      uploadForm.templateCode = ''
+      activeBindings.value = []
+    }
+    ElMessage.success('已删除模板')
+    await loadTemplates(true)
+  } catch {
+    ElMessage.error('删除失败')
+  }
+}
+
+/** 当前 sheet 立刻存成一条独立模板（一 sheet = 一模板） */
+async function saveSheetAsTemplate() {
+  if (!tplSheet.value) {
+    ElMessage.warning('请选择工作表')
+    return
+  }
+  if (!tplSelectedCols.value.length) {
+    ElMessage.warning('请先读取表头并勾选字段')
+    return
+  }
+  if (!tplTargetTable.value.trim()) {
+    ElMessage.warning('请填写目标 ODS 表名')
+    return
+  }
+  const name = (tplForm.templateName || '').trim() || defaultTplName(tplSheet.value)
+  const code = (tplForm.templateCode || '').trim() || `TPL_${Date.now()}`
+  tplBusy.value = true
+  try {
+    await ingestionApi.createTemplate({
+      templateCode: code,
+      templateName: name,
+      bindings: [{
+        sheetName: tplSheet.value,
+        headerRow: tplHeaderRow.value,
+        columns: [...tplSelectedCols.value],
+        targetTable: tplTargetTable.value.trim(),
+      }],
+    })
+    ElMessage.success(`已保存模板「${name}」（仅含工作表 ${tplSheet.value}）`)
+    await loadTemplates(true)
+    uploadForm.templateCode = code
+    await onTemplateSelect(code)
+    // 保留样例会话，方便换下一个 sheet 再建一条模板
+    tplForm.templateName = ''
+    tplForm.templateCode = ''
+    tplColumns.value = []
+    tplSelectedCols.value = []
+    const next = tplSheets.value.find((s) => s !== tplSheet.value)
+    if (next) {
+      tplSheet.value = next
+      tplHeaderRow.value = 1
+      tplTargetTable.value = ''
+      ElMessage.info(`可继续为工作表「${next}」读取表头并保存为另一条模板`)
+    }
+  } catch {
+    ElMessage.error('保存模板失败')
+  } finally {
+    tplBusy.value = false
+  }
+}
+
+async function onTemplateSelect(code: string) {
+  activeBindings.value = []
+  sheetOptions.value = []
+  selectedSheet.value = ''
+  if (!code) return
+  const meta = templates.value.find((t) => t.templateCode === code)
+  if (meta && !isUsableTemplate(meta)) {
+    ElMessage.warning('「' + (meta.templateName || code) + '」无法用于上传，请重新录入模板')
+    uploadForm.templateCode = ''
+    return
+  }
+  if (meta && meta.status === 'INACTIVE') {
+    ElMessage.warning('该模板已停用，请先启用或另选模板')
+    uploadForm.templateCode = ''
+    return
+  }
+  try {
+    const res = await ingestionApi.templateBindings(code)
+    activeBindings.value = res.data || []
+    if (!activeBindings.value.length) {
+      ElMessage.warning('该模板无有效 sheet 绑定，请重新录入')
+      uploadForm.templateCode = ''
+      return
+    }
+    sheetOptions.value = activeBindings.value.map((b) => b.sheetName)
+    selectedSheet.value = sheetOptions.value[0]
+    applyBindingSheet(selectedSheet.value)
+  } catch {
+    ElMessage.error('加载模板绑定失败（若为旧版模板请重新录入）')
+    uploadForm.templateCode = ''
+  }
+}
+
+function applyBindingSheet(sheet: string) {
+  const b = activeBindings.value.find((x) => x.sheetName === sheet)
+    || activeBindings.value.find((x) => x.sheetName.toLowerCase() === String(sheet || '').toLowerCase())
+    || (activeBindings.value.length === 1 ? activeBindings.value[0] : undefined)
+  if (b) {
+    activeHeaderRow.value = b.headerRow
+    targetTable.value = b.targetTable
+  }
+}
+
+function matchFileSheets(fileSheets: string[], bindings: typeof activeBindings.value) {
+  const matched: string[] = []
+  for (const b of bindings) {
+    const hit = fileSheets.find((s) => s === b.sheetName)
+      || fileSheets.find((s) => s.trim().toLowerCase() === b.sheetName.trim().toLowerCase())
+    if (hit && !matched.includes(hit)) matched.push(hit)
+  }
+  // 模板只绑了一个 sheet、文件也只有一个 sheet 时，按同表处理（名称可不同）
+  if (!matched.length && bindings.length === 1 && fileSheets.length === 1) {
+    matched.push(fileSheets[0])
+  }
+  return matched
+}
 
 async function onFileChange(e: Event) {
-
+  if (!uploadForm.templateCode) {
+    ElMessage.warning('请先选择下方「可用」部门模板（旧示范模板不可用）')
+    if (fileInput.value) fileInput.value.value = ''
+    return
+  }
   const file = (e.target as HTMLInputElement).files?.[0]
-
   if (!file) return
+  uploadBusy.value = true
+  commitResult.value = ''
+  try {
+    if (!activeBindings.value.length) await onTemplateSelect(uploadForm.templateCode)
+    if (!activeBindings.value.length) {
+      uploadStep.value = 0
+      return
+    }
+    const fd = new FormData()
+    fd.append('file', file)
+    const res = await ingestionApi.inspectUpload(fd)
+    const data = res.data
+    uploadToken.value = data.uploadToken
+    uploadFileName.value = data.fileName
+    const fileSheets = data.sheets || []
+    sheetOptions.value = matchFileSheets(fileSheets, activeBindings.value)
+    if (!sheetOptions.value.length) {
+      ElMessage.error(
+        `文件工作表 [${fileSheets.join('、')}] 与模板绑定 [${activeBindings.value.map((b) => b.sheetName).join('、')}] 对不上。请用同结构样例重新录入模板，或保证 sheet 名一致`,
+      )
+      uploadStep.value = 0
+      return
+    }
+    selectedSheet.value = sheetOptions.value[0]
+    applyBindingSheet(selectedSheet.value)
+    previewColumns.value = []
+    previewRows.value = []
+    committedSheets.value = []
+    remainingSheets.value = [...sheetOptions.value]
+    uploadStep.value = 1
+    ElMessage.success('已匹配工作表；字段校验通过后可选增量或全量写入')
+  } catch {
+    ElMessage.error('解析文件失败')
+  } finally {
+    uploadBusy.value = false
+    if (fileInput.value) fileInput.value.value = ''
+  }
+}
 
-  const fd = new FormData()
+async function loadSheetPreview() {
+  if (!uploadToken.value || !selectedSheet.value || !uploadForm.templateCode) {
+    ElMessage.warning('请先选择模板、文件与工作表')
+    return
+  }
+  applyBindingSheet(selectedSheet.value)
+  uploadBusy.value = true
+  try {
+    const res = await ingestionApi.previewUpload({
+      uploadToken: uploadToken.value,
+      sheetName: selectedSheet.value,
+      templateCode: uploadForm.templateCode,
+      limit: 50,
+    })
+    previewColumns.value = res.data.columns || []
+    previewRows.value = res.data.rows || []
+    targetTable.value = res.data.targetTable || targetTable.value
+    activeHeaderRow.value = res.data.headerRow || activeHeaderRow.value
+    uploadStep.value = 2
+    ElMessage.success(`字段校验通过，预览 ${res.data.previewRows} 行`)
+  } catch (err: unknown) {
+    const msg = (err as { response?: { data?: { message?: string } } })?.response?.data?.message
+    ElMessage.error(msg || '预览失败：字段与模板不一致时请新建模板')
+  } finally {
+    uploadBusy.value = false
+  }
+}
 
-  fd.append('file', file)
+async function commitToOds() {
+  if (!uploadToken.value || !selectedSheet.value || !uploadForm.templateCode) {
+    ElMessage.warning('请先完成模板选择与预览')
+    return
+  }
+  uploadBusy.value = true
+  try {
+    const res = await ingestionApi.commitUpload({
+      uploadToken: uploadToken.value,
+      sheetName: selectedSheet.value,
+      templateCode: uploadForm.templateCode,
+      writeMode: writeMode.value,
+    })
+    commitResult.value = res.data.message || '写入成功'
+    committedSheets.value = res.data.committedSheets || [...committedSheets.value, selectedSheet.value]
+    remainingSheets.value = res.data.remainingSheets || []
+    ElMessage.success(commitResult.value)
+    await loadUploads(true)
+    previewColumns.value = []
+    previewRows.value = []
+    uploadStep.value = 1
+    if (remainingSheets.value.length) {
+      selectedSheet.value = remainingSheets.value[0]
+      applyBindingSheet(selectedSheet.value)
+    } else {
+      uploadStep.value = 3
+    }
+  } catch (err: unknown) {
+    const msg = (err as { response?: { data?: { message?: string } } })?.response?.data?.message
+    ElMessage.error(msg || '写入 ODS 失败')
+  } finally {
+    uploadBusy.value = false
+  }
+}
 
-  fd.append('templateCode', uploadForm.templateCode)
-
-  await ingestionApi.uploadFile(fd)
-
-  await loadUploads(true)
-
+async function resetUploadWizard() {
+  if (uploadToken.value) {
+    try {
+      await ingestionApi.finishUpload({ uploadToken: uploadToken.value })
+    } catch { /* ignore */ }
+  }
+  uploadStep.value = 0
+  uploadToken.value = ''
+  uploadFileName.value = ''
+  sheetOptions.value = activeBindings.value.map((b) => b.sheetName)
+  selectedSheet.value = sheetOptions.value[0] || ''
+  targetTable.value = ''
+  previewColumns.value = []
+  previewRows.value = []
+  commitResult.value = ''
+  committedSheets.value = []
+  remainingSheets.value = []
+  writeMode.value = 'APPEND'
+  if (selectedSheet.value) applyBindingSheet(selectedSheet.value)
 }
 
 
 
+watch(selectedSheet, (sheet) => {
+  if (!uploadToken.value || !sheet) return
+  previewColumns.value = []
+  previewRows.value = []
+  if (uploadStep.value > 1) uploadStep.value = 1
+  applyBindingSheet(sheet)
+})
+
 watch(selectedChannelId, () => loadChannelForm(selectedChannel.value))
+
+watch(() => channelForm.sourceTableId, (id, prev) => {
+
+  if (activeChannelType.value !== 'TABLE') return
+
+  if (!id || id === prev) return
+
+  ensureTargetTableFromSource(true)
+
+})
 
 watch(() => route.query.section, () => {
 
@@ -673,141 +1133,10 @@ onMounted(() => {
 
 
       <template v-if="structuredSub === 'structured-table'">
-
-        <PageCard title="结构化数据接入">
-
-          <el-alert type="info" :closable="false" show-icon style="margin-bottom:12px"
-
-            title="源表与数据源来自「数据资产登记」中已登记内容，请先在登记侧完成数据源/表登记后再配置接入。" />
-
-          <el-form label-width="120px" class="portal-inline-form portal-inline-form--block">
-
-            <el-form-item label="接入通道">
-
-              <el-select v-model="selectedChannelId" style="min-width:240px">
-
-                <el-option v-for="c in filteredChannels" :key="c.id" :label="c.channelName" :value="c.id" />
-
-              </el-select>
-
-              <el-button type="primary" style="margin-left:8px" @click="runChannel">立即执行</el-button>
-
-            </el-form-item>
-
-            <template v-for="f in currentConfigFields" :key="f.key">
-
-              <el-form-item :label="f.label">
-
-                <el-select v-if="f.key === 'sourceTableId'" v-model="channelForm[f.key]" filterable style="min-width:320px" placeholder="选择已登记源表">
-
-                  <el-option v-for="tb in tables" :key="tb.id" :label="`${tb.tableName}（${tb.tableCode}）`" :value="String(tb.id)" />
-
-                </el-select>
-
-                <el-input v-else v-model="channelForm[f.key]" :placeholder="f.hint" style="max-width:400px" />
-
-              </el-form-item>
-
-            </template>
-
-            <el-form-item>
-
-              <el-button type="primary" @click="saveChannelConfig">保存接入配置</el-button>
-
-            </el-form-item>
-
-          </el-form>
-
-          <el-table v-if="selectedChannel" :data="[selectedChannel]" stripe size="small" style="margin-top:8px">
-
-            <el-table-column label="状态" width="90">
-          <template #default="{ row }">{{ $statusLabel(row.status) }}</template>
-        </el-table-column>
-
-            <el-table-column prop="lastMessage" label="最近执行" min-width="240" />
-
-          </el-table>
-
-        </PageCard>
-
+        <StructuredTableWizard />
       </template>
-
-
-
       <template v-else>
-
-        <PageCard title="上传模板管理">
-
-          <el-form inline class="portal-inline-form portal-inline-form--block">
-
-            <el-form-item label="模板编码" class="portal-field-md"><el-input v-model="tplForm.templateCode" placeholder="可选" /></el-form-item>
-
-            <el-form-item label="模板名称" class="portal-field-md"><el-input v-model="tplForm.templateName" /></el-form-item>
-
-            <el-form-item label="列映射" class="portal-field-lg"><el-input v-model="tplForm.columnMappingJson" placeholder="源列→目标列，逗号分隔" /></el-form-item>
-
-            <el-form-item class="portal-form-actions"><el-button type="primary" @click="createTemplate">新建模板</el-button></el-form-item>
-
-          </el-form>
-
-          <el-table :data="templates" stripe size="small">
-
-            <el-table-column prop="templateName" label="模板名称" />
-
-            <el-table-column prop="templateCode" label="编码" width="140" />
-
-            <el-table-column prop="columnMappingJson" label="列映射" min-width="200" show-overflow-tooltip />
-
-          </el-table>
-
-        </PageCard>
-
-        <PageCard title="手动上传数据">
-
-          <el-form inline class="portal-inline-form portal-inline-form--block">
-
-            <el-form-item label="模板" class="portal-field-default">
-
-              <el-select v-model="uploadForm.templateCode">
-
-                <el-option v-for="t in templates" :key="t.id" :label="t.templateName" :value="t.templateCode" />
-
-              </el-select>
-
-            </el-form-item>
-
-            <el-form-item class="portal-form-actions">
-
-              <el-button @click="fileInput?.click()">选择文件上传</el-button>
-
-              <el-button type="primary" @click="doUpload">模拟解析入库</el-button>
-
-            </el-form-item>
-
-            <input ref="fileInput" type="file" accept=".xlsx,.xls,.csv" style="display:none" @change="onFileChange" />
-
-          </el-form>
-
-        </PageCard>
-
-        <PageCard title="数据上传记录">
-
-          <el-table :data="uploads" stripe size="small">
-
-            <el-table-column prop="fileName" label="文件" />
-
-            <el-table-column prop="templateCode" label="模板" width="140" />
-
-            <el-table-column prop="rowCount" label="行数" width="80" />
-
-            <el-table-column label="状态" width="100">
-          <template #default="{ row }">{{ $statusLabel(row.status) }}</template>
-        </el-table-column>
-
-          </el-table>
-
-        </PageCard>
-
+        <ManualUploadView />
       </template>
 
     </template>
@@ -914,60 +1243,19 @@ onMounted(() => {
 
 
 
-    <!-- 接入任务（结构化库表页显示） -->
-
-    <PageCard v-if="mainTab === 'structured' && structuredSub === 'structured-table'" title="接入任务">
-
-      <el-alert type="info" :closable="false" show-icon style="margin-bottom:12px"
-
-        title="定时调度：使用 Cron 表达式控制任务自动执行时间。示例「0 2 * * *」表示每天凌晨 2 点执行一次（T+1 日批常见配置）。" />
-
-      <el-form inline class="portal-inline-form portal-inline-form--block">
-
-        <el-form-item label="通道" class="portal-field-default">
-
-          <el-select v-model="taskForm.channelId">
-
-            <el-option v-for="c in filteredChannels" :key="c.id" :label="c.channelName" :value="c.id" />
-
-          </el-select>
-
-        </el-form-item>
-
-        <el-form-item label="任务名称" class="portal-field-md"><el-input v-model="taskForm.taskName" /></el-form-item>
-
-        <el-form-item label="定时调度" class="portal-field-cron">
-
-          <el-input v-model="taskForm.scheduleCron" placeholder="0 2 * * *" />
-
-        </el-form-item>
-
-        <el-form-item class="portal-form-actions">
-
-          <el-button type="primary" @click="createTask">保存任务</el-button>
-
-        </el-form-item>
-
-      </el-form>
-
-      <el-table :data="tasks.filter(t => filteredChannels.some(c => c.id === t.channelId))" stripe size="small">
-
-        <el-table-column prop="taskName" label="任务名称" min-width="140" />
-
-        <el-table-column prop="scheduleCron" label="定时调度(Cron)" width="140" />
-
-        <el-table-column label="状态" width="90">
-          <template #default="{ row }">{{ $statusLabel(row.status) }}</template>
-        </el-table-column>
-
-        <el-table-column prop="lastRunMessage" label="最近日志" min-width="200" show-overflow-tooltip />
-
-      </el-table>
-
-    </PageCard>
-
   </div>
 
 </template>
+
+<style scoped>
+.channel-fixed-name {
+  display: inline-flex;
+  align-items: center;
+  height: 32px;
+  font-size: 14px;
+  color: var(--el-text-color-primary);
+  white-space: nowrap;
+}
+</style>
 
 

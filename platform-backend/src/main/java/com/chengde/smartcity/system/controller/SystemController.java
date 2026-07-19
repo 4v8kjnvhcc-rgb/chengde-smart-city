@@ -9,6 +9,7 @@ import com.chengde.smartcity.system.dto.OrgUpdateRequest;
 import com.chengde.smartcity.system.dto.PortalCardLinkRequest;
 import com.chengde.smartcity.system.dto.RoleMenuAssignRequest;
 import com.chengde.smartcity.system.dto.UserCreateRequest;
+import com.chengde.smartcity.system.dto.UserListItem;
 import com.chengde.smartcity.system.dto.UserUpdateRequest;
 import com.chengde.smartcity.system.entity.AuditLog;
 import com.chengde.smartcity.system.entity.PortalCardLink;
@@ -75,11 +76,13 @@ public class SystemController {
 
     @GetMapping("/users")
     @PreAuthorize("hasAuthority('system:user:list')")
-    public ApiResponse<Page<SysUser>> users(@AuthenticationPrincipal UserPrincipal principal,
-                                            @RequestParam(defaultValue = "1") int page,
-                                            @RequestParam(defaultValue = "20") int size,
-                                            @RequestParam(required = false) String keyword) {
-        return ApiResponse.ok(userService.page(principal, page, size, keyword));
+    public ApiResponse<Page<UserListItem>> users(
+            @AuthenticationPrincipal UserPrincipal principal,
+            @RequestParam(defaultValue = "1") int page,
+            @RequestParam(defaultValue = "20") int size,
+            @RequestParam(required = false) String keyword,
+            @RequestParam(required = false) Long orgId) {
+        return ApiResponse.ok(userService.pageWithRoles(principal, page, size, keyword, orgId));
     }
 
     @PostMapping("/users")
@@ -106,6 +109,19 @@ public class SystemController {
         return ApiResponse.ok(null);
     }
 
+    @PutMapping("/users/{id}/password")
+    @PreAuthorize("hasAuthority('system:user:edit')")
+    public ApiResponse<Void> resetPassword(@AuthenticationPrincipal UserPrincipal principal,
+                                           @PathVariable Long id,
+                                           @RequestBody Map<String, Object> body) {
+        Object pwd = body == null ? null : body.get("password");
+        if (pwd == null || String.valueOf(pwd).isBlank()) {
+            throw new com.chengde.smartcity.common.exception.BusinessException(400, "password required");
+        }
+        userService.resetPassword(principal, id, String.valueOf(pwd));
+        return ApiResponse.ok(null);
+    }
+
     @GetMapping("/users/{id}/roles")
     @PreAuthorize("hasAuthority('system:user:query') or hasAuthority('system:user:list') or hasAuthority('system:user:edit')")
     public ApiResponse<List<Long>> userRoles(@PathVariable Long id) {
@@ -118,6 +134,7 @@ public class SystemController {
     }
 
     @PutMapping("/roles/{id}/menus")
+    @PreAuthorize("hasAuthority('system:role:list') or hasAuthority('system:org:list')")
     public ApiResponse<Void> assignRoleMenus(@AuthenticationPrincipal UserPrincipal principal,
                                              @PathVariable Long id,
                                              @Valid @RequestBody RoleMenuAssignRequest request) {
@@ -126,6 +143,7 @@ public class SystemController {
     }
 
     @GetMapping("/roles/{id}/menus")
+    @PreAuthorize("hasAuthority('system:role:list') or hasAuthority('system:org:list')")
     public ApiResponse<List<Long>> roleMenus(@PathVariable Long id) {
         return ApiResponse.ok(roleService.menuIdsOfRole(id));
     }
@@ -163,8 +181,19 @@ public class SystemController {
     @GetMapping("/audit-logs")
     @PreAuthorize("hasAuthority('system:audit:list')")
     public ApiResponse<Page<AuditLog>> auditLogs(@RequestParam(defaultValue = "1") int page,
-                                                 @RequestParam(defaultValue = "20") int size) {
-        return ApiResponse.ok(auditLogMapper.selectPage(new Page<>(page, size), null));
+                                                 @RequestParam(defaultValue = "20") int size,
+                                                 @RequestParam(required = false) String username,
+                                                 @RequestParam(required = false) String action) {
+        com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper<AuditLog> q =
+                new com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper<AuditLog>()
+                        .orderByDesc(AuditLog::getId);
+        if (username != null && !username.isBlank()) {
+            q.like(AuditLog::getUsername, username.trim());
+        }
+        if (action != null && !action.isBlank()) {
+            q.eq(AuditLog::getAction, action.trim());
+        }
+        return ApiResponse.ok(auditLogMapper.selectPage(new Page<>(page, size), q));
     }
 
     @GetMapping("/portal-links/enabled")

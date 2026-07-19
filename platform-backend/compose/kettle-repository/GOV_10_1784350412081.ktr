@@ -1,0 +1,139 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<transformation>
+  <info>
+    <name>GOV_10_1784350412081</name>
+    <description>治理任务自动生成</description>
+    <created_user>system</created_user>
+    <created_date>2026-07-18T12:53:32.084058200</created_date>
+  </info>
+<connection>
+  <name>default</name>
+  <server>host.docker.internal</server>
+  <type>MYSQL</type>
+  <access>Native</access>
+  <database>smart_city_ods</database>
+  <port>3306</port>
+  <username>root</username>
+  <password></password>
+</connection>
+<connection>
+  <name>PLATFORM</name>
+  <server>host.docker.internal</server>
+  <type>MYSQL</type>
+  <access>Native</access>
+  <database>smart_city_ods</database>
+  <port>3306</port>
+  <username>root</username>
+  <password></password>
+</connection>
+<connection>
+  <name>smart_city</name>
+  <server>host.docker.internal</server>
+  <type>MYSQL</type>
+  <access>Native</access>
+  <database>smart_city</database>
+  <port>3306</port>
+  <username>root</username>
+  <password></password>
+</connection>
+<connection>
+  <name>smart_city_ods</name>
+  <server>host.docker.internal</server>
+  <type>MYSQL</type>
+  <access>Native</access>
+  <database>smart_city_ods</database>
+  <port>3306</port>
+  <username>root</username>
+  <password></password>
+</connection>
+<connection>
+  <name>smart_city_dwd</name>
+  <server>host.docker.internal</server>
+  <type>MYSQL</type>
+  <access>Native</access>
+  <database>smart_city_dwd</database>
+  <port>3306</port>
+  <username>root</username>
+  <password></password>
+</connection>
+<connection>
+  <name>smart_city_dws</name>
+  <server>host.docker.internal</server>
+  <type>MYSQL</type>
+  <access>Native</access>
+  <database>smart_city_dws</database>
+  <port>3306</port>
+  <username>root</username>
+  <password></password>
+</connection>
+<connection>
+  <name>smart_city_ads</name>
+  <server>host.docker.internal</server>
+  <type>MYSQL</type>
+  <access>Native</access>
+  <database>smart_city_ads</database>
+  <port>3306</port>
+  <username>root</username>
+  <password></password>
+</connection>
+  <step>
+    <name>输入</name>
+    <type>TableInput</type>
+    <description/>
+    <distribute>Y</distribute>
+    <copies>1</copies>
+    <connection>PLATFORM</connection>
+    <sql>SELECT * FROM enterprise master</sql>
+    <limit>0</limit>
+    <variables_active>Y</variables_active>
+    <!-- inputMode=TABLE -->
+  </step>
+  <step>
+    <name>过滤</name>
+    <type>FilterRows</type>
+    <description/>
+    <distribute>Y</distribute>
+    <copies>1</copies>
+    <send_true_to/>
+    <send_false_to/>
+    <compare>
+      <condition>
+        <negated>N</negated>
+        <conditions>
+          <condition>
+            <negated>N</negated>
+            <leftvalue>id</leftvalue>
+            <function>=</function>
+            <rightvalue></rightvalue>
+          </condition>
+        </conditions>
+      </condition>
+    </compare>
+  </step>
+  <step>
+    <name>输出</name>
+    <type>TableOutput</type>
+    <description/>
+    <distribute>Y</distribute>
+    <copies>1</copies>
+    <connection>smart_city_dwd</connection>
+    <schema/>
+    <table>output_table</table>
+    <commit>1000</commit>
+    <truncate>N</truncate>
+    <ignore_errors>N</ignore_errors>
+    <use_batch>Y</use_batch>
+  </step>
+  <order>
+    <hop>
+      <from>输入</from>
+      <to>过滤</to>
+      <enabled>Y</enabled>
+    </hop>
+    <hop>
+      <from>过滤</from>
+      <to>输出</to>
+      <enabled>Y</enabled>
+    </hop>
+  </order>
+</transformation>

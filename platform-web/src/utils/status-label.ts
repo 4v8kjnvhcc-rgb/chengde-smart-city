@@ -5,10 +5,14 @@ const STATUS_ZH: Record<string, string> = {
   ACTIVE: '启用',
   INACTIVE: '停用',
   ENABLED: '启用',
-  DISABLED: '停用',
+  DISABLED: '已停用',
   // 草稿/发布
   DRAFT: '草稿',
   PUBLISHED: '已发布',
+  PUBLISH: '发布',
+  CREATE: '创建',
+  ALTER: '变更',
+  UPDATE: '更新',
   OFFLINE: '已下线',
   ARCHIVED: '已归档',
   // 监控/预检
@@ -26,9 +30,12 @@ const STATUS_ZH: Record<string, string> = {
   SUBSCRIBED: '已订阅',
   DISTRIBUTED: '已分发',
   // 运行/任务
-  READY: '就绪',
+  IDLE: '空闲',
+  READY: '已配置',
+  CONFIGURED: '已配置',
   RUNNING: '运行中',
   SUCCESS: '成功',
+  PARTIAL: '部分成功',
   FAILED: '失败',
   ERROR: '错误',
   COMPLETED: '已完成',
@@ -45,6 +52,8 @@ const STATUS_ZH: Record<string, string> = {
   FULFILLING: '履约中',
   // 采集/解析
   PARSED: '已解析',
+  COMMITTED: '已入库',
+  PREVIEWED: '已预览',
   UPLOADED: '已上传',
   REGISTERED: '已登记',
   // 评估
@@ -58,8 +67,54 @@ const STATUS_ZH: Record<string, string> = {
   CHANGED: '已变更',
   UNCHANGED: '未变更',
   UNREAD: '未读',
-  LOCKED: '锁定',
+  LOCKED: '已锁定',
   EXPIRED: '已过期',
+  // 访问控制授权级别
+  VIEW: '查看',
+  EDIT: '编辑',
+  ADMIN: '管理',
+  ACCESS: '访问',
+  READ: '只读',
+  WRITE: '读写',
+  USER: '用户',
+  ROLE: '角色',
+  ORG: '机构',
+  PROJECT: '项目',
+  TABLE: '表',
+  SOURCE: '数据源',
+  // 治理 ETL 节点
+  INPUT: '输入',
+  OUTPUT: '输出',
+  FILTER: '过滤',
+  FIELD_PROCESS: '字段处理',
+  DEDUPLICATE: '去重',
+  MASK: '脱敏',
+  SPLIT: '表拆分',
+  SORT: '排序',
+  JOIN: '关联',
+  UNION: '合并',
+  AGGREGATE: '聚合',
+  PIVOT: '行转列',
+  UNPIVOT: '列转行',
+  SET_VARIABLE: '参数设置',
+  VALUE_MAPPER: '值映射',
+  CONSTANT: '增加常量',
+  FORMULA: '计算公式',
+  STRING_CUT: '字符串裁剪',
+  REPLACE_STRING: '字符串替换',
+  NULL_IF: '空值处理',
+  IF_NULL: '空值填充',
+  TYPE_CONVERT: '类型转换',
+  SELECT_FIELDS: '字段选择',
+  SWITCH_CASE: '流拆分',
+  VALIDATOR: '数据校验',
+  SCRIPT: '脚本',
+  TEXT_INPUT: '文本输入',
+  TEXT_OUTPUT: '文本输出',
+  EXCEL_INPUT: 'Excel输入',
+  INSERT_UPDATE: '插入更新',
+  DB_LOOKUP: '库表查找',
+  HTTP: 'HTTP接口',
   // 标准对标
   MAPPED: '已对标',
   PARTIAL: '部分对标',
@@ -99,6 +154,19 @@ const STATUS_ZH: Record<string, string> = {
   // 健康
   UP: '可用',
   DOWN: '不可用',
+  // 治理 ETL 节点类型
+  INPUT: '输入',
+  OUTPUT: '输出',
+  FILTER: '过滤',
+  FIELD_PROCESS: '字段处理',
+  DEDUPLICATE: '去重',
+  MASK: '脱敏',
+  JOIN: '关联',
+  UNION: '合并',
+  SORT: '排序',
+  AGGREGATE: '聚合',
+  PIVOT: '透视',
+  UNPIVOT: '逆透视',
 }
 
 /**
@@ -118,7 +186,7 @@ export function statusLabel(value: unknown): string {
 
 export function statusTagType(value: unknown): 'success' | 'warning' | 'info' | 'danger' | 'primary' {
   const key = String(value ?? '').trim().toUpperCase()
-  if (['ACTIVE', 'ENABLED', 'SUCCESS', 'APPROVED', 'COMPLETED', 'CONFIRMED', 'PUBLISHED', 'READY', 'NORMAL', 'SUBSCRIBED', 'DISTRIBUTED', 'MAPPED', 'OK'].includes(key)) {
+  if (['ACTIVE', 'ENABLED', 'SUCCESS', 'APPROVED', 'COMPLETED', 'CONFIRMED', 'PUBLISHED', 'READY', 'CONFIGURED', 'NORMAL', 'SUBSCRIBED', 'DISTRIBUTED', 'MAPPED', 'OK'].includes(key)) {
     return 'success'
   }
   if (['PENDING', 'RUNNING', 'ANALYZING', 'WAITING', 'DRAFT', 'SUPERVISING', 'DISPATCHED', 'FULFILLING', 'PARTIAL', 'WARN'].includes(key)) {

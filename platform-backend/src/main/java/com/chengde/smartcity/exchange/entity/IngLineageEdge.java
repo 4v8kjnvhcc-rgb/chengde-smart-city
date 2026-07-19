@@ -15,6 +15,9 @@ public class IngLineageEdge {
     private String edgeType;
     private String fieldMapping;
     private Integer sortOrder;
+    private Long projectId;
+    private Long fromSourceId;
+    private Long toSourceId;
 
     public Long getId() { return id; }
     public void setId(Long id) { this.id = id; }
@@ -32,4 +35,10 @@ public class IngLineageEdge {
     public void setFieldMapping(String fieldMapping) { this.fieldMapping = fieldMapping; }
     public Integer getSortOrder() { return sortOrder; }
     public void setSortOrder(Integer sortOrder) { this.sortOrder = sortOrder; }
+    public Long getProjectId() { return projectId; }
+    public void setProjectId(Long projectId) { this.projectId = projectId; }
+    public Long getFromSourceId() { return fromSourceId; }
+    public void setFromSourceId(Long fromSourceId) { this.fromSourceId = fromSourceId; }
+    public Long getToSourceId() { return toSourceId; }
+    public void setToSourceId(Long toSourceId) { this.toSourceId = toSourceId; }
 }

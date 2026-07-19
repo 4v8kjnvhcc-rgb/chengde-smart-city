@@ -128,6 +128,12 @@ onMounted(syncFromRoute)
           >
             {{ s.label }}
           </button>
+          <button type="button" class="share-link share-link--app" @click="router.push('/exchange/application/supply-config')">
+            供需配置
+          </button>
+          <button type="button" class="share-link share-link--app" @click="router.push('/exchange/application/assessment-config')">
+            考核配置
+          </button>
         </nav>
 
         <button type="button" class="share-back" @click="router.push('/dashboard')">

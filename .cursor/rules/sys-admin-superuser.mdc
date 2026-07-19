@@ -1,0 +1,39 @@
+---
+description: sys_admin 为超级管理员，拥有全系统权限且不受权限配置变更影响
+alwaysApply: true
+---
+
+# 超级管理员 sys_admin（硬约束）
+
+## 身份定义
+
+- 账号 **`sys_admin`**（角色 `SYSTEM_ADMIN`）是本平台**超级管理员**。
+- 拥有本系统**全部功能与数据的操作权限**（菜单、按钮、API、登记项目、组织用户等）。
+- 其权限**不因**角色菜单勾选、项目授权、数据授权、机构绑定等配置变更而削减或失效。
+
+## 开发与改权限时必须遵守
+
+1. **禁止**写出会让 `sys_admin` / `isSystemAdmin()==true` 被拒绝访问的逻辑（例如仅按 `sys_project_grant` 过滤却不给系统管理员放行）。
+2. 访问控制、列表过滤、`@PreAuthorize`、前端按钮显隐：系统管理员一律视为已授权；业务校验优先：
+   - `UserPrincipal.isSystemAdmin()` → 放行 / 返回全量
+3. **禁止**通过改菜单、改角色、清授权等方式「降权」`sys_admin`；验收与运维账号必须始终可用。
+4. 部门管理员授权限制（如「系统管理员不能直接授项目/数据权」）**不得**导致系统管理员无法**查看或使用**业务功能；仅限制「替他人写授权」时可单独约束，且须保留运维可见性。
+5. 新建资源（如登记项目）时：即使创建人是 `sys_admin`，列表也必须立即可见（全量可见或自动授权）。
+
+## 反例 / 正例
+
+```java
+// ❌ BAD：系统管理员也被授权表过滤掉
+Set<Long> ids = grantsOnly(user);
+
+// ✅ GOOD
+if (user.isSystemAdmin()) {
+    return allProjectIds();
+}
+```
+
+## 相关账号
+
+- 用户名：`sys_admin`
+- 角色码：`SYSTEM_ADMIN`
+- 判定：`UserPrincipal.isSystemAdmin()` / 角色码包含 `SYSTEM_ADMIN`

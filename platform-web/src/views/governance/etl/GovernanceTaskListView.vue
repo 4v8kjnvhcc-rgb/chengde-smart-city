@@ -1,9 +1,12 @@
 <script setup lang="ts">
-import { onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref, watch } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import api from '@/api/http'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import PageCard from '@/components/common/PageCard.vue'
 import { statusLabel, statusTagType } from '@/utils/status-label'
+
+export type ListMode = 'mgmt' | 'run' | 'schedule'
 
 interface TaskRow {
   id: number
@@ -15,20 +18,65 @@ interface TaskRow {
   lockedBy?: string
   lastRunAt?: string
   lastMessage?: string
+  lastRunStatus?: string
+  lastRunId?: number
   updatedAt?: string
   scheduleEnabled?: boolean
   scheduleCron?: string
+  scheduleMode?: string
+  startTime?: string
+  timeUnit?: string
+  intervalValue?: number
   nextRunAt?: string
 }
+
+interface DsOption {
+  value: string
+  label: string
+  sourceId?: number
+  kind: 'platform' | 'external'
+}
+
+interface TableOption {
+  id: number
+  sourceId: number
+  tableName: string
+  tableCode?: string
+}
+
+const RULE_OPTIONS = [
+  { type: 'FILTER', label: '过滤' },
+  { type: 'FIELD_PROCESS', label: '字段处理' },
+  { type: 'DEDUPLICATE', label: '去重' },
+  { type: 'MASK', label: '脱敏' },
+]
+
+const PLATFORM_SOURCES: DsOption[] = [
+  { value: 'smart_city_ods', label: '平台 ODS（smart_city_ods）', kind: 'platform' },
+  { value: 'smart_city_dwd', label: '平台 DWD（smart_city_dwd）', kind: 'platform' },
+  { value: 'smart_city_dws', label: '平台 DWS（smart_city_dws）', kind: 'platform' },
+]
+
+const TARGET_SOURCES: DsOption[] = [
+  { value: 'smart_city_dwd', label: '平台 DWD（smart_city_dwd）', kind: 'platform' },
+  { value: 'smart_city_dws', label: '平台 DWS（smart_city_dws）', kind: 'platform' },
+  { value: 'smart_city_ads', label: '平台 ADS（smart_city_ads）', kind: 'platform' },
+]
+
+const props = withDefaults(defineProps<{ mode?: ListMode }>(), { mode: 'mgmt' })
 
 const emit = defineEmits<{
   design: [id: number]
   monitor: [id: number]
 }>()
 
+const route = useRoute()
+const router = useRouter()
+
 const tasks = ref<TaskRow[]>([])
 const loading = ref(false)
 const createVisible = ref(false)
+const creating = ref(false)
 const renameVisible = ref(false)
 const renameId = ref<number | null>(null)
 const scheduleVisible = ref(false)
@@ -39,9 +87,23 @@ const runTargetId = ref<number | null>(null)
 const varDefs = ref<Array<{ name: string; label?: string; defaultValue?: string; required?: boolean }>>([])
 const varForm = ref<Record<string, string>>({})
 
+const sourceOptions = ref<DsOption[]>([...PLATFORM_SOURCES])
+const allTables = ref<TableOption[]>([])
+
 const form = reactive({
   taskName: '',
   description: '',
+  sourceConnection: '',
+  sourceTable: '',
+  targetConnection: 'smart_city_dwd',
+  targetTable: '',
+  rules: [] as string[],
+  scheduleEnabled: false,
+  scheduleMode: 'CRON' as 'CRON' | 'SIMPLE',
+  scheduleCron: '0 0 2 * * ?',
+  startTime: '',
+  timeUnit: 'DAY',
+  intervalValue: 1,
 })
 
 const renameForm = reactive({
@@ -58,6 +120,42 @@ const scheduleForm = reactive({
   nextRunAt: '',
 })
 
+const pageTitle = computed(() => {
+  if (props.mode === 'run') return '任务运行'
+  if (props.mode === 'schedule') return '任务定时'
+  return '任务管理'
+})
+
+/** 运行页：排除草稿与停用，展示可执行任务 */
+const displayTasks = computed(() => {
+  if (props.mode !== 'run') return tasks.value
+  return tasks.value.filter(t => t.status !== 'DRAFT' && t.status !== 'DISABLED')
+})
+
+const selectedSource = computed(() => sourceOptions.value.find(s => s.value === form.sourceConnection))
+
+const sourceTableOptions = computed(() => {
+  const sid = selectedSource.value?.sourceId
+  if (sid == null) return []
+  return allTables.value.filter(t => t.sourceId === sid)
+})
+
+watch(() => form.sourceConnection, () => {
+  form.sourceTable = ''
+})
+
+function goEtlSub(sub: string, taskId?: number) {
+  const q: Record<string, unknown> = { ...route.query, tab: 'etl', etlSub: sub }
+  delete q.etlView
+  if (taskId != null) {
+    q.etlView = 'monitor'
+    q.taskId = String(taskId)
+  } else {
+    delete q.taskId
+  }
+  router.replace({ query: q as Record<string, string> })
+}
+
 async function load() {
   loading.value = true
   try {
@@ -69,10 +167,47 @@ async function load() {
   }
 }
 
+async function loadCreateOptions() {
+  try {
+    const [dsRes, tbRes] = await Promise.all([
+      api.get('/exchange/ingestion/data-sources'),
+      api.get('/exchange/ingestion/register/tables'),
+    ])
+    const external = ((dsRes.data || []) as Array<{ id: number; sourceName: string; sourceType?: string }>).map(s => ({
+      value: `ds:${s.id}`,
+      label: `${s.sourceName}${s.sourceType ? `（${s.sourceType}）` : ''}`,
+      sourceId: s.id,
+      kind: 'external' as const,
+    }))
+    sourceOptions.value = [...PLATFORM_SOURCES, ...external]
+    allTables.value = ((tbRes.data || []) as TableOption[]).map(t => ({
+      id: t.id,
+      sourceId: t.sourceId,
+      tableName: t.tableName,
+      tableCode: t.tableCode,
+    }))
+  } catch {
+    sourceOptions.value = [...PLATFORM_SOURCES]
+    allTables.value = []
+  }
+}
+
 function openCreate() {
   form.taskName = ''
   form.description = ''
+  form.sourceConnection = ''
+  form.sourceTable = ''
+  form.targetConnection = 'smart_city_dwd'
+  form.targetTable = ''
+  form.rules = []
+  form.scheduleEnabled = false
+  form.scheduleMode = 'CRON'
+  form.scheduleCron = '0 0 2 * * ?'
+  form.startTime = ''
+  form.timeUnit = 'DAY'
+  form.intervalValue = 1
   createVisible.value = true
+  void loadCreateOptions()
 }
 
 async function submitCreate() {
@@ -80,14 +215,40 @@ async function submitCreate() {
     ElMessage.warning('请输入任务名称')
     return
   }
-  const id = (await api.post('/governance/gov-tasks', {
-    taskName: form.taskName.trim(),
-    description: form.description || undefined,
-  })).data
-  ElMessage.success('已创建')
-  createVisible.value = false
-  await load()
-  openDesign(id as number)
+  if (form.scheduleEnabled && form.scheduleMode === 'CRON' && !form.scheduleCron.trim()) {
+    ElMessage.warning('请填写 Cron 表达式')
+    return
+  }
+  if (form.scheduleEnabled && form.scheduleMode === 'SIMPLE' && !form.startTime) {
+    ElMessage.warning('请选择起始时间')
+    return
+  }
+  creating.value = true
+  try {
+    const id = (await api.post('/governance/gov-tasks', {
+      taskName: form.taskName.trim(),
+      description: form.description || undefined,
+      sourceConnection: form.sourceConnection || undefined,
+      sourceTable: form.sourceTable || undefined,
+      targetConnection: form.targetConnection || undefined,
+      targetTable: form.targetTable || undefined,
+      rules: form.rules,
+      scheduleEnabled: form.scheduleEnabled,
+      scheduleMode: form.scheduleMode,
+      scheduleCron: form.scheduleCron.trim(),
+      startTime: form.startTime || undefined,
+      timeUnit: form.timeUnit,
+      intervalValue: form.intervalValue,
+    })).data
+    ElMessage.success('已创建，可进入开发调整')
+    createVisible.value = false
+    await load()
+    openDesign(id as number)
+  } catch {
+    ElMessage.error('创建失败')
+  } finally {
+    creating.value = false
+  }
 }
 
 function openDesign(id: number) {
@@ -175,14 +336,14 @@ async function stopTask(row: TaskRow) {
 }
 
 async function removeTask(row: TaskRow) {
-  await ElMessageBox.confirm(`确认删除任务「${row.taskName}」？`, '删除确认', { type: 'warning' })
+  await ElMessageBox.confirm(`确认删除任务「${row.taskName}」？删除后不可恢复。`, '删除确认', { type: 'warning' })
   await api.delete(`/governance/gov-tasks/${row.id}`)
   ElMessage.success('已删除')
   await load()
 }
 
 async function batchDelete() {
-  await ElMessageBox.confirm(`确认删除选中的 ${selectedIds.value.length} 个任务？`, '批量删除确认', { type: 'warning' })
+  await ElMessageBox.confirm(`确认删除选中的 ${selectedIds.value.length} 个任务？删除后不可恢复。`, '批量删除确认', { type: 'warning' })
   try {
     await api.post('/governance/gov-tasks/batch-delete', { ids: selectedIds.value })
     ElMessage.success(`已删除 ${selectedIds.value.length} 个任务`)
@@ -196,11 +357,11 @@ async function batchDelete() {
 function openSchedule(row: TaskRow) {
   scheduleId.value = row.id
   scheduleForm.scheduleEnabled = !!row.scheduleEnabled
-  scheduleForm.scheduleMode = (row as TaskRow & { scheduleMode?: string }).scheduleMode === 'SIMPLE' ? 'SIMPLE' : 'CRON'
+  scheduleForm.scheduleMode = row.scheduleMode === 'SIMPLE' ? 'SIMPLE' : 'CRON'
   scheduleForm.scheduleCron = row.scheduleCron || '0 0 2 * * ?'
-  scheduleForm.startTime = (row as TaskRow & { startTime?: string }).startTime || ''
-  scheduleForm.timeUnit = (row as TaskRow & { timeUnit?: string }).timeUnit || 'DAY'
-  scheduleForm.intervalValue = Number((row as TaskRow & { intervalValue?: number }).intervalValue || 1)
+  scheduleForm.startTime = row.startTime || ''
+  scheduleForm.timeUnit = row.timeUnit || 'DAY'
+  scheduleForm.intervalValue = Number(row.intervalValue || 1)
   scheduleForm.nextRunAt = row.nextRunAt || ''
   scheduleVisible.value = true
 }
@@ -231,18 +392,28 @@ async function submitSchedule() {
   await load()
 }
 
+function scheduleModeLabel(row: TaskRow) {
+  if (!row.scheduleEnabled) return '—'
+  if (row.scheduleMode === 'SIMPLE') {
+    const unitMap: Record<string, string> = { HOUR: '小时', DAY: '天', WEEK: '周', MONTH: '月' }
+    return `每 ${row.intervalValue || 1} ${unitMap[row.timeUnit || 'DAY'] || row.timeUnit}`
+  }
+  return row.scheduleCron || 'Cron'
+}
+
 onMounted(load)
 
 defineExpose({ reload: load })
 </script>
 
 <template>
-  <PageCard title="数据治理 · ETL任务">
+  <PageCard :title="pageTitle">
     <el-form inline class="portal-inline-form portal-inline-form--block">
       <el-form-item class="portal-form-actions">
-        <el-button type="primary" @click="openCreate">新建任务</el-button>
+        <el-button v-if="mode === 'mgmt'" type="primary" @click="openCreate">新增任务</el-button>
         <el-button @click="load">刷新</el-button>
         <el-button
+          v-if="mode === 'mgmt'"
           type="danger"
           :disabled="selectedIds.length === 0"
           @click="batchDelete"
@@ -254,63 +425,176 @@ defineExpose({ reload: load })
 
     <el-table
       v-loading="loading"
-      :data="tasks"
+      :data="displayTasks"
       stripe
       size="small"
       @selection-change="(val: TaskRow[]) => selectedIds = val.map(r => r.id)"
     >
-      <el-table-column type="selection" width="55" />
-      <el-table-column prop="taskCode" label="编码" width="180" />
-      <el-table-column prop="taskName" label="名称" min-width="140" />
-      <el-table-column label="引擎" width="100">
-        <template #default="{ row }">
-          <el-tag size="small" :type="row.engineType === 'IN_MEMORY' ? 'info' : 'success'">
-            {{ row.engineType === 'IN_MEMORY' ? '内存' : 'Kettle' }}
-          </el-tag>
-        </template>
-      </el-table-column>
-      <el-table-column label="状态" width="100">
+      <el-table-column v-if="mode === 'mgmt'" type="selection" width="48" />
+      <el-table-column prop="taskName" label="任务名称" min-width="140" />
+      <el-table-column v-if="mode === 'mgmt'" prop="description" label="描述" min-width="120" show-overflow-tooltip />
+      <el-table-column v-if="mode === 'mgmt'" label="生命周期" width="100">
         <template #default="{ row }">
           <el-tag :type="statusTagType(row.status)" size="small">{{ statusLabel(row.status) }}</el-tag>
         </template>
       </el-table-column>
-      <el-table-column prop="lockedBy" label="锁定人" width="100" />
-      <el-table-column label="定时" width="90">
+      <el-table-column v-if="mode === 'run'" label="最近运行状态" width="120">
         <template #default="{ row }">
-          <el-tag v-if="row.scheduleEnabled" type="success" size="small">已启用</el-tag>
+          <el-tag v-if="row.lastRunStatus" :type="statusTagType(row.lastRunStatus)" size="small">
+            {{ statusLabel(row.lastRunStatus) }}
+          </el-tag>
           <span v-else>—</span>
         </template>
       </el-table-column>
-      <el-table-column prop="nextRunAt" label="下次运行" width="150" />
-      <el-table-column prop="lastMessage" label="最近结果" min-width="140" show-overflow-tooltip />
-      <el-table-column prop="lastRunAt" label="最近运行" width="150" />
-      <el-table-column label="操作" width="380" fixed="right">
+      <el-table-column v-if="mode === 'mgmt'" prop="lockedBy" label="锁定人" width="100">
+        <template #default="{ row }">{{ row.lockedBy || '—' }}</template>
+      </el-table-column>
+      <el-table-column v-if="mode === 'mgmt'" prop="updatedAt" label="更新时间" width="160" />
+
+      <el-table-column v-if="mode === 'run'" prop="lastMessage" label="最近结果" min-width="160" show-overflow-tooltip />
+      <el-table-column v-if="mode === 'run'" prop="lastRunAt" label="最近运行时间" width="160" />
+
+      <el-table-column v-if="mode === 'schedule'" label="定时状态" width="100">
         <template #default="{ row }">
-          <el-button link type="primary" @click="openDesign(row.id)">开发</el-button>
-          <el-button link @click="openMonitor(row.id)">监控</el-button>
-          <el-button link @click="openSchedule(row)">定时</el-button>
-          <el-button link @click="openRename(row)">重命名</el-button>
-          <el-button v-if="row.status !== 'LOCKED'" link @click="lockTask(row)">锁定</el-button>
-          <el-button v-else link @click="unlockTask(row)">解锁</el-button>
-          <el-button v-if="row.status === 'RUNNING'" link type="warning" @click="stopTask(row)">停止</el-button>
-          <el-button v-else link type="success" @click="runTask(row)">运行</el-button>
-          <el-button link type="danger" @click="removeTask(row)">删除</el-button>
+          <el-tag v-if="row.scheduleEnabled" type="success" size="small">已启用</el-tag>
+          <el-tag v-else type="info" size="small">未启用</el-tag>
+        </template>
+      </el-table-column>
+      <el-table-column v-if="mode === 'schedule'" label="调度计划" min-width="160">
+        <template #default="{ row }">{{ scheduleModeLabel(row) }}</template>
+      </el-table-column>
+      <el-table-column v-if="mode === 'schedule'" prop="nextRunAt" label="下次执行" width="160">
+        <template #default="{ row }">{{ row.nextRunAt || '—' }}</template>
+      </el-table-column>
+
+      <el-table-column label="操作" :width="mode === 'mgmt' ? 360 : mode === 'run' ? 220 : 160" fixed="right">
+        <template #default="{ row }">
+          <!-- 任务管理 -->
+          <template v-if="mode === 'mgmt'">
+            <el-button link type="primary" @click="openDesign(row.id)">开发</el-button>
+            <el-button link @click="openRename(row)">重命名</el-button>
+            <el-button v-if="row.status !== 'LOCKED'" link @click="lockTask(row)">锁定</el-button>
+            <el-button v-else link @click="unlockTask(row)">解锁</el-button>
+            <el-button link @click="goEtlSub('task-run')">去运行</el-button>
+            <el-button link @click="goEtlSub('task-schedule')">去定时</el-button>
+            <el-button link type="danger" @click="removeTask(row)">删除</el-button>
+          </template>
+          <!-- 任务运行 -->
+          <template v-else-if="mode === 'run'">
+            <el-button v-if="row.status === 'RUNNING'" link type="warning" @click="stopTask(row)">停止</el-button>
+            <el-button v-else link type="success" @click="runTask(row)">运行</el-button>
+            <el-button link @click="openMonitor(row.id)">查看监控</el-button>
+          </template>
+          <!-- 任务定时 -->
+          <template v-else>
+            <el-button link type="primary" @click="openSchedule(row)">定时</el-button>
+          </template>
         </template>
       </el-table-column>
     </el-table>
 
-    <el-dialog v-model="createVisible" title="新建治理任务" width="420px">
-      <el-form label-width="80px">
-        <el-form-item label="名称" required>
-          <el-input v-model="form.taskName" maxlength="128" />
+    <el-dialog v-model="createVisible" title="新增治理任务" width="640px" destroy-on-close>
+      <el-form label-width="100px">
+        <el-form-item label="任务名称" required>
+          <el-input v-model="form.taskName" maxlength="128" placeholder="支持中文" />
         </el-form-item>
-        <el-form-item label="说明">
+        <el-form-item label="描述">
           <el-input v-model="form.description" type="textarea" :rows="2" />
         </el-form-item>
+        <el-form-item label="来源库">
+          <el-select v-model="form.sourceConnection" clearable filterable placeholder="已登记数据源或平台库" style="width:100%">
+            <el-option-group label="平台分层库">
+              <el-option v-for="s in PLATFORM_SOURCES" :key="s.value" :label="s.label" :value="s.value" />
+            </el-option-group>
+            <el-option-group v-if="sourceOptions.some(s => s.kind === 'external')" label="已登记外部源">
+              <el-option
+                v-for="s in sourceOptions.filter(s => s.kind === 'external')"
+                :key="s.value"
+                :label="s.label"
+                :value="s.value"
+              />
+            </el-option-group>
+          </el-select>
+        </el-form-item>
+        <el-form-item label="来源表">
+          <el-select
+            v-if="selectedSource?.kind === 'external'"
+            v-model="form.sourceTable"
+            clearable
+            filterable
+            allow-create
+            placeholder="选择或输入表名"
+            style="width:100%"
+          >
+            <el-option
+              v-for="t in sourceTableOptions"
+              :key="t.id"
+              :label="t.tableName"
+              :value="t.tableName"
+            />
+          </el-select>
+          <el-input v-else v-model="form.sourceTable" placeholder="如 ods_xxx" />
+        </el-form-item>
+        <el-form-item label="目标库">
+          <el-select v-model="form.targetConnection" filterable placeholder="治理产出层（默认 DWD）" style="width:100%">
+            <el-option v-for="s in TARGET_SOURCES" :key="s.value" :label="s.label" :value="s.value" />
+          </el-select>
+          <div style="font-size:12px;color:var(--el-text-color-secondary);margin-top:4px">
+            标准治理写入 DWD；回写 ODS 请在画布输出节点显式勾选「允许回写 ODS」
+          </div>
+        </el-form-item>
+        <el-form-item label="目标表">
+          <el-input v-model="form.targetTable" placeholder="如 dwd_xxx" />
+        </el-form-item>
+        <el-form-item label="治理规则">
+          <el-checkbox-group v-model="form.rules">
+            <el-checkbox v-for="r in RULE_OPTIONS" :key="r.type" :label="r.type">
+              {{ r.label }}
+            </el-checkbox>
+          </el-checkbox-group>
+        </el-form-item>
+        <el-form-item label="开启定时">
+          <el-switch v-model="form.scheduleEnabled" />
+        </el-form-item>
+        <template v-if="form.scheduleEnabled">
+          <el-form-item label="定时方式">
+            <el-radio-group v-model="form.scheduleMode">
+              <el-radio-button value="SIMPLE">定时器</el-radio-button>
+              <el-radio-button value="CRON">Cron</el-radio-button>
+            </el-radio-group>
+          </el-form-item>
+          <template v-if="form.scheduleMode === 'SIMPLE'">
+            <el-form-item label="起始时间">
+              <el-date-picker
+                v-model="form.startTime"
+                type="datetime"
+                value-format="YYYY-MM-DD HH:mm:ss"
+                placeholder="选择起始时间"
+                style="width: 100%"
+              />
+            </el-form-item>
+            <el-form-item label="间隔">
+              <el-input-number v-model="form.intervalValue" :min="1" :max="999" />
+            </el-form-item>
+            <el-form-item label="单位">
+              <el-radio-group v-model="form.timeUnit">
+                <el-radio value="HOUR">小时</el-radio>
+                <el-radio value="DAY">天</el-radio>
+                <el-radio value="WEEK">周</el-radio>
+                <el-radio value="MONTH">月</el-radio>
+              </el-radio-group>
+            </el-form-item>
+          </template>
+          <template v-else>
+            <el-form-item label="Cron">
+              <el-input v-model="form.scheduleCron" placeholder="0 0 2 * * ?" class="portal-field-cron" />
+            </el-form-item>
+          </template>
+        </template>
       </el-form>
       <template #footer>
         <el-button @click="createVisible = false">取消</el-button>
-        <el-button type="primary" @click="submitCreate">创建并设计</el-button>
+        <el-button type="primary" :loading="creating" @click="submitCreate">创建并进入开发</el-button>
       </template>
     </el-dialog>
 
@@ -322,14 +606,14 @@ defineExpose({ reload: load })
       </template>
     </el-dialog>
 
-    <el-dialog v-model="scheduleVisible" title="定时计划" width="520px">
+    <el-dialog v-model="scheduleVisible" title="添加定时计划" width="520px">
       <el-form label-width="100px">
         <el-form-item label="启用定时">
           <el-switch v-model="scheduleForm.scheduleEnabled" />
         </el-form-item>
-        <el-form-item v-if="scheduleForm.scheduleEnabled" label="调度方式">
+        <el-form-item v-if="scheduleForm.scheduleEnabled" label="定时器选择">
           <el-radio-group v-model="scheduleForm.scheduleMode">
-            <el-radio-button value="SIMPLE">简单间隔</el-radio-button>
+            <el-radio-button value="SIMPLE">定时器选择</el-radio-button>
             <el-radio-button value="CRON">自定义脚本</el-radio-button>
           </el-radio-group>
         </el-form-item>
@@ -356,7 +640,7 @@ defineExpose({ reload: load })
           </el-form-item>
         </template>
         <template v-if="scheduleForm.scheduleEnabled && scheduleForm.scheduleMode === 'CRON'">
-          <el-form-item label="Cron 表达式">
+          <el-form-item label="自定义脚本">
             <el-input
               v-model="scheduleForm.scheduleCron"
               placeholder="0 0 2 * * ?"

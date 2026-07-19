@@ -71,7 +71,8 @@ public class JdbcProbeService {
             case "POSTGRES", "POSTGRESQL" -> "jdbc:postgresql://" + c.host + ":" + c.port + "/" + c.database;
             case "ORACLE" -> "jdbc:oracle:thin:@" + c.host + ":" + c.port + ":" + c.database;
             default -> "jdbc:mysql://" + c.host + ":" + c.port + "/" + c.database
-                    + "?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai"
+                    + "?useUnicode=true&characterEncoding=UTF-8&connectionCollation=utf8mb4_unicode_ci"
+                    + "&serverTimezone=Asia/Shanghai"
                     + "&useSSL=false&allowPublicKeyRetrieval=true&connectTimeout=5000&socketTimeout=15000";
         };
     }

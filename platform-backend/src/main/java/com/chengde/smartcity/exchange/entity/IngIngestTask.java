@@ -12,9 +12,14 @@ public class IngIngestTask {
     private String taskCode;
     private String taskName;
     private Long channelId;
+    private String accessMode;
     private Long sourceId;
     private Long tableId;
     private String targetTable;
+    private String configJson;
+    private String writeMode;
+    private String watermarkValue;
+    private Integer enabled;
     private Long collectedRows;
     private String kettleTransName;
     private Long dsProjectCode;
@@ -38,12 +43,22 @@ public class IngIngestTask {
     public void setTaskName(String taskName) { this.taskName = taskName; }
     public Long getChannelId() { return channelId; }
     public void setChannelId(Long channelId) { this.channelId = channelId; }
+    public String getAccessMode() { return accessMode; }
+    public void setAccessMode(String accessMode) { this.accessMode = accessMode; }
     public Long getSourceId() { return sourceId; }
     public void setSourceId(Long sourceId) { this.sourceId = sourceId; }
     public Long getTableId() { return tableId; }
     public void setTableId(Long tableId) { this.tableId = tableId; }
     public String getTargetTable() { return targetTable; }
     public void setTargetTable(String targetTable) { this.targetTable = targetTable; }
+    public String getConfigJson() { return configJson; }
+    public void setConfigJson(String configJson) { this.configJson = configJson; }
+    public String getWriteMode() { return writeMode; }
+    public void setWriteMode(String writeMode) { this.writeMode = writeMode; }
+    public String getWatermarkValue() { return watermarkValue; }
+    public void setWatermarkValue(String watermarkValue) { this.watermarkValue = watermarkValue; }
+    public Integer getEnabled() { return enabled; }
+    public void setEnabled(Integer enabled) { this.enabled = enabled; }
     public Long getCollectedRows() { return collectedRows; }
     public void setCollectedRows(Long collectedRows) { this.collectedRows = collectedRows; }
     public String getKettleTransName() { return kettleTransName; }

@@ -39,6 +39,7 @@ const platformIcons: Record<string, object> = {
   '/master-data': Coin,
   '/analytics': DataAnalysis,
   '/business': Grid,
+  '/integration': Connection,
   '/system': Setting,
 }
 
@@ -89,6 +90,15 @@ const platformThemes: Record<
     titleColor: '#085048',
     accent: '#1D9A88',
     dotColor: '#5CBEAE',
+  },
+  '/integration': {
+    border: '#B5C7D9',
+    headerBg: '#EEF3F8',
+    iconBg: '#B5C7D9',
+    iconColor: '#3D5A73',
+    titleColor: '#2A4055',
+    accent: '#5B7C99',
+    dotColor: '#8FA8BF',
   },
   '/system': {
     border: '#CECBF6',
@@ -170,6 +180,19 @@ function toggleDrawer(index: number) {
   }
 }
 
+function isSystemPlatform(node: MenuNode) {
+  return node.path === '/system'
+}
+
+function onCardHeaderClick(node: MenuNode, index: number) {
+  if (isSystemPlatform(node)) {
+    activeIndex.value = null
+    enterSubsystem(node)
+    return
+  }
+  toggleDrawer(index)
+}
+
 function enterSubsystem(node: MenuNode) {
   const target = firstNavPath(node)
   if (target) router.push(target)
@@ -240,6 +263,7 @@ onMounted(async () => {
         :class="{
           'is-open': activeIndex === index,
           'is-dim': activeIndex !== null && activeIndex !== index,
+          'is-direct': isSystemPlatform(node),
         }"
         :style="{
           '--card-border': getTheme(node.path).border,
@@ -254,8 +278,8 @@ onMounted(async () => {
         <button
           type="button"
           class="card-header"
-          :aria-expanded="activeIndex === index"
-          @click="toggleDrawer(index)"
+          :aria-expanded="isSystemPlatform(node) ? undefined : activeIndex === index"
+          @click="onCardHeaderClick(node, index)"
         >
           <div class="card-icon-wrap">
             <el-icon :size="44">
@@ -263,10 +287,10 @@ onMounted(async () => {
             </el-icon>
           </div>
           <div class="card-title">{{ node.menuName }}</div>
-          <div class="card-arrow" />
+          <div v-if="!isSystemPlatform(node)" class="card-arrow" />
         </button>
 
-        <div class="drawer-body">
+        <div v-if="!isSystemPlatform(node)" class="drawer-body">
           <div class="drawer-body-inner">
             <button
               v-for="item in getCardItems(node)"

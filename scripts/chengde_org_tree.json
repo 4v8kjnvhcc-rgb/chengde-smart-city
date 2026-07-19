@@ -1,0 +1,109 @@
+[
+  {
+    "id": "CD",
+    "parent_id": null,
+    "code": "100000",
+    "full_name": "承德高新技术产业开发区",
+    "short_name": "承德高新区",
+    "type": "ROOT",
+    "level": 0,
+    "sort_order": 0,
+    "children": [
+      {
+        "id": "CD-GOV",
+        "parent_id": "CD",
+        "code": "100001",
+        "full_name": "承德高新技术产业开发区工作委员会",
+        "short_name": "高新区工委",
+        "type": "LEADER",
+        "level": 1,
+        "sort_order": 1,
+        "children": [
+          {"id": "CD-GOV-Office", "parent_id": "CD-GOV", "code": "100010", "full_name": "党政综合办公室", "short_name": "党政办", "type": "INNER_DEPT", "level": 2, "sort_order": 1, "children": []},
+          {"id": "CD-Party-Mass", "parent_id": "CD-GOV", "code": "100020", "full_name": "党群工作部（人力资源部）", "short_name": "党群部", "type": "INNER_DEPT", "level": 2, "sort_order": 2, "children": [
+            {"id": "CD-Union", "parent_id": "CD-Party-Mass", "code": "100201", "full_name": "高新区总工会", "short_name": "区工会", "type": "MASS", "level": 3, "sort_order": 1, "children": []},
+            {"id": "CD-Youth-League", "parent_id": "CD-Party-Mass", "code": "100202", "full_name": "共青团承德高新区委员会", "short_name": "区团委", "type": "MASS", "level": 3, "sort_order": 2, "children": []},
+            {"id": "CD-Women-Fed", "parent_id": "CD-Party-Mass", "code": "100203", "full_name": "高新区妇女联合会", "short_name": "区妇联", "type": "MASS", "level": 3, "sort_order": 3, "children": []},
+            {"id": "CD-Commerce-Fed", "parent_id": "CD-Party-Mass", "code": "100204", "full_name": "高新区工商业联合会", "short_name": "区工商联", "type": "MASS", "level": 3, "sort_order": 4, "children": []},
+            {"id": "CD-Disabled-Fed", "parent_id": "CD-Party-Mass", "code": "100205", "full_name": "高新区残疾人联合会", "short_name": "区残联", "type": "MASS", "level": 3, "sort_order": 5, "children": []},
+            {"id": "CD-Red-Cross", "parent_id": "CD-Party-Mass", "code": "100206", "full_name": "高新区红十字会", "short_name": "区红十字会", "type": "MASS", "level": 3, "sort_order": 6, "children": []},
+            {"id": "CD-Talent-Center", "parent_id": "CD-Party-Mass", "code": "100207", "full_name": "高新区人才服务中心", "short_name": "人才中心", "type": "INSTITUTION", "level": 3, "sort_order": 7, "children": []}
+          ]},
+          {"id": "CD-Discipline", "parent_id": "CD-GOV", "code": "100030", "full_name": "承德市纪委监委派出高新区纪检监察工作委员会", "short_name": "纪检监察工委", "type": "JUDICIAL", "level": 2, "sort_order": 3, "children": []},
+          {"id": "CD-Publicity", "parent_id": "CD-GOV", "code": "100040", "full_name": "高新区宣传中心", "short_name": "宣传中心", "type": "INSTITUTION", "level": 2, "sort_order": 4, "children": []},
+          {"id": "CD-Info-Center", "parent_id": "CD-GOV", "code": "100050", "full_name": "高新区信息化中心", "short_name": "信息化中心", "type": "INSTITUTION", "level": 2, "sort_order": 5, "children": []}
+        ]
+      },
+      {
+        "id": "CD-ADMIN",
+        "parent_id": "CD",
+        "code": "100002",
+        "full_name": "承德高新技术产业开发区管理委员会",
+        "short_name": "高新区管委会",
+        "type": "LEADER",
+        "level": 1,
+        "sort_order": 2,
+        "children": [
+          {"id": "CD-Econ", "parent_id": "CD-ADMIN", "code": "100100", "full_name": "经济发展部", "short_name": "经发部", "type": "INNER_DEPT", "level": 2, "sort_order": 1, "children": []},
+          {"id": "CD-SciTech", "parent_id": "CD-ADMIN", "code": "100110", "full_name": "科技创新部", "short_name": "科创部", "type": "INNER_DEPT", "level": 2, "sort_order": 2, "children": [
+            {"id": "CD-Inno-Center", "parent_id": "CD-SciTech", "code": "100301", "full_name": "高新区创新创业服务中心", "short_name": "双创中心", "type": "INSTITUTION", "level": 3, "sort_order": 1, "children": []}
+          ]},
+          {"id": "CD-Finance", "parent_id": "CD-ADMIN", "code": "100120", "full_name": "财政金融部", "short_name": "财政部", "type": "INNER_DEPT", "level": 2, "sort_order": 3, "children": [
+            {"id": "CD-Treasury", "parent_id": "CD-Finance", "code": "100401", "full_name": "高新区财政国库支付中心", "short_name": "国库支付中心", "type": "INSTITUTION", "level": 3, "sort_order": 1, "children": []},
+            {"id": "CD-Procurement", "parent_id": "CD-Finance", "code": "100402", "full_name": "高新区政府采购中心", "short_name": "采购中心", "type": "INSTITUTION", "level": 3, "sort_order": 2, "children": []}
+          ]},
+          {"id": "CD-Social", "parent_id": "CD-ADMIN", "code": "100130", "full_name": "社会事务部", "short_name": "社事部", "type": "INNER_DEPT", "level": 2, "sort_order": 4, "children": [
+            {"id": "CD-No1-Middle", "parent_id": "CD-Social", "code": "101101", "full_name": "高新区第一中学", "short_name": "高新区一中", "type": "PUBLIC", "level": 3, "sort_order": 1, "children": []},
+            {"id": "CD-Exp-Middle", "parent_id": "CD-Social", "code": "101102", "full_name": "高新区实验中学", "short_name": "实验中学", "type": "PUBLIC", "level": 3, "sort_order": 2, "children": []},
+            {"id": "CD-No1-Primary", "parent_id": "CD-Social", "code": "101103", "full_name": "高新区第一小学", "short_name": "一小", "type": "PUBLIC", "level": 3, "sort_order": 3, "children": []},
+            {"id": "CD-No2-Primary", "parent_id": "CD-Social", "code": "101104", "full_name": "高新区第二小学", "short_name": "二小", "type": "PUBLIC", "level": 3, "sort_order": 4, "children": []},
+            {"id": "CD-Community-Health", "parent_id": "CD-Social", "code": "101105", "full_name": "高新区社区卫生服务中心", "short_name": "社区卫生中心", "type": "PUBLIC", "level": 3, "sort_order": 5, "children": []},
+            {"id": "CD-CDC", "parent_id": "CD-Social", "code": "101106", "full_name": "高新区疾病预防控制中心", "short_name": "疾控中心", "type": "PUBLIC", "level": 3, "sort_order": 6, "children": []},
+            {"id": "CD-Culture-Center", "parent_id": "CD-Social", "code": "101107", "full_name": "高新区文化馆", "short_name": "文化馆", "type": "PUBLIC", "level": 3, "sort_order": 7, "children": []},
+            {"id": "CD-Library", "parent_id": "CD-Social", "code": "101108", "full_name": "高新区图书馆", "short_name": "图书馆", "type": "PUBLIC", "level": 3, "sort_order": 8, "children": []},
+            {"id": "CD-Sports-Center", "parent_id": "CD-Social", "code": "101109", "full_name": "高新区体育中心", "short_name": "体育中心", "type": "PUBLIC", "level": 3, "sort_order": 9, "children": []},
+            {"id": "CD-Legal-Aid", "parent_id": "CD-Social", "code": "101110", "full_name": "高新区法律援助中心", "short_name": "法援中心", "type": "JUDICIAL", "level": 3, "sort_order": 10, "children": []}
+          ]},
+          {"id": "CD-Emergency", "parent_id": "CD-ADMIN", "code": "100140", "full_name": "应急管理部", "short_name": "应急部", "type": "INNER_DEPT", "level": 2, "sort_order": 5, "children": [
+            {"id": "CD-Emer-Enforce", "parent_id": "CD-Emergency", "code": "100701", "full_name": "高新区应急综合执法大队", "short_name": "应急执法大队", "type": "SQUAD", "level": 3, "sort_order": 1, "children": []}
+          ]},
+          {"id": "CD-Approval", "parent_id": "CD-ADMIN", "code": "100150", "full_name": "行政审批服务局", "short_name": "审批局", "type": "INNER_DEPT", "level": 2, "sort_order": 6, "children": [
+            {"id": "CD-Pub-Resource", "parent_id": "CD-Approval", "code": "100501", "full_name": "高新区公共资源交易中心", "short_name": "公共资源交易中心", "type": "INSTITUTION", "level": 3, "sort_order": 1, "children": []},
+            {"id": "CD-Gov-Service", "parent_id": "CD-Approval", "code": "100502", "full_name": "高新区政务服务中心", "short_name": "政务中心", "type": "INSTITUTION", "level": 3, "sort_order": 2, "children": []}
+          ]},
+          {"id": "CD-UrbanMgmt", "parent_id": "CD-ADMIN", "code": "100160", "full_name": "城市管理综合行政执法局", "short_name": "城管局", "type": "INNER_DEPT", "level": 2, "sort_order": 7, "children": [
+            {"id": "CD-Comp-Enforce", "parent_id": "CD-UrbanMgmt", "code": "100601", "full_name": "高新区综合行政执法大队", "short_name": "综合执法大队", "type": "SQUAD", "level": 3, "sort_order": 1, "children": []}
+          ]},
+          {"id": "CD-Agri", "parent_id": "CD-ADMIN", "code": "100170", "full_name": "农业农村部", "short_name": "农业部", "type": "INNER_DEPT", "level": 2, "sort_order": 8, "children": []},
+          {"id": "CD-Housing", "parent_id": "CD-ADMIN", "code": "100180", "full_name": "住房和城乡建设局", "short_name": "住建局", "type": "INNER_DEPT", "level": 2, "sort_order": 9, "children": []},
+          {"id": "CD-Transport", "parent_id": "CD-ADMIN", "code": "100190", "full_name": "交通运输局", "short_name": "交通局", "type": "INNER_DEPT", "level": 2, "sort_order": 10, "children": [
+            {"id": "CD-Traffic-5", "parent_id": "CD-Transport", "code": "101001", "full_name": "承德市交警支队第五大队", "short_name": "交警五大队", "type": "SQUAD", "level": 3, "sort_order": 1, "children": []},
+            {"id": "CD-Traffic-7", "parent_id": "CD-Transport", "code": "101002", "full_name": "承德市交警支队第七大队", "short_name": "交警七大队", "type": "SQUAD", "level": 3, "sort_order": 2, "children": []}
+          ]},
+          {"id": "CD-Police", "parent_id": "CD-ADMIN", "code": "100200", "full_name": "承德市公安局高新技术产业开发区分局", "short_name": "高新区公安分局", "type": "DISPATCH", "level": 2, "sort_order": 11, "children": []},
+          {"id": "CD-Market", "parent_id": "CD-ADMIN", "code": "100210", "full_name": "承德市市场监督管理局高新区分局", "short_name": "市场监管分局", "type": "DISPATCH", "level": 2, "sort_order": 12, "children": [
+            {"id": "CD-Market-Enforce", "parent_id": "CD-Market", "code": "100801", "full_name": "高新区市场监管综合执法大队", "short_name": "市监执法大队", "type": "SQUAD", "level": 3, "sort_order": 1, "children": []}
+          ]},
+          {"id": "CD-NR-Plan", "parent_id": "CD-ADMIN", "code": "100220", "full_name": "承德市自然资源和规划局高新区分局", "short_name": "资规分局", "type": "DISPATCH", "level": 2, "sort_order": 13, "children": []},
+          {"id": "CD-Env", "parent_id": "CD-ADMIN", "code": "100230", "full_name": "承德市生态环境局高新区分局", "short_name": "生态环境分局", "type": "DISPATCH", "level": 2, "sort_order": 14, "children": [
+            {"id": "CD-Env-Enforce", "parent_id": "CD-Env", "code": "100901", "full_name": "高新区生态环境综合执法大队", "short_name": "生态执法大队", "type": "SQUAD", "level": 3, "sort_order": 1, "children": []}
+          ]},
+          {"id": "CD-Tax", "parent_id": "CD-ADMIN", "code": "100240", "full_name": "国家税务总局承德高新技术产业开发区税务局", "short_name": "高新区税务局", "type": "VERTICAL", "level": 2, "sort_order": 15, "children": []},
+          {"id": "CD-Fire", "parent_id": "CD-ADMIN", "code": "100250", "full_name": "承德市消防救援支队高新技术产业开发区大队", "short_name": "高新区消防救援大队", "type": "VERTICAL", "level": 2, "sort_order": 16, "children": []},
+          {"id": "CD-Street-Shangban", "parent_id": "CD-ADMIN", "code": "100300", "full_name": "承德高新区上板城街道办事处", "short_name": "上板城街道", "type": "TOWN", "level": 2, "sort_order": 17, "children": []},
+          {"id": "CD-Street-Xiaban", "parent_id": "CD-ADMIN", "code": "100310", "full_name": "承德高新区下板城街道办事处", "short_name": "下板城街道", "type": "TOWN", "level": 2, "sort_order": 18, "children": []},
+          {"id": "CD-Town-Damiao", "parent_id": "CD-ADMIN", "code": "100320", "full_name": "承德高新区大庙镇人民政府", "short_name": "大庙镇", "type": "TOWN", "level": 2, "sort_order": 19, "children": []},
+          {"id": "CD-Town-Taiping", "parent_id": "CD-ADMIN", "code": "100330", "full_name": "承德高新区太平庄乡人民政府", "short_name": "太平庄乡", "type": "TOWN", "level": 2, "sort_order": 20, "children": []},
+          {"id": "CD-Prosecution", "parent_id": "CD-ADMIN", "code": "100400", "full_name": "承德市人民检察院高新区检察室", "short_name": "高新区检察室", "type": "JUDICIAL", "level": 2, "sort_order": 21, "children": []},
+          {"id": "CD-Court", "parent_id": "CD-ADMIN", "code": "100410", "full_name": "承德市中级人民法院高新区人民法庭", "short_name": "高新区法庭", "type": "JUDICIAL", "level": 2, "sort_order": 22, "children": []},
+          {"id": "CD-Invest-Group", "parent_id": "CD-ADMIN", "code": "100500", "full_name": "承德高新区投资发展集团有限公司", "short_name": "高发集团", "type": "SOE", "level": 2, "sort_order": 23, "children": [
+            {"id": "CD-Construction-Co", "parent_id": "CD-Invest-Group", "code": "101201", "full_name": "承德高新区建设开发有限公司", "short_name": "高建公司", "type": "SOE", "level": 3, "sort_order": 1, "children": []},
+            {"id": "CD-Sci-Invest-Co", "parent_id": "CD-Invest-Group", "code": "101202", "full_name": "承德高新区科技创新投资有限公司", "short_name": "科投公司", "type": "SOE", "level": 3, "sort_order": 2, "children": []},
+            {"id": "CD-Cultural-Tourism-Co", "parent_id": "CD-Invest-Group", "code": "101203", "full_name": "承德高新区文旅发展有限公司", "short_name": "文旅公司", "type": "SOE", "level": 3, "sort_order": 3, "children": []},
+            {"id": "CD-Power-Center", "parent_id": "CD-Invest-Group", "code": "101204", "full_name": "国网承德高新区供电中心", "short_name": "高新区供电中心", "type": "SOE", "level": 3, "sort_order": 4, "children": []}
+          ]}
+        ]
+      }
+    ]
+  }
+]

@@ -1,69 +1,211 @@
 <script setup lang="ts">
-import { onMounted, reactive, ref } from 'vue'
+import { computed, nextTick, onMounted, reactive, ref, watch } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import api from '@/api/http'
-import { ElMessage, ElMessageBox } from 'element-plus'
+import { ElMessage, ElMessageBox, type ElTree } from 'element-plus'
 import { useAuthStore } from '@/stores/auth'
 import PageHeader from '@/components/common/PageHeader.vue'
 import PageCard from '@/components/common/PageCard.vue'
+import { statusLabel } from '@/utils/status-label'
 
 interface Org {
   id: number
   orgCode: string
   orgName: string
   parentId: number
+  orgType?: number
   status: number
+  children?: Org[]
+}
+
+interface UserRow {
+  id: number
+  username: string
+  displayName: string
+  orgId: number
+  status: number
+  roleIds?: number[]
+  roleNames?: string[]
+}
+
+interface Role {
+  id: number
+  roleName: string
+  roleCode?: string
+}
+
+interface MenuRow {
+  id: number
+  parentId: number
+  menuName: string
+  menuType: number
+}
+
+interface CheckNode {
+  id: number
+  label: string
+  children?: CheckNode[]
 }
 
 const auth = useAuthStore()
+const route = useRoute()
+const router = useRouter()
+
 const orgs = ref<Org[]>([])
-const dialogVisible = ref(false)
-const editVisible = ref(false)
+const roles = ref<Role[]>([])
+const selectedOrgId = ref<number | null>(null)
+const users = ref<UserRow[]>([])
+const usersLoading = ref(false)
+const userTotal = ref(0)
+const userPage = ref(1)
+const userKeyword = ref('')
+
+const orgDialogVisible = ref(false)
+const orgEditVisible = ref(false)
+const userDialogVisible = ref(false)
+const userEditVisible = ref(false)
+const permDialogVisible = ref(false)
 const submitting = ref(false)
 
-const form = reactive({
-  orgCode: '',
-  orgName: '',
-  parentId: 0 as number,
+const orgForm = reactive({ orgCode: '', orgName: '', parentId: 0 as number })
+const orgEditForm = reactive({ id: 0, orgName: '', parentId: 0 as number, status: 1 })
+const userForm = reactive({
+  username: '',
+  password: 'Test@12345',
+  displayName: '',
+  orgId: undefined as number | undefined,
+  roleIds: [] as number[],
 })
-
-const editForm = reactive({
+const userEditForm = reactive({
   id: 0,
-  orgName: '',
-  parentId: 0 as number,
+  displayName: '',
   status: 1,
+  orgId: undefined as number | undefined,
+  roleIds: [] as number[],
 })
 
-async function load() {
+const permTree = ref<CheckNode[]>([])
+const permTreeRef = ref<InstanceType<typeof ElTree>>()
+const permTitle = ref('')
+
+const selectedOrg = computed(() => orgs.value.find((o) => o.id === selectedOrgId.value) || null)
+
+const orgTree = computed(() => {
+  const map = new Map<number, Org>()
+  const roots: Org[] = []
+  for (const o of orgs.value) {
+    map.set(o.id, { ...o, children: [] })
+  }
+  for (const o of map.values()) {
+    const p = o.parentId
+    if (p && map.has(p)) map.get(p)!.children!.push(o)
+    else roots.push(o)
+  }
+  const sortRec = (list: Org[]) => {
+    list.sort((a, b) => (a.orgCode || '').localeCompare(b.orgCode || '', 'zh-CN'))
+    list.forEach((n) => n.children && sortRec(n.children))
+  }
+  sortRec(roots)
+  return roots
+})
+
+function buildCheckTree(rows: MenuRow[]): CheckNode[] {
+  const map = new Map<number, CheckNode>()
+  const roots: CheckNode[] = []
+  for (const r of rows) {
+    const suffix = r.menuType === 3 ? ' [按钮]' : r.menuType === 1 ? ' [目录]' : ''
+    map.set(r.id, { id: r.id, label: `${r.menuName}${suffix}`, children: [] })
+  }
+  for (const r of rows) {
+    const node = map.get(r.id)!
+    if (!r.parentId || r.parentId === 0 || !map.has(r.parentId)) roots.push(node)
+    else map.get(r.parentId)!.children!.push(node)
+  }
+  const prune = (nodes: CheckNode[]) => {
+    for (const n of nodes) {
+      if (n.children?.length === 0) delete n.children
+      else if (n.children) prune(n.children)
+    }
+  }
+  prune(roots)
+  return roots
+}
+
+async function loadOrgs() {
   const res = await api.get('/system/orgs')
-  orgs.value = res.data
+  orgs.value = res.data || []
+  if (!selectedOrgId.value && orgs.value.length) {
+    const fromQuery = Number(route.query.orgId)
+    selectedOrgId.value = Number.isFinite(fromQuery) && fromQuery > 0
+      ? fromQuery
+      : (orgs.value.find((o) => o.parentId === 0)?.id || orgs.value[0].id)
+  }
 }
 
-async function openCreate() {
-  form.orgCode = ''
-  form.orgName = ''
-  form.parentId = orgs.value[0]?.id || 0
-  dialogVisible.value = true
+async function loadRoles() {
+  const res = await api.get('/system/roles')
+  roles.value = res.data || []
 }
 
-function openEdit(row: Org) {
-  editForm.id = row.id
-  editForm.orgName = row.orgName
-  editForm.parentId = row.parentId
-  editForm.status = row.status ?? 1
-  editVisible.value = true
+async function loadUsers() {
+  if (!selectedOrgId.value) {
+    users.value = []
+    userTotal.value = 0
+    return
+  }
+  usersLoading.value = true
+  try {
+    const res = await api.get('/system/users', {
+      params: {
+        page: userPage.value,
+        size: 20,
+        orgId: selectedOrgId.value,
+        keyword: userKeyword.value || undefined,
+      },
+    })
+    users.value = res.data?.records || []
+    userTotal.value = res.data?.total || 0
+  } finally {
+    usersLoading.value = false
+  }
 }
 
-async function submitCreate() {
-  if (!form.orgCode || !form.orgName) {
+function selectOrg(id: number) {
+  selectedOrgId.value = id
+  userPage.value = 1
+  router.replace({ query: { ...route.query, orgId: String(id) } })
+}
+
+watch(selectedOrgId, () => {
+  loadUsers()
+})
+
+async function openCreateOrg() {
+  orgForm.orgCode = ''
+  orgForm.orgName = ''
+  orgForm.parentId = selectedOrgId.value || orgs.value.find((o) => o.parentId === 0)?.id || 0
+  orgDialogVisible.value = true
+}
+
+function openEditOrg(row: Org) {
+  orgEditForm.id = row.id
+  orgEditForm.orgName = row.orgName
+  orgEditForm.parentId = row.parentId
+  orgEditForm.status = row.status ?? 1
+  orgEditVisible.value = true
+}
+
+async function submitCreateOrg() {
+  if (!orgForm.orgCode || !orgForm.orgName) {
     ElMessage.warning('请填写编码与名称')
     return
   }
   submitting.value = true
   try {
-    await api.post('/system/orgs', form)
+    await api.post('/system/orgs', orgForm)
     ElMessage.success('机构已创建')
-    dialogVisible.value = false
-    load()
+    orgDialogVisible.value = false
+    await loadOrgs()
   } catch (e: unknown) {
     ElMessage.error(e instanceof Error ? e.message : '创建失败')
   } finally {
@@ -71,17 +213,17 @@ async function submitCreate() {
   }
 }
 
-async function submitEdit() {
+async function submitEditOrg() {
   submitting.value = true
   try {
-    await api.put(`/system/orgs/${editForm.id}`, {
-      orgName: editForm.orgName,
-      parentId: editForm.parentId,
-      status: editForm.status,
+    await api.put(`/system/orgs/${orgEditForm.id}`, {
+      orgName: orgEditForm.orgName,
+      parentId: orgEditForm.parentId,
+      status: orgEditForm.status,
     })
     ElMessage.success('机构已更新')
-    editVisible.value = false
-    load()
+    orgEditVisible.value = false
+    await loadOrgs()
   } catch (e: unknown) {
     ElMessage.error(e instanceof Error ? e.message : '更新失败')
   } finally {
@@ -94,7 +236,8 @@ async function removeOrg(row: Org) {
     await ElMessageBox.confirm(`确认删除机构「${row.orgName}」？`, '删除机构', { type: 'warning' })
     await api.delete(`/system/orgs/${row.id}`)
     ElMessage.success('机构已删除')
-    load()
+    if (selectedOrgId.value === row.id) selectedOrgId.value = null
+    await loadOrgs()
   } catch (e: unknown) {
     if (e !== 'cancel' && e !== 'close') {
       ElMessage.error(e instanceof Error ? e.message : '删除失败')
@@ -102,96 +245,404 @@ async function removeOrg(row: Org) {
   }
 }
 
-onMounted(load)
+function openCreateUser() {
+  if (!selectedOrgId.value) {
+    ElMessage.warning('请先选择左侧组织')
+    return
+  }
+  userForm.username = ''
+  userForm.displayName = ''
+  userForm.password = 'Test@12345'
+  userForm.orgId = selectedOrgId.value
+  userForm.roleIds = []
+  userDialogVisible.value = true
+}
+
+async function openEditUser(row: UserRow) {
+  userEditForm.id = row.id
+  userEditForm.displayName = row.displayName
+  userEditForm.status = row.status
+  userEditForm.orgId = row.orgId
+  userEditForm.roleIds = row.roleIds?.length
+    ? [...row.roleIds]
+    : ((await api.get(`/system/users/${row.id}/roles`)).data || [])
+  userEditVisible.value = true
+}
+
+async function submitCreateUser() {
+  if (!userForm.username || !userForm.password || !userForm.displayName || !userForm.orgId) {
+    ElMessage.warning('请填写完整信息')
+    return
+  }
+  submitting.value = true
+  try {
+    await api.post('/system/users', { ...userForm })
+    ElMessage.success('用户已创建')
+    userDialogVisible.value = false
+    await loadUsers()
+  } catch (e: unknown) {
+    ElMessage.error(e instanceof Error ? e.message : '创建失败')
+  } finally {
+    submitting.value = false
+  }
+}
+
+async function submitEditUser() {
+  submitting.value = true
+  try {
+    await api.put(`/system/users/${userEditForm.id}`, {
+      displayName: userEditForm.displayName,
+      status: userEditForm.status,
+      orgId: userEditForm.orgId,
+      roleIds: userEditForm.roleIds,
+    })
+    ElMessage.success('用户已更新')
+    userEditVisible.value = false
+    await loadUsers()
+  } catch (e: unknown) {
+    ElMessage.error(e instanceof Error ? e.message : '更新失败')
+  } finally {
+    submitting.value = false
+  }
+}
+
+async function disableUser(row: UserRow) {
+  try {
+    await ElMessageBox.confirm(`确认禁用用户「${row.username}」？`, '禁用用户', { type: 'warning' })
+    await api.delete(`/system/users/${row.id}`)
+    ElMessage.success('用户已禁用')
+    await loadUsers()
+  } catch (e: unknown) {
+    if (e !== 'cancel' && e !== 'close') {
+      ElMessage.error(e instanceof Error ? e.message : '禁用失败')
+    }
+  }
+}
+
+async function resetPassword(row: UserRow) {
+  try {
+    const { value } = await ElMessageBox.prompt(`为用户「${row.username}」设置新密码`, '重置密码', {
+      inputType: 'password',
+      inputValue: 'Test@12345',
+    })
+    await api.put(`/system/users/${row.id}/password`, { password: value })
+    ElMessage.success('密码已重置')
+  } catch (e: unknown) {
+    if (e !== 'cancel' && e !== 'close') {
+      ElMessage.error(e instanceof Error ? e.message : '重置失败')
+    }
+  }
+}
+
+/** 只读查看：该用户角色合并后的菜单权限 */
+async function viewUserPerms(row: UserRow) {
+  permTitle.value = `${row.displayName || row.username} · 菜单权限（只读）`
+  const roleIds = row.roleIds?.length
+    ? row.roleIds
+    : ((await api.get(`/system/users/${row.id}/roles`)).data as number[]) || []
+  const [menusRes, ...assigned] = await Promise.all([
+    api.get('/system/menus'),
+    ...roleIds.map((rid) => api.get(`/system/roles/${rid}/menus`)),
+  ])
+  const menuIds = new Set<number>()
+  for (const res of assigned) {
+    for (const id of res.data || []) menuIds.add(Number(id))
+  }
+  permTree.value = buildCheckTree(menusRes.data || [])
+  permDialogVisible.value = true
+  await nextTick()
+  permTreeRef.value?.setCheckedKeys([...menuIds], false)
+}
+
+onMounted(async () => {
+  await Promise.all([loadOrgs(), loadRoles()])
+  await loadUsers()
+})
 </script>
 
 <template>
   <div>
-    <PageHeader title="机构管理" description="组织机构与部门信息">
+    <PageHeader title="组织与账号" description="在组织树中点选单位，查看并管理该单位下的账号、角色与菜单权限">
+      <el-button v-if="auth.hasPermission('system:org:add')" @click="openCreateOrg">新增机构</el-button>
       <el-button
-        v-if="auth.hasPermission('system:org:add')"
+        v-if="auth.hasPermission('system:user:add')"
         type="primary"
-        @click="openCreate"
+        :disabled="!selectedOrgId"
+        @click="openCreateUser"
       >
-        新增机构
+        为本单位新建账号
       </el-button>
     </PageHeader>
-    <PageCard>
-      <el-table class="portal-table" :data="orgs" stripe>
-        <el-table-column prop="orgCode" label="编码" min-width="120" />
-        <el-table-column prop="orgName" label="名称" min-width="160" />
-        <el-table-column prop="parentId" label="上级ID" width="100" />
-        <el-table-column label="操作" width="160" fixed="right">
-          <template #default="{ row }">
-            <el-button
-              v-if="auth.hasPermission('system:org:edit')"
-              link
-              type="primary"
-              @click="openEdit(row)"
-            >
-              编辑
-            </el-button>
-            <el-button
-              v-if="auth.hasPermission('system:org:delete')"
-              link
-              type="danger"
-              @click="removeOrg(row)"
-            >
-              删除
-            </el-button>
-          </template>
-        </el-table-column>
-      </el-table>
-    </PageCard>
 
-    <el-dialog v-model="dialogVisible" title="新增机构" width="440px" destroy-on-close>
+    <div class="org-user-layout">
+      <PageCard class="org-pane" title="组织机构">
+        <el-tree
+          :data="orgTree"
+          node-key="id"
+          default-expand-all
+          highlight-current
+          :current-node-key="selectedOrgId ?? undefined"
+          :props="{ label: 'orgName', children: 'children' }"
+          @node-click="(data: Org) => selectOrg(data.id)"
+        >
+          <template #default="{ data }">
+            <span class="org-node">
+              <span>{{ data.orgName }}</span>
+              <span class="org-code">{{ data.orgCode }}</span>
+            </span>
+          </template>
+        </el-tree>
+      </PageCard>
+
+      <PageCard class="user-pane" :title="selectedOrg ? `${selectedOrg.orgName} · 账号` : '请选择组织'">
+        <template v-if="selectedOrg">
+          <div class="user-toolbar">
+            <el-form inline class="portal-inline-form">
+              <el-form-item label="搜索" class="portal-field-md">
+                <el-input
+                  v-model="userKeyword"
+                  clearable
+                  placeholder="用户名/姓名"
+                  @keyup.enter="userPage = 1; loadUsers()"
+                />
+              </el-form-item>
+              <el-form-item class="portal-form-actions">
+                <el-button type="primary" @click="userPage = 1; loadUsers()">查询</el-button>
+                <el-button
+                  v-if="auth.hasPermission('system:org:edit')"
+                  @click="openEditOrg(selectedOrg)"
+                >
+                  编辑本单位
+                </el-button>
+              </el-form-item>
+            </el-form>
+          </div>
+
+          <el-table class="portal-table" :data="users" v-loading="usersLoading" stripe>
+            <el-table-column prop="username" label="用户名" min-width="110" />
+            <el-table-column prop="displayName" label="姓名" min-width="100" />
+            <el-table-column label="角色" min-width="160">
+              <template #default="{ row }">
+                <template v-if="row.roleNames?.length">
+                  <el-tag
+                    v-for="name in row.roleNames"
+                    :key="name"
+                    size="small"
+                    class="role-tag"
+                  >
+                    {{ name }}
+                  </el-tag>
+                </template>
+                <span v-else class="muted">未分配</span>
+              </template>
+            </el-table-column>
+            <el-table-column label="状态" width="90">
+              <template #default="{ row }">
+                <el-tag :type="row.status === 1 ? 'success' : 'info'" size="small">
+                  {{ statusLabel(row.status === 1 ? 'ACTIVE' : 'DISABLED') }}
+                </el-tag>
+              </template>
+            </el-table-column>
+            <el-table-column label="操作" width="280" fixed="right">
+              <template #default="{ row }">
+                <el-button
+                  v-if="auth.hasPermission('system:user:edit')"
+                  link
+                  type="primary"
+                  @click="openEditUser(row)"
+                >
+                  编辑角色
+                </el-button>
+                <el-button link type="primary" @click="viewUserPerms(row)">看权限</el-button>
+                <el-button
+                  v-if="auth.hasPermission('system:user:edit')"
+                  link
+                  type="primary"
+                  @click="resetPassword(row)"
+                >
+                  重置密码
+                </el-button>
+                <el-button
+                  v-if="auth.hasPermission('system:user:delete') && row.status === 1"
+                  link
+                  type="danger"
+                  @click="disableUser(row)"
+                >
+                  禁用
+                </el-button>
+              </template>
+            </el-table-column>
+          </el-table>
+          <el-pagination
+            class="pager"
+            layout="total, prev, pager, next"
+            :total="userTotal"
+            :current-page="userPage"
+            @current-change="(p: number) => { userPage = p; loadUsers() }"
+          />
+        </template>
+        <el-empty v-else description="请从左侧选择一个组织单位" />
+      </PageCard>
+    </div>
+
+    <el-dialog v-model="orgDialogVisible" title="新增机构" width="440px" destroy-on-close>
       <el-form label-position="top">
-        <el-form-item label="编码" required>
-          <el-input v-model="form.orgCode" />
-        </el-form-item>
-        <el-form-item label="名称" required>
-          <el-input v-model="form.orgName" />
-        </el-form-item>
+        <el-form-item label="编码" required><el-input v-model="orgForm.orgCode" /></el-form-item>
+        <el-form-item label="名称" required><el-input v-model="orgForm.orgName" /></el-form-item>
         <el-form-item label="上级机构">
-          <el-select v-model="form.parentId" style="width: 100%">
+          <el-select v-model="orgForm.parentId" filterable style="width: 100%">
             <el-option :value="0" label="无（顶级）" />
-            <el-option v-for="o in orgs" :key="o.id" :label="o.orgName" :value="o.id" />
+            <el-option v-for="o in orgs" :key="o.id" :label="`${o.orgName} (${o.orgCode})`" :value="o.id" />
           </el-select>
         </el-form-item>
       </el-form>
       <template #footer>
-        <el-button @click="dialogVisible = false">取消</el-button>
-        <el-button type="primary" :loading="submitting" @click="submitCreate">确定</el-button>
+        <el-button @click="orgDialogVisible = false">取消</el-button>
+        <el-button type="primary" :loading="submitting" @click="submitCreateOrg">确定</el-button>
       </template>
     </el-dialog>
 
-    <el-dialog v-model="editVisible" title="编辑机构" width="440px" destroy-on-close>
+    <el-dialog v-model="orgEditVisible" title="编辑机构" width="440px" destroy-on-close>
       <el-form label-position="top">
-        <el-form-item label="名称" required>
-          <el-input v-model="editForm.orgName" />
-        </el-form-item>
+        <el-form-item label="名称" required><el-input v-model="orgEditForm.orgName" /></el-form-item>
         <el-form-item label="上级机构">
-          <el-select v-model="editForm.parentId" style="width: 100%">
+          <el-select v-model="orgEditForm.parentId" filterable style="width: 100%">
             <el-option :value="0" label="无（顶级）" />
             <el-option
-              v-for="o in orgs.filter((x) => x.id !== editForm.id)"
+              v-for="o in orgs.filter((x) => x.id !== orgEditForm.id)"
               :key="o.id"
-              :label="o.orgName"
+              :label="`${o.orgName} (${o.orgCode})`"
               :value="o.id"
             />
           </el-select>
         </el-form-item>
         <el-form-item label="状态">
-          <el-radio-group v-model="editForm.status">
+          <el-radio-group v-model="orgEditForm.status">
             <el-radio :value="1">启用</el-radio>
             <el-radio :value="0">停用</el-radio>
           </el-radio-group>
         </el-form-item>
       </el-form>
       <template #footer>
-        <el-button @click="editVisible = false">取消</el-button>
-        <el-button type="primary" :loading="submitting" @click="submitEdit">保存</el-button>
+        <el-button @click="orgEditVisible = false">取消</el-button>
+        <el-button type="primary" :loading="submitting" @click="submitEditOrg">保存</el-button>
+        <el-button
+          v-if="auth.hasPermission('system:org:delete')"
+          type="danger"
+          plain
+          @click="removeOrg(selectedOrg!)"
+        >
+          删除
+        </el-button>
+      </template>
+    </el-dialog>
+
+    <el-dialog v-model="userDialogVisible" title="为本单位新建账号" width="480px" destroy-on-close>
+      <el-form label-position="top">
+        <el-form-item label="所属单位">
+          <el-input :model-value="selectedOrg?.orgName" disabled />
+        </el-form-item>
+        <el-form-item label="用户名" required><el-input v-model="userForm.username" /></el-form-item>
+        <el-form-item label="姓名" required><el-input v-model="userForm.displayName" /></el-form-item>
+        <el-form-item label="密码" required>
+          <el-input v-model="userForm.password" type="password" show-password />
+        </el-form-item>
+        <el-form-item label="角色">
+          <el-select v-model="userForm.roleIds" multiple filterable placeholder="如：机构管理员" style="width: 100%">
+            <el-option
+              v-for="r in roles"
+              :key="r.id"
+              :label="r.roleCode ? `${r.roleName}（${r.roleCode}）` : r.roleName"
+              :value="r.id"
+            />
+          </el-select>
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="userDialogVisible = false">取消</el-button>
+        <el-button type="primary" :loading="submitting" @click="submitCreateUser">确定</el-button>
+      </template>
+    </el-dialog>
+
+    <el-dialog v-model="userEditVisible" title="编辑账号与角色" width="480px" destroy-on-close>
+      <el-form label-position="top">
+        <el-form-item label="姓名" required><el-input v-model="userEditForm.displayName" /></el-form-item>
+        <el-form-item label="状态">
+          <el-radio-group v-model="userEditForm.status">
+            <el-radio :value="1">启用</el-radio>
+            <el-radio :value="0">禁用</el-radio>
+          </el-radio-group>
+        </el-form-item>
+        <el-form-item label="所属机构">
+          <el-select v-model="userEditForm.orgId" filterable style="width: 100%">
+            <el-option v-for="o in orgs" :key="o.id" :label="`${o.orgName} (${o.orgCode})`" :value="o.id" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="角色">
+          <el-select v-model="userEditForm.roleIds" multiple filterable style="width: 100%">
+            <el-option
+              v-for="r in roles"
+              :key="r.id"
+              :label="r.roleCode ? `${r.roleName}（${r.roleCode}）` : r.roleName"
+              :value="r.id"
+            />
+          </el-select>
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="userEditVisible = false">取消</el-button>
+        <el-button type="primary" :loading="submitting" @click="submitEditUser">保存</el-button>
+      </template>
+    </el-dialog>
+
+    <el-dialog v-model="permDialogVisible" :title="permTitle" width="520px" destroy-on-close>
+      <p class="hint">勾选状态为当前用户通过角色合并得到的菜单权限（只读，改权限请到「用户中心 · 角色菜单权限」）。</p>
+      <el-tree
+        ref="permTreeRef"
+        :data="permTree"
+        show-checkbox
+        node-key="id"
+        default-expand-all
+        :props="{ label: 'label', children: 'children', disabled: () => true }"
+      />
+      <template #footer>
+        <el-button type="primary" @click="permDialogVisible = false">关闭</el-button>
+        <el-button @click="router.push('/system/uum?tab=users')">去改角色菜单</el-button>
       </template>
     </el-dialog>
   </div>
 </template>
+
+<style scoped>
+.org-user-layout {
+  display: grid;
+  grid-template-columns: minmax(260px, 320px) 1fr;
+  gap: 16px;
+  align-items: start;
+}
+.org-pane {
+  max-height: calc(100vh - 180px);
+  overflow: auto;
+}
+.user-pane {
+  min-width: 0;
+}
+.org-node {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 13px;
+}
+.org-code {
+  color: var(--el-text-color-secondary);
+  font-size: 12px;
+}
+.role-tag { margin-right: 4px; margin-bottom: 2px; }
+.muted { color: var(--el-text-color-secondary); }
+.hint { color: var(--el-text-color-secondary); margin: 0 0 12px; line-height: 1.5; font-size: 13px; }
+.pager { margin-top: 16px; justify-content: flex-end; }
+.user-toolbar { margin-bottom: 8px; }
+@media (max-width: 960px) {
+  .org-user-layout { grid-template-columns: 1fr; }
+}
+</style>

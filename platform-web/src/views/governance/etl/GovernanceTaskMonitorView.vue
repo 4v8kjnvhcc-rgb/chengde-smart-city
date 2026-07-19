@@ -259,7 +259,6 @@ onUnmounted(clearPoll)
       <el-col :span="14">
         <div style="margin-bottom:8px;font-weight:600">
           节点运行情况 {{ selectedRunId ? `#${selectedRunId}` : '' }}
-          <span style="font-weight:400;font-size:12px;color:#909399;margin-left:8px">右键或点击「查看日志」</span>
         </div>
         <el-table
           :data="logs"
@@ -273,7 +272,9 @@ onUnmounted(clearPoll)
             <template #default>{{ selectedRunId }}</template>
           </el-table-column>
           <el-table-column prop="nodeName" label="节点名称" width="96" />
-          <el-table-column prop="nodeType" label="类型" width="100" />
+          <el-table-column label="类型" width="100">
+            <template #default="{ row }">{{ statusLabel(row.nodeType) }}</template>
+          </el-table-column>
           <el-table-column label="节点状态" width="88">
             <template #default="{ row }">
               <el-tag :type="statusTagType(row.status)" size="small">{{ statusLabel(row.status) }}</el-tag>

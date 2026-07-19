@@ -23,7 +23,7 @@ export const REGISTER_MODULES: IngestionModuleMeta[] = [
   { key: 'm045', mCode: 'M045', label: '数据资产标签管理', subLabel: '标签体系', system: 'register' },
   { key: 'm046', mCode: 'M046', label: '数据资产报告', subLabel: '资产大屏', system: 'register' },
   { key: 'm047', mCode: 'M047', label: '数据资产图谱分析', subLabel: '血缘图谱', system: 'register' },
-  { key: 'm048', mCode: 'M048', label: '访问控制管理', subLabel: '跳转系统管理', system: 'register' },
+  { key: 'm048', mCode: 'M048', label: '访问控制管理', subLabel: '已迁至系统管理', system: 'register' },
   { key: 'm049', mCode: 'M049', label: '系统维护管理', subLabel: '跳转系统管理', system: 'register' },
   { key: 'm050', mCode: 'M050', label: '数据字典管理', subLabel: '字典管理', system: 'register' },
 ]

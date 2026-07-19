@@ -18,6 +18,7 @@ const iconMap: Record<string, object> = {
   '/master-data': Coin,
   '/analytics': DataAnalysis,
   '/system': Setting,
+  '/integration': Connection,
   '/dashboard': Odometer,
   '/': HomeFilled,
 }

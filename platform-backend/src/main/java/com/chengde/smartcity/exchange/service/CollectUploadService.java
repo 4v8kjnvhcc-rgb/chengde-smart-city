@@ -62,6 +62,33 @@ public class CollectUploadService {
     }
 
     @Transactional
+    public void deleteTemplate(UserPrincipal operator, Long id) {
+        IngUploadTemplate t = templateMapper.selectById(id);
+        if (t == null) {
+            return;
+        }
+        templateMapper.deleteById(id);
+        auditService.log(operator.getUserId(), operator.getUsername(), operator.getOrgId(),
+                "ING_UPLOAD_TPL_DEL", "ing_upload_template", String.valueOf(id), t.getTemplateName());
+    }
+
+    @Transactional
+    public void updateTemplateStatus(UserPrincipal operator, Long id, String status) {
+        if (!"ACTIVE".equals(status) && !"INACTIVE".equals(status)) {
+            throw new BusinessException(400, "status 仅支持 ACTIVE / INACTIVE");
+        }
+        IngUploadTemplate t = templateMapper.selectById(id);
+        if (t == null) {
+            throw new BusinessException(404, "模板不存在");
+        }
+        t.setStatus(status);
+        templateMapper.updateById(t);
+        auditService.log(operator.getUserId(), operator.getUsername(), operator.getOrgId(),
+                "ING_UPLOAD_TPL_STATUS", "ing_upload_template", String.valueOf(id),
+                t.getTemplateName() + " → " + status);
+    }
+
+    @Transactional
     public Long uploadFile(UserPrincipal operator, MultipartFile file, String templateCode) {
         IngUploadRecord r = new IngUploadRecord();
         r.setTemplateCode(str(templateCode, "TPL_DEFAULT"));
@@ -86,32 +113,175 @@ public class CollectUploadService {
         return taskMapper.selectList(q);
     }
 
+    public List<IngIngestTask> listJobs(String accessMode) {
+        LambdaQueryWrapper<IngIngestTask> q = new LambdaQueryWrapper<IngIngestTask>().orderByDesc(IngIngestTask::getId);
+        if (accessMode != null && !accessMode.isBlank()) {
+            q.eq(IngIngestTask::getAccessMode, accessMode.toUpperCase());
+        }
+        return taskMapper.selectList(q);
+    }
+
+    public IngIngestTask getJob(Long id) {
+        IngIngestTask t = taskMapper.selectById(id);
+        if (t == null) {
+            throw new BusinessException(404, "接入任务不存在");
+        }
+        return t;
+    }
+
     @Transactional
     public Long createTask(UserPrincipal operator, Map<String, Object> body) {
-        Long channelId = Long.valueOf(String.valueOf(required(body.get("channelId"), "channelId")));
-        IngIngestChannel ch = channelMapper.selectById(channelId);
-        if (ch == null) {
-            throw new BusinessException(404, "通道不存在");
+        Long channelId = body.get("channelId") != null
+                ? Long.valueOf(String.valueOf(body.get("channelId")))
+                : null;
+        if (channelId == null) {
+            IngIngestChannel ch = channelMapper.selectOne(new LambdaQueryWrapper<IngIngestChannel>()
+                    .eq(IngIngestChannel::getChannelType, "TABLE").last("LIMIT 1"));
+            if (ch == null) {
+                throw new BusinessException(400, "未找到 TABLE 接入通道");
+            }
+            channelId = ch.getId();
+        } else {
+            IngIngestChannel ch = channelMapper.selectById(channelId);
+            if (ch == null) {
+                throw new BusinessException(404, "通道不存在");
+            }
         }
         IngIngestTask task = new IngIngestTask();
         task.setTaskCode("TASK_" + System.currentTimeMillis());
         task.setTaskName(required(body.get("taskName"), "taskName").toString());
         task.setChannelId(channelId);
-        task.setSourceId(longVal(body.get("sourceId")));
-        task.setTableId(longVal(body.get("tableId")));
-        task.setTargetTable(str(body.get("targetTable"), null));
-        task.setCollectedRows(longVal(body.get("collectedRows")));
-        task.setScheduleCron(str(body.get("scheduleCron"), "0 2 * * *"));
+        applyJobFields(task, body);
         String status = str(body.get("status"), "IDLE");
         task.setStatus(status);
-        task.setLastRunMessage("registered type=" + ch.getChannelType());
+        if (task.getLastRunMessage() == null) {
+            task.setLastRunMessage("registered");
+        }
         if ("SUCCESS".equalsIgnoreCase(status)) {
             task.setLastRunAt(java.time.LocalDateTime.now());
             task.setLastRunMessage(str(body.get("lastRunMessage"), "collect success"));
             markTableCollected(task.getTableId(), task.getTargetTable(), task.getCollectedRows());
         }
         taskMapper.insert(task);
+        auditService.log(operator.getUserId(), operator.getUsername(), operator.getOrgId(),
+                "ING_JOB_CREATE", "ing_ingest_task", String.valueOf(task.getId()), task.getTaskName());
         return task.getId();
+    }
+
+    @Transactional
+    public void updateJob(UserPrincipal operator, Long id, Map<String, Object> body) {
+        IngIngestTask task = getJob(id);
+        if (body.containsKey("taskName") && body.get("taskName") != null) {
+            task.setTaskName(String.valueOf(body.get("taskName")));
+        }
+        applyJobFields(task, body);
+        taskMapper.updateById(task);
+        auditService.log(operator.getUserId(), operator.getUsername(), operator.getOrgId(),
+                "ING_JOB_UPDATE", "ing_ingest_task", String.valueOf(id), task.getTaskName());
+    }
+
+    @Transactional
+    public void resetStuckJob(UserPrincipal operator, Long id) {
+        IngIngestTask task = getJob(id);
+        task.setStatus("FAILED");
+        task.setLastRunAt(java.time.LocalDateTime.now());
+        task.setLastRunMessage("已手动重置，可重新执行");
+        task.setErrorDetail("manual reset by " + operator.getUsername());
+        taskMapper.updateById(task);
+        auditService.log(operator.getUserId(), operator.getUsername(), operator.getOrgId(),
+                "ING_JOB_RESET", "ing_ingest_task", String.valueOf(id), task.getTaskName());
+    }
+
+    @Transactional
+    public void deleteJob(UserPrincipal operator, Long id) {
+        IngIngestTask task = getJob(id);
+        if ("RUNNING".equalsIgnoreCase(task.getStatus())) {
+            throw new BusinessException(400, "任务运行中，请先重置后再删除");
+        }
+        String name = task.getTaskName();
+        taskMapper.deleteById(id);
+        auditService.log(operator.getUserId(), operator.getUsername(), operator.getOrgId(),
+                "ING_JOB_DELETE", "ing_ingest_task", String.valueOf(id), name);
+    }
+
+    @SuppressWarnings("unchecked")
+    private void applyJobFields(IngIngestTask task, Map<String, Object> body) {
+        if (body.get("sourceId") != null) task.setSourceId(longVal(body.get("sourceId")));
+        if (body.get("tableId") != null) task.setTableId(longVal(body.get("tableId")));
+        if (body.get("targetTable") != null) task.setTargetTable(str(body.get("targetTable"), null));
+        if (body.get("collectedRows") != null) task.setCollectedRows(longVal(body.get("collectedRows")));
+        if (body.get("scheduleCron") != null) task.setScheduleCron(str(body.get("scheduleCron"), ""));
+        if (body.get("accessMode") != null) {
+            task.setAccessMode(str(body.get("accessMode"), "SINGLE").toUpperCase());
+        } else if (task.getAccessMode() == null) {
+            task.setAccessMode("SINGLE");
+        }
+        if (body.get("writeMode") != null) {
+            task.setWriteMode(str(body.get("writeMode"), "FULL").toUpperCase());
+        } else if (task.getWriteMode() == null) {
+            task.setWriteMode("FULL");
+        }
+        if (body.get("watermarkValue") != null) {
+            task.setWatermarkValue(str(body.get("watermarkValue"), null));
+        }
+        if (body.get("enabled") != null) {
+            Object en = body.get("enabled");
+            if (en instanceof Boolean b) {
+                task.setEnabled(b ? 1 : 0);
+            } else {
+                task.setEnabled("1".equals(String.valueOf(en)) || "true".equalsIgnoreCase(String.valueOf(en)) ? 1 : 0);
+            }
+        } else if (task.getEnabled() == null) {
+            task.setEnabled(0);
+        }
+        if (body.get("config") != null) {
+            try {
+                Object cfg = body.get("config");
+                if (cfg instanceof String s) {
+                    task.setConfigJson(s);
+                } else {
+                    task.setConfigJson(new com.fasterxml.jackson.databind.ObjectMapper().writeValueAsString(cfg));
+                }
+            } catch (Exception e) {
+                throw new BusinessException(400, "config 格式无效");
+            }
+        } else if (body.get("configJson") != null) {
+            task.setConfigJson(String.valueOf(body.get("configJson")));
+        }
+        if (task.getConfigJson() != null && !task.getConfigJson().isBlank()) {
+            try {
+                Map<String, Object> cfg = new com.fasterxml.jackson.databind.ObjectMapper()
+                        .readValue(task.getConfigJson(), Map.class);
+                if (task.getAccessMode() == null && cfg.get("accessMode") != null) {
+                    task.setAccessMode(String.valueOf(cfg.get("accessMode")).toUpperCase());
+                }
+                if (cfg.get("writeMode") != null && body.get("writeMode") == null) {
+                    task.setWriteMode(String.valueOf(cfg.get("writeMode")).toUpperCase());
+                }
+                Object single = cfg.get("single");
+                if (single instanceof Map<?, ?> sm) {
+                    if (task.getTableId() == null && sm.get("tableId") != null) {
+                        task.setTableId(longVal(sm.get("tableId")));
+                    }
+                    if ((task.getTargetTable() == null || task.getTargetTable().isBlank()) && sm.get("targetTable") != null) {
+                        task.setTargetTable(String.valueOf(sm.get("targetTable")));
+                    }
+                }
+                Object sql = cfg.get("sql");
+                if (sql instanceof Map<?, ?> qm && task.getSourceId() == null && qm.get("sourceId") != null) {
+                    task.setSourceId(longVal(qm.get("sourceId")));
+                }
+                if (cfg.get("scheduleCron") != null && (task.getScheduleCron() == null || task.getScheduleCron().isBlank())) {
+                    task.setScheduleCron(String.valueOf(cfg.get("scheduleCron")));
+                }
+            } catch (BusinessException e) {
+                throw e;
+            } catch (Exception ignored) {
+            }
+        }
+        if (task.getScheduleCron() == null) {
+            task.setScheduleCron("");
+        }
     }
 
     @Transactional

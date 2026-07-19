@@ -49,6 +49,10 @@ public class KettleExecuteService {
      */
     @Transactional
     public Map<String, Object> executeTask(Long taskId, Map<String, String> params) {
+        if (!kettleClient.isHealthy()) {
+            return Map.of("status", "FAILED",
+                    "message", "Kettle Carte 不可用，请启动 compose profile etl 并设置 INTEGRATION_ENABLED=true");
+        }
         GovGovernanceTask task = taskMapper.selectById(taskId);
         if (task == null) {
             return Map.of("status", "FAILED", "message", "任务不存在");
@@ -61,10 +65,18 @@ public class KettleExecuteService {
             return Map.of("status", "FAILED", "message", "画布为空");
         }
 
+        String graphErr = transConverter.validateGraphOutputRules(graphJson);
+        if (graphErr != null) {
+            return Map.of("status", "FAILED", "message", graphErr);
+        }
+
         try {
-            // 1. 生成 KTR XML
+            // 1. 生成 KTR XML（含真实 connection）
             String ktrXml = transConverter.graphToKtr(graphJson, transName);
             log.info("Generated KTR for task {}: {} bytes", taskId, ktrXml.length());
+
+            // 可选归档到本地仓库目录
+            transConverter.archiveKtr(transName, ktrXml);
 
             // 2. 注册到 Carte
             Map<String, Object> addResult = kettleClient.addTrans(transName, ktrXml);
@@ -82,6 +94,7 @@ public class KettleExecuteService {
             GovGovernanceTaskRun run = new GovGovernanceTaskRun();
             run.setTaskId(taskId);
             run.setTransName(transName);
+            run.setKettleTransName(transName);
             run.setStatus("RUNNING");
             run.setStartedAt(LocalDateTime.now());
             run.setTriggeredBy("USER");
@@ -89,6 +102,7 @@ public class KettleExecuteService {
 
             // 5. 更新任务状态
             task.setStatus("RUNNING");
+            task.setEngineType("KETTLE");
             task.setLastRunAt(LocalDateTime.now());
             taskMapper.updateById(task);
 
@@ -103,6 +117,14 @@ public class KettleExecuteService {
         } catch (Exception e) {
             log.error("Execute task {} failed: {}", taskId, e.getMessage(), e);
             return Map.of("status", "FAILED", "message", "执行失败: " + e.getMessage());
+        }
+    }
+
+    public boolean isCarteAvailable() {
+        try {
+            return kettleClient.isHealthy();
+        } catch (Exception e) {
+            return false;
         }
     }
 

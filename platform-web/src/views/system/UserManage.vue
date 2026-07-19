@@ -154,17 +154,30 @@ async function disableUser(row: UserRow) {
   }
 }
 
-function statusLabel(s: number) {
-  return s === 1 ? '启用' : '禁用'
+async function resetPassword(row: UserRow) {
+  try {
+    const { value } = await ElMessageBox.prompt(`为用户「${row.username}」设置新密码（至少 8 位，含字母和数字）`, '重置密码', {
+      inputType: 'password',
+      inputValue: 'Test@12345',
+      confirmButtonText: '确定',
+      cancelButtonText: '取消',
+    })
+    await api.put(`/system/users/${row.id}/password`, { password: value })
+    ElMessage.success('密码已重置')
+  } catch (e: unknown) {
+    if (e !== 'cancel' && e !== 'close') {
+      ElMessage.error(e instanceof Error ? e.message : '重置失败')
+    }
+  }
 }
-void statusLabel
 
 onMounted(load)
 </script>
 
 <template>
   <div>
-    <PageHeader title="用户管理" description="管理系统用户账号、机构与角色绑定">
+    <PageHeader title="用户管理（全局列表）" description="建议优先在「组织与账号」按单位管理用户；本页为全局检索入口。">
+      <el-button @click="$router.push('/system/orgs')">打开组织与账号</el-button>
       <el-button
         v-if="auth.hasPermission('system:user:add')"
         type="primary"
@@ -183,7 +196,7 @@ onMounted(load)
             <el-tag :type="row.status === 1 ? 'success' : 'info'" size="small">{{ $statusLabel(row.status) }}</el-tag>
           </template>
         </el-table-column>
-        <el-table-column label="操作" width="180" fixed="right">
+        <el-table-column label="操作" width="240" fixed="right">
           <template #default="{ row }">
             <el-button
               v-if="auth.hasPermission('system:user:edit')"
@@ -192,6 +205,14 @@ onMounted(load)
               @click="openEdit(row)"
             >
               编辑
+            </el-button>
+            <el-button
+              v-if="auth.hasPermission('system:user:edit')"
+              link
+              type="primary"
+              @click="resetPassword(row)"
+            >
+              重置密码
             </el-button>
             <el-button
               v-if="auth.hasPermission('system:user:delete') && row.status === 1"

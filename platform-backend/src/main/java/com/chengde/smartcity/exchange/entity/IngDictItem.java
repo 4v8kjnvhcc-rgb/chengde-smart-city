@@ -1,6 +1,8 @@
 package com.chengde.smartcity.exchange.entity;
 
+import com.baomidou.mybatisplus.annotation.FieldStrategy;
 import com.baomidou.mybatisplus.annotation.IdType;
+import com.baomidou.mybatisplus.annotation.TableField;
 import com.baomidou.mybatisplus.annotation.TableId;
 import com.baomidou.mybatisplus.annotation.TableName;
 
@@ -11,6 +13,9 @@ public class IngDictItem {
     private Long dictId;
     private String itemKey;
     private String itemValue;
+    /** 业务使用说明（ALWAYS 保证增改写入，避免空值被默认策略跳过） */
+    @TableField(value = "biz_usage", insertStrategy = FieldStrategy.ALWAYS, updateStrategy = FieldStrategy.ALWAYS)
+    private String bizUsage;
     private Integer sortOrder;
     private String status;
 
@@ -22,6 +27,8 @@ public class IngDictItem {
     public void setItemKey(String itemKey) { this.itemKey = itemKey; }
     public String getItemValue() { return itemValue; }
     public void setItemValue(String itemValue) { this.itemValue = itemValue; }
+    public String getBizUsage() { return bizUsage; }
+    public void setBizUsage(String bizUsage) { this.bizUsage = bizUsage; }
     public Integer getSortOrder() { return sortOrder; }
     public void setSortOrder(Integer sortOrder) { this.sortOrder = sortOrder; }
     public String getStatus() { return status; }

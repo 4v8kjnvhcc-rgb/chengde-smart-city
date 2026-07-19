@@ -11,7 +11,9 @@ import com.chengde.smartcity.security.JwtTokenProvider;
 import com.chengde.smartcity.security.SecurityUserDetailsService;
 import com.chengde.smartcity.security.SessionRedisService;
 import com.chengde.smartcity.security.UserPrincipal;
+import com.chengde.smartcity.system.entity.SysOrg;
 import com.chengde.smartcity.system.entity.SysUser;
+import com.chengde.smartcity.system.mapper.SysOrgMapper;
 import com.chengde.smartcity.system.mapper.SysUserMapper;
 import com.chengde.smartcity.system.service.SecurityConfigService;
 import io.jsonwebtoken.Claims;
@@ -27,6 +29,7 @@ import org.springframework.transaction.annotation.Transactional;
 public class AuthService {
 
     private final SysUserMapper userMapper;
+    private final SysOrgMapper orgMapper;
     private final PasswordEncoder passwordEncoder;
     private final JwtTokenProvider tokenProvider;
     private final JwtProperties jwtProperties;
@@ -36,11 +39,13 @@ public class AuthService {
     private final SecurityConfigService securityConfigService;
     private final AuditService auditService;
 
-    public AuthService(SysUserMapper userMapper, PasswordEncoder passwordEncoder, JwtTokenProvider tokenProvider,
+    public AuthService(SysUserMapper userMapper, SysOrgMapper orgMapper, PasswordEncoder passwordEncoder,
+                       JwtTokenProvider tokenProvider,
                        JwtProperties jwtProperties, SecurityProperties securityProperties,
                        SessionRedisService sessionRedisService, SecurityUserDetailsService userDetailsService,
                        SecurityConfigService securityConfigService, AuditService auditService) {
         this.userMapper = userMapper;
+        this.orgMapper = orgMapper;
         this.passwordEncoder = passwordEncoder;
         this.tokenProvider = tokenProvider;
         this.jwtProperties = jwtProperties;
@@ -119,11 +124,19 @@ public class AuthService {
         sessionRedisService.bindActiveAccessToken(user.getId(), accessClaims.getId(), access);
         sessionRedisService.touchSession(user.getId());
         auditService.log(user.getId(), user.getUsername(), user.getOrgId(), "LOGIN", "auth", user.getUsername(), "登录成功");
+        String orgName = null;
+        if (user.getOrgId() != null) {
+            SysOrg org = orgMapper.selectById(user.getOrgId());
+            if (org != null) {
+                orgName = org.getOrgName();
+            }
+        }
         return new TokenResponse(
                 access,
                 refresh,
                 jwtProperties.accessTokenMinutes() * 60,
-                new TokenResponse.UserInfo(user.getId(), user.getUsername(), user.getDisplayName(), user.getOrgId())
+                new TokenResponse.UserInfo(user.getId(), user.getUsername(), user.getDisplayName(),
+                        user.getOrgId(), orgName)
         );
     }
 }

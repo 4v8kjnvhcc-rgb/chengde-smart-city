@@ -12,6 +12,7 @@ public class IngDataSource {
     private Long projectId;
     private String sourceCode;
     private String sourceName;
+    private String systemName;
     private String sourceType;
     private String connStatus;
     private Integer tableCount;
@@ -31,6 +32,8 @@ public class IngDataSource {
     public void setSourceCode(String sourceCode) { this.sourceCode = sourceCode; }
     public String getSourceName() { return sourceName; }
     public void setSourceName(String sourceName) { this.sourceName = sourceName; }
+    public String getSystemName() { return systemName; }
+    public void setSystemName(String systemName) { this.systemName = systemName; }
     public String getSourceType() { return sourceType; }
     public void setSourceType(String sourceType) { this.sourceType = sourceType; }
     public String getConnStatus() { return connStatus; }

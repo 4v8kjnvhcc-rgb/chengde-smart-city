@@ -1,17 +1,23 @@
 package com.chengde.smartcity.masterdata.service;
 
+import com.chengde.smartcity.integration.config.IntegrationProperties;
+import com.chengde.smartcity.integration.kettle.KettleConnectionService;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
 import java.io.ByteArrayInputStream;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Files;
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import javax.xml.parsers.DocumentBuilderFactory;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import org.w3c.dom.Document;
 import org.w3c.dom.Element;
@@ -19,12 +25,22 @@ import org.w3c.dom.Node;
 import org.w3c.dom.NodeList;
 
 /**
- * 画布 DAG ↔ Kettle .ktr XML 转换引擎（先稳妥支持单向导出 + 基础导入）。
+ * 画布 DAG ↔ Kettle .ktr XML 转换引擎（导出含平台目标库 connection，可供 Carte 执行）。
  */
 @Service
 public class KettleTransConverterService {
 
     private static final ObjectMapper OM = new ObjectMapper();
+    private static final Logger log = LoggerFactory.getLogger(KettleTransConverterService.class);
+
+    private final IntegrationProperties integrationProperties;
+    private final KettleConnectionService connectionService;
+
+    public KettleTransConverterService(IntegrationProperties integrationProperties,
+                                       KettleConnectionService connectionService) {
+        this.integrationProperties = integrationProperties;
+        this.connectionService = connectionService;
+    }
 
     private static final Map<String, String> NODE_TO_KETTLE = Map.ofEntries(
             Map.entry("INPUT", "TableInput"),
@@ -39,7 +55,26 @@ public class KettleTransConverterService {
             Map.entry("AGGREGATE", "GroupBy"),
             Map.entry("PIVOT", "Denormaliser"),
             Map.entry("UNPIVOT", "Normaliser"),
-            Map.entry("SET_VARIABLE", "SetVariable")
+            Map.entry("SET_VARIABLE", "SetVariable"),
+            Map.entry("SPLIT", "SplitField"),
+            Map.entry("VALUE_MAPPER", "ValueMapper"),
+            Map.entry("CONSTANT", "Constant"),
+            Map.entry("FORMULA", "Formula"),
+            Map.entry("STRING_CUT", "StringCut"),
+            Map.entry("REPLACE_STRING", "ReplaceString"),
+            Map.entry("NULL_IF", "NullIf"),
+            Map.entry("IF_NULL", "IfNull"),
+            Map.entry("TYPE_CONVERT", "SelectValues"),
+            Map.entry("SELECT_FIELDS", "SelectValues"),
+            Map.entry("SWITCH_CASE", "SwitchCase"),
+            Map.entry("VALIDATOR", "Validator"),
+            Map.entry("SCRIPT", "ScriptValueMod"),
+            Map.entry("TEXT_INPUT", "TextFileInput"),
+            Map.entry("TEXT_OUTPUT", "TextFileOutput"),
+            Map.entry("EXCEL_INPUT", "ExcelInput"),
+            Map.entry("INSERT_UPDATE", "InsertUpdate"),
+            Map.entry("DB_LOOKUP", "DBLookup"),
+            Map.entry("HTTP", "Rest")
     );
 
     private static final Map<String, String> KETTLE_TO_NODE = reverse(NODE_TO_KETTLE);
@@ -59,27 +94,129 @@ public class KettleTransConverterService {
         m.put("ROWNORMALISER", "UNPIVOT");
         m.put("NORMALISER", "UNPIVOT");
         m.put("DUMMY", "FILTER");
-        m.put("TEXTFILEINPUT", "INPUT");
-        m.put("TEXTFILEOUTPUT", "OUTPUT");
+        m.put("TEXTFILEINPUT", "TEXT_INPUT");
+        m.put("TEXTFILEOUTPUT", "TEXT_OUTPUT");
+        m.put("SPLITFIELD", "SPLIT");
+        m.put("SPLITFIELDS", "SPLIT");
+        m.put("VALUEMAPPER", "VALUE_MAPPER");
+        m.put("STRINGCUT", "STRING_CUT");
+        m.put("REPLACESTRING", "REPLACE_STRING");
+        m.put("NULLIF", "NULL_IF");
+        m.put("IFNULL", "IF_NULL");
+        m.put("SWITCHCASE", "SWITCH_CASE");
+        m.put("SCRIPTVALUEMOD", "SCRIPT");
+        m.put("EXCELINPUT", "EXCEL_INPUT");
+        m.put("INSERTUPDATE", "INSERT_UPDATE");
+        m.put("DBLOOKUP", "DB_LOOKUP");
+        m.put("REST", "HTTP");
         return m;
+    }
+
+    /**
+     * 校验画布输出落层：须有输出节点；表输出须配置目标表；写 ODS 须显式 allowOdsWriteback。
+     * @return 错误信息，通过则 null
+     */
+    public String validateGraphOutputRules(String graphJson) {
+        if (graphJson == null || graphJson.isBlank()) {
+            return "画布为空";
+        }
+        try {
+            JsonNode root = OM.readTree(graphJson);
+            JsonNode nodes = root.get("nodes");
+            if (nodes == null || !nodes.isArray() || nodes.isEmpty()) {
+                return "画布无节点";
+            }
+            boolean hasOut = false;
+            for (JsonNode n : nodes) {
+                String type = n.path("data").path("nodeType").asText("");
+                if ("OUTPUT".equals(type) || "INSERT_UPDATE".equals(type) || "TEXT_OUTPUT".equals(type)) {
+                    hasOut = true;
+                }
+            }
+            if (!hasOut) {
+                return "请先添加输出节点（或文本输出试跑），治理结果须明确写出目标";
+            }
+            for (JsonNode n : nodes) {
+                JsonNode data = n.path("data");
+                String type = data.path("nodeType").asText("");
+                if (!"OUTPUT".equals(type) && !"INSERT_UPDATE".equals(type)) {
+                    continue;
+                }
+                JsonNode cfg = data.path("config");
+                String table = textOr(cfg, "table", textOr(cfg, "outputTable", ""));
+                String conn = textOr(cfg, "connection", textOr(cfg, "outputConnection", ""));
+                String label = data.path("label").asText(n.path("id").asText("output"));
+                if (table.isBlank() || "output_table".equals(table)) {
+                    return "输出节点「" + label + "」未配置目标表";
+                }
+                boolean allowOds = cfg.path("allowOdsWriteback").asBoolean(false);
+                if ("smart_city_ods".equals(conn) && !allowOds) {
+                    return "写回 ODS 须在输出节点勾选「允许回写 ODS」";
+                }
+            }
+            return null;
+        } catch (Exception e) {
+            log.warn("validateGraphOutputRules failed: {}", e.getMessage());
+            return "画布 JSON 解析失败";
+        }
+    }
+
+    private static String textOr(JsonNode cfg, String field, String def) {
+        if (cfg == null || cfg.isMissingNode() || cfg.isNull()) return def;
+        JsonNode n = cfg.get(field);
+        if (n == null || n.isNull()) return def;
+        String v = n.asText("").trim();
+        return v.isEmpty() ? def : v;
     }
 
     public String graphToKtr(String graphJson, String transName) {
         try {
             GraphModel graph = parseGraph(graphJson);
+            String startStep = firstStepLabel(graph);
             StringBuilder xml = new StringBuilder();
             xml.append("<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n");
+            xml.append("<transformation_configuration>\n");
             xml.append("<transformation>\n");
             xml.append("  <info>\n");
             xml.append("    <name>").append(escapeXml(transName)).append("</name>\n");
             xml.append("    <description>治理任务自动生成</description>\n");
+            xml.append("    <extended_description/>\n");
+            xml.append("    <trans_version/>\n");
+            xml.append("    <trans_type>Normal</trans_type>\n");
+            xml.append("    <directory>/</directory>\n");
+            xml.append("    <parameters></parameters>\n");
+            xml.append("    <log>\n");
+            xml.append("      <trans-log-table><connection/><schema/><table/></trans-log-table>\n");
+            xml.append("      <perf-log-table><connection/><schema/><table/></perf-log-table>\n");
+            xml.append("      <channel-log-table><connection/><schema/><table/></channel-log-table>\n");
+            xml.append("      <step-log-table><connection/><schema/><table/></step-log-table>\n");
+            xml.append("    </log>\n");
+            xml.append("    <maxdate><connection/><table/><field/><offset>0.0</offset><maxdiff>0.0</maxdiff></maxdate>\n");
+            xml.append("    <size_rowset>10000</size_rowset>\n");
+            xml.append("    <sleep_time_empty>50</sleep_time_empty>\n");
+            xml.append("    <sleep_time_full>50</sleep_time_full>\n");
+            xml.append("    <unique_connections>N</unique_connections>\n");
+            xml.append("    <feedback_shown>Y</feedback_shown>\n");
+            xml.append("    <feedback_size>50000</feedback_size>\n");
+            xml.append("    <using_thread_priorities>Y</using_thread_priorities>\n");
+            xml.append("    <shared_objects_file/>\n");
+            xml.append("    <capture_step_performance>N</capture_step_performance>\n");
+            xml.append("    <step_performance_capturing_delay>1000</step_performance_capturing_delay>\n");
+            xml.append("    <step_performance_capturing_size_limit>100</step_performance_capturing_size_limit>\n");
+            xml.append("    <dependencies></dependencies>\n");
+            xml.append("    <partitionschemas></partitionschemas>\n");
+            xml.append("    <slaveservers></slaveservers>\n");
+            xml.append("    <clusterschemas></clusterschemas>\n");
             xml.append("    <created_user>system</created_user>\n");
-            xml.append("    <created_date>").append(java.time.LocalDateTime.now()).append("</created_date>\n");
-            xml.append("  </info>\n");
-
-            for (NodeDef node : graph.nodes.values()) {
-                xml.append(generateStepXml(node));
+            xml.append("    <modified_user>system</modified_user>\n");
+            if (startStep != null) {
+                xml.append("    <start>").append(escapeXml(startStep)).append("</start>\n");
             }
+            xml.append("  </info>\n");
+            xml.append("  <notepads></notepads>\n");
+
+            // 嵌入平台目标库连接（Carte 可达），节点可引用 PLATFORM / default / smart_city_*
+            xml.append(buildPlatformConnectionsXml());
 
             xml.append("  <order>\n");
             for (EdgeDef edge : graph.edges) {
@@ -95,11 +232,92 @@ public class KettleTransConverterService {
                 xml.append("    </hop>\n");
             }
             xml.append("  </order>\n");
-            xml.append("</transformation>");
+
+            for (NodeDef node : graph.nodes.values()) {
+                xml.append(generateStepXml(node));
+            }
+
+            xml.append("  <step_error_handling></step_error_handling>\n");
+            xml.append("  <slave_step_copy_partition_distribution></slave_step_copy_partition_distribution>\n");
+            xml.append("  <slave_transformation>N</slave_transformation>\n");
+            xml.append("</transformation>\n");
+            xml.append("  <transformation_execution_configuration>\n");
+            xml.append("    <exec_local>Y</exec_local>\n");
+            xml.append("    <exec_remote>N</exec_remote>\n");
+            xml.append("    <pass_export>N</pass_export>\n");
+            xml.append("    <exec_cluster>N</exec_cluster>\n");
+            xml.append("    <cluster_post>Y</cluster_post>\n");
+            xml.append("    <cluster_prepare>Y</cluster_prepare>\n");
+            xml.append("    <cluster_start>Y</cluster_start>\n");
+            xml.append("    <cluster_show_trans>N</cluster_show_trans>\n");
+            xml.append("    <parameters></parameters>\n");
+            xml.append("    <variables></variables>\n");
+            xml.append("    <arguments></arguments>\n");
+            xml.append("    <safe_mode>N</safe_mode>\n");
+            xml.append("    <log_level>Basic</log_level>\n");
+            xml.append("    <log_file>N</log_file>\n");
+            xml.append("    <log_file_append>N</log_file_append>\n");
+            xml.append("    <create_parent_folder>N</create_parent_folder>\n");
+            xml.append("    <clear_log>Y</clear_log>\n");
+            xml.append("    <gather_metrics>N</gather_metrics>\n");
+            xml.append("    <show_subcomponents>Y</show_subcomponents>\n");
+            xml.append("  </transformation_execution_configuration>\n");
+            xml.append("</transformation_configuration>\n");
             return xml.toString();
         } catch (Exception e) {
             throw new RuntimeException("转换DAG到KTR失败: " + e.getMessage(), e);
         }
+    }
+
+    /** 取拓扑中入度为 0 的首个节点作为 start（与汇聚 KTR 一致） */
+    private String firstStepLabel(GraphModel graph) {
+        if (graph.nodes.isEmpty()) return null;
+        java.util.Set<String> targets = new java.util.HashSet<>();
+        for (EdgeDef e : graph.edges) {
+            if (e.target != null) targets.add(e.target);
+        }
+        for (NodeDef n : graph.nodes.values()) {
+            if (!targets.contains(n.id)) {
+                return labelOf(n);
+            }
+        }
+        return labelOf(graph.nodes.values().iterator().next());
+    }
+
+    /** 归档 KTR 到 compose/kettle-repository（若目录存在） */
+    public void archiveKtr(String transName, String ktrXml) {
+        try {
+            Path dir = Path.of("compose", "kettle-repository");
+            if (!Files.isDirectory(dir)) {
+                Files.createDirectories(dir);
+            }
+            Path file = dir.resolve(transName + ".ktr");
+            Files.writeString(file, ktrXml, StandardCharsets.UTF_8);
+            log.info("archived ktr to {}", file.toAbsolutePath());
+        } catch (Exception e) {
+            log.warn("archive ktr skipped: {}", e.getMessage());
+        }
+    }
+
+    private String buildPlatformConnectionsXml() {
+        var k = integrationProperties.getKettle();
+        if (k == null) {
+            return "";
+        }
+        StringBuilder sb = new StringBuilder();
+        String host = k.getTargetHost() != null ? k.getTargetHost() : "host.docker.internal";
+        int port = k.getTargetPort();
+        String user = k.getTargetUser() != null ? k.getTargetUser() : "root";
+        String pass = k.getTargetPassword() != null ? k.getTargetPassword() : "";
+        // 默认连接名
+        sb.append(connectionService.toConnectionXml("default", host, port,
+                k.getTargetDatabase() != null ? k.getTargetDatabase() : "smart_city_ods", user, pass));
+        sb.append(connectionService.toConnectionXml("PLATFORM", host, port,
+                k.getTargetDatabase() != null ? k.getTargetDatabase() : "smart_city_ods", user, pass));
+        for (String db : List.of("smart_city", "smart_city_ods", "smart_city_dwd", "smart_city_dws", "smart_city_ads")) {
+            sb.append(connectionService.toConnectionXml(db, host, port, db, user, pass));
+        }
+        return sb.toString();
     }
 
     /**
@@ -146,6 +364,25 @@ public class KettleTransConverterService {
                 if ("FILTER".equals(nodeType) && type != null && !NODE_TO_KETTLE.containsValue(type)) {
                     config.put("unknownStepType", type);
                 }
+                // 导入保真：回填常见 Step 参数
+                String conn = textChild(step, "connection");
+                if (conn != null && !conn.isBlank()) config.put("connection", conn);
+                String sql = textChild(step, "sql");
+                if (sql != null && !sql.isBlank()) {
+                    config.put("sql", sql);
+                    config.put("inputMode", "SQL");
+                }
+                String table = textChild(step, "table");
+                if (table != null && !table.isBlank()) {
+                    config.put("table", table);
+                    config.put("outputTable", table);
+                    config.put("tableName", table);
+                    if (!config.has("inputMode")) config.put("inputMode", "TABLE");
+                }
+                String splitfield = textChild(step, "splitfield");
+                if (splitfield != null && !splitfield.isBlank()) config.put("sourceField", splitfield);
+                String delimiter = textChild(step, "delimiter");
+                if (delimiter != null && !delimiter.isBlank()) config.put("delimiter", delimiter);
                 data.set("config", config);
                 node.set("data", data);
                 nodesArr.add(node);
@@ -203,9 +440,9 @@ public class KettleTransConverterService {
         JsonNode cfg = node.data.config;
         return switch (nodeType) {
             case "INPUT" -> cfgInput(cfg);
-            case "OUTPUT" -> cfgOutput(cfg);
+            case "OUTPUT", "INSERT_UPDATE" -> cfgOutput(cfg);
             case "FILTER" -> cfgFilter(cfg);
-            case "FIELD_PROCESS" -> cfgFieldProcess(cfg);
+            case "FIELD_PROCESS", "SELECT_FIELDS", "TYPE_CONVERT" -> cfgFieldProcess(cfg);
             case "DEDUPLICATE" -> cfgDeduplicate(cfg);
             case "MASK" -> cfgMask(cfg);
             case "JOIN" -> cfgJoin(cfg);
@@ -215,13 +452,48 @@ public class KettleTransConverterService {
             case "PIVOT" -> cfgPivot(cfg);
             case "UNPIVOT" -> cfgUnpivot(cfg);
             case "SET_VARIABLE" -> cfgSetVariable(cfg);
+            case "SPLIT" -> cfgSplit(cfg);
+            case "VALUE_MAPPER" -> cfgValueMapper(cfg);
+            case "CONSTANT" -> cfgConstant(cfg);
+            case "FORMULA" -> cfgFormula(cfg);
+            case "STRING_CUT" -> cfgStringCut(cfg);
+            case "REPLACE_STRING" -> cfgReplaceString(cfg);
+            case "NULL_IF" -> cfgNullIf(cfg);
+            case "IF_NULL" -> cfgIfNull(cfg);
+            case "SWITCH_CASE" -> cfgSwitchCase(cfg);
+            case "VALIDATOR" -> cfgValidator(cfg);
+            case "SCRIPT" -> cfgScript(cfg);
+            case "TEXT_INPUT", "EXCEL_INPUT" -> cfgFileInput(cfg);
+            case "TEXT_OUTPUT" -> cfgFileOutput(cfg);
+            case "DB_LOOKUP" -> cfgDbLookup(cfg);
+            case "HTTP" -> cfgHttp(cfg);
             default -> "";
         };
     }
 
+    private String resolveConn(JsonNode cfg, String key, String def) {
+        String c = cfgText(cfg, key, def);
+        if (c == null || c.isBlank() || "default".equalsIgnoreCase(c)) {
+            return "PLATFORM";
+        }
+        if (c.startsWith("ds:")) {
+            return "PLATFORM";
+        }
+        return c;
+    }
+
     private String cfgInput(JsonNode cfg) {
-        String conn = cfgText(cfg, "connection", "default");
-        String sql = cfgText(cfg, "sql", "SELECT 1 AS id");
+        String conn = resolveConn(cfg, "connection", "PLATFORM");
+        String mode = cfgText(cfg, "inputMode", "TABLE");
+        String table = cfgText(cfg, "tableName", "");
+        String sql = cfgText(cfg, "sql", "");
+        if (sql == null || sql.isBlank()) {
+            if (table != null && !table.isBlank()) {
+                sql = "SELECT * FROM " + table;
+            } else {
+                sql = "SELECT 1 AS id";
+            }
+        }
         int limit = cfgInt(cfg, "rowCount", 0);
         if (limit <= 0) {
             limit = cfgInt(cfg, "limit", 0);
@@ -229,20 +501,171 @@ public class KettleTransConverterService {
         return "    <connection>" + escapeXml(conn) + "</connection>\n"
                 + "    <sql>" + escapeXml(sql) + "</sql>\n"
                 + "    <limit>" + limit + "</limit>\n"
-                + "    <variables_active>Y</variables_active>\n";
+                + "    <variables_active>Y</variables_active>\n"
+                + "    <!-- inputMode=" + escapeXml(mode) + " -->\n";
     }
 
     private String cfgOutput(JsonNode cfg) {
-        String conn = cfgText(cfg, "connection", "default");
-        String table = cfgText(cfg, "table", "output_table");
+        String conn = resolveConn(cfg, "connection", "PLATFORM");
+        if (cfg != null && cfg.has("outputConnection") && !cfg.get("outputConnection").asText("").isBlank()) {
+            conn = resolveConn(cfg, "outputConnection", conn);
+        }
+        String table = cfgText(cfg, "table", null);
+        if (table == null || table.isBlank()) {
+            table = cfgText(cfg, "outputTable", "output_table");
+        }
         int commit = cfgInt(cfg, "commit", 1000);
+        if (commit <= 0) commit = cfgInt(cfg, "commitSize", 1000);
+        String mode = cfgText(cfg, "outputMode", "INSERT");
+        boolean truncate = "TRUNCATE_INSERT".equalsIgnoreCase(mode);
         return "    <connection>" + escapeXml(conn) + "</connection>\n"
                 + "    <schema/>\n"
                 + "    <table>" + escapeXml(table) + "</table>\n"
                 + "    <commit>" + commit + "</commit>\n"
-                + "    <truncate>N</truncate>\n"
+                + "    <truncate>" + (truncate ? "Y" : "N") + "</truncate>\n"
                 + "    <ignore_errors>N</ignore_errors>\n"
                 + "    <use_batch>Y</use_batch>\n";
+    }
+
+    private String cfgSplit(JsonNode cfg) {
+        String field = cfgText(cfg, "sourceField", "col");
+        String delimiter = cfgText(cfg, "delimiter", ",");
+        List<String> targets = cfgStringList(cfg, "targetFields");
+        if (targets.isEmpty()) {
+            String raw = cfgText(cfg, "targetFieldsCsv", "col1,col2");
+            for (String p : raw.split(",")) {
+                if (!p.isBlank()) targets.add(p.trim());
+            }
+        }
+        StringBuilder sb = new StringBuilder();
+        sb.append("    <splitfield>").append(escapeXml(field)).append("</splitfield>\n");
+        sb.append("    <delimiter>").append(escapeXml(delimiter)).append("</delimiter>\n");
+        sb.append("    <fields>\n");
+        for (String t : targets) {
+            sb.append("      <field><name>").append(escapeXml(t)).append("</name></field>\n");
+        }
+        sb.append("    </fields>\n");
+        return sb.toString();
+    }
+
+    private String cfgValueMapper(JsonNode cfg) {
+        String field = cfgText(cfg, "field", "code");
+        String target = cfgText(cfg, "targetField", field + "_mapped");
+        return "    <field_to_use>" + escapeXml(field) + "</field_to_use>\n"
+                + "    <target_field>" + escapeXml(target) + "</target_field>\n"
+                + "    <non_match_default>" + escapeXml(cfgText(cfg, "defaultValue", "")) + "</non_match_default>\n"
+                + "    <fields>\n"
+                + "      <field><source_value>" + escapeXml(cfgText(cfg, "fromValue", "A"))
+                + "</source_value><target_value>" + escapeXml(cfgText(cfg, "toValue", "甲"))
+                + "</target_value></field>\n"
+                + "    </fields>\n";
+    }
+
+    private String cfgConstant(JsonNode cfg) {
+        String name = cfgText(cfg, "field", "const_col");
+        String value = cfgText(cfg, "value", "");
+        return "    <fields>\n"
+                + "      <field><name>" + escapeXml(name) + "</name><type>String</type>"
+                + "<nullif>" + escapeXml(value) + "</nullif></field>\n"
+                + "    </fields>\n";
+    }
+
+    private String cfgFormula(JsonNode cfg) {
+        String name = cfgText(cfg, "field", "calc");
+        String formula = cfgText(cfg, "formula", "[a]+[b]");
+        return "    <formula>\n"
+                + "      <field_name>" + escapeXml(name) + "</field_name>\n"
+                + "      <formula_string>" + escapeXml(formula) + "</formula_string>\n"
+                + "    </formula>\n";
+    }
+
+    private String cfgStringCut(JsonNode cfg) {
+        String field = cfgText(cfg, "field", "name");
+        int from = cfgInt(cfg, "cutFrom", 0);
+        int to = cfgInt(cfg, "cutTo", 1);
+        return "    <fields>\n"
+                + "      <field><in_stream_name>" + escapeXml(field) + "</in_stream_name>"
+                + "<out_stream_name>" + escapeXml(cfgText(cfg, "targetField", field)) + "</out_stream_name>"
+                + "<cut_from>" + from + "</cut_from><cut_to>" + to + "</cut_to></field>\n"
+                + "    </fields>\n";
+    }
+
+    private String cfgReplaceString(JsonNode cfg) {
+        String field = cfgText(cfg, "field", "name");
+        return "    <fields>\n"
+                + "      <field><in_stream_name>" + escapeXml(field) + "</in_stream_name>"
+                + "<out_stream_name>" + escapeXml(cfgText(cfg, "targetField", field)) + "</out_stream_name>"
+                + "<replace>" + escapeXml(cfgText(cfg, "search", "")) + "</replace>"
+                + "<replace_by>" + escapeXml(cfgText(cfg, "replace", "")) + "</replace_by></field>\n"
+                + "    </fields>\n";
+    }
+
+    private String cfgNullIf(JsonNode cfg) {
+        return "    <fields>\n"
+                + "      <field><name>" + escapeXml(cfgText(cfg, "field", "col"))
+                + "</name><value>" + escapeXml(cfgText(cfg, "value", "")) + "</value></field>\n"
+                + "    </fields>\n";
+    }
+
+    private String cfgIfNull(JsonNode cfg) {
+        return "    <fields>\n"
+                + "      <field><name>" + escapeXml(cfgText(cfg, "field", "col"))
+                + "</name><value>" + escapeXml(cfgText(cfg, "replaceValue", "")) + "</value>"
+                + "<replace>Y</replace></field>\n"
+                + "    </fields>\n";
+    }
+
+    private String cfgSwitchCase(JsonNode cfg) {
+        return "    <fieldname>" + escapeXml(cfgText(cfg, "field", "status")) + "</fieldname>\n"
+                + "    <use_contains>N</use_contains>\n"
+                + "    <case_value_type>String</case_value_type>\n"
+                + "    <default_target_step/>\n";
+    }
+
+    private String cfgValidator(JsonNode cfg) {
+        return "    <validations>\n"
+                + "      <validation><name>check</name><field_name>"
+                + escapeXml(cfgText(cfg, "field", "id"))
+                + "</field_name><null_allowed>N</null_allowed></validation>\n"
+                + "    </validations>\n";
+    }
+
+    private String cfgScript(JsonNode cfg) {
+        String script = cfgText(cfg, "script", "// var i = 0;");
+        return "    <jsScripts>\n"
+                + "      <jsScript><jsScript_type>0</jsScript_type>"
+                + "<jsScript_name>Script 1</jsScript_name>"
+                + "<jsScript_script>" + escapeXml(script) + "</jsScript_script></jsScript>\n"
+                + "    </jsScripts>\n";
+    }
+
+    private String cfgFileInput(JsonNode cfg) {
+        return "    <file><name>" + escapeXml(cfgText(cfg, "filePath", "/tmp/input.csv"))
+                + "</name></file>\n"
+                + "    <separator>" + escapeXml(cfgText(cfg, "separator", ",")) + "</separator>\n"
+                + "    <header>Y</header>\n";
+    }
+
+    private String cfgFileOutput(JsonNode cfg) {
+        return "    <file><name>" + escapeXml(cfgText(cfg, "filePath", "/tmp/output.csv"))
+                + "</name></file>\n"
+                + "    <separator>" + escapeXml(cfgText(cfg, "separator", ",")) + "</separator>\n"
+                + "    <header>Y</header>\n";
+    }
+
+    private String cfgDbLookup(JsonNode cfg) {
+        String conn = resolveConn(cfg, "connection", "PLATFORM");
+        return "    <connection>" + escapeXml(conn) + "</connection>\n"
+                + "    <lookup><schema/><table>" + escapeXml(cfgText(cfg, "table", "dim"))
+                + "</table></lookup>\n"
+                + "    <key><name>" + escapeXml(cfgText(cfg, "keyField", "id"))
+                + "</name><field>" + escapeXml(cfgText(cfg, "lookupKey", "id"))
+                + "</field></key>\n";
+    }
+
+    private String cfgHttp(JsonNode cfg) {
+        return "    <url>" + escapeXml(cfgText(cfg, "url", "http://localhost/")) + "</url>\n"
+                + "    <method>" + escapeXml(cfgText(cfg, "method", "GET")) + "</method>\n";
     }
 
     private String cfgFilter(JsonNode cfg) {

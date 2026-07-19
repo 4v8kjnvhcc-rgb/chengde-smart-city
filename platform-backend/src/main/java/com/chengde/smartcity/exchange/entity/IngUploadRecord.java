@@ -11,6 +11,9 @@ public class IngUploadRecord {
     private Long id;
     private String templateCode;
     private String fileName;
+    private String sheetName;
+    private String targetTable;
+    private String storagePath;
     private Integer rowCount;
     private String status;
     private String previewJson;
@@ -23,6 +26,12 @@ public class IngUploadRecord {
     public void setTemplateCode(String templateCode) { this.templateCode = templateCode; }
     public String getFileName() { return fileName; }
     public void setFileName(String fileName) { this.fileName = fileName; }
+    public String getSheetName() { return sheetName; }
+    public void setSheetName(String sheetName) { this.sheetName = sheetName; }
+    public String getTargetTable() { return targetTable; }
+    public void setTargetTable(String targetTable) { this.targetTable = targetTable; }
+    public String getStoragePath() { return storagePath; }
+    public void setStoragePath(String storagePath) { this.storagePath = storagePath; }
     public Integer getRowCount() { return rowCount; }
     public void setRowCount(Integer rowCount) { this.rowCount = rowCount; }
     public String getStatus() { return status; }

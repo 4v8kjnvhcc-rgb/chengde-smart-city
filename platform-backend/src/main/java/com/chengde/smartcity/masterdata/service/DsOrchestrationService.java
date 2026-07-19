@@ -158,9 +158,15 @@ public class DsOrchestrationService {
         long definitionCode = dsClient.createAndReleaseShellChain(projectCode, defName, steps, scripts, tenant);
         long instanceId = dsClient.startInstance(projectCode, definitionCode);
 
-        auditService.log(operator.getUserId(), operator.getUsername(), operator.getOrgId(),
-                "DS_KETTLE_TRANS_RUN", "dolphinscheduler", String.valueOf(instanceId),
-                "trans=" + transName);
+        if (operator != null) {
+            auditService.log(operator.getUserId(), operator.getUsername(), operator.getOrgId(),
+                    "DS_KETTLE_TRANS_RUN", "dolphinscheduler", String.valueOf(instanceId),
+                    "trans=" + transName);
+        } else {
+            auditService.log(0L, "system", null,
+                    "DS_KETTLE_TRANS_RUN", "dolphinscheduler", String.valueOf(instanceId),
+                    "trans=" + transName);
+        }
 
         String state = "UNKNOWN";
         for (int i = 0; i < 720; i++) {

@@ -36,15 +36,22 @@ import com.chengde.smartcity.integration.jdbc.JdbcProbeService;
 import com.chengde.smartcity.integration.storage.StorageIntegrationClient;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.chengde.smartcity.security.UserPrincipal;
+import com.chengde.smartcity.system.entity.SysOrg;
+import com.chengde.smartcity.system.mapper.SysOrgMapper;
+import com.chengde.smartcity.system.service.AccessControlService;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
+import java.util.Set;
 import java.util.UUID;
+import java.util.stream.Collectors;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -69,6 +76,9 @@ public class IngestionPlatformService {
     private final StorageIntegrationClient storageClient;
     private final CredentialCipher credentialCipher;
     private final JdbcProbeService jdbcProbeService;
+    private final SysOrgMapper orgMapper;
+    private final AccessControlService accessControlService;
+    private final KettleCollectService kettleCollectService;
     private final ObjectMapper objectMapper = new ObjectMapper();
 
     public IngestionPlatformService(IngStatsMetricMapper statsMapper, IngGuideStepMapper guideMapper,
@@ -79,7 +89,9 @@ public class IngestionPlatformService {
                                     IngResourceRegistryMapper registryMapper, IngGovernPolicyMapper policyMapper,
                                     IngHealthMetricMapper healthMapper, BizDataAssetMapper assetMapper,
                                     AuditService auditService, StorageIntegrationClient storageClient,
-                                    CredentialCipher credentialCipher, JdbcProbeService jdbcProbeService) {
+                                    CredentialCipher credentialCipher, JdbcProbeService jdbcProbeService,
+                                    SysOrgMapper orgMapper, AccessControlService accessControlService,
+                                    KettleCollectService kettleCollectService) {
         this.statsMapper = statsMapper;
         this.guideMapper = guideMapper;
         this.projectMapper = projectMapper;
@@ -98,6 +110,9 @@ public class IngestionPlatformService {
         this.storageClient = storageClient;
         this.credentialCipher = credentialCipher;
         this.jdbcProbeService = jdbcProbeService;
+        this.orgMapper = orgMapper;
+        this.accessControlService = accessControlService;
+        this.kettleCollectService = kettleCollectService;
     }
 
     public List<IngStatsMetric> baseStats() {
@@ -114,22 +129,64 @@ public class IngestionPlatformService {
         return guideMapper.selectList(new LambdaQueryWrapper<IngGuideStep>().orderByAsc(IngGuideStep::getStepNo));
     }
 
-    public Map<String, Object> registerOverview() {
+    /**
+     * 登记概览：按当前用户可见范围统计（与项目/数据源列表权限一致），避免部门管理员看到全平台数字。
+     * 字典为平台共享资源，仍为全库数量。
+     */
+    public Map<String, Object> registerOverview(UserPrincipal operator) {
+        Set<Long> projectIds = accessControlService.effectiveProjectIds(operator);
+        Set<Long> sourceIds = accessControlService.effectiveSourceIds(operator);
+        Set<Long> tableIds = accessControlService.effectiveTableIds(operator);
         Map<String, Object> out = new LinkedHashMap<>();
-        out.put("projects", projectMapper.selectCount(null));
-        out.put("dataSources", dataSourceMapper.selectCount(null));
+        out.put("projects", projectIds.size());
+        out.put("dataSources", sourceIds.size());
         out.put("dicts", dictMapper.selectCount(null));
-        out.put("assets", assetMapper.selectCount(null));
+        // 「资产」对齐可见登记表数量（本页语境下的可操作资产）
+        out.put("assets", tableIds.size());
         out.put("lineageGraph", Map.of("nodes", List.of(), "edges", List.of()));
         out.put("systemLinks", List.of(
-                Map.of("mCode", "M048", "route", "/system/orgs", "label", "访问控制"),
+                Map.of("mCode", "M048", "route", "?system=collect&module=m048", "label", "访问控制"),
                 Map.of("mCode", "M049", "route", "/system/security", "label", "等保开关")
         ));
         return out;
     }
 
-    public List<IngProject> listProjects() {
-        return projectMapper.selectList(new LambdaQueryWrapper<IngProject>().orderByDesc(IngProject::getId));
+    public List<IngProject> listProjects(UserPrincipal operator) {
+        accessControlService.ensureOrgOtherProject(operator);
+        Set<Long> allowed = accessControlService.effectiveProjectIds(operator);
+        if (allowed.isEmpty()) {
+            return List.of();
+        }
+        List<IngProject> list = projectMapper.selectList(
+                new LambdaQueryWrapper<IngProject>().in(IngProject::getId, allowed).orderByDesc(IngProject::getId));
+        fillBoundOrgNames(list);
+        return list;
+    }
+
+    private void fillBoundOrgNames(List<IngProject> list) {
+        if (list == null || list.isEmpty()) {
+            return;
+        }
+        Set<Long> orgIds = list.stream()
+                .map(IngProject::getBoundOrgId)
+                .filter(Objects::nonNull)
+                .collect(Collectors.toCollection(HashSet::new));
+        if (orgIds.isEmpty()) {
+            return;
+        }
+        Map<Long, String> names = new HashMap<>();
+        for (SysOrg org : orgMapper.selectBatchIds(orgIds)) {
+            if (org != null && org.getId() != null) {
+                names.put(org.getId(), org.getOrgName());
+            }
+        }
+        for (IngProject p : list) {
+            if (p.getBoundOrgId() != null) {
+                p.setBoundOrgName(names.getOrDefault(p.getBoundOrgId(), "—"));
+            } else {
+                p.setBoundOrgName("—");
+            }
+        }
     }
 
     @Transactional
@@ -137,15 +194,53 @@ public class IngestionPlatformService {
         IngProject p = new IngProject();
         p.setProjectCode(str(body.get("projectCode"), "PRJ_" + UUID.randomUUID().toString().substring(0, 8)));
         p.setProjectName(required(body.get("projectName"), "projectName").toString());
-        Object orgId = body.get("boundOrgId");
-        p.setBoundOrgId(orgId == null ? operator.getOrgId() : Long.valueOf(String.valueOf(orgId)));
-        p.setSystemName(str(body.get("systemName"), "业务系统"));
+        // 固定绑定当前登录账号所属部门，不再使用前端传的机构 ID
+        if (operator.getOrgId() == null) {
+            throw new BusinessException(400, "当前账号未绑定部门，无法登记项目");
+        }
+        String systemName = str(body.get("systemName"), "").trim();
+        if (systemName.isEmpty()) {
+            throw new BusinessException(400, "请填写首个业务系统名称（同一项目后续还可继续添加系统/数据源）");
+        }
+        // 项目行保留「首个系统」展示名；同部门允许不同项目有相同系统名（系统以数据源为准）
+        p.setBoundOrgId(operator.getOrgId());
+        p.setSystemName(systemName);
         p.setStatus("ACTIVE");
         p.setCreatedBy(operator.getUsername());
         projectMapper.insert(p);
+        accessControlService.ensureCreatorProjectGrant(operator, p.getId());
         auditService.log(operator.getUserId(), operator.getUsername(), operator.getOrgId(),
                 "ING_PROJECT_CREATE", "ing_project", String.valueOf(p.getId()), p.getProjectName());
         return p.getId();
+    }
+
+    @Transactional
+    public void updateProject(UserPrincipal operator, Long id, Map<String, Object> body) {
+        accessControlService.assertProjectAccess(operator, id);
+        IngProject p = projectMapper.selectById(id);
+        if (p == null) {
+            throw new BusinessException(404, "项目不存在");
+        }
+        if (isBuiltinOtherProject(p.getProjectCode())) {
+            // 系统初始化「其他」项目：名称固定，仅允许维护系统/数据源
+            if (!"其他".equals(p.getProjectName())) {
+                p.setProjectName("其他");
+            }
+        } else {
+            String projectName = str(body.get("projectName"), "").trim();
+            if (projectName.isEmpty()) {
+                throw new BusinessException(400, "项目名称必填");
+            }
+            p.setProjectName(projectName);
+        }
+        String systemName = str(body.get("systemName"), "").trim();
+        if (systemName.isEmpty()) {
+            throw new BusinessException(400, "请填写系统名称");
+        }
+        p.setSystemName(systemName);
+        projectMapper.updateById(p);
+        auditService.log(operator.getUserId(), operator.getUsername(), operator.getOrgId(),
+                "ING_PROJECT_UPDATE", "ing_project", String.valueOf(id), p.getProjectName());
     }
 
     @Transactional
@@ -157,25 +252,55 @@ public class IngestionPlatformService {
         if (p == null) {
             throw new BusinessException(404, "项目不存在");
         }
+        if (isBuiltinOtherProject(p.getProjectCode())) {
+            throw new BusinessException(400, "平台默认项目「其他」不可删除");
+        }
         List<IngDataSource> sources = dataSourceMapper.selectList(
                 new LambdaQueryWrapper<IngDataSource>().eq(IngDataSource::getProjectId, id));
         for (IngDataSource ds : sources) {
-            List<IngDataTable> tables = dataTableMapper.selectList(
-                    new LambdaQueryWrapper<IngDataTable>().eq(IngDataTable::getSourceId, ds.getId()));
-            for (IngDataTable t : tables) {
-                dataColumnMapper.delete(new LambdaQueryWrapper<IngDataColumn>().eq(IngDataColumn::getTableId, t.getId()));
-            }
-            dataTableMapper.delete(new LambdaQueryWrapper<IngDataTable>().eq(IngDataTable::getSourceId, ds.getId()));
+            deleteDataSourceCascade(ds.getId());
         }
-        dataSourceMapper.delete(new LambdaQueryWrapper<IngDataSource>().eq(IngDataSource::getProjectId, id));
         projectMapper.deleteById(id);
         auditService.log(operator.getUserId(), operator.getUsername(), operator.getOrgId(),
                 "ING_PROJECT_DELETE", "ing_project", String.valueOf(id), p.getProjectName());
     }
 
-    public List<IngDataSource> listDataSources(Long projectId) {
-        LambdaQueryWrapper<IngDataSource> q = new LambdaQueryWrapper<IngDataSource>().orderByDesc(IngDataSource::getId);
+    @Transactional
+    public void deleteDataSource(UserPrincipal operator, Long id) {
+        IngDataSource ds = dataSourceMapper.selectById(id);
+        if (ds == null) {
+            throw new BusinessException(404, "数据源不存在");
+        }
+        if (isBuiltinManualUploadSource(ds.getSourceCode())) {
+            throw new BusinessException(400, "平台默认「手动上传」数据源不可删除，可修改其系统名称，或新增系统/数据源");
+        }
+        String name = ds.getSourceName();
+        deleteDataSourceCascade(id);
+        auditService.log(operator.getUserId(), operator.getUsername(), operator.getOrgId(),
+                "ING_DS_DELETE", "ing_data_source", String.valueOf(id), name);
+    }
+
+    /** 删除数据源及其已登记表/字段 */
+    private void deleteDataSourceCascade(Long sourceId) {
+        List<IngDataTable> tables = dataTableMapper.selectList(
+                new LambdaQueryWrapper<IngDataTable>().eq(IngDataTable::getSourceId, sourceId));
+        for (IngDataTable t : tables) {
+            dataColumnMapper.delete(new LambdaQueryWrapper<IngDataColumn>().eq(IngDataColumn::getTableId, t.getId()));
+        }
+        dataTableMapper.delete(new LambdaQueryWrapper<IngDataTable>().eq(IngDataTable::getSourceId, sourceId));
+        dataSourceMapper.deleteById(sourceId);
+    }
+
+    public List<IngDataSource> listDataSources(UserPrincipal operator, Long projectId) {
+        Set<Long> allowedSources = accessControlService.effectiveSourceIds(operator);
+        if (allowedSources.isEmpty()) {
+            return List.of();
+        }
+        LambdaQueryWrapper<IngDataSource> q = new LambdaQueryWrapper<IngDataSource>()
+                .in(IngDataSource::getId, allowedSources)
+                .orderByDesc(IngDataSource::getId);
         if (projectId != null) {
+            accessControlService.assertProjectAccess(operator, projectId);
             q.eq(IngDataSource::getProjectId, projectId);
         }
         List<IngDataSource> list = dataSourceMapper.selectList(q);
@@ -306,14 +431,17 @@ public class IngestionPlatformService {
             for (Map<String, Object> col : cols) {
                 IngDataColumn c = new IngDataColumn();
                 c.setTableId(table.getId());
-                c.setColumnCode(String.valueOf(col.get("columnName")));
-                c.setColumnName(String.valueOf(col.get("columnName")));
+                // 字段编码 = 源库列名；字段名称 = 列注释（无注释则为空，可在数据项管理中补全）
+                String physicalName = String.valueOf(col.get("columnName"));
+                String remarks = str(col.get("remarks"), null);
+                c.setColumnCode(physicalName);
+                c.setColumnName(remarks != null && !remarks.isBlank() ? remarks.trim() : "");
                 c.setDataType(String.valueOf(col.get("dataType")));
                 c.setNullableFlag(Boolean.TRUE.equals(col.get("nullable")) ? 1 : 0);
                 c.setSortOrder(intVal(col.get("sortOrder"), 0));
                 Object size = col.get("columnSize");
                 c.setLengthVal(size == null ? null : Integer.parseInt(String.valueOf(size)));
-                c.setSemanticDesc(str(col.get("remarks"), null));
+                c.setSemanticDesc(remarks);
                 c.setBuiltInFlag(0);
                 dataColumnMapper.insert(c);
             }
@@ -334,15 +462,36 @@ public class IngestionPlatformService {
 
     @Transactional
     public Long createDataSource(UserPrincipal operator, Map<String, Object> body) {
+        Long projectId = Long.valueOf(String.valueOf(required(body.get("projectId"), "projectId")));
+        accessControlService.assertProjectAccess(operator, projectId);
+        IngProject project = projectMapper.selectById(projectId);
+        if (project == null) {
+            throw new BusinessException(404, "项目不存在");
+        }
         IngDataSource ds = new IngDataSource();
-        ds.setProjectId(Long.valueOf(String.valueOf(required(body.get("projectId"), "projectId"))));
+        ds.setProjectId(projectId);
         ds.setSourceCode(str(body.get("sourceCode"), "DS_" + System.currentTimeMillis()));
-        ds.setSourceName(required(body.get("sourceName"), "sourceName").toString());
+        String sourceName = String.valueOf(required(body.get("sourceName"), "数据源名称")).trim();
+        if (sourceName.isBlank()) {
+            throw new BusinessException(400, "数据源名称不能为空");
+        }
+        ds.setSourceName(sourceName);
+        String systemName = str(body.get("systemName"), "").trim();
+        if (systemName.isEmpty()) {
+            systemName = sourceName;
+        }
+        assertSystemNameUniqueInProject(projectId, systemName, null);
+        ds.setSystemName(systemName);
         ds.setSourceType(str(body.get("sourceType"), "MYSQL"));
         ds.setConnConfigJson(buildConnConfigJson(body, null));
-        ds.setConnStatus("UNTESTED");
+        ds.setConnStatus("FILE".equalsIgnoreCase(ds.getSourceType()) || "API".equalsIgnoreCase(ds.getSourceType())
+                ? "OK" : "UNTESTED");
         ds.setTableCount(0);
         ds.setSyncStatus("PENDING");
+        if ("FILE".equalsIgnoreCase(ds.getSourceType()) && (ds.getConnConfigJson() == null || ds.getConnConfigJson().isBlank())) {
+            ds.setConnConfigJson("{\"channel\":\"MANUAL_UPLOAD\",\"odsDb\":\"smart_city_ods\"}");
+            ds.setSourceSchema("smart_city_ods");
+        }
         dataSourceMapper.insert(ds);
         return ds.getId();
     }
@@ -351,11 +500,46 @@ public class IngestionPlatformService {
     public void updateDataSource(UserPrincipal operator, Long id, Map<String, Object> body) {
         IngDataSource ds = dataSourceMapper.selectById(id);
         if (ds == null) throw new BusinessException(404, "数据源不存在");
-        if (body.containsKey("sourceName")) ds.setSourceName(body.get("sourceName").toString());
-        if (body.containsKey("sourceType")) ds.setSourceType(body.get("sourceType").toString());
+        accessControlService.assertProjectAccess(operator, ds.getProjectId());
+        // 空名称不覆盖，避免「配置连接」误传空 sourceName 把名称清掉
+        if (body.containsKey("sourceName")) {
+            String name = body.get("sourceName") == null ? "" : String.valueOf(body.get("sourceName")).trim();
+            if (!name.isBlank()) {
+                ds.setSourceName(name);
+            }
+        }
+        if (body.containsKey("systemName")) {
+            String systemName = body.get("systemName") == null ? "" : String.valueOf(body.get("systemName")).trim();
+            if (!systemName.isBlank()) {
+                assertSystemNameUniqueInProject(ds.getProjectId(), systemName, ds.getId());
+                ds.setSystemName(systemName);
+            }
+        }
+        if (body.containsKey("sourceType")) {
+            Object st = body.get("sourceType");
+            if (st != null && !String.valueOf(st).isBlank()) {
+                ds.setSourceType(String.valueOf(st));
+            }
+        }
         ds.setConnConfigJson(buildConnConfigJson(body, ds));
-        ds.setConnStatus("UNTESTED");
+        if (!"FILE".equalsIgnoreCase(ds.getSourceType()) && !"API".equalsIgnoreCase(ds.getSourceType())) {
+            ds.setConnStatus("UNTESTED");
+        }
         dataSourceMapper.updateById(ds);
+    }
+
+    /** 同一项目下系统名称唯一（对应多个数据源）。 */
+    private void assertSystemNameUniqueInProject(Long projectId, String systemName, Long excludeSourceId) {
+        LambdaQueryWrapper<IngDataSource> q = new LambdaQueryWrapper<IngDataSource>()
+                .eq(IngDataSource::getProjectId, projectId)
+                .eq(IngDataSource::getSystemName, systemName);
+        if (excludeSourceId != null) {
+            q.ne(IngDataSource::getId, excludeSourceId);
+        }
+        Long dup = dataSourceMapper.selectCount(q);
+        if (dup != null && dup > 0) {
+            throw new BusinessException(409, "本项目下已存在系统「" + systemName + "」，请更换系统名称或使用已有数据源");
+        }
     }
 
     /**
@@ -424,10 +608,15 @@ public class IngestionPlatformService {
     @Transactional
     public Long createDict(UserPrincipal operator, Map<String, Object> body) {
         IngDict d = new IngDict();
+        // 编码仅作库内唯一键，界面不采集，自动生成
         d.setDictCode(str(body.get("dictCode"), "DICT_" + System.currentTimeMillis()));
-        d.setDictName(required(body.get("dictName"), "dictName").toString());
-        d.setDictType(str(body.get("dictType"), "STANDARD"));
-        d.setItemCount(intVal(body.get("itemCount"), 0));
+        d.setDictName(required(body.get("dictName"), "字典名称").toString().trim());
+        d.setDictType("CUSTOM");
+        d.setStandardNo(str(body.get("standardNo"), null));
+        d.setPublisher(null);
+        d.setVersionNo(null);
+        d.setRemark(str(body.get("remark"), null));
+        d.setItemCount(0);
         d.setStatus("ACTIVE");
         dictMapper.insert(d);
         return d.getId();
@@ -461,11 +650,13 @@ public class IngestionPlatformService {
         return channelMapper.selectList(q);
     }
 
-    @Transactional
     public Map<String, Object> runChannel(UserPrincipal operator, Long id) {
         IngIngestChannel ch = channelMapper.selectById(id);
         if (ch == null) {
             throw new BusinessException(404, "接入通道不存在");
+        }
+        if ("TABLE".equals(ch.getChannelType())) {
+            return runTableChannelToOds(operator, ch);
         }
         String integrationNote = "demo";
         if ("CDC".equals(ch.getChannelType())) {
@@ -483,6 +674,69 @@ public class IngestionPlatformService {
         auditService.log(operator.getUserId(), operator.getUsername(), operator.getOrgId(),
                 "ING_CHANNEL_RUN", "ing_ingest_channel", String.valueOf(id), ch.getLastMessage());
         return Map.of("channelId", id, "status", ch.getStatus(), "message", ch.getLastMessage(), "integration", integrationNote);
+    }
+
+    /** 结构化库表通道：按配置源表经 Kettle 真实抽取到 smart_city_ods。 */
+    private Map<String, Object> runTableChannelToOds(UserPrincipal operator, IngIngestChannel ch) {
+        Map<String, Object> cfg = readChannelConfig(ch.getConfigJson());
+        Object sid = cfg.get("sourceTableId");
+        if (sid == null || String.valueOf(sid).isBlank()) {
+            throw new BusinessException(400, "请先选择源表并保存接入配置后再执行");
+        }
+        Long tableId;
+        try {
+            tableId = Long.valueOf(String.valueOf(sid).trim());
+        } catch (NumberFormatException e) {
+            throw new BusinessException(400, "源表 ID 无效");
+        }
+        String preferredOds = str(cfg.get("targetTable"), null);
+        try {
+            Map<String, Object> collect = kettleCollectService.collectTable(operator, tableId, preferredOds);
+            String odsTable = String.valueOf(collect.get("odsTable"));
+            Object rows = collect.get("collectedRows");
+            ch.setStatus("SUCCESS");
+            ch.setLastRunAt(LocalDateTime.now());
+            ch.setLastMessage("已落入 smart_city_ods." + odsTable + " rows=" + rows);
+            channelMapper.updateById(ch);
+            auditService.log(operator.getUserId(), operator.getUsername(), operator.getOrgId(),
+                    "ING_CHANNEL_RUN", "ing_ingest_channel", String.valueOf(ch.getId()), ch.getLastMessage());
+            Map<String, Object> out = new LinkedHashMap<>(collect);
+            out.put("channelId", ch.getId());
+            out.put("message", ch.getLastMessage());
+            out.put("odsDatabase", "smart_city_ods");
+            return out;
+        } catch (BusinessException e) {
+            ch.setStatus("FAILED");
+            ch.setLastRunAt(LocalDateTime.now());
+            String msg = e.getMessage() == null ? "汇聚失败" : e.getMessage();
+            ch.setLastMessage(msg.length() > 500 ? msg.substring(0, 500) : msg);
+            channelMapper.updateById(ch);
+            auditService.log(operator.getUserId(), operator.getUsername(), operator.getOrgId(),
+                    "ING_CHANNEL_RUN", "ing_ingest_channel", String.valueOf(ch.getId()), ch.getLastMessage());
+            throw e;
+        }
+    }
+
+    @SuppressWarnings("unchecked")
+    private Map<String, Object> readChannelConfig(String configJson) {
+        if (configJson == null || configJson.isBlank()) {
+            return Map.of();
+        }
+        try {
+            Object parsed = objectMapper.readValue(configJson, Map.class);
+            if (parsed instanceof Map<?, ?> map) {
+                Map<String, Object> out = new LinkedHashMap<>();
+                for (Map.Entry<?, ?> e : map.entrySet()) {
+                    if (e.getKey() != null) {
+                        out.put(String.valueOf(e.getKey()), e.getValue());
+                    }
+                }
+                return out;
+            }
+        } catch (Exception e) {
+            throw new BusinessException(400, "通道配置格式无效，请重新保存");
+        }
+        return Map.of();
     }
 
     @Transactional
@@ -675,5 +929,21 @@ public class IngestionPlatformService {
             return def;
         }
         return Integer.parseInt(String.valueOf(v));
+    }
+
+    /** 各部门默认「其他」项目：PRJ_OTHER 或 PRJ_OTHER_{orgId} */
+    private static boolean isBuiltinOtherProject(String projectCode) {
+        if (projectCode == null || projectCode.isBlank()) {
+            return false;
+        }
+        return "PRJ_OTHER".equals(projectCode) || projectCode.startsWith("PRJ_OTHER_");
+    }
+
+    /** 各部门默认手动上传源：DS_MANUAL_UPLOAD 或 DS_MANUAL_UPLOAD_{orgId} */
+    private static boolean isBuiltinManualUploadSource(String sourceCode) {
+        if (sourceCode == null || sourceCode.isBlank()) {
+            return false;
+        }
+        return "DS_MANUAL_UPLOAD".equals(sourceCode) || sourceCode.startsWith("DS_MANUAL_UPLOAD_");
     }
 }

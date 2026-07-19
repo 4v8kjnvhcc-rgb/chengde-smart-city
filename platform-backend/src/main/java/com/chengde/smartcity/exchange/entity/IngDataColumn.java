@@ -19,6 +19,7 @@ public class IngDataColumn {
     private String componentType;
     private String requiredTip;
     private Integer builtInFlag;
+    private Integer partitionColFlag;
 
     public Long getId() { return id; }
     public void setId(Long id) { this.id = id; }
@@ -44,4 +45,6 @@ public class IngDataColumn {
     public void setRequiredTip(String requiredTip) { this.requiredTip = requiredTip; }
     public Integer getBuiltInFlag() { return builtInFlag; }
     public void setBuiltInFlag(Integer builtInFlag) { this.builtInFlag = builtInFlag; }
+    public Integer getPartitionColFlag() { return partitionColFlag; }
+    public void setPartitionColFlag(Integer partitionColFlag) { this.partitionColFlag = partitionColFlag; }
 }

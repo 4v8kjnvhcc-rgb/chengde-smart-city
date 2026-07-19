@@ -46,9 +46,14 @@ public class GovernanceKtrController {
             return ResponseEntity.notFound().build();
         }
         String name = task.getTaskCode() != null ? task.getTaskCode() : ("task_" + id);
-        String ktr = converter.graphToKtr(
-                task.getGraphJson() != null ? task.getGraphJson() : "{\"nodes\":[],\"edges\":[]}",
-                name);
+        String graphJson = task.getGraphJson() != null ? task.getGraphJson() : "{\"nodes\":[],\"edges\":[]}";
+        String err = converter.validateGraphOutputRules(graphJson);
+        if (err != null) {
+            return ResponseEntity.badRequest()
+                    .contentType(MediaType.TEXT_PLAIN)
+                    .body(err.getBytes(StandardCharsets.UTF_8));
+        }
+        String ktr = converter.graphToKtr(graphJson, name);
         byte[] bytes = ktr.getBytes(StandardCharsets.UTF_8);
         return ResponseEntity.ok()
                 .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"" + name + ".ktr\"")

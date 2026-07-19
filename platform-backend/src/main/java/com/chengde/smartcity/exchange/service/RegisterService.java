@@ -3,32 +3,36 @@ package com.chengde.smartcity.exchange.service;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.chengde.smartcity.common.exception.BusinessException;
 import com.chengde.smartcity.exchange.entity.IngAssetTag;
-import com.chengde.smartcity.exchange.entity.IngColumnLineage;
+import com.chengde.smartcity.exchange.entity.IngAssetTagBinding;
 import com.chengde.smartcity.exchange.entity.IngDataColumn;
 import com.chengde.smartcity.exchange.entity.IngDataTable;
 import com.chengde.smartcity.exchange.entity.IngDict;
 import com.chengde.smartcity.exchange.entity.IngDictItem;
 import com.chengde.smartcity.exchange.entity.IngIngestTask;
-import com.chengde.smartcity.exchange.entity.IngLineageEdge;
 import com.chengde.smartcity.exchange.entity.IngProject;
 import com.chengde.smartcity.exchange.entity.IngResourceRegistry;
+import com.chengde.smartcity.exchange.mapper.IngAssetTagBindingMapper;
 import com.chengde.smartcity.exchange.mapper.IngAssetTagMapper;
-import com.chengde.smartcity.exchange.mapper.IngColumnLineageMapper;
 import com.chengde.smartcity.exchange.mapper.IngDataColumnMapper;
 import com.chengde.smartcity.exchange.mapper.IngDataTableMapper;
 import com.chengde.smartcity.exchange.mapper.IngDictItemMapper;
 import com.chengde.smartcity.exchange.mapper.IngDictMapper;
 import com.chengde.smartcity.exchange.mapper.IngIngestTaskMapper;
-import com.chengde.smartcity.exchange.mapper.IngLineageEdgeMapper;
 import com.chengde.smartcity.exchange.mapper.IngProjectMapper;
 import com.chengde.smartcity.exchange.mapper.IngResourceRegistryMapper;
 import com.chengde.smartcity.security.UserPrincipal;
+import com.chengde.smartcity.system.service.AccessControlService;
+import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
+import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -38,35 +42,46 @@ public class RegisterService {
 
     private final IngDataTableMapper tableMapper;
     private final IngDataColumnMapper columnMapper;
-    private final IngLineageEdgeMapper lineageMapper;
-    private final IngColumnLineageMapper columnLineageMapper;
     private final IngAssetTagMapper tagMapper;
+    private final IngAssetTagBindingMapper tagBindingMapper;
     private final IngProjectMapper projectMapper;
     private final IngIngestTaskMapper taskMapper;
     private final IngResourceRegistryMapper registryMapper;
     private final IngDictMapper dictMapper;
     private final IngDictItemMapper dictItemMapper;
+    private final LineageService lineageService;
+    private final AccessControlService accessControlService;
 
     public RegisterService(IngDataTableMapper tableMapper, IngDataColumnMapper columnMapper,
-                           IngLineageEdgeMapper lineageMapper, IngColumnLineageMapper columnLineageMapper,
-                           IngAssetTagMapper tagMapper, IngProjectMapper projectMapper,
+                           IngAssetTagMapper tagMapper, IngAssetTagBindingMapper tagBindingMapper,
+                           IngProjectMapper projectMapper,
                            IngIngestTaskMapper taskMapper, IngResourceRegistryMapper registryMapper,
-                           IngDictMapper dictMapper, IngDictItemMapper dictItemMapper) {
+                           IngDictMapper dictMapper, IngDictItemMapper dictItemMapper,
+                           LineageService lineageService,
+                           AccessControlService accessControlService) {
         this.tableMapper = tableMapper;
         this.columnMapper = columnMapper;
-        this.lineageMapper = lineageMapper;
-        this.columnLineageMapper = columnLineageMapper;
         this.tagMapper = tagMapper;
+        this.tagBindingMapper = tagBindingMapper;
         this.projectMapper = projectMapper;
         this.taskMapper = taskMapper;
         this.registryMapper = registryMapper;
         this.dictMapper = dictMapper;
         this.dictItemMapper = dictItemMapper;
+        this.lineageService = lineageService;
+        this.accessControlService = accessControlService;
     }
 
-    public List<IngDataTable> listTables(Long sourceId) {
-        LambdaQueryWrapper<IngDataTable> q = new LambdaQueryWrapper<IngDataTable>().orderByAsc(IngDataTable::getId);
+    public List<IngDataTable> listTables(UserPrincipal operator, Long sourceId) {
+        Set<Long> allowed = accessControlService.effectiveTableIds(operator);
+        if (allowed.isEmpty()) {
+            return List.of();
+        }
+        LambdaQueryWrapper<IngDataTable> q = new LambdaQueryWrapper<IngDataTable>()
+                .in(IngDataTable::getId, allowed)
+                .orderByAsc(IngDataTable::getId);
         if (sourceId != null) {
+            accessControlService.assertSourceAccess(operator, sourceId);
             q.eq(IngDataTable::getSourceId, sourceId);
         }
         return tableMapper.selectList(q);
@@ -186,52 +201,15 @@ public class RegisterService {
     }
 
     public Map<String, Object> lineageGraph(String projectScope) {
-        List<IngLineageEdge> edges = lineageMapper.selectList(
-                new LambdaQueryWrapper<IngLineageEdge>().orderByAsc(IngLineageEdge::getSortOrder));
-        Map<String, Map<String, Object>> nodeMap = new LinkedHashMap<>();
-        for (IngLineageEdge e : edges) {
-            nodeMap.putIfAbsent(e.getFromNode(), node("SOURCE", e.getFromNode(), e.getFromLabel()));
-            nodeMap.putIfAbsent(e.getToNode(), node(inferType(e.getToNode()), e.getToNode(), e.getToLabel()));
-        }
-        Map<String, Object> out = new LinkedHashMap<>();
-        out.put("nodes", new ArrayList<>(nodeMap.values()));
-        out.put("edges", edges);
-        out.put("projectScope", projectScope == null ? "ALL" : projectScope);
-        return out;
+        return lineageService.panorama(null, null, null);
     }
 
     public Map<String, Object> lineageDrill(String nodeId) {
-        List<IngLineageEdge> all = lineageMapper.selectList(null);
-        List<IngLineageEdge> upstream = all.stream().filter(e -> nodeId.equals(e.getToNode())).collect(Collectors.toList());
-        List<IngLineageEdge> downstream = all.stream().filter(e -> nodeId.equals(e.getFromNode())).collect(Collectors.toList());
-        Map<String, Object> out = new LinkedHashMap<>();
-        out.put("focusNode", nodeId);
-        out.put("upstream", upstream);
-        out.put("downstream", downstream);
-        Set<String> related = new java.util.HashSet<>();
-        related.add(nodeId);
-        upstream.forEach(e -> related.add(e.getFromNode()));
-        downstream.forEach(e -> related.add(e.getToNode()));
-        List<Map<String, Object>> nodes = related.stream().map(id -> {
-            IngLineageEdge edge = all.stream().filter(e -> id.equals(e.getFromNode()) || id.equals(e.getToNode())).findFirst().orElse(null);
-            String label = id;
-            if (edge != null) {
-                if (id.equals(edge.getFromNode())) label = edge.getFromLabel();
-                else if (id.equals(edge.getToNode())) label = edge.getToLabel();
-            }
-            return node(inferType(id), id, label);
-        }).collect(Collectors.toList());
-        out.put("nodes", nodes);
-        List<IngLineageEdge> localEdges = new ArrayList<>();
-        localEdges.addAll(upstream);
-        localEdges.addAll(downstream);
-        out.put("edges", localEdges);
-        return out;
+        return lineageService.drill(nodeId);
     }
 
-    public List<IngColumnLineage> fieldLineage(String tableNode) {
-        return columnLineageMapper.selectList(new LambdaQueryWrapper<IngColumnLineage>()
-                .eq(IngColumnLineage::getTableNode, tableNode).orderByAsc(IngColumnLineage::getSortOrder));
+    public Map<String, Object> fieldLineage(String tableNode) {
+        return lineageService.fieldLineage(tableNode);
     }
 
     public Map<String, Object> assetReport() {
@@ -276,7 +254,38 @@ public class RegisterService {
     }
 
     public List<IngAssetTag> listTags() {
-        return tagMapper.selectList(new LambdaQueryWrapper<IngAssetTag>().orderByAsc(IngAssetTag::getId));
+        return tagMapper.selectList(new LambdaQueryWrapper<IngAssetTag>()
+                .orderByAsc(IngAssetTag::getTagSource)
+                .orderByAsc(IngAssetTag::getStdCode)
+                .orderByAsc(IngAssetTag::getId));
+    }
+
+    /** tree=true 时返回标准类目树；否则平铺全部标签。 */
+    public Object listTags(boolean tree) {
+        List<IngAssetTag> all = listTags();
+        if (!tree) {
+            return all;
+        }
+        List<IngAssetTag> roots = new ArrayList<>();
+        Map<Long, IngAssetTag> byId = new LinkedHashMap<>();
+        for (IngAssetTag t : all) {
+            if (!"STANDARD".equals(t.getTagSource())) {
+                continue;
+            }
+            t.setChildren(new ArrayList<>());
+            byId.put(t.getId(), t);
+        }
+        for (IngAssetTag t : byId.values()) {
+            if (t.getParentId() == null || !byId.containsKey(t.getParentId())) {
+                roots.add(t);
+            } else {
+                byId.get(t.getParentId()).getChildren().add(t);
+            }
+        }
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("standardTree", roots);
+        out.put("customTags", all.stream().filter(t -> !"STANDARD".equals(t.getTagSource())).toList());
+        return out;
     }
 
     @Transactional
@@ -288,6 +297,10 @@ public class RegisterService {
         tag.setTagDesc(str(body.get("tagDesc"), ""));
         tag.setHitCount(0);
         tag.setStatus("ACTIVE");
+        tag.setTagSource("CUSTOM");
+        tag.setLevel(null);
+        tag.setParentId(null);
+        tag.setStdCode(null);
         tagMapper.insert(tag);
         return tag.getId();
     }
@@ -296,6 +309,13 @@ public class RegisterService {
     public void updateTag(UserPrincipal operator, Long id, Map<String, Object> body) {
         IngAssetTag tag = tagMapper.selectById(id);
         if (tag == null) throw new BusinessException(404, "标签不存在");
+        if ("STANDARD".equals(tag.getTagSource())) {
+            if (body.containsKey("ruleExpr")) {
+                tag.setRuleExpr(body.get("ruleExpr") == null ? "" : body.get("ruleExpr").toString());
+            }
+            tagMapper.updateById(tag);
+            return;
+        }
         if (body.containsKey("tagName")) tag.setTagName(body.get("tagName").toString());
         if (body.containsKey("ruleExpr")) tag.setRuleExpr(body.get("ruleExpr").toString());
         if (body.containsKey("tagDesc")) tag.setTagDesc(body.get("tagDesc").toString());
@@ -315,10 +335,314 @@ public class RegisterService {
         return Map.of("matchedTags", tags.size(), "totalHits", totalHits);
     }
 
+    public List<IngAssetTagBinding> listTagBindings(String assetType, Long assetId) {
+        if (assetType == null || assetType.isBlank() || assetId == null) {
+            throw new BusinessException(400, "assetType/assetId required");
+        }
+        String type = assetType.trim().toUpperCase();
+        List<IngAssetTagBinding> list = tagBindingMapper.selectList(new LambdaQueryWrapper<IngAssetTagBinding>()
+                .eq(IngAssetTagBinding::getAssetType, type)
+                .eq(IngAssetTagBinding::getAssetId, assetId)
+                .orderByAsc(IngAssetTagBinding::getId));
+        enrichBindings(list);
+        return list;
+    }
+
+    public List<IngAssetTagBinding> listTagBindingsByTag(Long tagId) {
+        if (tagId == null) throw new BusinessException(400, "tagId required");
+        List<IngAssetTagBinding> list = tagBindingMapper.selectList(new LambdaQueryWrapper<IngAssetTagBinding>()
+                .eq(IngAssetTagBinding::getTagId, tagId)
+                .orderByAsc(IngAssetTagBinding::getId));
+        enrichBindings(list);
+        return list;
+    }
+
+    /**
+     * 打开「匹配标签」抽屉用：一次返回字段列表 + 表/字段已挂标签，避免 N+1。
+     */
+    public Map<String, Object> tagMatchContext(Long tableId) {
+        if (tableId == null) throw new BusinessException(400, "tableId required");
+        if (tableMapper.selectById(tableId) == null) {
+            throw new BusinessException(404, "数据表不存在");
+        }
+        List<IngDataColumn> columns = listColumns(tableId);
+        List<Long> tableTagIds = tagBindingMapper.selectList(new LambdaQueryWrapper<IngAssetTagBinding>()
+                        .eq(IngAssetTagBinding::getAssetType, "TABLE")
+                        .eq(IngAssetTagBinding::getAssetId, tableId)
+                        .orderByAsc(IngAssetTagBinding::getId))
+                .stream().map(IngAssetTagBinding::getTagId).toList();
+
+        Map<Long, List<Long>> columnTagMap = new LinkedHashMap<>();
+        for (IngDataColumn col : columns) {
+            columnTagMap.put(col.getId(), new ArrayList<>());
+        }
+        List<Long> colIds = columns.stream().map(IngDataColumn::getId).toList();
+        if (!colIds.isEmpty()) {
+            List<IngAssetTagBinding> colBinds = tagBindingMapper.selectList(new LambdaQueryWrapper<IngAssetTagBinding>()
+                    .eq(IngAssetTagBinding::getAssetType, "COLUMN")
+                    .in(IngAssetTagBinding::getAssetId, colIds)
+                    .orderByAsc(IngAssetTagBinding::getId));
+            for (IngAssetTagBinding b : colBinds) {
+                columnTagMap.computeIfAbsent(b.getAssetId(), k -> new ArrayList<>()).add(b.getTagId());
+            }
+        }
+
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("tableId", tableId);
+        out.put("columns", columns);
+        out.put("tableTagIds", tableTagIds);
+        out.put("columnTagMap", columnTagMap);
+        return out;
+    }
+
+    /**
+     * 根据该标签已手工挂标的表/字段，逆向归纳识别规则建议（不落库，需用户确认后写入 ruleExpr）。
+     */
+    public Map<String, Object> suggestRuleFromBindings(Long tagId) {
+        IngAssetTag tag = tagMapper.selectById(tagId);
+        if (tag == null) throw new BusinessException(404, "标签不存在");
+        if (tag.getLevel() != null && tag.getLevel() == 1) {
+            throw new BusinessException(400, "一级类目仅作分组，请对二级类目或扩展标签生成规则");
+        }
+        List<IngAssetTagBinding> bindings = listTagBindingsByTag(tagId);
+        List<String> tableCodes = new ArrayList<>();
+        List<String> tableNames = new ArrayList<>();
+        List<String> columnCodes = new ArrayList<>();
+        List<String> columnNames = new ArrayList<>();
+        for (IngAssetTagBinding b : bindings) {
+            if ("TABLE".equals(b.getAssetType())) {
+                IngDataTable t = tableMapper.selectById(b.getAssetId());
+                if (t != null) {
+                    if (t.getTableCode() != null && !t.getTableCode().isBlank()) tableCodes.add(t.getTableCode().trim());
+                    if (t.getTableName() != null && !t.getTableName().isBlank()) tableNames.add(t.getTableName().trim());
+                }
+            } else if ("COLUMN".equals(b.getAssetType())) {
+                IngDataColumn c = columnMapper.selectById(b.getAssetId());
+                if (c != null) {
+                    if (c.getColumnCode() != null && !c.getColumnCode().isBlank()) columnCodes.add(c.getColumnCode().trim());
+                    if (c.getColumnName() != null && !c.getColumnName().isBlank()) columnNames.add(c.getColumnName().trim());
+                }
+            }
+        }
+        Set<String> tableTokens = extractTokens(tableCodes, tableNames);
+        Set<String> uniqueColCodes = new LinkedHashSet<>(columnCodes);
+        List<String> parts = new ArrayList<>();
+        if (!tableTokens.isEmpty()) {
+            String tableRule = tableTokens.stream()
+                    .limit(8)
+                    .map(tok -> "table_name LIKE %" + tok + "%")
+                    .collect(Collectors.joining(" OR "));
+            parts.add(tableRule);
+        }
+        if (!uniqueColCodes.isEmpty()) {
+            String cols = uniqueColCodes.stream().limit(20).collect(Collectors.joining(","));
+            parts.add("column_name IN (" + cols + ")");
+        }
+        String suggested = String.join("; ", parts);
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("tagId", tagId);
+        out.put("tagName", tag.getTagName());
+        out.put("stdCode", tag.getStdCode());
+        out.put("currentRule", tag.getRuleExpr() == null ? "" : tag.getRuleExpr());
+        out.put("suggestedRule", suggested);
+        out.put("bindingCount", bindings.size());
+        out.put("tableSamples", distinctLimit(mergeLabels(tableCodes, tableNames), 12));
+        out.put("columnSamples", distinctLimit(mergeLabels(columnCodes, columnNames), 12));
+        out.put("tableTokenCount", tableTokens.size());
+        out.put("columnCodeCount", uniqueColCodes.size());
+        if (bindings.isEmpty()) {
+            out.put("message", "该标签尚无挂标资产，请先在数据资产标签登记中手工匹配");
+        } else if (suggested.isBlank()) {
+            out.put("message", "已有挂标但未能提取有效关键词，请手工填写规则");
+        } else {
+            out.put("message", "已根据 " + tableSamplesSize(tableCodes, tableNames) + " 张表、"
+                    + uniqueColCodes.size() + " 个字段归纳规则建议，确认后可写入识别规则");
+        }
+        return out;
+    }
+
+    @Transactional
+    public Map<String, Object> applySuggestedRule(UserPrincipal operator, Long tagId, Map<String, Object> body) {
+        Map<String, Object> suggestion = suggestRuleFromBindings(tagId);
+        String rule = str(body.get("ruleExpr"), null);
+        if (rule == null || rule.isBlank()) {
+            rule = String.valueOf(suggestion.get("suggestedRule"));
+        }
+        if (rule == null || rule.isBlank()) {
+            throw new BusinessException(400, "无可用规则可写入");
+        }
+        Map<String, Object> update = new HashMap<>();
+        update.put("ruleExpr", rule.trim());
+        updateTag(operator, tagId, update);
+        suggestion.put("appliedRule", rule.trim());
+        suggestion.put("currentRule", rule.trim());
+        suggestion.put("message", "识别规则已更新");
+        return suggestion;
+    }
+
+    private static final Pattern TOKEN_SPLIT = Pattern.compile("[^a-zA-Z0-9\\u4e00-\\u9fff]+");
+    private static final Set<String> STOP_TOKENS = Set.of(
+            "tbl", "table", "col", "column", "data", "info", "base", "master",
+            "表", "信息", "数据", "基础", "综合", "其他", "管理");
+
+    private Set<String> extractTokens(List<String> codes, List<String> names) {
+        Map<String, Integer> freq = new LinkedHashMap<>();
+        List<String> all = new ArrayList<>();
+        all.addAll(codes);
+        all.addAll(names);
+        for (String raw : all) {
+            if (raw == null || raw.isBlank()) continue;
+            String[] parts = TOKEN_SPLIT.split(raw.trim());
+            Set<String> seenInItem = new LinkedHashSet<>();
+            for (String p : parts) {
+                if (p == null || p.isBlank()) continue;
+                String tok = p.toLowerCase(Locale.ROOT);
+                if (tok.length() < 2) continue;
+                if (tok.matches("\\d+")) continue;
+                if (STOP_TOKENS.contains(tok)) continue;
+                seenInItem.add(tok);
+            }
+            // 中文短名整体也可作为 token
+            String compact = raw.replaceAll("\\s+", "");
+            if (compact.matches("[\\u4e00-\\u9fff]{2,8}")) {
+                seenInItem.add(compact);
+            }
+            for (String tok : seenInItem) {
+                freq.merge(tok, 1, Integer::sum);
+            }
+        }
+        if (freq.isEmpty()) return Set.of();
+        int threshold = all.size() >= 2 ? 2 : 1;
+        Set<String> preferred = freq.entrySet().stream()
+                .filter(e -> e.getValue() >= threshold)
+                .sorted((a, b) -> {
+                    int c = Integer.compare(b.getValue(), a.getValue());
+                    if (c != 0) return c;
+                    return Integer.compare(b.getKey().length(), a.getKey().length());
+                })
+                .map(Map.Entry::getKey)
+                .collect(Collectors.toCollection(LinkedHashSet::new));
+        if (!preferred.isEmpty()) return preferred;
+        return freq.keySet().stream().limit(8).collect(Collectors.toCollection(LinkedHashSet::new));
+    }
+
+    private List<String> mergeLabels(List<String> codes, List<String> names) {
+        List<String> out = new ArrayList<>();
+        int n = Math.max(codes.size(), names.size());
+        for (int i = 0; i < n; i++) {
+            String c = i < codes.size() ? codes.get(i) : null;
+            String name = i < names.size() ? names.get(i) : null;
+            if (c != null && name != null && !c.equals(name)) out.add(c + "/" + name);
+            else if (c != null) out.add(c);
+            else if (name != null) out.add(name);
+        }
+        return out;
+    }
+
+    private List<String> distinctLimit(List<String> items, int limit) {
+        return items.stream().filter(Objects::nonNull).distinct().limit(limit).toList();
+    }
+
+    private int tableSamplesSize(List<String> codes, List<String> names) {
+        Set<String> s = new LinkedHashSet<>();
+        s.addAll(codes);
+        s.addAll(names);
+        return s.size();
+    }
+
+    @Transactional
+    public Long bindTag(UserPrincipal operator, Map<String, Object> body) {
+        Long tagId = longVal(body.get("tagId"));
+        String assetType = str(body.get("assetType"), "").trim().toUpperCase();
+        Long assetId = longVal(body.get("assetId"));
+        if (tagId == null || assetId == null || assetType.isBlank()) {
+            throw new BusinessException(400, "tagId/assetType/assetId required");
+        }
+        if (!Set.of("TABLE", "COLUMN").contains(assetType)) {
+            throw new BusinessException(400, "assetType 仅支持 TABLE 或 COLUMN");
+        }
+        IngAssetTag tag = tagMapper.selectById(tagId);
+        if (tag == null) throw new BusinessException(404, "标签不存在");
+        if (tag.getLevel() != null && tag.getLevel() == 1) {
+            throw new BusinessException(400, "请选择二级类目挂标，一级类目仅作分组");
+        }
+        assertAssetExists(assetType, assetId);
+        IngAssetTagBinding exists = tagBindingMapper.selectOne(new LambdaQueryWrapper<IngAssetTagBinding>()
+                .eq(IngAssetTagBinding::getTagId, tagId)
+                .eq(IngAssetTagBinding::getAssetType, assetType)
+                .eq(IngAssetTagBinding::getAssetId, assetId)
+                .last("LIMIT 1"));
+        if (exists != null) {
+            return exists.getId();
+        }
+        IngAssetTagBinding b = new IngAssetTagBinding();
+        b.setTagId(tagId);
+        b.setAssetType(assetType);
+        b.setAssetId(assetId);
+        b.setCreatedAt(LocalDateTime.now());
+        tagBindingMapper.insert(b);
+        return b.getId();
+    }
+
+    @Transactional
+    public void unbindTag(UserPrincipal operator, Map<String, Object> body) {
+        Long tagId = longVal(body.get("tagId"));
+        String assetType = str(body.get("assetType"), "").trim().toUpperCase();
+        Long assetId = longVal(body.get("assetId"));
+        if (tagId == null || assetId == null || assetType.isBlank()) {
+            throw new BusinessException(400, "tagId/assetType/assetId required");
+        }
+        tagBindingMapper.delete(new LambdaQueryWrapper<IngAssetTagBinding>()
+                .eq(IngAssetTagBinding::getTagId, tagId)
+                .eq(IngAssetTagBinding::getAssetType, assetType)
+                .eq(IngAssetTagBinding::getAssetId, assetId));
+    }
+
+    private void assertAssetExists(String assetType, Long assetId) {
+        if ("TABLE".equals(assetType)) {
+            if (tableMapper.selectById(assetId) == null) {
+                throw new BusinessException(404, "数据表不存在");
+            }
+        } else if ("COLUMN".equals(assetType)) {
+            if (columnMapper.selectById(assetId) == null) {
+                throw new BusinessException(404, "字段/数据项不存在");
+            }
+        }
+    }
+
+    private void enrichBindings(List<IngAssetTagBinding> list) {
+        for (IngAssetTagBinding b : list) {
+            IngAssetTag tag = tagMapper.selectById(b.getTagId());
+            if (tag != null) {
+                b.setTagName(tag.getTagName());
+                b.setStdCode(tag.getStdCode());
+            }
+            if ("TABLE".equals(b.getAssetType())) {
+                IngDataTable t = tableMapper.selectById(b.getAssetId());
+                if (t != null) {
+                    b.setAssetLabel(Objects.toString(t.getTableName(), t.getTableCode()));
+                }
+            } else if ("COLUMN".equals(b.getAssetType())) {
+                IngDataColumn c = columnMapper.selectById(b.getAssetId());
+                if (c != null) {
+                    b.setAssetLabel(Objects.toString(c.getColumnName(), c.getColumnCode()));
+                }
+            }
+        }
+    }
+
+    private Long longVal(Object v) {
+        if (v == null || String.valueOf(v).isBlank()) return null;
+        return Long.valueOf(String.valueOf(v));
+    }
+
     public List<IngDict> listDicts(String keyword) {
         LambdaQueryWrapper<IngDict> q = new LambdaQueryWrapper<IngDict>().orderByAsc(IngDict::getId);
         if (keyword != null && !keyword.isBlank()) {
-            q.and(w -> w.like(IngDict::getDictCode, keyword).or().like(IngDict::getDictName, keyword));
+            q.and(w -> w.like(IngDict::getDictName, keyword)
+                    .or().like(IngDict::getStandardNo, keyword)
+                    .or().like(IngDict::getPublisher, keyword)
+                    .or().like(IngDict::getDictCode, keyword));
         }
         List<IngDict> dicts = dictMapper.selectList(q);
         for (IngDict d : dicts) {
@@ -332,8 +656,20 @@ public class RegisterService {
     public void updateDict(UserPrincipal operator, Long id, Map<String, Object> body) {
         IngDict d = dictMapper.selectById(id);
         if (d == null) throw new BusinessException(404, "字典不存在");
-        if (body.containsKey("dictName")) d.setDictName(body.get("dictName").toString());
-        if (body.containsKey("dictType")) d.setDictType(body.get("dictType").toString());
+        if (body.containsKey("dictName")) {
+            String name = body.get("dictName") == null ? "" : body.get("dictName").toString().trim();
+            if (!name.isBlank()) d.setDictName(name);
+        }
+        if (body.containsKey("dictType")) {
+            String dictType = String.valueOf(body.get("dictType")).trim().toUpperCase();
+            if (Set.of("GB", "DB", "HB", "TB", "CUSTOM").contains(dictType)) {
+                d.setDictType(dictType);
+            }
+        }
+        if (body.containsKey("standardNo")) d.setStandardNo(str(body.get("standardNo"), null));
+        if (body.containsKey("publisher")) d.setPublisher(str(body.get("publisher"), null));
+        if (body.containsKey("versionNo")) d.setVersionNo(str(body.get("versionNo"), null));
+        if (body.containsKey("remark")) d.setRemark(str(body.get("remark"), null));
         dictMapper.updateById(d);
     }
 
@@ -354,8 +690,13 @@ public class RegisterService {
     public Long createDictItem(UserPrincipal operator, Long dictId, Map<String, Object> body) {
         IngDictItem item = new IngDictItem();
         item.setDictId(dictId);
-        item.setItemKey(required(body.get("itemKey"), "itemKey").toString());
-        item.setItemValue(required(body.get("itemValue"), "itemValue").toString());
+        item.setItemKey(required(body.get("itemKey"), "代码值").toString());
+        item.setItemValue(required(body.get("itemValue"), "中文名称").toString());
+        Object usage = body.get("bizUsage");
+        if (usage == null) {
+            usage = body.get("biz_usage");
+        }
+        item.setBizUsage(usage == null ? "" : String.valueOf(usage).trim());
         item.setSortOrder(intVal(body.get("sortOrder"), 0));
         item.setStatus("ACTIVE");
         dictItemMapper.insert(item);
@@ -369,6 +710,10 @@ public class RegisterService {
         if (item == null) throw new BusinessException(404, "字典值不存在");
         if (body.containsKey("itemKey")) item.setItemKey(body.get("itemKey").toString());
         if (body.containsKey("itemValue")) item.setItemValue(body.get("itemValue").toString());
+        if (body.containsKey("bizUsage") || body.containsKey("biz_usage")) {
+            Object usage = body.containsKey("bizUsage") ? body.get("bizUsage") : body.get("biz_usage");
+            item.setBizUsage(usage == null ? "" : String.valueOf(usage).trim());
+        }
         if (body.containsKey("sortOrder")) item.setSortOrder(intVal(body.get("sortOrder"), item.getSortOrder()));
         dictItemMapper.updateById(item);
     }
@@ -396,7 +741,7 @@ public class RegisterService {
                 dict = new IngDict();
                 dict.setDictCode(dictCode);
                 dict.setDictName(p[1].trim());
-                dict.setDictType("STANDARD");
+                dict.setDictType("CUSTOM");
                 dict.setItemCount(0);
                 dict.setStatus("ACTIVE");
                 dictMapper.insert(dict);
@@ -405,6 +750,7 @@ public class RegisterService {
             Map<String, Object> itemBody = new HashMap<>();
             itemBody.put("itemKey", p[2].trim());
             itemBody.put("itemValue", p[3].trim());
+            if (p.length > 4) itemBody.put("bizUsage", p[4].trim());
             createDictItem(operator, currentDictId, itemBody);
             rows++;
         }
@@ -412,19 +758,23 @@ public class RegisterService {
     }
 
     public String dictTemplateCsv() {
-        return "dict_code,dict_name,item_key,item_value\nDICT_GENDER,性别,M,男\nDICT_GENDER,性别,F,女\n";
+        return "dict_code,dict_name,item_key,item_value,biz_usage\n"
+                + "DICT_GENDER,性别,M,男,用于人员性别采集\n"
+                + "DICT_GENDER,性别,F,女,用于人员性别采集\n";
     }
 
     public String exportDictCsv(List<Long> dictIds) {
-        StringBuilder sb = new StringBuilder("dict_code,dict_name,item_key,item_value\n");
+        StringBuilder sb = new StringBuilder("dict_code,dict_name,item_key,item_value,biz_usage\n");
         for (Long dictId : dictIds) {
             IngDict d = dictMapper.selectById(dictId);
             if (d == null) continue;
             for (IngDictItem item : listDictItems(dictId)) {
+                String usage = item.getBizUsage() == null ? "" : item.getBizUsage().replace(',', '，');
                 sb.append(d.getDictCode()).append(',')
                         .append(d.getDictName()).append(',')
                         .append(item.getItemKey()).append(',')
-                        .append(item.getItemValue()).append('\n');
+                        .append(item.getItemValue()).append(',')
+                        .append(usage).append('\n');
             }
         }
         return sb.toString();
@@ -456,20 +806,6 @@ public class RegisterService {
             col.setComponentType("INPUT");
             columnMapper.insert(col);
         }
-    }
-
-    private Map<String, Object> node(String type, String id, String label) {
-        Map<String, Object> n = new HashMap<>();
-        n.put("id", id);
-        n.put("type", type);
-        n.put("label", label);
-        return n;
-    }
-
-    private String inferType(String nodeId) {
-        if (nodeId.startsWith("src")) return "SOURCE";
-        if (nodeId.startsWith("cat")) return "CATALOG";
-        return "TABLE";
     }
 
     private String str(Object v, String def) {
