@@ -194,16 +194,13 @@ public class IngestionPlatformService {
         IngProject p = new IngProject();
         p.setProjectCode(str(body.get("projectCode"), "PRJ_" + UUID.randomUUID().toString().substring(0, 8)));
         p.setProjectName(required(body.get("projectName"), "projectName").toString());
-        // 固定绑定当前登录账号所属部门，不再使用前端传的机构 ID
-        if (operator.getOrgId() == null) {
-            throw new BusinessException(400, "当前账号未绑定部门，无法登记项目");
-        }
+        Long boundOrgId = resolveBoundOrgIdForWrite(operator, body, true);
         String systemName = str(body.get("systemName"), "").trim();
         if (systemName.isEmpty()) {
             throw new BusinessException(400, "请填写首个业务系统名称（同一项目后续还可继续添加系统/数据源）");
         }
         // 项目行保留「首个系统」展示名；同部门允许不同项目有相同系统名（系统以数据源为准）
-        p.setBoundOrgId(operator.getOrgId());
+        p.setBoundOrgId(boundOrgId);
         p.setSystemName(systemName);
         p.setStatus("ACTIVE");
         p.setCreatedBy(operator.getUsername());
@@ -222,9 +219,13 @@ public class IngestionPlatformService {
             throw new BusinessException(404, "项目不存在");
         }
         if (isBuiltinOtherProject(p.getProjectCode())) {
-            // 系统初始化「其他」项目：名称固定，仅允许维护系统/数据源
+            // 系统初始化「其他」项目：名称固定，仅允许维护系统/数据源；部门归属不可改
             if (!"其他".equals(p.getProjectName())) {
                 p.setProjectName("其他");
+            }
+            if (body.containsKey("boundOrgId") && body.get("boundOrgId") != null
+                    && !String.valueOf(body.get("boundOrgId")).isBlank()) {
+                throw new BusinessException(400, "平台默认「其他」项目的部门归属不可修改");
             }
         } else {
             String projectName = str(body.get("projectName"), "").trim();
@@ -232,6 +233,10 @@ public class IngestionPlatformService {
                 throw new BusinessException(400, "项目名称必填");
             }
             p.setProjectName(projectName);
+            Long newOrgId = resolveBoundOrgIdForWrite(operator, body, false);
+            if (newOrgId != null) {
+                p.setBoundOrgId(newOrgId);
+            }
         }
         String systemName = str(body.get("systemName"), "").trim();
         if (systemName.isEmpty()) {
@@ -650,6 +655,34 @@ public class IngestionPlatformService {
         return channelMapper.selectList(q);
     }
 
+    @Transactional
+    public Long createChannel(UserPrincipal operator, Map<String, Object> body) {
+        String channelType = required(body.get("channelType"), "channelType").toString().trim().toUpperCase();
+        String channelName = str(body.get("channelName"), "").trim();
+        if (channelName.isEmpty()) {
+            throw new BusinessException(400, "请填写任务名称");
+        }
+        IngIngestChannel ch = new IngIngestChannel();
+        ch.setChannelCode("CH_" + channelType + "_" + System.currentTimeMillis());
+        ch.setChannelName(channelName);
+        ch.setChannelType(channelType);
+        ch.setStatus("IDLE");
+        Object cfg = body.get("config");
+        if (cfg instanceof Map<?, ?> cfgMap) {
+            try {
+                ch.setConfigJson(objectMapper.writeValueAsString(cfgMap));
+            } catch (Exception e) {
+                throw new BusinessException(400, "通道配置格式无效");
+            }
+        } else {
+            ch.setConfigJson("{}");
+        }
+        channelMapper.insert(ch);
+        auditService.log(operator.getUserId(), operator.getUsername(), operator.getOrgId(),
+                "ING_CHANNEL_CREATE", "ing_ingest_channel", String.valueOf(ch.getId()), ch.getChannelName());
+        return ch.getId();
+    }
+
     public Map<String, Object> runChannel(UserPrincipal operator, Long id) {
         IngIngestChannel ch = channelMapper.selectById(id);
         if (ch == null) {
@@ -915,6 +948,39 @@ public class IngestionPlatformService {
 
     private String str(Object v, String def) {
         return v == null || String.valueOf(v).isBlank() ? def : String.valueOf(v);
+    }
+
+    /**
+     * 解析项目部门归属。
+     * 仅超级管理员（SYSTEM_ADMIN）可传入/修改 boundOrgId；其他人一律绑定本人部门。
+     * @param creating true=新建必须得到有效部门；false=更新时未传则返回 null 表示不改
+     */
+    private Long resolveBoundOrgIdForWrite(UserPrincipal operator, Map<String, Object> body, boolean creating) {
+        Object raw = body == null ? null : body.get("boundOrgId");
+        boolean hasBoundOrg = raw != null && !String.valueOf(raw).isBlank();
+        if (hasBoundOrg) {
+            if (!operator.isSystemAdmin()) {
+                throw new BusinessException(403, "仅超级管理员可指定或修改项目部门归属");
+            }
+            Long orgId;
+            try {
+                orgId = Long.valueOf(String.valueOf(raw).trim());
+            } catch (NumberFormatException e) {
+                throw new BusinessException(400, "部门 ID 无效");
+            }
+            SysOrg org = orgMapper.selectById(orgId);
+            if (org == null) {
+                throw new BusinessException(400, "部门不存在: " + orgId);
+            }
+            return orgId;
+        }
+        if (!creating) {
+            return null;
+        }
+        if (operator.getOrgId() == null) {
+            throw new BusinessException(400, "当前账号未绑定部门，无法登记项目（超级管理员请选择部门归属）");
+        }
+        return operator.getOrgId();
     }
 
     private Object required(Object v, String field) {

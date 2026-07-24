@@ -67,7 +67,9 @@ onMounted(load)
         <el-table-column label="动作" width="160">
           <template #default="{ row }">{{ statusLabel(row.action) }}</template>
         </el-table-column>
-        <el-table-column prop="resourceType" label="资源类型" width="140" />
+        <el-table-column label="资源类型" width="140">
+          <template #default="{ row }">{{ $statusLabel(row.resourceType) }}</template>
+        </el-table-column>
         <el-table-column prop="detail" label="详情" min-width="200" show-overflow-tooltip />
       </el-table>
       <el-pagination

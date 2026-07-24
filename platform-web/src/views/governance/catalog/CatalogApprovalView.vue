@@ -98,7 +98,7 @@ onMounted(load)
       <el-table-column prop="resourceCode" label="资源编码" width="130" />
       <el-table-column prop="resourceName" label="资源名称" min-width="140" />
       <el-table-column label="操作类型" width="90">
-        <template #default="{ row }">{{ ACTION_ZH[row.actionType] || row.actionType }}</template>
+        <template #default="{ row }">{{ ACTION_ZH[row.actionType] || $statusLabel(row.actionType) }}</template>
       </el-table-column>
       <el-table-column label="审批状态" width="100">
         <template #default="{ row }">

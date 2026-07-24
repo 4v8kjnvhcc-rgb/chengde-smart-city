@@ -152,7 +152,9 @@ onBeforeUnmount(() => {
       <div v-loading="monitorLoading">
         <el-table :data="monitorNodes" stripe size="small">
           <el-table-column prop="nodeName" label="节点" min-width="100" show-overflow-tooltip />
-          <el-table-column prop="nodeType" label="类型" width="90" />
+          <el-table-column label="类型" width="90">
+            <template #default="{ row }">{{ $statusLabel(row.nodeType) }}</template>
+          </el-table-column>
           <el-table-column label="状态" width="90">
             <template #default="{ row }">{{ $statusLabel(row.status) }}</template>
           </el-table-column>

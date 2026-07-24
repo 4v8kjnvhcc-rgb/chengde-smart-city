@@ -357,7 +357,7 @@ onMounted(async () => {
                 @click="selectSource(s)"
               >
                 <span class="lane-item__name">{{ s.systemName || s.sourceName || '未命名系统' }}</span>
-                <span class="lane-item__meta">{{ s.sourceType }}</span>
+                <span class="lane-item__meta">{{ $statusLabel(s.sourceType) }}</span>
               </button>
               <div v-if="selectedProjectId && !dataSources.length" class="lane-empty">暂无系统，请在项目详情中新增</div>
               <div v-else-if="!selectedProjectId" class="lane-empty">请选择项目</div>
@@ -381,7 +381,7 @@ onMounted(async () => {
                 <span class="lane-item__name">{{ s.systemName || s.sourceName || '未命名' }}</span>
                 <span class="lane-item__meta">
                   <el-tag size="small" effect="plain" type="info">{{ s.sourceName }}</el-tag>
-                  <el-tag size="small" effect="plain" type="info">{{ s.sourceType }}</el-tag>
+                  <el-tag size="small" effect="plain" type="info">{{ $statusLabel(s.sourceType) }}</el-tag>
                   <el-tag
                     v-if="s.sourceType === 'MYSQL' || s.sourceType === 'ORACLE'"
                     size="small"
@@ -497,7 +497,7 @@ onMounted(async () => {
               <el-option
                 v-for="s in dataSources"
                 :key="s.id"
-                :label="`${s.sourceName || '未命名'}（${s.sourceType}${s.connStatus ? ' · ' + s.connStatus : ''}）`"
+                :label="`${s.sourceName || '未命名'}（${$statusLabel(s.sourceType)}${s.connStatus ? ' · ' + $statusLabel(s.connStatus) : ''}）`"
                 :value="s.id"
               />
             </el-select>

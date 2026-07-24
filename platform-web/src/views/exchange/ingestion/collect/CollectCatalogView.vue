@@ -208,7 +208,7 @@ onMounted(() => reload())
 
           <el-select v-model="registryForm.refSourceId" clearable filterable style="min-width:280px">
 
-            <el-option v-for="s in dataSources" :key="s.id" :label="`${s.sourceName}（${s.sourceType}）`" :value="s.id" />
+            <el-option v-for="s in dataSources" :key="s.id" :label="`${s.sourceName}（${$statusLabel(s.sourceType)}）`" :value="s.id" />
 
           </el-select>
 
@@ -254,11 +254,17 @@ onMounted(() => reload())
 
         <el-table-column prop="categoryPath" label="分类" min-width="140" />
 
-        <el-table-column prop="secretLevel" label="涉密" width="90" />
+        <el-table-column label="涉密" width="90">
+          <template #default="{ row }">{{ $statusLabel(row.secretLevel) }}</template>
+        </el-table-column>
 
-        <el-table-column prop="publishStatus" label="发布" width="100" />
+        <el-table-column label="发布" width="100">
+          <template #default="{ row }">{{ $statusLabel(row.publishStatus) }}</template>
+        </el-table-column>
 
-        <el-table-column prop="approvalStatus" label="审批" width="100" />
+        <el-table-column label="审批" width="100">
+          <template #default="{ row }">{{ $statusLabel(row.approvalStatus) }}</template>
+        </el-table-column>
 
       </el-table>
 
@@ -304,7 +310,9 @@ onMounted(() => reload())
 
         <el-table-column prop="nodeName" label="名称" />
 
-        <el-table-column prop="secretLevel" label="涉密" width="90" />
+        <el-table-column label="涉密" width="90">
+          <template #default="{ row }">{{ $statusLabel(row.secretLevel) }}</template>
+        </el-table-column>
 
       </el-table>
 
@@ -338,7 +346,9 @@ onMounted(() => reload())
 
         <el-table-column prop="categoryPath" label="分类" />
 
-        <el-table-column prop="publishStatus" label="状态" width="100" />
+        <el-table-column label="状态" width="100">
+          <template #default="{ row }">{{ $statusLabel(row.publishStatus) }}</template>
+        </el-table-column>
 
       </el-table>
 
@@ -352,7 +362,9 @@ onMounted(() => reload())
 
         <el-table-column prop="title" label="标题" />
 
-        <el-table-column prop="approvalStatus" label="审批状态" width="120" />
+        <el-table-column label="审批状态" width="120">
+          <template #default="{ row }">{{ $statusLabel(row.approvalStatus) }}</template>
+        </el-table-column>
 
         <el-table-column label="操作" width="100">
 

@@ -68,7 +68,7 @@ public class IntegrationProperties {
     }
 
     public static class Kettle {
-        private String url = "http://localhost:8081";
+        private String url = "http://localhost:18081";
         private String user = "cluster";
         private String password = "cluster";
         // Carte 视角下平台 ODS/DWS 目标库连接（容器内通过 host-gateway 访问宿主机 smart_city）

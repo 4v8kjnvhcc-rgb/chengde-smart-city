@@ -9,6 +9,7 @@ import { ElMessage } from 'element-plus'
 import { collectIngestMainTab, type IngestMainTab } from '../ingestion-nav'
 import StructuredTableWizard from './StructuredTableWizard.vue'
 import ManualUploadView from './ManualUploadView.vue'
+import ChannelTaskPanel from './ChannelTaskPanel.vue'
 
 import { ingestionRegisterCache } from '../ingestion-register-cache'
 
@@ -1143,7 +1144,7 @@ onMounted(() => {
 
 
 
-    <!-- 文件上传：远程 / 本地 -->
+    <!-- 文件上传：远程 / 本地 —— 列表展示已有任务，右上角新建 -->
 
     <template v-else-if="mainTab === 'file'">
 
@@ -1153,47 +1154,25 @@ onMounted(() => {
 
       </el-radio-group>
 
-      <PageCard :title="FILE_MODES.find(m => m.key === fileSub)?.label || '文件上传'">
+      <ChannelTaskPanel
 
-        <el-form label-width="120px">
+        :key="fileSub"
 
-          <el-form-item label="接入通道">
+        :title="FILE_MODES.find(m => m.key === fileSub)?.label || '文件上传'"
 
-            <el-select v-model="selectedChannelId" style="min-width:240px">
+        :channel-type="activeChannelType || 'FTP'"
 
-              <el-option v-for="c in filteredChannels" :key="c.id" :label="c.channelName" :value="c.id" />
+        :config-fields="configFields(activeChannelType || 'FTP')"
 
-            </el-select>
+        subtitle="主界面展示已上传/接入任务信息；点击右上角新建上传任务"
 
-          </el-form-item>
-
-          <template v-for="f in currentConfigFields" :key="f.key">
-
-            <el-form-item :label="f.label">
-
-              <el-input v-model="channelForm[f.key]" :placeholder="f.hint" style="max-width:400px" />
-
-            </el-form-item>
-
-          </template>
-
-          <el-form-item>
-
-            <el-button type="primary" @click="saveChannelConfig">保存配置</el-button>
-
-            <el-button @click="runChannel">测试接入</el-button>
-
-          </el-form-item>
-
-        </el-form>
-
-      </PageCard>
+      />
 
     </template>
 
 
 
-    <!-- 其他数据接入 -->
+    <!-- 其他数据接入 —— 列表展示已有任务，右上角新建 -->
 
     <template v-else>
 
@@ -1203,41 +1182,19 @@ onMounted(() => {
 
       </el-radio-group>
 
-      <PageCard title="其他数据接入">
+      <ChannelTaskPanel
 
-        <el-form label-width="120px">
+        :key="otherSub"
 
-          <el-form-item label="接入通道">
+        :title="OTHER_MODES.find(m => m.key === otherSub)?.label || '其他数据接入'"
 
-            <el-select v-model="selectedChannelId" style="min-width:240px">
+        :channel-type="activeChannelType || 'API'"
 
-              <el-option v-for="c in filteredChannels" :key="c.id" :label="c.channelName" :value="c.id" />
+        :config-fields="configFields(activeChannelType || 'API')"
 
-            </el-select>
+        subtitle="主界面展示已接入任务信息；点击右上角新建上传任务"
 
-          </el-form-item>
-
-          <template v-for="f in currentConfigFields" :key="f.key">
-
-            <el-form-item :label="f.label">
-
-              <el-input v-model="channelForm[f.key]" :placeholder="f.hint" style="max-width:400px" />
-
-            </el-form-item>
-
-          </template>
-
-          <el-form-item>
-
-            <el-button type="primary" @click="saveChannelConfig">保存配置</el-button>
-
-            <el-button @click="runChannel">测试接入</el-button>
-
-          </el-form-item>
-
-        </el-form>
-
-      </PageCard>
+      />
 
     </template>
 

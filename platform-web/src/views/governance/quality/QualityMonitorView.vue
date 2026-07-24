@@ -198,14 +198,18 @@ onBeforeUnmount(() => {
 
     <PageCard v-if="selectedRunId" :title="`问题下钻 · 运行 #${selectedRunId}`" style="margin-top: 12px">
       <el-table :data="issues" stripe size="small">
-        <el-table-column prop="checkType" label="检查" width="110" />
+        <el-table-column label="检查" width="110">
+          <template #default="{ row }">{{ $statusLabel(row.checkType) }}</template>
+        </el-table-column>
         <el-table-column prop="targetTable" label="表" width="140" />
         <el-table-column prop="targetColumn" label="字段" width="100" />
-        <el-table-column prop="issueType" label="类型" width="100" />
+        <el-table-column label="类型" width="100">
+          <template #default="{ row }">{{ $statusLabel(row.issueType) }}</template>
+        </el-table-column>
         <el-table-column prop="issueValue" label="说明" min-width="200" show-overflow-tooltip />
         <el-table-column prop="issueCount" label="数量" width="70" />
         <el-table-column label="级别" width="80">
-          <template #default="{ row }">{{ ({ HIGH: '高', MEDIUM: '中', LOW: '低' } as Record<string, string>)[row.severity || ''] || row.severity || '—' }}</template>
+          <template #default="{ row }">{{ $statusLabel(row.severity) }}</template>
         </el-table-column>
         <el-table-column prop="sampleData" label="样本" min-width="160" show-overflow-tooltip />
         <el-table-column label="状态" width="80">

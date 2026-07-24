@@ -115,14 +115,18 @@ onBeforeUnmount(() => {
           <el-table :data="lineage.upstream || []" stripe size="small" style="margin-bottom:12px">
             <el-table-column prop="label" label="来源" min-width="140" />
             <el-table-column prop="node" label="节点" width="120" />
-            <el-table-column prop="edgeType" label="类型" width="90" />
+            <el-table-column label="类型" width="90">
+              <template #default="{ row }">{{ $statusLabel(row.edgeType) }}</template>
+            </el-table-column>
           </el-table>
           <el-empty v-if="!(lineage.upstream || []).length" description="暂无上游血缘" :image-size="48" />
           <h4 class="sub">下游关系</h4>
           <el-table :data="lineage.downstream || []" stripe size="small">
             <el-table-column prop="label" label="去向" min-width="140" />
             <el-table-column prop="node" label="节点" width="120" />
-            <el-table-column prop="edgeType" label="类型" width="90" />
+            <el-table-column label="类型" width="90">
+              <template #default="{ row }">{{ $statusLabel(row.edgeType) }}</template>
+            </el-table-column>
           </el-table>
           <el-empty v-if="!(lineage.downstream || []).length" description="暂无下游血缘" :image-size="48" />
         </el-tab-pane>

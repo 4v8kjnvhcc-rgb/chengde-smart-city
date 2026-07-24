@@ -99,6 +99,15 @@ public class GovernanceTaskController {
         return ApiResponse.ok(service.getGraph(id));
     }
 
+    /** 预览治理任务输出表样例行（默认最多 100 行） */
+    @GetMapping("/{id}/output-preview")
+    @PreAuthorize("isAuthenticated()")
+    public ApiResponse<Map<String, Object>> outputPreview(@PathVariable Long id,
+                                                          @RequestParam(required = false) String table,
+                                                          @RequestParam(required = false) Integer limit) {
+        return ApiResponse.ok(service.previewOutput(id, table, limit));
+    }
+
     @PutMapping("/{id}/graph")
     @PreAuthorize("isAuthenticated()")
     public ApiResponse<Void> saveGraph(@AuthenticationPrincipal UserPrincipal principal,

@@ -84,7 +84,7 @@ onBeforeUnmount(() => {
     <div v-loading="loading">
       <el-descriptions v-if="detail" :column="2" border size="small" style="margin-bottom:12px">
         <el-descriptions-item label="编码">{{ detail.scriptCode }}</el-descriptions-item>
-        <el-descriptions-item label="类型">{{ detail.scriptType }}</el-descriptions-item>
+        <el-descriptions-item label="类型">{{ $statusLabel(detail.scriptType) }}</el-descriptions-item>
         <el-descriptions-item label="发布状态">{{ $statusLabel(detail.publishStatus) }}</el-descriptions-item>
         <el-descriptions-item label="版本">{{ detail.versionNo }}</el-descriptions-item>
       </el-descriptions>

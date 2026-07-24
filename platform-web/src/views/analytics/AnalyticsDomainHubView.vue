@@ -140,9 +140,9 @@ onMounted(loadOverview)
     <HubSideLayout v-model="activeMCode" :groups="navGroups">
       <PageCard v-if="activeModule" :title="`${activeModule.mCode} ${activeModule.moduleName}`">
         <el-descriptions :column="2" border size="small">
-          <el-descriptions-item label="类型">{{ activeModule.moduleType }}</el-descriptions-item>
+          <el-descriptions-item label="类型">{{ $statusLabel(activeModule.moduleType) }}</el-descriptions-item>
           <el-descriptions-item label="分组">{{ activeModule.capGroup }}</el-descriptions-item>
-          <el-descriptions-item label="状态">{{ activeModule.status }}</el-descriptions-item>
+          <el-descriptions-item label="状态">{{ $statusLabel(activeModule.status) }}</el-descriptions-item>
           <el-descriptions-item label="最近运行">{{ activeModule.lastRunAt || '-' }}</el-descriptions-item>
           <el-descriptions-item v-if="activeModule.deDashboardId" label="DE 看板" :span="2">
             {{ activeModule.deDashboardId }}

@@ -142,7 +142,9 @@ onMounted(load)
           @current-change="(row: RuleRow | null) => row && selectRule(row)"
         >
           <el-table-column prop="ruleName" label="规则" min-width="120" />
-          <el-table-column prop="ruleType" label="类型" width="100" />
+          <el-table-column label="类型" width="100">
+            <template #default="{ row }">{{ $statusLabel(row.ruleType) }}</template>
+          </el-table-column>
           <el-table-column label="状态" width="80">
             <template #default="{ row }">
               <el-tag size="small" :type="statusTagType(row.status)">{{ statusLabel(row.status) }}</el-tag>

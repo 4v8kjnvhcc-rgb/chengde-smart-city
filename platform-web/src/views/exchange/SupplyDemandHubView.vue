@@ -333,7 +333,9 @@ onMounted(() => { resolveTab(); loadTabData() })
           </el-form>
           <el-table :data="demands" stripe>
             <el-table-column prop="demandTitle" label="需求" min-width="160" />
-            <el-table-column prop="demandType" label="类型" width="100" />
+            <el-table-column label="类型" width="100">
+              <template #default="{ row }">{{ $statusLabel(row.demandType) }}</template>
+            </el-table-column>
             <el-table-column prop="stage" label="阶段" width="90" />
             <el-table-column label="状态" width="110">
               <template #default="{ row }"><el-tag :type="$statusTagType(row.status)">{{ $statusLabel(row.status) }}</el-tag></template>
@@ -392,7 +394,9 @@ onMounted(() => { resolveTab(); loadTabData() })
             <el-option v-for="d in demands.filter(x => x.status === 'CONFIRMED')" :key="d.id" :label="d.demandTitle" :value="d.id" />
           </el-select>
           <el-table v-if="supplyTasks.length" :data="supplyTasks" stripe>
-            <el-table-column prop="taskType" label="类型" width="100" />
+            <el-table-column label="类型" width="100">
+              <template #default="{ row }">{{ $statusLabel(row.taskType) }}</template>
+            </el-table-column>
             <el-table-column prop="taskName" label="任务" min-width="200" />
             <el-table-column label="状态" width="100">
           <template #default="{ row }">{{ $statusLabel(row.status) }}</template>
@@ -418,7 +422,9 @@ onMounted(() => { resolveTab(); loadTabData() })
           <el-table :data="catalogs" stripe>
             <el-table-column prop="catalogCode" label="编码" width="140" />
             <el-table-column prop="title" label="标题" min-width="160" />
-            <el-table-column prop="publishStatus" label="状态" width="100" />
+            <el-table-column label="状态" width="100">
+              <template #default="{ row }">{{ $statusLabel(row.publishStatus) }}</template>
+            </el-table-column>
             <el-table-column label="操作" width="160">
               <template #default="{ row }">
                 <el-button v-if="row.publishStatus === 'DRAFT'" link type="primary" @click="publishCatalog(row.id)">发布</el-button>
@@ -449,7 +455,9 @@ onMounted(() => { resolveTab(); loadTabData() })
           </el-form>
           <el-table :data="objections" stripe>
             <el-table-column prop="catalogId" label="目录ID" width="90" />
-            <el-table-column prop="objectionType" label="类型" width="100" />
+            <el-table-column label="类型" width="100">
+              <template #default="{ row }">{{ $statusLabel(row.objectionType) }}</template>
+            </el-table-column>
             <el-table-column prop="content" label="内容" min-width="200" />
             <el-table-column label="状态" width="100">
           <template #default="{ row }">{{ $statusLabel(row.status) }}</template>
@@ -466,9 +474,13 @@ onMounted(() => { resolveTab(); loadTabData() })
       <template v-if="tab === 'm026'">
         <PageCard>
           <el-table :data="manifests" stripe>
-            <el-table-column prop="manifestType" label="类型" width="120" />
+            <el-table-column label="类型" width="120">
+              <template #default="{ row }">{{ $statusLabel(row.manifestType) }}</template>
+            </el-table-column>
             <el-table-column prop="title" label="标题" min-width="180" />
-            <el-table-column prop="authLevel" label="授权级别" width="100" />
+            <el-table-column label="授权级别" width="100">
+              <template #default="{ row }">{{ $statusLabel(row.authLevel) }}</template>
+            </el-table-column>
             <el-table-column prop="cascadeFlag" label="级联" width="70">
               <template #default="{ row }">{{ row.cascadeFlag ? '是' : '否' }}</template>
             </el-table-column>

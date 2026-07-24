@@ -5,6 +5,7 @@ import api from '@/api/http'
 import PageHeader from '@/components/common/PageHeader.vue'
 import PageCard from '@/components/common/PageCard.vue'
 import type { D05Module } from '@/components/catalog/ModuleMetaPanel.vue'
+import { statusLabel, statusTagType } from '@/utils/status-label'
 
 const router = useRouter()
 const summary = ref<{
@@ -17,14 +18,6 @@ const modules = ref<D05Module[]>([])
 const keyword = ref('')
 const platform = ref('')
 const status = ref('')
-
-const STATUS_LABEL: Record<string, string> = {
-  implemented: '已实装',
-  poc: 'PoC',
-  external: '外部',
-  stub: '占位',
-  missing: '待开发',
-}
 
 async function search() {
   const res = await api.get('/catalog/modules', {
@@ -49,13 +42,6 @@ function openModule(row: D05Module) {
 
 function goPlatform(p: string) {
   router.push(`/catalog/${p}`)
-}
-
-function statusTagType(s: string) {
-  if (s === 'implemented') return 'success'
-  if (s === 'poc') return 'warning'
-  if (s === 'missing') return 'danger'
-  return 'info'
 }
 
 onMounted(load)
@@ -128,10 +114,10 @@ onMounted(load)
         <el-table-column prop="chapter" label="D05章节" min-width="160" show-overflow-tooltip />
         <el-table-column prop="sectionName" label="子章节" min-width="180" show-overflow-tooltip />
         <el-table-column prop="deliveryLevel" label="级别" width="72" />
-        <el-table-column prop="implStatus" label="状态" width="96">
+        <el-table-column label="状态" width="96">
           <template #default="{ row }">
             <el-tag size="small" :type="statusTagType(row.implStatus)">
-              {{ STATUS_LABEL[row.implStatus] || row.implStatus }}
+              {{ statusLabel(row.implStatus) }}
             </el-tag>
           </template>
         </el-table-column>

@@ -97,7 +97,9 @@ onMounted(load)
       <el-table class="portal-table" :data="catalogs" stripe>
         <el-table-column prop="catalogCode" label="编码" min-width="140" />
         <el-table-column prop="title" label="标题" min-width="160" />
-        <el-table-column prop="publishStatus" label="状态" width="120" />
+        <el-table-column label="状态" width="120">
+          <template #default="{ row }">{{ $statusLabel(row.publishStatus) }}</template>
+        </el-table-column>
         <el-table-column label="操作" width="100">
           <template #default="{ row }">
             <el-button

@@ -75,7 +75,16 @@ export interface Upload {
   status: string
   previewJson?: string
 }
-export interface Channel { id: number; channelCode: string; channelName: string; channelType: string; status: string; lastMessage?: string; configJson?: string }
+export interface Channel {
+  id: number
+  channelCode: string
+  channelName: string
+  channelType: string
+  status: string
+  lastMessage?: string
+  lastRunAt?: string
+  configJson?: string
+}
 export interface IngestTask {
   id: number
   taskCode: string
@@ -321,6 +330,7 @@ export const ingestionApi = {
   finishUpload: (body: Record<string, unknown>) =>
     api.post<{ message: string; ok: boolean }>('/exchange/ingestion/collect/uploads/finish', body),
   channels: (channelType?: string) => api.get<Channel[]>('/exchange/ingestion/channels', { params: { channelType } }),
+  createChannel: (body: Record<string, unknown>) => api.post<number>('/exchange/ingestion/channels', body),
   updateChannel: (id: number, body: Record<string, unknown>) => api.put<void>(`/exchange/ingestion/channels/${id}`, body),
   runChannel: (id: number) => api.post<Record<string, unknown>>(`/exchange/ingestion/channels/${id}/run`),
   tasks: (channelId?: number) => api.get<IngestTask[]>('/exchange/ingestion/collect/tasks', { params: { channelId } }),

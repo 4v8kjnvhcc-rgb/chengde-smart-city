@@ -1,4 +1,4 @@
-/** 业务状态码 → 中文展示（API 仍传英文码，仅 UI 转换） */
+/** 业务状态码 / 枚举码 → 中文展示（API 仍传英文码，仅 UI 转换） */
 
 const STATUS_ZH: Record<string, string> = {
   // 通用启用
@@ -15,6 +15,7 @@ const STATUS_ZH: Record<string, string> = {
   UPDATE: '更新',
   OFFLINE: '已下线',
   ARCHIVED: '已归档',
+  ARCHIVE: '归档',
   // 监控/预检
   OK: '正常',
   WARN: '预警',
@@ -39,10 +40,12 @@ const STATUS_ZH: Record<string, string> = {
   FAILED: '失败',
   ERROR: '错误',
   COMPLETED: '已完成',
+  FINISHED: '已完成',
   STOPPED: '已停止',
   CLOSED: '已关闭',
   OPEN: '开放',
   WAITING: '等待中',
+  SKIPPED: '已跳过',
   // 供需
   SUBMITTED: '已提交',
   ANALYZING: '分析中',
@@ -50,12 +53,19 @@ const STATUS_ZH: Record<string, string> = {
   DISPATCHED: '已分发',
   SUPERVISING: '督办中',
   FULFILLING: '履约中',
-  // 采集/解析
+  MATCHED: '已匹配',
+  UNMATCHED: '未匹配',
+  // 采集/解析/索引
   PARSED: '已解析',
   COMMITTED: '已入库',
   PREVIEWED: '已预览',
   UPLOADED: '已上传',
   REGISTERED: '已登记',
+  INDEXED: '已索引',
+  RAW: '原始',
+  CLEANED: '已清洗',
+  TAGGED: '已标注',
+  LINKED: '已关联',
   // 评估
   EVALUATING: '评估中',
   SCORED: '已打分',
@@ -69,6 +79,8 @@ const STATUS_ZH: Record<string, string> = {
   UNREAD: '未读',
   LOCKED: '已锁定',
   EXPIRED: '已过期',
+  UNTESTED: '未测试',
+  ONLINE: '在线',
   // 访问控制授权级别
   VIEW: '查看',
   EDIT: '编辑',
@@ -80,9 +92,46 @@ const STATUS_ZH: Record<string, string> = {
   ROLE: '角色',
   ORG: '机构',
   PROJECT: '项目',
-  TABLE: '表',
+  // 标准对标
+  MAPPED: '已对标',
+  UNMAPPED: '未对标',
+  // 元数据条目类型
   SOURCE: '数据源',
-  // 治理 ETL 节点
+  CONNECTOR: '连接器',
+  TABLE: '数据表',
+  COLUMN: '字段',
+  CATALOG: '编目',
+  MODEL: '元模型',
+  LINEAGE: '血缘',
+  VERSION: '版本',
+  METRIC: '指标',
+  SERVICE: '服务',
+  FILE: '文件',
+  API: '接口',
+  DATA: '数据',
+  // 安全分级
+  PUBLIC: '公开',
+  INTERNAL: '内部',
+  SENSITIVE: '敏感',
+  SECRET: '核心',
+  CORE: '核心',
+  // 采集范围 / 符合度 / 分层
+  FULL: '整库',
+  PASS: '通过',
+  FAIL: '不通过',
+  ODS: 'ODS',
+  DWD: 'DWD',
+  DWS: 'DWS',
+  ADS: 'ADS',
+  EXTERNAL: '外部',
+  // 关系类型
+  FK: '外键',
+  IMPACT: '影响',
+  ASSOC: '关联',
+  // 健康
+  UP: '可用',
+  DOWN: '不可用',
+  // 治理 ETL 节点类型
   INPUT: '输入',
   OUTPUT: '输出',
   FILTER: '过滤',
@@ -115,58 +164,135 @@ const STATUS_ZH: Record<string, string> = {
   INSERT_UPDATE: '插入更新',
   DB_LOOKUP: '库表查找',
   HTTP: 'HTTP接口',
-  // 标准对标
-  MAPPED: '已对标',
-  PARTIAL: '部分对标',
-  UNMAPPED: '未对标',
-  // 元数据条目类型
-  SOURCE: '数据源',
-  CONNECTOR: '连接器',
-  TABLE: '数据表',
-  COLUMN: '字段',
-  CATALOG: '编目',
-  MODEL: '元模型',
-  LINEAGE: '血缘',
-  VERSION: '版本',
-  METRIC: '指标',
-  SERVICE: '服务',
-  FILE: '文件',
-  API: '接口',
-  // 安全分级
-  PUBLIC: '公开',
-  INTERNAL: '内部',
-  SENSITIVE: '敏感',
-  SECRET: '核心',
-  CORE: '核心',
-  // 采集范围 / 符合度 / 分层
-  FULL: '整库',
-  PASS: '通过',
-  FAIL: '不通过',
-  ODS: 'ODS',
-  DWD: 'DWD',
-  DWS: 'DWS',
-  ADS: 'ADS',
-  EXTERNAL: '外部源',
-  // 关系类型
-  FK: '外键',
-  IMPACT: '影响',
-  ASSOC: '关联',
-  // 健康
-  UP: '可用',
-  DOWN: '不可用',
-  // 治理 ETL 节点类型
-  INPUT: '输入',
-  OUTPUT: '输出',
-  FILTER: '过滤',
-  FIELD_PROCESS: '字段处理',
-  DEDUPLICATE: '去重',
-  MASK: '脱敏',
-  JOIN: '关联',
-  UNION: '合并',
-  SORT: '排序',
-  AGGREGATE: '聚合',
-  PIVOT: '透视',
-  UNPIVOT: '逆透视',
+  // D05 模块实现状态
+  IMPLEMENTED: '已实装',
+  POC: 'PoC演示',
+  STUB: '占位',
+  MISSING: '待开发',
+  // 分析域模块类型
+  DATA_OPS: '数据运维',
+  ANALYSIS: '分析应用',
+  // 共享方式 / 路径
+  DB_SYNC: '库表同步',
+  FILE_SYNC: '文件同步',
+  DIRECT: '直接共享',
+  PROCESSED: '加工共享',
+  CONDITIONAL: '有条件共享',
+  NOT_SHARE: '不予共享',
+  RESTRICTED: '受限共享',
+  NEED_COLLECT: '需采集',
+  AUTHORIZE_EXISTING: '授权现有',
+  // 通道类型
+  FTP: 'FTP',
+  LOCAL: '本地文件',
+  UNSTRUCT: '非结构化',
+  SEMI: '半结构化',
+  CDC: 'CDC增量',
+  // 作业/管道/策略类型
+  PROBE: '探测',
+  RECONCILE: '对账',
+  CLEAN: '清洗',
+  TAG: '标注',
+  LINK: '关联',
+  CLASSIFY: '分类',
+  BACKUP: '备份',
+  DESTROY: '销毁',
+  // 异议类型
+  QUALITY: '质量',
+  COMPLETENESS: '完整性',
+  AUTH: '授权',
+  // 严重级别
+  HIGH: '高',
+  MEDIUM: '中',
+  LOW: '低',
+  DELETE: '删除',
+  DATABASE: '数据库',
+  OTHER: '其他',
+  REALTIME: '实时',
+  DAILY: '每日',
+  WEEKLY: '每周',
+  MONTHLY: '每月',
+  YEARLY: '每年',
+  // 共享属性（目录 OPEN 与通用 OPEN 语义不同，展示侧优先用本地 SHARE 映射）
+  UNCONDITIONAL: '无条件共享',
+  // 质量检查 / 问题类型
+  NULL_CHECK: '空值检查',
+  UNIQUENESS: '唯一性',
+  RECORD_COUNT: '记录数',
+  ACCURACY: '准确性',
+  INTEGRITY: '完整性',
+  NULL: '空值',
+  NULL_VALUE: '空值',
+  DUPLICATE: '重复值',
+  INVALID: '无效值',
+  COUNT: '计数异常',
+  OUT_OF_RANGE: '超范围',
+  FORMAT_ERROR: '格式错误',
+  THRESHOLD: '超阈值',
+  // 脚本/组件类型
+  SELECT: '查询',
+  FORM: '表单',
+  LIST: '列表',
+  // 供需清单
+  SUPPLY: '供给',
+  DEMAND: '需求',
+  // 常见数据源类型（展示名可与品牌一致）
+  MYSQL: 'MySQL',
+  POSTGRESQL: 'PostgreSQL',
+  POSTGRES: 'PostgreSQL',
+  ORACLE: 'Oracle',
+  SQLSERVER: 'SQL Server',
+  HIVE: 'Hive',
+  CLICKHOUSE: 'ClickHouse',
+  MONGODB: 'MongoDB',
+  REDIS: 'Redis',
+  KAFKA: 'Kafka',
+  ELASTICSEARCH: 'Elasticsearch',
+  // 需求/任务类型
+  STRUCTURED: '结构化',
+  UNSTRUCTURED: '非结构化',
+  COLLECT: '归集',
+  SHARE: '共享',
+  EXCHANGE: '交换',
+  // 评价周期 / 指标 / 对象
+  WEEK: '周',
+  MONTH: '月',
+  QUARTER: '季',
+  QUARTERLY: '每季',
+  HALF_YEAR: '半年',
+  YEAR: '年',
+  A: 'A自动',
+  B: 'B人工',
+  REGION: '区域',
+  DEPT: '部门',
+  POSITION: '岗位',
+  SYSTEM: '业务系统',
+  // 质量规则
+  CONSISTENCY: '一致性',
+  TIMELINESS: '及时性',
+  // 指标/字段值类型（非 DB dataType 列）
+  STRING: '字符串',
+  NUMBER: '数字',
+  DATE: '日期',
+  BOOLEAN: '布尔',
+  // 媒介 / 应用
+  DOCUMENT: '文档',
+  IMAGE: '图片',
+  AV: '音视频',
+  VIDEO: '视频',
+  AUDIO: '音频',
+  WEB: 'Web',
+  // 分区类型
+  RANGE: '范围',
+  HASH: '哈希',
+  // 血缘边 / 探查实体
+  FLOW: '数据流',
+  EXTRACT: '抽取',
+  CROSS_DB: '跨库',
+  ENTERPRISE: '企业',
+  PERSON: '人员',
+  // 授权对象补充（ORG/USER/ROLE/TABLE/COLUMN 已有）
+  AUTHORIZE: '授权',
 }
 
 /**
@@ -186,16 +312,16 @@ export function statusLabel(value: unknown): string {
 
 export function statusTagType(value: unknown): 'success' | 'warning' | 'info' | 'danger' | 'primary' {
   const key = String(value ?? '').trim().toUpperCase()
-  if (['ACTIVE', 'ENABLED', 'SUCCESS', 'APPROVED', 'COMPLETED', 'CONFIRMED', 'PUBLISHED', 'READY', 'CONFIGURED', 'NORMAL', 'SUBSCRIBED', 'DISTRIBUTED', 'MAPPED', 'OK'].includes(key)) {
+  if (['ACTIVE', 'ENABLED', 'SUCCESS', 'APPROVED', 'COMPLETED', 'FINISHED', 'CONFIRMED', 'PUBLISHED', 'READY', 'CONFIGURED', 'NORMAL', 'SUBSCRIBED', 'DISTRIBUTED', 'MAPPED', 'MATCHED', 'INDEXED', 'OK', 'IMPLEMENTED', 'ONLINE', 'UP', 'PASS'].includes(key)) {
     return 'success'
   }
-  if (['PENDING', 'RUNNING', 'ANALYZING', 'WAITING', 'DRAFT', 'SUPERVISING', 'DISPATCHED', 'FULFILLING', 'PARTIAL', 'WARN'].includes(key)) {
+  if (['PENDING', 'RUNNING', 'ANALYZING', 'WAITING', 'DRAFT', 'SUPERVISING', 'DISPATCHED', 'FULFILLING', 'PARTIAL', 'WARN', 'POC', 'MEDIUM', 'RAW', 'TAGGED', 'CLEANED'].includes(key)) {
     return 'warning'
   }
-  if (['REJECTED', 'FAILED', 'ERROR', 'CANCELLED', 'ABNORMAL', 'EXPIRED', 'RETURNED', 'STOPPED', 'UNMAPPED', 'CRITICAL', 'BLOCKED'].includes(key)) {
+  if (['REJECTED', 'FAILED', 'ERROR', 'CANCELLED', 'ABNORMAL', 'EXPIRED', 'RETURNED', 'STOPPED', 'UNMAPPED', 'UNMATCHED', 'CRITICAL', 'BLOCKED', 'MISSING', 'HIGH', 'DOWN', 'FAIL'].includes(key)) {
     return 'danger'
   }
-  if (['INACTIVE', 'DISABLED', 'OFFLINE', 'CLOSED', 'WITHDRAWN', 'ARCHIVED'].includes(key)) {
+  if (['INACTIVE', 'DISABLED', 'OFFLINE', 'CLOSED', 'WITHDRAWN', 'ARCHIVED', 'STUB', 'EXTERNAL', 'SKIPPED', 'UNTESTED', 'LOW'].includes(key)) {
     return 'info'
   }
   return 'info'

@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed } from 'vue'
+import { statusLabel, statusTagType } from '@/utils/status-label'
 
 export interface D05Module {
   mCode: string
@@ -17,30 +18,23 @@ export interface D05Module {
   externalUrl?: string | null
 }
 
-const STATUS_META: Record<string, { label: string; type: 'success' | 'warning' | 'info' | 'danger' }> = {
-  implemented: { label: '已实装', type: 'success' },
-  poc: { label: 'PoC演示', type: 'warning' },
-  external: { label: '外部组件', type: 'info' },
-  stub: { label: '占位', type: 'info' },
-  missing: { label: '待开发', type: 'danger' },
-}
-
 const props = defineProps<{
   module: D05Module
 }>()
 
-const statusMeta = computed(() => STATUS_META[props.module.implStatus] || { label: props.module.implStatus, type: 'info' as const })
+const statusText = computed(() => statusLabel(props.module.implStatus))
+const statusType = computed(() => statusTagType(props.module.implStatus))
 </script>
 
 <template>
   <el-descriptions :column="2" border size="small" class="module-desc">
     <el-descriptions-item label="模块编号">{{ module.mCode }}</el-descriptions-item>
     <el-descriptions-item label="交付级别">
-      <el-tag size="small">{{ module.deliveryLevel }}</el-tag>
+      <el-tag size="small">{{ $statusLabel(module.deliveryLevel) }}</el-tag>
     </el-descriptions-item>
     <el-descriptions-item label="逻辑域">{{ module.logicalDomain }}</el-descriptions-item>
     <el-descriptions-item label="实现状态">
-      <el-tag size="small" :type="statusMeta.type">{{ statusMeta.label }}</el-tag>
+      <el-tag size="small" :type="statusType">{{ statusText }}</el-tag>
     </el-descriptions-item>
     <el-descriptions-item label="D05 章节" :span="2">{{ module.chapter }}</el-descriptions-item>
     <el-descriptions-item label="所属板块" :span="2">{{ module.sectionName }}</el-descriptions-item>

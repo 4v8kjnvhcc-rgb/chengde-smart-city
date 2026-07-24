@@ -33,17 +33,20 @@ public class GovernanceTaskService {
     private final GovGovernanceNodeLogMapper nodeLogMapper;
     private final KettleExecuteService kettleExecuteService;
     private final TaskVariableService variableService;
+    private final GovernanceLayerTableService layerTableService;
 
     public GovernanceTaskService(GovGovernanceTaskMapper taskMapper,
                                  GovGovernanceTaskRunMapper runMapper,
                                  GovGovernanceNodeLogMapper nodeLogMapper,
                                  KettleExecuteService kettleExecuteService,
-                                 TaskVariableService variableService) {
+                                 TaskVariableService variableService,
+                                 GovernanceLayerTableService layerTableService) {
         this.taskMapper = taskMapper;
         this.runMapper = runMapper;
         this.nodeLogMapper = nodeLogMapper;
         this.kettleExecuteService = kettleExecuteService;
         this.variableService = variableService;
+        this.layerTableService = layerTableService;
     }
 
     public List<Map<String, Object>> list() {
@@ -407,6 +410,17 @@ public class GovernanceTaskService {
         return nodeLogMapper.selectList(new LambdaQueryWrapper<GovGovernanceNodeLog>()
                 .eq(GovGovernanceNodeLog::getRunId, runId)
                 .orderByAsc(GovGovernanceNodeLog::getId));
+    }
+
+    /**
+     * 预览治理任务输出表样例数据（平台分层库）。
+     */
+    public Map<String, Object> previewOutput(Long id, String table, Integer limit) {
+        GovGovernanceTask task = requireTask(id);
+        Map<String, Object> out = layerTableService.previewFromGraph(task.getGraphJson(), table, limit);
+        out.put("taskId", task.getId());
+        out.put("taskName", task.getTaskName());
+        return out;
     }
 
     private GovGovernanceTask requireTask(Long id) {

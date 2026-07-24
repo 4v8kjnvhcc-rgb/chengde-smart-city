@@ -7,7 +7,7 @@ $checks = @(
     @{ Name = 'OpenMetadata'; Url = 'http://localhost:8585/api/v1/system/version' },
     @{ Name = 'DataEase'; Url = 'http://localhost:8100' },
     @{ Name = 'DolphinScheduler'; Url = 'http://localhost:12345/dolphinscheduler/actuator/health' },
-    @{ Name = 'Kettle'; Url = 'http://localhost:8081'; Accept401 = $true },
+    @{ Name = 'Kettle'; Url = 'http://localhost:18081'; Accept401 = $true },
     @{ Name = 'Canal'; Url = $null; Port = 19090 }
 )
 

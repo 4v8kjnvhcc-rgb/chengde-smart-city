@@ -131,7 +131,9 @@ onMounted(load)
       <el-table class="portal-table" :data="connectors" stripe>
         <el-table-column prop="connectorCode" label="编码" min-width="140" />
         <el-table-column prop="connectorName" label="名称" min-width="160" />
-        <el-table-column prop="sourceType" label="类型" width="100" />
+        <el-table-column label="类型" width="100">
+          <template #default="{ row }">{{ $statusLabel(row.sourceType) }}</template>
+        </el-table-column>
         <el-table-column prop="lastMessage" label="最近同步" min-width="200" />
         <el-table-column label="操作" width="100">
           <template #default="{ row }">
@@ -157,7 +159,9 @@ onMounted(load)
       <el-table class="portal-table" :data="rules" stripe>
         <el-table-column prop="ruleCode" label="编码" min-width="120" />
         <el-table-column prop="ruleName" label="名称" min-width="160" />
-        <el-table-column prop="ruleType" label="类型" width="140" />
+        <el-table-column label="类型" width="140">
+          <template #default="{ row }">{{ $statusLabel(row.ruleType) }}</template>
+        </el-table-column>
         <el-table-column label="状态" width="100">
           <template #default="{ row }">{{ $statusLabel(row.status) }}</template>
         </el-table-column>

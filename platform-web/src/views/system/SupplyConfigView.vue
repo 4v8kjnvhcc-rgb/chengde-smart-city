@@ -143,7 +143,9 @@ onMounted(load)
       <el-table :data="templates" stripe size="small">
         <el-table-column prop="templateCode" label="编码" width="140" />
         <el-table-column prop="templateName" label="名称" min-width="140" />
-        <el-table-column prop="demandType" label="类型" width="110" />
+        <el-table-column label="类型" width="110">
+          <template #default="{ row }">{{ $statusLabel(row.demandType) }}</template>
+        </el-table-column>
         <el-table-column prop="fieldSchema" label="字段模型" min-width="180" show-overflow-tooltip />
         <el-table-column label="状态" width="90">
           <template #default="{ row }">{{ $statusLabel(row.status) }}</template>
@@ -166,7 +168,9 @@ onMounted(load)
       <el-table :data="catalogs" stripe size="small">
         <el-table-column prop="catalogCode" label="编码" width="140" />
         <el-table-column prop="title" label="标题" min-width="160" />
-        <el-table-column prop="publishStatus" label="状态" width="100" />
+        <el-table-column label="状态" width="100">
+          <template #default="{ row }">{{ $statusLabel(row.publishStatus) }}</template>
+        </el-table-column>
         <el-table-column label="操作" width="160">
           <template #default="{ row }">
             <el-button v-if="row.publishStatus !== 'PUBLISHED'" link type="primary" @click="publishCatalog(Number(row.id))">发布</el-button>
@@ -179,7 +183,9 @@ onMounted(load)
     <PageCard v-else-if="tab === 'objection'" title="异议治理">
       <el-table :data="objections" stripe size="small">
         <el-table-column prop="catalogId" label="目录ID" width="90" />
-        <el-table-column prop="objectionType" label="类型" width="100" />
+        <el-table-column label="类型" width="100">
+          <template #default="{ row }">{{ $statusLabel(row.objectionType) }}</template>
+        </el-table-column>
         <el-table-column prop="content" label="内容" min-width="200" />
         <el-table-column label="状态" width="100">
           <template #default="{ row }">{{ $statusLabel(row.status) }}</template>
@@ -194,9 +200,13 @@ onMounted(load)
 
     <PageCard v-else-if="tab === 'manifest'" title="全局供需清单">
       <el-table :data="manifests" stripe size="small">
-        <el-table-column prop="manifestType" label="类型" width="120" />
+        <el-table-column label="类型" width="120">
+          <template #default="{ row }">{{ $statusLabel(row.manifestType) }}</template>
+        </el-table-column>
         <el-table-column prop="title" label="标题" min-width="180" />
-        <el-table-column prop="authLevel" label="授权级别" width="100" />
+        <el-table-column label="授权级别" width="100">
+          <template #default="{ row }">{{ $statusLabel(row.authLevel) }}</template>
+        </el-table-column>
         <el-table-column label="状态" width="90">
           <template #default="{ row }">{{ $statusLabel(row.status) }}</template>
         </el-table-column>
@@ -212,8 +222,12 @@ onMounted(load)
       <el-table :data="duties" stripe size="small">
         <el-table-column prop="demandId" label="需求ID" width="90" />
         <el-table-column prop="dutyOrg" label="责任单位" min-width="140" />
-        <el-table-column prop="dutyType" label="责任类型" width="110" />
-        <el-table-column prop="fulfillPath" label="履约路径" width="160" />
+        <el-table-column label="责任类型" width="110">
+          <template #default="{ row }">{{ $statusLabel(row.dutyType) }}</template>
+        </el-table-column>
+        <el-table-column label="履约路径" width="160">
+          <template #default="{ row }">{{ $statusLabel(row.fulfillPath) }}</template>
+        </el-table-column>
         <el-table-column prop="catalogId" label="目录ID" width="90" />
         <el-table-column label="状态" width="90">
           <template #default="{ row }">{{ $statusLabel(row.status) }}</template>

@@ -123,7 +123,9 @@ onMounted(() => { resolveTab(); loadTabData() })
           <el-table :data="categories" stripe size="small">
             <el-table-column prop="categoryCode" label="编码" width="140" />
             <el-table-column prop="categoryName" label="名称" />
-            <el-table-column prop="mediaType" label="媒介" width="100" />
+            <el-table-column label="媒介" width="100">
+              <template #default="{ row }">{{ $statusLabel(row.mediaType) }}</template>
+            </el-table-column>
           </el-table>
       </PageCard>
       <PageCard v-if="tab === 'files'">
@@ -136,8 +138,12 @@ onMounted(() => { resolveTab(); loadTabData() })
           <el-table :data="docs" stripe>
             <el-table-column prop="title" label="标题" />
             <el-table-column prop="storageKey" label="存储键" min-width="180" />
-            <el-table-column prop="publishStatus" label="发布" width="90" />
-            <el-table-column prop="indexStatus" label="索引" width="90" />
+            <el-table-column label="发布" width="90">
+              <template #default="{ row }">{{ $statusLabel(row.publishStatus) }}</template>
+            </el-table-column>
+            <el-table-column label="索引" width="90">
+              <template #default="{ row }">{{ $statusLabel(row.indexStatus) }}</template>
+            </el-table-column>
             <el-table-column label="操作" width="200">
               <template #default="{ row }">
                 <el-button v-if="row.publishStatus!=='PUBLISHED'" link @click="publishDoc(row.id)">发布</el-button>
@@ -150,7 +156,9 @@ onMounted(() => { resolveTab(); loadTabData() })
           <el-table :data="docs" stripe>
             <el-table-column prop="title" label="文档" />
             <el-table-column prop="tagJson" label="标签" />
-            <el-table-column prop="processStatus" label="处理状态" width="110" />
+            <el-table-column label="处理状态" width="110">
+              <template #default="{ row }">{{ $statusLabel(row.processStatus) }}</template>
+            </el-table-column>
           </el-table>
       </PageCard>
       <PageCard v-if="tab === 'process'">
@@ -165,7 +173,9 @@ onMounted(() => { resolveTab(); loadTabData() })
             </el-table-column>
           </el-table>
           <el-table :data="pipelines" stripe size="small" style="margin-top:12px">
-            <el-table-column prop="pipelineType" label="类型" width="90" />
+            <el-table-column label="类型" width="90">
+              <template #default="{ row }">{{ $statusLabel(row.pipelineType) }}</template>
+            </el-table-column>
             <el-table-column prop="resultMessage" label="结果" />
           </el-table>
       </PageCard>

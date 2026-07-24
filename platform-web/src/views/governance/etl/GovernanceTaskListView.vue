@@ -42,6 +42,8 @@ interface TableOption {
   sourceId: number
   tableName: string
   tableCode?: string
+  physicalTableName?: string
+  sourceSchema?: string
 }
 
 const RULE_OPTIONS = [
@@ -56,6 +58,14 @@ const PLATFORM_SOURCES: DsOption[] = [
   { value: 'smart_city_dwd', label: '平台 DWD（smart_city_dwd）', kind: 'platform' },
   { value: 'smart_city_dws', label: '平台 DWS（smart_city_dws）', kind: 'platform' },
 ]
+
+/** 与元数据采集侧平台分层虚拟源 ID 对齐：ODS=-1 / DWD=-2 / DWS=-3 / ADS=-4 */
+const PLATFORM_LAYER_IDS: Record<string, number> = {
+  smart_city_ods: -1,
+  smart_city_dwd: -2,
+  smart_city_dws: -3,
+  smart_city_ads: -4,
+}
 
 const TARGET_SOURCES: DsOption[] = [
   { value: 'smart_city_dwd', label: '平台 DWD（smart_city_dwd）', kind: 'platform' },
@@ -87,8 +97,21 @@ const runTargetId = ref<number | null>(null)
 const varDefs = ref<Array<{ name: string; label?: string; defaultValue?: string; required?: boolean }>>([])
 const varForm = ref<Record<string, string>>({})
 
+const previewVisible = ref(false)
+const previewLoading = ref(false)
+const previewTitle = ref('治理结果')
+const previewMeta = ref('')
+const previewMessage = ref('')
+const previewColumns = ref<string[]>([])
+const previewRows = ref<Record<string, string | null>[]>([])
+const previewTargets = ref<Array<{ database: string; table: string; layer: string }>>([])
+const previewSelectedTable = ref('')
+const previewTaskId = ref<number | null>(null)
+
 const sourceOptions = ref<DsOption[]>([...PLATFORM_SOURCES])
 const allTables = ref<TableOption[]>([])
+const platformTables = ref<string[]>([])
+const platformTablesLoading = ref(false)
 
 const form = reactive({
   taskName: '',
@@ -134,14 +157,73 @@ const displayTasks = computed(() => {
 
 const selectedSource = computed(() => sourceOptions.value.find(s => s.value === form.sourceConnection))
 
-const sourceTableOptions = computed(() => {
+/** 外部登记源：按 sourceId 过滤已登记表 */
+const externalTableOptions = computed(() => {
   const sid = selectedSource.value?.sourceId
   if (sid == null) return []
   return allTables.value.filter(t => t.sourceId === sid)
 })
 
-watch(() => form.sourceConnection, () => {
+/**
+ * 平台分层库：优先用 JDBC 探到的实表；并补充登记资产中落在该库的物理表名
+ * （避免探库暂时失败时选不到已采集表）
+ */
+const platformTableOptions = computed(() => {
+  const db = form.sourceConnection
+  if (!db || selectedSource.value?.kind !== 'platform') return []
+  const names = new Set<string>(platformTables.value)
+  const prefix =
+    db === 'smart_city_ods' ? 'ods_'
+      : db === 'smart_city_dwd' ? 'dwd_'
+        : db === 'smart_city_dws' ? 'dws_'
+          : db === 'smart_city_ads' ? 'ads_'
+            : ''
+  for (const t of allTables.value) {
+    const physical = (t.physicalTableName || '').trim()
+    if (!physical) continue
+    const schema = (t.sourceSchema || '').trim().toLowerCase()
+    if (schema === db.toLowerCase() || (prefix && physical.toLowerCase().startsWith(prefix))) {
+      names.add(physical)
+    }
+  }
+  return Array.from(names).sort((a, b) => a.localeCompare(b))
+})
+
+const sourceTableSelectOptions = computed(() => {
+  if (selectedSource.value?.kind === 'platform') {
+    return platformTableOptions.value.map(name => ({ value: name, label: name }))
+  }
+  return externalTableOptions.value.map(t => ({
+    value: t.physicalTableName || t.tableName,
+    label: t.physicalTableName && t.physicalTableName !== t.tableName
+      ? `${t.tableName}（${t.physicalTableName}）`
+      : t.tableName,
+  }))
+})
+
+async function loadPlatformTables(connection: string) {
+  platformTables.value = []
+  const layerId = PLATFORM_LAYER_IDS[connection]
+  if (layerId == null) return
+  platformTablesLoading.value = true
+  try {
+    const rows = (await api.get(`/governance/platform/metadata/collect/data-sources/${layerId}/tables`)).data || []
+    platformTables.value = (rows as Array<{ sourceTable?: string }>)
+      .map(r => String(r.sourceTable || '').trim())
+      .filter(Boolean)
+  } catch {
+    platformTables.value = []
+  } finally {
+    platformTablesLoading.value = false
+  }
+}
+
+watch(() => form.sourceConnection, (conn) => {
   form.sourceTable = ''
+  platformTables.value = []
+  if (conn && PLATFORM_LAYER_IDS[conn] != null) {
+    void loadPlatformTables(conn)
+  }
 })
 
 function goEtlSub(sub: string, taskId?: number) {
@@ -175,7 +257,7 @@ async function loadCreateOptions() {
     ])
     const external = ((dsRes.data || []) as Array<{ id: number; sourceName: string; sourceType?: string }>).map(s => ({
       value: `ds:${s.id}`,
-      label: `${s.sourceName}${s.sourceType ? `（${s.sourceType}）` : ''}`,
+      label: `${s.sourceName}${s.sourceType ? `（${statusLabel(s.sourceType)}）` : ''}`,
       sourceId: s.id,
       kind: 'external' as const,
     }))
@@ -185,6 +267,8 @@ async function loadCreateOptions() {
       sourceId: t.sourceId,
       tableName: t.tableName,
       tableCode: t.tableCode,
+      physicalTableName: t.physicalTableName,
+      sourceSchema: t.sourceSchema,
     }))
   } catch {
     sourceOptions.value = [...PLATFORM_SOURCES]
@@ -401,6 +485,51 @@ function scheduleModeLabel(row: TaskRow) {
   return row.scheduleCron || 'Cron'
 }
 
+async function openOutputPreview(row: TaskRow, table?: string) {
+  previewTaskId.value = row.id
+  previewTitle.value = `治理结果 · ${row.taskName}`
+  previewVisible.value = true
+  await loadOutputPreview(table)
+}
+
+async function loadOutputPreview(table?: string) {
+  if (!previewTaskId.value) return
+  previewLoading.value = true
+  previewMessage.value = ''
+  previewColumns.value = []
+  previewRows.value = []
+  try {
+    const res = await api.get(`/governance/gov-tasks/${previewTaskId.value}/output-preview`, {
+      params: {
+        limit: 100,
+        table: table || previewSelectedTable.value || undefined,
+      },
+    })
+    const d = res.data || {}
+    previewTargets.value = d.targets || []
+    previewSelectedTable.value = d.table || ''
+    previewMeta.value = d.qualifiedName
+      ? `${d.layer || ''} · ${d.qualifiedName}`.replace(/^ · /, '')
+      : ''
+    previewColumns.value = d.columns || []
+    previewRows.value = d.rows || []
+    previewMessage.value = d.message || ''
+  } catch (e: unknown) {
+    const msg = (e as { response?: { data?: { message?: string } }; message?: string })?.response?.data?.message
+      || (e as { message?: string })?.message
+      || '加载治理结果失败'
+    previewMessage.value = msg
+    ElMessage.error(msg)
+  } finally {
+    previewLoading.value = false
+  }
+}
+
+async function onPreviewTableChange(table: string) {
+  previewSelectedTable.value = table
+  await loadOutputPreview(table)
+}
+
 onMounted(load)
 
 defineExpose({ reload: load })
@@ -433,6 +562,11 @@ defineExpose({ reload: load })
       <el-table-column v-if="mode === 'mgmt'" type="selection" width="48" />
       <el-table-column prop="taskName" label="任务名称" min-width="140" />
       <el-table-column v-if="mode === 'mgmt'" prop="description" label="描述" min-width="120" show-overflow-tooltip />
+      <el-table-column v-if="mode === 'mgmt' || mode === 'run'" label="查看数据" width="100">
+        <template #default="{ row }">
+          <el-button link type="primary" @click="openOutputPreview(row)">查看</el-button>
+        </template>
+      </el-table-column>
       <el-table-column v-if="mode === 'mgmt'" label="生命周期" width="100">
         <template #default="{ row }">
           <el-tag :type="statusTagType(row.status)" size="small">{{ statusLabel(row.status) }}</el-tag>
@@ -451,7 +585,18 @@ defineExpose({ reload: load })
       </el-table-column>
       <el-table-column v-if="mode === 'mgmt'" prop="updatedAt" label="更新时间" width="160" />
 
-      <el-table-column v-if="mode === 'run'" prop="lastMessage" label="最近结果" min-width="160" show-overflow-tooltip />
+      <el-table-column
+        v-if="mode === 'run'"
+        prop="lastMessage"
+        label="最近结果"
+        min-width="160"
+        show-overflow-tooltip
+      >
+        <template #header>
+          <span title="最近一次运行的摘要说明（成功行数 / 失败原因等）">最近结果</span>
+        </template>
+        <template #default="{ row }">{{ row.lastMessage || '—' }}</template>
+      </el-table-column>
       <el-table-column v-if="mode === 'run'" prop="lastRunAt" label="最近运行时间" width="160" />
 
       <el-table-column v-if="mode === 'schedule'" label="定时状态" width="100">
@@ -518,22 +663,23 @@ defineExpose({ reload: load })
         </el-form-item>
         <el-form-item label="来源表">
           <el-select
-            v-if="selectedSource?.kind === 'external'"
+            v-if="form.sourceConnection"
             v-model="form.sourceTable"
             clearable
             filterable
             allow-create
-            placeholder="选择或输入表名"
+            :loading="platformTablesLoading"
+            placeholder="选择已采集/已登记表，也可手工输入"
             style="width:100%"
           >
             <el-option
-              v-for="t in sourceTableOptions"
-              :key="t.id"
-              :label="t.tableName"
-              :value="t.tableName"
+              v-for="t in sourceTableSelectOptions"
+              :key="t.value"
+              :label="t.label"
+              :value="t.value"
             />
           </el-select>
-          <el-input v-else v-model="form.sourceTable" placeholder="如 ods_xxx" />
+          <el-input v-else v-model="form.sourceTable" placeholder="请先选择来源库" disabled />
         </el-form-item>
         <el-form-item label="目标库">
           <el-select v-model="form.targetConnection" filterable placeholder="治理产出层（默认 DWD）" style="width:100%">
@@ -679,5 +825,69 @@ defineExpose({ reload: load })
         <el-button type="primary" @click="confirmVarRun">运行</el-button>
       </template>
     </el-dialog>
+
+    <el-drawer
+      v-model="previewVisible"
+      :title="previewTitle"
+      size="72%"
+      destroy-on-close
+    >
+      <div v-loading="previewLoading" class="output-preview">
+        <el-form inline class="portal-inline-form portal-inline-form--block">
+          <el-form-item v-if="previewTargets.length > 1" label="输出表" class="portal-field-xl">
+            <el-select
+              :model-value="previewSelectedTable"
+              placeholder="选择输出表"
+              @change="onPreviewTableChange"
+            >
+              <el-option
+                v-for="t in previewTargets"
+                :key="`${t.database}.${t.table}`"
+                :label="`${t.layer} · ${t.table}`"
+                :value="t.table"
+              />
+            </el-select>
+          </el-form-item>
+          <el-form-item v-if="previewMeta" label="目标">
+            <span>{{ previewMeta }}</span>
+          </el-form-item>
+          <el-form-item class="portal-form-actions">
+            <el-button @click="loadOutputPreview()">刷新</el-button>
+          </el-form-item>
+        </el-form>
+        <el-alert
+          v-if="previewMessage"
+          :title="previewMessage"
+          :type="previewRows.length ? 'success' : 'info'"
+          show-icon
+          :closable="false"
+          class="output-preview__msg"
+        />
+        <el-table
+          v-if="previewColumns.length"
+          :data="previewRows"
+          stripe
+          size="small"
+          border
+          max-height="560"
+        >
+          <el-table-column
+            v-for="col in previewColumns"
+            :key="col"
+            :prop="col"
+            :label="col"
+            min-width="120"
+            show-overflow-tooltip
+          />
+        </el-table>
+        <el-empty v-else-if="!previewLoading" description="暂无样例数据" />
+      </div>
+    </el-drawer>
   </PageCard>
 </template>
+
+<style scoped>
+.output-preview__msg {
+  margin-bottom: 12px;
+}
+</style>

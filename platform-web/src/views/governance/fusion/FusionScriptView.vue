@@ -184,7 +184,9 @@ onMounted(() => { void loadScripts() })
     <el-table v-loading="loading" :data="scripts" stripe size="small">
       <el-table-column prop="scriptCode" label="编码" width="120" />
       <el-table-column prop="scriptName" label="名称" min-width="140" />
-      <el-table-column prop="scriptType" label="类型" width="80" />
+      <el-table-column label="类型" width="80">
+        <template #default="{ row }">{{ $statusLabel(row.scriptType) }}</template>
+      </el-table-column>
       <el-table-column label="发布" width="90">
         <template #default="{ row }">
           <el-tag size="small" :type="statusTagType(row.publishStatus)">{{ statusLabel(row.publishStatus) }}</el-tag>

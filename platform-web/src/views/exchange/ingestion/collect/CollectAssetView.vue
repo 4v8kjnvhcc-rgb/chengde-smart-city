@@ -80,7 +80,9 @@ onMounted(reload)
         <el-tag v-if="searchResult">引擎: {{ searchResult.engine }}</el-tag>
       </el-form>
       <el-table v-if="searchResult?.hits" :data="searchResult.hits as Record<string,unknown>[]" stripe size="small" style="margin-top:12px">
-        <el-table-column prop="type" label="类型" width="100" />
+        <el-table-column label="类型" width="100">
+          <template #default="{ row }">{{ $statusLabel(row.type) }}</template>
+        </el-table-column>
         <el-table-column prop="title" label="标题" />
       </el-table>
     </PageCard>
@@ -117,7 +119,9 @@ onMounted(reload)
       <el-table :data="health" stripe size="small">
         <el-table-column prop="metricLabel" label="指标" />
         <el-table-column prop="metricValue" label="值" />
-        <el-table-column prop="alertLevel" label="级别" width="90" />
+        <el-table-column label="级别" width="90">
+          <template #default="{ row }">{{ $statusLabel(row.alertLevel) }}</template>
+        </el-table-column>
       </el-table>
     </PageCard>
   </div>

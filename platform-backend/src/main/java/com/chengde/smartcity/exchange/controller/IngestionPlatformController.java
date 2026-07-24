@@ -214,6 +214,13 @@ public class IngestionPlatformController {
         return ApiResponse.ok(service.listChannels(channelType));
     }
 
+    @PostMapping("/channels")
+    @PreAuthorize("isAuthenticated()")
+    public ApiResponse<Long> createChannel(@AuthenticationPrincipal UserPrincipal principal,
+                                           @RequestBody Map<String, Object> body) {
+        return ApiResponse.ok(service.createChannel(principal, body));
+    }
+
     @PostMapping("/channels/{id}/run")
     public ApiResponse<Map<String, Object>> runChannel(@AuthenticationPrincipal UserPrincipal principal,
                                                          @PathVariable Long id) {

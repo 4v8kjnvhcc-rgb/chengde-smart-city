@@ -63,7 +63,9 @@ onMounted(reload)
         <el-table-column prop="nodeCode" label="编码" width="140" />
         <el-table-column prop="nodeName" label="名称" />
         <el-table-column prop="parentId" label="父ID" width="80" />
-        <el-table-column prop="secretLevel" label="涉密" width="90" />
+        <el-table-column label="涉密" width="90">
+          <template #default="{ row }">{{ $statusLabel(row.secretLevel) }}</template>
+        </el-table-column>
       </el-table>
     </PageCard>
     <PageCard :title="title">
@@ -78,9 +80,15 @@ onMounted(reload)
         <el-table-column prop="registryCode" label="编码" width="140" />
         <el-table-column prop="title" label="标题" min-width="160" />
         <el-table-column prop="categoryPath" label="分类" min-width="140" />
-        <el-table-column prop="secretLevel" label="涉密" width="90" />
-        <el-table-column prop="publishStatus" label="发布" width="100" />
-        <el-table-column prop="approvalStatus" label="审批" width="100" />
+        <el-table-column label="涉密" width="90">
+          <template #default="{ row }">{{ $statusLabel(row.secretLevel) }}</template>
+        </el-table-column>
+        <el-table-column label="发布" width="100">
+          <template #default="{ row }">{{ $statusLabel(row.publishStatus) }}</template>
+        </el-table-column>
+        <el-table-column label="审批" width="100">
+          <template #default="{ row }">{{ $statusLabel(row.approvalStatus) }}</template>
+        </el-table-column>
         <el-table-column v-if="module === 'm068'" label="操作" width="90">
           <template #default="{ row }">
             <el-button v-if="row.approvalStatus === 'PENDING'" link @click="approve(row.id)">四性审批</el-button>

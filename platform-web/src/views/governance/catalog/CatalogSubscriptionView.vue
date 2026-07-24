@@ -149,7 +149,7 @@ onMounted(load)
           <el-table-column prop="resourceCode" label="资源编码" width="130" />
           <el-table-column prop="resourceName" label="资源名称" min-width="140" />
           <el-table-column label="共享方式" width="100">
-            <template #default="{ row }">{{ SHARE_ZH[row.shareMode] || row.shareMode }}</template>
+            <template #default="{ row }">{{ SHARE_ZH[row.shareMode] || $statusLabel(row.shareMode) }}</template>
           </el-table-column>
           <el-table-column prop="purpose" label="用途" min-width="120" show-overflow-tooltip />
           <el-table-column label="状态" width="100">
@@ -195,7 +195,7 @@ onMounted(load)
           <el-table-column prop="resourceCode" label="资源编码" width="130" />
           <el-table-column prop="resourceName" label="资源名称" min-width="140" />
           <el-table-column label="共享方式" width="100">
-            <template #default="{ row }">{{ SHARE_ZH[row.shareMode] || row.shareMode }}</template>
+            <template #default="{ row }">{{ SHARE_ZH[row.shareMode] || $statusLabel(row.shareMode) }}</template>
           </el-table-column>
           <el-table-column prop="applicantOrg" label="申请机构" width="120" />
           <el-table-column prop="applicantUser" label="申请人" width="100" />

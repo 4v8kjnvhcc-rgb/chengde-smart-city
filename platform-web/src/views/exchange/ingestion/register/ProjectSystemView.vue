@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
+import api from '@/api/http'
 import { useAuthStore } from '@/stores/auth'
 import PageCard from '@/components/common/PageCard.vue'
 import {
@@ -17,6 +18,7 @@ const projects = ref<Project[]>([])
 const allDataSources = ref<DataSource[]>([])
 const overview = ref<Record<string, unknown> | null>(null)
 const selectedIds = ref<number[]>([])
+const orgs = ref<Array<{ id: number; orgName: string }>>([])
 
 const detailProjectId = ref<number | null>(null)
 
@@ -26,6 +28,7 @@ const projectSaving = ref(false)
 const editingDataSourceId = ref<number | null>(null)
 const editingProjectId = ref<number | null>(null)
 const projectForm = reactive({
+  boundOrgId: undefined as number | undefined,
   projectName: '',
   systemName: '',
   sourceName: '',
@@ -106,6 +109,7 @@ function dsSummary(projectId: number) {
 }
 
 function resetProjectForm() {
+  projectForm.boundOrgId = auth.user?.orgId
   projectForm.projectName = ''
   projectForm.systemName = ''
   projectForm.sourceName = ''
@@ -117,6 +121,15 @@ function resetProjectForm() {
   projectForm.password = ''
   editingDataSourceId.value = null
   editingProjectId.value = null
+}
+
+async function ensureOrgsLoaded() {
+  if (!auth.isSystemAdmin || orgs.value.length) return
+  try {
+    orgs.value = (await api.get('/system/orgs')).data || []
+  } catch {
+    orgs.value = []
+  }
 }
 
 async function reload() {
@@ -134,16 +147,18 @@ async function reload() {
     if (detailProjectId.value && !projects.value.some((x) => x.id === detailProjectId.value)) {
       detailProjectId.value = null
     }
+    if (auth.isSystemAdmin) await ensureOrgsLoaded()
   })
 }
 
-function openCreateProject() {
+async function openCreateProject() {
   projectDialogMode.value = 'create'
   resetProjectForm()
+  await ensureOrgsLoaded()
   projectDialog.value = true
 }
 
-function openEditProject(row?: Project | null) {
+async function openEditProject(row?: Project | null) {
   const target = row || selectedProject.value
   if (!target) {
     ElMessage.warning('请先选中要编辑的项目')
@@ -158,6 +173,7 @@ function openEditProject(row?: Project | null) {
   projectDialogMode.value = 'edit'
   resetProjectForm()
   editingProjectId.value = target.id
+  projectForm.boundOrgId = target.boundOrgId
   projectForm.projectName = target.projectName || ''
   projectForm.systemName = target.systemName || ''
   const ds = primaryDs(target.id)
@@ -174,6 +190,7 @@ function openEditProject(row?: Project | null) {
     } catch { /* ignore */ }
   }
   projectForm.password = ''
+  await ensureOrgsLoaded()
   projectDialog.value = true
 }
 
@@ -194,9 +211,16 @@ function validateProjectForm() {
     ElMessage.warning('请填写库名')
     return false
   }
-  if (projectDialogMode.value === 'create' && !auth.user?.orgId) {
-    ElMessage.warning('当前账号未绑定部门，请先在系统管理中维护用户所属组织')
-    return false
+  if (projectDialogMode.value === 'create') {
+    if (auth.isSystemAdmin) {
+      if (!projectForm.boundOrgId) {
+        ElMessage.warning('请选择项目部门归属')
+        return false
+      }
+    } else if (!auth.user?.orgId) {
+      ElMessage.warning('当前账号未绑定部门，请先在系统管理中维护用户所属组织')
+      return false
+    }
   }
   return true
 }
@@ -205,10 +229,14 @@ async function submitProjectDialog() {
   if (!validateProjectForm()) return
   projectSaving.value = true
   try {
+    const boundOrgPayload = auth.isSystemAdmin && projectForm.boundOrgId
+      ? { boundOrgId: projectForm.boundOrgId }
+      : {}
     if (projectDialogMode.value === 'create') {
       const projectId = (await ingestionApi.createProject({
         projectName: projectForm.projectName.trim(),
         systemName: projectForm.systemName.trim(),
+        ...boundOrgPayload,
       })).data
       await ingestionApi.createDataSource({
         projectId,
@@ -228,6 +256,7 @@ async function submitProjectDialog() {
       await ingestionApi.updateProject(editingProjectId.value, {
         projectName: projectForm.projectName.trim(),
         systemName: projectForm.systemName.trim(),
+        ...boundOrgPayload,
       })
       const dsBody: Record<string, unknown> = {
         sourceName: projectForm.sourceName.trim(),
@@ -398,7 +427,18 @@ onMounted(reload)
     <el-dialog v-model="projectDialog" :title="projectDialogTitle" width="560px" destroy-on-close>
       <el-form label-width="100px">
         <el-form-item label="登记账号"><el-input :model-value="currentAccountLabel" disabled /></el-form-item>
-        <el-form-item label="部门"><el-input :model-value="currentDeptName" disabled /></el-form-item>
+        <el-form-item label="部门" required>
+          <el-select
+            v-if="auth.isSystemAdmin"
+            v-model="projectForm.boundOrgId"
+            filterable
+            placeholder="选择部门归属（仅超级管理员可改）"
+            style="width:100%"
+          >
+            <el-option v-for="o in orgs" :key="o.id" :label="o.orgName" :value="o.id" />
+          </el-select>
+          <el-input v-else :model-value="currentDeptName" disabled />
+        </el-form-item>
         <el-form-item label="项目名称" required>
           <el-input v-model="projectForm.projectName" placeholder="如：公安人口库归集" />
         </el-form-item>

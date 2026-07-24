@@ -561,7 +561,9 @@ onMounted(() => {
       </el-form>
       <el-table :data="demands" stripe size="small" style="margin-top:12px">
         <el-table-column prop="demandTitle" label="需求" min-width="160" />
-        <el-table-column prop="demandType" label="类型" width="110" />
+        <el-table-column label="类型" width="110">
+          <template #default="{ row }">{{ $statusLabel(row.demandType) }}</template>
+        </el-table-column>
         <el-table-column prop="templateCode" label="模板" width="120" />
         <el-table-column prop="stage" label="阶段" width="90" />
         <el-table-column label="状态" width="110">
@@ -798,7 +800,9 @@ onMounted(() => {
           </el-descriptions-item>
         </el-descriptions>
         <el-table :data="(confirmResult.tasks as Record<string, unknown>[]) || []" stripe size="small" style="margin-top:12px">
-          <el-table-column prop="taskType" label="类型" width="100" />
+          <el-table-column label="类型" width="100">
+            <template #default="{ row }">{{ $statusLabel(row.taskType) }}</template>
+          </el-table-column>
           <el-table-column prop="taskName" label="任务" min-width="200" />
           <el-table-column label="状态" width="100">
           <template #default="{ row }">{{ $statusLabel(row.status) }}</template>
@@ -839,7 +843,9 @@ onMounted(() => {
       <h4 v-if="duties.length" class="confirm-h">数据责任</h4>
       <el-table v-if="duties.length" :data="duties" stripe size="small" style="margin-bottom:12px">
         <el-table-column prop="dutyOrg" label="责任单位" min-width="120" />
-        <el-table-column prop="dutyType" label="类型" width="100" />
+        <el-table-column label="类型" width="100">
+          <template #default="{ row }">{{ $statusLabel(row.dutyType) }}</template>
+        </el-table-column>
         <el-table-column label="履约路径" width="160">
           <template #default="{ row }">{{ fulfillLabel(row.fulfillPath) }}</template>
         </el-table-column>
@@ -852,7 +858,9 @@ onMounted(() => {
         <el-col :span="24" :md="8">
           <PageCard title="交换作业">
             <el-table :data="exchangeJobs" stripe size="small" empty-text="暂无交换/归集作业">
-              <el-table-column prop="taskType" label="类型" width="90" />
+              <el-table-column label="类型" width="90">
+                <template #default="{ row }">{{ $statusLabel(row.taskType) }}</template>
+              </el-table-column>
               <el-table-column prop="taskName" label="作业" min-width="120" />
               <el-table-column prop="flowCode" label="流编码" width="100" />
               <el-table-column label="状态" width="80">
@@ -911,7 +919,9 @@ onMounted(() => {
         </el-form>
         <el-table :data="listCenterItems" stripe size="small">
           <el-table-column prop="catalogId" label="目录ID" width="90" />
-          <el-table-column prop="objectionType" label="类型" width="100" />
+          <el-table-column label="类型" width="100">
+            <template #default="{ row }">{{ $statusLabel(row.objectionType) }}</template>
+          </el-table-column>
           <el-table-column prop="content" label="内容" min-width="200" />
           <el-table-column label="状态" width="100">
           <template #default="{ row }">{{ $statusLabel(row.status) }}</template>
@@ -923,8 +933,12 @@ onMounted(() => {
           <template #default="{ row }">{{ row.code || row.catalogCode || row.id }}</template>
         </el-table-column>
         <el-table-column prop="title" label="名称" min-width="160" />
-        <el-table-column v-if="listCenterSub === 'service-list'" prop="type" label="类型" width="120" />
-        <el-table-column v-if="listCenterSub === 'open-list'" prop="shareAttr" label="共享属性" width="110" />
+        <el-table-column v-if="listCenterSub === 'service-list'" label="类型" width="120">
+          <template #default="{ row }">{{ $statusLabel(row.type) }}</template>
+        </el-table-column>
+        <el-table-column v-if="listCenterSub === 'open-list'" label="共享属性" width="110">
+          <template #default="{ row }">{{ $statusLabel(row.shareAttr) }}</template>
+        </el-table-column>
         <el-table-column label="状态" width="100">
           <template #default="{ row }"><el-tag :type="$statusTagType(row.status)" size="small">{{ $statusLabel(row.status) }}</el-tag></template>
         </el-table-column>

@@ -353,7 +353,9 @@ onMounted(() => {
         </el-form>
         <el-table :data="(partOverview.partitions as Partition[])" stripe size="small">
           <el-table-column prop="partitionName" label="分区策略" />
-          <el-table-column prop="partitionType" label="类型" width="90" />
+          <el-table-column label="类型" width="90">
+            <template #default="{ row }">{{ statusLabel(row.partitionType) }}</template>
+          </el-table-column>
           <el-table-column prop="tableName" label="目标表" width="180" />
           <el-table-column label="预检" width="100">
             <template #default="{ row }">

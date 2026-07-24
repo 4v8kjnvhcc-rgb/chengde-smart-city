@@ -41,6 +41,22 @@ interface NodeLog {
   endedAt?: string
 }
 
+interface ProcessInfo {
+  status?: string
+  statusDesc?: string
+  runStatus?: string
+  runMessage?: string
+  linesInput?: number
+  linesOutput?: number
+  linesRejected?: number
+  errors?: number
+  stepCount?: number
+  totalNodes?: number
+  transName?: string
+  carteId?: string
+  log?: string
+}
+
 const runs = ref<RunRow[]>([])
 const logs = ref<NodeLog[]>([])
 const selectedRunId = ref<number | null>(null)
@@ -50,18 +66,74 @@ const actionLoading = ref(false)
 const logDialogVisible = ref(false)
 const currentLog = ref<NodeLog | null>(null)
 const kettleLogText = ref('')
+const processInfo = ref<ProcessInfo>({})
 let pollTimer: ReturnType<typeof setInterval> | null = null
 
-function calcDuration(start?: string, end?: string): string {
+const selectedRun = computed(() => runs.value.find(r => r.id === selectedRunId.value) || null)
+
+const processSummary = computed(() => {
+  const p = processInfo.value
+  const run = selectedRun.value
+  const status = p.runStatus || p.status || run?.status || '—'
+  const inRows = p.linesInput ?? run?.rowCount ?? 0
+  const outRows = p.linesOutput ?? run?.lineCount ?? 0
+  const steps = `${p.stepCount ?? run?.successNodes ?? 0}/${p.totalNodes ?? run?.totalNodes ?? 0}`
+  return { status, inRows, outRows, steps, rejected: p.linesRejected ?? 0, errors: p.errors ?? 0 }
+})
+
+function displayMessage(msg?: string): string {
+  if (!msg) return '—'
+  // 隐藏内部 carteId= 前缀，只展示过程摘要
+  const parts = msg.split('|')
+  const body = parts.length > 1 ? parts.slice(1).join('|') : msg
+  return body.startsWith('carteId=') ? body.replace(/^carteId=[^|]*/, '').replace(/^\|/, '') || '—' : body
+}
+
+function formatSeconds(sec: number): string {
+  const s = Math.max(0, Math.round(sec))
+  if (s < 60) return `${s}秒`
+  const m = Math.floor(s / 60)
+  const r = s % 60
+  return `${m}分${r}秒`
+}
+
+/** 节点时长：优先用 Carte 上报的 seconds（过程信息里的 · 0.6s），避免 endedAt-start 墙钟虚高 */
+function nodeDuration(row: NodeLog): string {
+  const fromMsg = row.message?.match(/·\s*([\d.]+)\s*s/i)
+  if (fromMsg) {
+    return formatSeconds(parseFloat(fromMsg[1]))
+  }
+  if (row.detailJson) {
+    try {
+      const d = JSON.parse(row.detailJson)
+      if (d.seconds != null && String(d.seconds).trim() !== '') {
+        return formatSeconds(parseFloat(String(d.seconds)))
+      }
+    } catch { /* ignore */ }
+  }
+  return calcDuration(row.startedAt, row.endedAt || selectedRun.value?.endedAt, row.status || processSummary.value.status)
+}
+
+function calcDuration(start?: string, end?: string, frozenStatus?: string): string {
   if (!start) return '—'
   const s = new Date(start).getTime()
-  const e = end ? new Date(end).getTime() : Date.now()
-  if (Number.isNaN(s) || Number.isNaN(e)) return '—'
-  const sec = Math.max(0, Math.round((e - s) / 1000))
-  if (sec < 60) return `${sec}秒`
-  const m = Math.floor(sec / 60)
-  const r = sec % 60
-  return `${m}分${r}秒`
+  if (Number.isNaN(s)) return '—'
+  let e: number
+  if (end) {
+    e = new Date(end).getTime()
+  } else if (frozenStatus && isTerminal(frozenStatus)) {
+    return '—'
+  } else {
+    e = Date.now()
+  }
+  if (Number.isNaN(e)) return '—'
+  return formatSeconds((e - s) / 1000)
+}
+
+const TERMINAL = ['SUCCESS', 'FAILED', 'STOPPED', 'FINISHED']
+
+function isTerminal(status?: string) {
+  return !!status && TERMINAL.includes(status)
 }
 
 async function loadTaskStatus() {
@@ -87,6 +159,8 @@ async function loadRuns() {
     } else {
       selectedRunId.value = null
       logs.value = []
+      processInfo.value = {}
+      kettleLogText.value = ''
     }
     await loadTaskStatus()
   } catch {
@@ -98,30 +172,79 @@ async function loadRuns() {
 
 async function openRun(runId: number) {
   selectedRunId.value = runId
-  logs.value = (await api.get(`/governance/gov-tasks/runs/${runId}/node-logs`)).data || []
-  try {
-    await api.get(`/governance/kettle/runs/${runId}/status`)
-  } catch {
-    /* kettle 可选 */
+  const existing = runs.value.find(r => r.id === runId)
+  // 已成功/失败的实例：只读库内节点日志，不再打会改写 endedAt 的状态接口
+  if (existing && isTerminal(existing.status)) {
+    processInfo.value = {
+      runStatus: existing.status,
+      runMessage: existing.message,
+      transName: existing.transName,
+      linesInput: existing.rowCount,
+      linesOutput: existing.lineCount,
+      stepCount: existing.successNodes,
+      totalNodes: existing.totalNodes,
+    }
+    logs.value = (await api.get(`/governance/gov-tasks/runs/${runId}/node-logs`)).data || []
+    try {
+      const res = await api.get(`/governance/kettle/runs/${runId}/log`)
+      kettleLogText.value = String(res.data?.log || '')
+    } catch {
+      kettleLogText.value = ''
+    }
+    clearPoll()
+    return
   }
+  try {
+    const statusRes = await api.get(`/governance/kettle/runs/${runId}/status`)
+    processInfo.value = (statusRes.data || {}) as ProcessInfo
+    if (statusRes.data?.log) {
+      kettleLogText.value = String(statusRes.data.log)
+    }
+    const idx = runs.value.findIndex(r => r.id === runId)
+    if (idx >= 0) {
+      const row = { ...runs.value[idx] }
+      if (statusRes.data?.runStatus) row.status = String(statusRes.data.runStatus)
+      if (statusRes.data?.runMessage) row.message = String(statusRes.data.runMessage)
+      if (statusRes.data?.linesInput != null) row.rowCount = Number(statusRes.data.linesInput)
+      if (statusRes.data?.linesOutput != null) row.lineCount = Number(statusRes.data.linesOutput)
+      if (statusRes.data?.stepCount != null) row.successNodes = Number(statusRes.data.stepCount)
+      if (statusRes.data?.endedAt) row.endedAt = String(statusRes.data.endedAt)
+      runs.value[idx] = row
+    }
+  } catch {
+    processInfo.value = {}
+  }
+  logs.value = (await api.get(`/governance/gov-tasks/runs/${runId}/node-logs`)).data || []
+  if (!kettleLogText.value) {
+    try {
+      const res = await api.get(`/governance/kettle/runs/${runId}/log`)
+      kettleLogText.value = String(res.data?.log || '')
+    } catch {
+      kettleLogText.value = ''
+    }
+  }
+  setupPoll()
 }
 
 async function rerunTask() {
   if (!props.taskId) return
   actionLoading.value = true
   try {
-    // 重跑：清理旧转换后重新执行
     if (selectedRunId.value) {
       try {
         await api.delete(`/governance/kettle/runs/${selectedRunId.value}/cleanup`)
       } catch { /* ignore */ }
     }
     const res = await api.post(`/governance/kettle/tasks/${props.taskId}/execute`)
-    ElMessage.success(res.data?.message || '已重新运行')
+    if (res.data?.status === 'FAILED') {
+      ElMessage.error(res.data?.message || '运行失败')
+    } else {
+      ElMessage.success(res.data?.message || '已重新运行')
+    }
     selectedRunId.value = null
     await loadRuns()
-  } catch {
-    ElMessage.error('运行失败')
+  } catch (e: any) {
+    ElMessage.error(e?.response?.data?.message || '运行失败')
   } finally {
     actionLoading.value = false
   }
@@ -144,8 +267,7 @@ async function stopTask() {
 
 async function viewNodeLog(row: NodeLog) {
   currentLog.value = row
-  kettleLogText.value = ''
-  if (selectedRunId.value) {
+  if (selectedRunId.value && !kettleLogText.value) {
     try {
       const res = await api.get(`/governance/kettle/runs/${selectedRunId.value}/log`)
       kettleLogText.value = String(res.data?.log || '')
@@ -169,8 +291,20 @@ function backToList() {
 
 function setupPoll() {
   clearPoll()
-  if (taskStatus.value === 'RUNNING') {
-    pollTimer = setInterval(() => { void loadRuns() }, 3000)
+  const runStatus = processInfo.value.runStatus || selectedRun.value?.status
+  if (isTerminal(runStatus)) {
+    return
+  }
+  const runRunning = runStatus === 'RUNNING'
+  const taskRunning = taskStatus.value === 'RUNNING'
+  if (runRunning || taskRunning) {
+    pollTimer = setInterval(() => {
+      if (selectedRunId.value) {
+        void openRun(selectedRunId.value)
+      } else {
+        void loadRuns()
+      }
+    }, 3000)
   }
 }
 
@@ -206,6 +340,14 @@ onUnmounted(clearPoll)
 
 <template>
   <PageCard :title="taskId ? `ETL监控 · 任务 ${taskId}` : 'ETL监控'">
+    <el-alert
+      type="info"
+      :closable="false"
+      show-icon
+      class="monitor-tip"
+      title="不同治理任务可以同时运行；同一任务运行中不可再次启动。写入 DWD/DWS/ADS 时，若目标表不存在，系统会按 ODS 源表结构自动建表。"
+    />
+
     <el-form inline class="portal-inline-form portal-inline-form--block">
       <el-form-item class="portal-form-actions">
         <el-button @click="backToList">返回列表</el-button>
@@ -224,6 +366,34 @@ onUnmounted(clearPoll)
         >结束任务</el-button>
       </el-form-item>
     </el-form>
+
+    <!-- 过程摘要 -->
+    <div v-if="selectedRunId" class="process-panel">
+      <div class="process-title">执行过程 · 实例 #{{ selectedRunId }}</div>
+      <el-descriptions :column="4" border size="small">
+        <el-descriptions-item label="运行状态">
+          <el-tag :type="statusTagType(processSummary.status)" size="small">
+            {{ statusLabel(processSummary.status) }}
+          </el-tag>
+          <span v-if="processInfo.statusDesc" class="muted">（Carte: {{ processInfo.statusDesc }}）</span>
+        </el-descriptions-item>
+        <el-descriptions-item label="步骤数">{{ processSummary.steps }}</el-descriptions-item>
+        <el-descriptions-item label="输入行">{{ processSummary.inRows }}</el-descriptions-item>
+        <el-descriptions-item label="输出行">{{ processSummary.outRows }}</el-descriptions-item>
+        <el-descriptions-item label="拒绝/错误">
+          {{ processSummary.rejected }} / {{ processSummary.errors }}
+        </el-descriptions-item>
+        <el-descriptions-item label="转换名" :span="2">
+          {{ processInfo.transName || selectedRun?.transName || '—' }}
+        </el-descriptions-item>
+        <el-descriptions-item label="时长">
+          {{ calcDuration(selectedRun?.startedAt, selectedRun?.endedAt, processSummary.status) }}
+        </el-descriptions-item>
+        <el-descriptions-item label="过程说明" :span="4">
+          {{ displayMessage(processInfo.runMessage || selectedRun?.message) }}
+        </el-descriptions-item>
+      </el-descriptions>
+    </div>
 
     <el-row :gutter="12">
       <el-col :span="10">
@@ -249,57 +419,57 @@ onUnmounted(clearPoll)
             <template #default="{ row }">{{ row.lineCount ?? row.rowCount ?? 0 }}</template>
           </el-table-column>
           <el-table-column label="时长" width="80">
-            <template #default="{ row }">{{ calcDuration(row.startedAt, row.endedAt) }}</template>
+            <template #default="{ row }">{{ calcDuration(row.startedAt, row.endedAt, row.status) }}</template>
+          </el-table-column>
+          <el-table-column label="过程信息" min-width="160" show-overflow-tooltip>
+            <template #default="{ row }">{{ displayMessage(row.message) }}</template>
           </el-table-column>
           <el-table-column prop="triggeredBy" label="触发" width="72" show-overflow-tooltip />
           <el-table-column prop="startedAt" label="开始时间" width="140" />
-          <el-table-column prop="endedAt" label="结束时间" width="140" />
         </el-table>
       </el-col>
       <el-col :span="14">
-        <div style="margin-bottom:8px;font-weight:600">
+        <div class="section-title">
           节点运行情况 {{ selectedRunId ? `#${selectedRunId}` : '' }}
         </div>
         <el-table
           :data="logs"
           stripe
           size="small"
-          max-height="420"
+          max-height="280"
+          empty-text="暂无步骤过程（运行中将自动从 Carte 同步）"
           :row-class-name="({ row }: { row: NodeLog }) => (row.status === 'FAILED' ? 'is-failed' : '')"
           @row-contextmenu="(row: NodeLog, col: unknown, e: Event) => { e.preventDefault(); onNodeContextMenu(row, col, e) }"
         >
-          <el-table-column label="实例标识" width="88">
-            <template #default>{{ selectedRunId }}</template>
-          </el-table-column>
-          <el-table-column prop="nodeName" label="节点名称" width="96" />
-          <el-table-column label="类型" width="100">
-            <template #default="{ row }">{{ statusLabel(row.nodeType) }}</template>
-          </el-table-column>
+          <el-table-column prop="nodeName" label="节点名称" min-width="120" show-overflow-tooltip />
           <el-table-column label="节点状态" width="88">
             <template #default="{ row }">
               <el-tag :type="statusTagType(row.status)" size="small">{{ statusLabel(row.status) }}</el-tag>
             </template>
           </el-table-column>
-          <el-table-column prop="inputRows" label="入行" width="56" />
-          <el-table-column prop="outputRows" label="出行" width="56" />
-          <el-table-column prop="startedAt" label="开始时间" width="140" />
-          <el-table-column prop="endedAt" label="结束时间" width="140" />
+          <el-table-column prop="inputRows" label="入行" width="64" />
+          <el-table-column prop="outputRows" label="出行" width="64" />
+          <el-table-column label="过程" min-width="140" show-overflow-tooltip>
+            <template #default="{ row }">{{ row.message || '—' }}</template>
+          </el-table-column>
           <el-table-column label="时长" width="72">
-            <template #default="{ row }">{{ calcDuration(row.startedAt, row.endedAt) }}</template>
+            <template #default="{ row }">{{ nodeDuration(row) }}</template>
           </el-table-column>
           <el-table-column label="日志" width="90" fixed="right">
             <template #default="{ row }">
-              <el-dropdown trigger="contextmenu" @command="() => viewNodeLog(row)">
-                <el-button link type="primary" @click="viewNodeLog(row)">查看日志</el-button>
-                <template #dropdown>
-                  <el-dropdown-menu>
-                    <el-dropdown-item command="log">查看日志</el-dropdown-item>
-                  </el-dropdown-menu>
-                </template>
-              </el-dropdown>
+              <el-button link type="primary" @click="viewNodeLog(row)">查看</el-button>
             </template>
           </el-table-column>
         </el-table>
+
+        <div class="section-title" style="margin-top:12px">Kettle 执行日志</div>
+        <el-input
+          type="textarea"
+          :rows="10"
+          :model-value="kettleLogText || '暂无日志'"
+          readonly
+          class="kettle-log"
+        />
       </el-col>
     </el-row>
 
@@ -307,9 +477,9 @@ onUnmounted(clearPoll)
       <template v-if="currentLog">
         <el-descriptions :column="2" border size="small">
           <el-descriptions-item label="节点名称">{{ currentLog.nodeName }}</el-descriptions-item>
-          <el-descriptions-item label="节点类型">{{ currentLog.nodeType }}</el-descriptions-item>
+          <el-descriptions-item label="节点类型">{{ statusLabel(currentLog.nodeType) }}</el-descriptions-item>
           <el-descriptions-item label="状态">{{ statusLabel(currentLog.status) }}</el-descriptions-item>
-          <el-descriptions-item label="时长">{{ calcDuration(currentLog.startedAt, currentLog.endedAt) }}</el-descriptions-item>
+          <el-descriptions-item label="时长">{{ currentLog ? nodeDuration(currentLog) : '—' }}</el-descriptions-item>
           <el-descriptions-item label="输入行数">{{ currentLog.inputRows }}</el-descriptions-item>
           <el-descriptions-item label="输出行数">{{ currentLog.outputRows }}</el-descriptions-item>
           <el-descriptions-item label="消息" :span="2">{{ currentLog.message || '—' }}</el-descriptions-item>
@@ -331,6 +501,30 @@ onUnmounted(clearPoll)
 </template>
 
 <style scoped>
+.monitor-tip {
+  margin-bottom: 12px;
+}
+.process-panel {
+  margin-bottom: 12px;
+  padding: 10px 12px;
+  background: var(--el-fill-color-blank);
+  border: 1px solid var(--el-border-color-lighter);
+  border-radius: 6px;
+}
+.process-title,
+.section-title {
+  margin-bottom: 8px;
+  font-weight: 600;
+}
+.muted {
+  margin-left: 6px;
+  color: var(--el-text-color-secondary);
+  font-size: 12px;
+}
+.kettle-log :deep(textarea) {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+}
 :deep(.el-table .is-current > td) {
   background-color: var(--el-color-primary-light-9) !important;
 }

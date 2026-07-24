@@ -18,7 +18,7 @@ app:
   security:
     credential-key: ${CREDENTIAL_KEY:chengde-smartcity-credential-key}
   integration:
-    enabled: ${INTEGRATION_ENABLED:false}
+    enabled: ${INTEGRATION_ENABLED:true}
     demo-fallback: ${INTEGRATION_DEMO_FALLBACK:false}
     om:
       url: ${OM_URL:http://localhost:8585/api/v1}
@@ -34,7 +34,8 @@ app:
       token: ${DS_TOKEN:}
       tenant-code: ${DS_TENANT:default}
     kettle:
-      url: ${KETTLE_URL:http://localhost:8081}
+      # 宿主端口 18081（Windows 保留了 8081–8180）；可用环境变量覆盖
+      url: ${KETTLE_URL:http\://localhost\:18081}
       user: ${KETTLE_USER:cluster}
       password: ${KETTLE_PASSWORD:cluster}
       # Carte 容器写入平台 ODS 分层库时的可达地址；宿主机数据库经 host-gateway 访问

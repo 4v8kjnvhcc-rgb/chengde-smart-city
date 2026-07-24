@@ -405,7 +405,9 @@ onMounted(async () => {
         <el-table :data="apps" stripe size="small" style="margin-bottom:16px">
           <el-table-column prop="appCode" label="编码" width="140" />
           <el-table-column prop="appName" label="名称" />
-          <el-table-column prop="appType" label="类型" width="80" />
+          <el-table-column label="类型" width="80">
+            <template #default="{ row }">{{ $statusLabel(row.appType) }}</template>
+          </el-table-column>
           <el-table-column prop="endpointUrl" label="入口" />
           <el-table-column label="状态" width="90">
             <template #default="{ row }">{{ statusLabel(row.status) }}</template>

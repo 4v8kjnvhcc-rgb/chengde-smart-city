@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
+import api from '@/api/http'
+import { useAuthStore } from '@/stores/auth'
 import PageCard from '@/components/common/PageCard.vue'
 import { projectOptionLabel } from '../ingestion-project-scope'
 import { ingestionApi, useIngestionLoading, type DataSource, type Project, type ProbeTable } from '../useIngestionHub'
@@ -16,8 +18,12 @@ const emit = defineEmits<{
   changed: []
 }>()
 
+const auth = useAuthStore()
 const { loading, loadError, withLoad } = useIngestionLoading()
 const dataSources = ref<DataSource[]>([])
+const orgs = ref<Array<{ id: number; orgName: string }>>([])
+const editOrgId = ref<number | undefined>()
+const orgSaving = ref(false)
 
 const connDialog = ref(false)
 const editingDs = ref<DataSource | null>(null)
@@ -57,8 +63,52 @@ function isManualUploadSource(code?: string) {
   return !!code && (code === 'DS_MANUAL_UPLOAD' || code.startsWith('DS_MANUAL_UPLOAD_'))
 }
 
+const canEditOrg = computed(() => auth.isSystemAdmin && !isOtherProject(props.project.projectCode))
+
 const title = computed(() => `项目详情 · ${projectOptionLabel(props.project)}`)
 
+async function ensureOrgsLoaded() {
+  if (!auth.isSystemAdmin || orgs.value.length) return
+  try {
+    orgs.value = (await api.get('/system/orgs')).data || []
+  } catch {
+    orgs.value = []
+  }
+}
+
+async function saveBoundOrg() {
+  if (!canEditOrg.value) return
+  if (!editOrgId.value) {
+    ElMessage.warning('请选择部门')
+    return
+  }
+  if (editOrgId.value === props.project.boundOrgId) {
+    ElMessage.info('部门归属未变更')
+    return
+  }
+  orgSaving.value = true
+  try {
+    await ingestionApi.updateProject(props.project.id, {
+      projectName: props.project.projectName,
+      systemName: props.project.systemName || props.project.projectName,
+      boundOrgId: editOrgId.value,
+    })
+    ElMessage.success('部门归属已更新')
+    emit('changed')
+  } catch (e: unknown) {
+    ElMessage.error(e instanceof Error ? e.message : '更新失败')
+  } finally {
+    orgSaving.value = false
+  }
+}
+
+watch(
+  () => props.project.boundOrgId,
+  (v) => {
+    editOrgId.value = v
+  },
+  { immediate: true },
+)
 function isDbType(type: string) {
   return type === 'MYSQL' || type === 'ORACLE'
 }
@@ -269,7 +319,10 @@ watch(() => props.project.id, () => {
   void reloadDataSources()
 })
 
-onMounted(reloadDataSources)
+onMounted(async () => {
+  await reloadDataSources()
+  await ensureOrgsLoaded()
+})
 </script>
 
 <template>
@@ -292,7 +345,17 @@ onMounted(reloadDataSources)
       <el-descriptions :column="3" border size="small" style="margin-bottom:16px">
         <el-descriptions-item label="项目名称">{{ project.projectName }}</el-descriptions-item>
         <el-descriptions-item label="默认系统">{{ project.systemName || '—' }}</el-descriptions-item>
-        <el-descriptions-item label="部门">{{ project.boundOrgName || deptName }}</el-descriptions-item>
+        <el-descriptions-item label="部门">
+          <template v-if="canEditOrg">
+            <div class="org-edit">
+              <el-select v-model="editOrgId" filterable placeholder="选择部门" style="width:200px">
+                <el-option v-for="o in orgs" :key="o.id" :label="o.orgName" :value="o.id" />
+              </el-select>
+              <el-button type="primary" link :loading="orgSaving" @click="saveBoundOrg">保存归属</el-button>
+            </div>
+          </template>
+          <template v-else>{{ project.boundOrgName || deptName }}</template>
+        </el-descriptions-item>
         <el-descriptions-item label="编码">{{ project.projectCode }}</el-descriptions-item>
         <el-descriptions-item label="登记账号">{{ project.createdBy || '—' }}</el-descriptions-item>
         <el-descriptions-item label="状态">{{ $statusLabel(project.status) }}</el-descriptions-item>
@@ -316,7 +379,9 @@ onMounted(reloadDataSources)
           <template #default="{ row }">{{ row.systemName || '—' }}</template>
         </el-table-column>
         <el-table-column prop="sourceName" label="数据源" min-width="140" />
-        <el-table-column prop="sourceType" label="类型" width="90" />
+        <el-table-column label="类型" width="90">
+          <template #default="{ row }">{{ $statusLabel(row.sourceType) }}</template>
+        </el-table-column>
         <el-table-column label="连接状态" width="100">
           <template #default="{ row }">
             {{ isDbType(row.sourceType) ? connLabel(row.connStatus) : '—' }}
@@ -456,5 +521,11 @@ onMounted(reloadDataSources)
   margin: 0 0 10px;
   font-size: 12px;
   color: #909399;
+}
+.org-edit {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
 }
 </style>

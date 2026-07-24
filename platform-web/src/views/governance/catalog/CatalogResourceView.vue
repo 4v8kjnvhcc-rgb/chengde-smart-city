@@ -384,7 +384,7 @@ onMounted(async () => {
           <el-table-column prop="resourceCode" label="编码" width="130" />
           <el-table-column prop="resourceName" label="名称" min-width="140" />
           <el-table-column label="类型" width="70">
-            <template #default="{ row }">{{ TYPE_ZH[row.resourceType] || row.resourceType }}</template>
+            <template #default="{ row }">{{ TYPE_ZH[row.resourceType] || $statusLabel(row.resourceType) }}</template>
           </el-table-column>
           <el-table-column label="来源路径" width="90">
             <template #default="{ row }">
@@ -402,10 +402,10 @@ onMounted(async () => {
           </el-table-column>
           <el-table-column prop="providerOrg" label="提供方" width="110" show-overflow-tooltip />
           <el-table-column label="格式" width="70">
-            <template #default="{ row }">{{ FORMAT_ZH[row.resourceFormat] || row.resourceFormat || '—' }}</template>
+            <template #default="{ row }">{{ FORMAT_ZH[row.resourceFormat] || $statusLabel(row.resourceFormat) || '—' }}</template>
           </el-table-column>
           <el-table-column label="共享" width="100">
-            <template #default="{ row }">{{ SHARE_ZH[row.shareType] || row.shareType || '—' }}</template>
+            <template #default="{ row }">{{ SHARE_ZH[row.shareType] || $statusLabel(row.shareType) || '—' }}</template>
           </el-table-column>
           <el-table-column label="发布" width="90">
             <template #default="{ row }">

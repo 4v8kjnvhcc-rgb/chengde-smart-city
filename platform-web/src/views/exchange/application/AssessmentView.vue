@@ -45,7 +45,9 @@ onMounted(load)
       />
       <el-table class="portal-table" :data="executions" stripe size="small">
         <el-table-column prop="targetName" label="考核对象" min-width="140" />
-        <el-table-column prop="targetType" label="类型" width="90" />
+        <el-table-column label="类型" width="90">
+          <template #default="{ row }">{{ $statusLabel(row.targetType) }}</template>
+        </el-table-column>
         <el-table-column prop="totalScore" label="总分" width="80" />
         <el-table-column label="状态" width="100">
           <template #default="{ row }">{{ $statusLabel(row.status) }}</template>
@@ -60,7 +62,9 @@ onMounted(load)
         <h4>评分明细（执行 #{{ selectedExecId }}）</h4>
         <el-table class="portal-table" :data="resultRows" stripe size="small">
           <el-table-column prop="indicatorName" label="指标" min-width="140" />
-          <el-table-column prop="indicatorType" label="类型" width="72" />
+          <el-table-column label="类型" width="72">
+            <template #default="{ row }">{{ $statusLabel(row.indicatorType) }}</template>
+          </el-table-column>
           <el-table-column prop="score" label="得分" width="80" />
           <el-table-column prop="rawValue" label="原始值" width="80" />
           <el-table-column prop="remark" label="备注 / 应报说明" min-width="160" />

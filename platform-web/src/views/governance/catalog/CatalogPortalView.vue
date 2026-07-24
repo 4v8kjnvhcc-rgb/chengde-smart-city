@@ -112,9 +112,9 @@ onMounted(load)
         </div>
         <div class="portal-card__code">{{ item.resourceCode }}</div>
         <div class="portal-card__meta">
-          <span>{{ TYPE_ZH[item.resourceType] || item.resourceType }}</span>
+          <span>{{ TYPE_ZH[item.resourceType] || $statusLabel(item.resourceType) }}</span>
           <span v-if="item.providerOrg">· {{ item.providerOrg }}</span>
-          <span v-if="item.shareType">· {{ SHARE_TYPE_ZH[item.shareType] || item.shareType }}</span>
+          <span v-if="item.shareType">· {{ SHARE_TYPE_ZH[item.shareType] || $statusLabel(item.shareType) }}</span>
         </div>
         <p class="portal-card__desc">{{ item.description || item.categoryPath || '暂无描述' }}</p>
         <div class="portal-card__actions">

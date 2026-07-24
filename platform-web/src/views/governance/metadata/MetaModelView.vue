@@ -312,7 +312,7 @@ onMounted(loadModels)
       </el-table-column>
       <el-table-column label="组件" width="90">
         <template #default="{ row }">
-          {{ COMPONENT_TYPE_OPTIONS.find(o => o.value === row.componentType)?.label || row.componentType || '—' }}
+          {{ COMPONENT_TYPE_OPTIONS.find(o => o.value === row.componentType)?.label || $statusLabel(row.componentType) || '—' }}
         </template>
       </el-table-column>
       <el-table-column label="状态" width="100">

@@ -66,7 +66,7 @@ import org.springframework.transaction.annotation.Transactional;
 public class MetadataSubsystemService {
 
     private static final Logger log = LoggerFactory.getLogger(MetadataSubsystemService.class);
-    private static final int JDBC_TABLE_LIMIT = 50;
+    private static final int JDBC_TABLE_LIMIT = 500;
     private static final long PLATFORM_ODS_ID = -1L;
     private static final long PLATFORM_DWD_ID = -2L;
     private static final long PLATFORM_DWS_ID = -3L;

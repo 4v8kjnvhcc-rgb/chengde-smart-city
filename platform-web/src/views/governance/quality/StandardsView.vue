@@ -561,7 +561,9 @@ onMounted(load)
           <el-alert v-if="validateResult" :title="validateResult" :type="validateResult.startsWith('通过') ? 'success' : 'warning'" show-icon :closable="false" style="margin-bottom:12px" />
 
           <el-table v-loading="namingLoading" :data="namingRows" stripe size="small">
-            <el-table-column prop="namingType" label="类型" width="90" />
+            <el-table-column label="类型" width="90">
+              <template #default="{ row }">{{ $statusLabel(row.namingType) }}</template>
+            </el-table-column>
             <el-table-column prop="namingName" label="名称" min-width="120" />
             <el-table-column prop="standardContent" label="规则内容" min-width="180" show-overflow-tooltip />
             <el-table-column label="状态" width="90">

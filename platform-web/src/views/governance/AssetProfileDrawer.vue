@@ -110,9 +110,13 @@ watch(
             style="margin-top:8px"
           >
             <el-table-column prop="targetColumn" label="字段" width="160" />
-            <el-table-column prop="issueType" label="问题类型" width="110" />
+            <el-table-column label="问题类型" width="110">
+              <template #default="{ row }">{{ $statusLabel(row.issueType) }}</template>
+            </el-table-column>
             <el-table-column prop="issueValue" label="描述" show-overflow-tooltip />
-            <el-table-column prop="severity" label="级别" width="90" />
+            <el-table-column label="级别" width="90">
+              <template #default="{ row }">{{ $statusLabel(row.severity) }}</template>
+            </el-table-column>
           </el-table>
         </template>
         <el-empty v-else description="未绑定质量任务" :image-size="60" />

@@ -5,6 +5,7 @@ import api from '@/api/http'
 import PageHeader from '@/components/common/PageHeader.vue'
 import PageCard from '@/components/common/PageCard.vue'
 import type { D05Module } from '@/components/catalog/ModuleMetaPanel.vue'
+import { statusLabel, statusTagType } from '@/utils/status-label'
 
 interface Section {
   key: string
@@ -26,14 +27,6 @@ const PLATFORM_NAMES: Record<string, string> = {
   'master-data': '主数据平台',
   analytics: '大数据挖掘分析平台',
   system: '系统管理 / 跨平台',
-}
-
-const STATUS_LABEL: Record<string, string> = {
-  implemented: '已实装',
-  poc: 'PoC',
-  external: '外部',
-  stub: '占位',
-  missing: '待开发',
 }
 
 const route = useRoute()
@@ -71,13 +64,6 @@ function openModule(row: D05Module) {
   router.push(`/modules/${row.mCode}`)
 }
 
-function statusTagType(s: string) {
-  if (s === 'implemented') return 'success'
-  if (s === 'poc') return 'warning'
-  if (s === 'missing') return 'danger'
-  return 'info'
-}
-
 watch([platform, sectionKey, status], load)
 watch(keyword, () => {
   window.clearTimeout((window as unknown as { _d05kw?: number })._d05kw)
@@ -97,7 +83,7 @@ onMounted(load)
       <el-space wrap>
         <el-tag>共 {{ summary.moduleCount }} 模块（本板块 {{ modules.length }}）</el-tag>
         <el-tag v-for="(cnt, key) in summary.statusSummary" :key="key" :type="statusTagType(key)">
-          {{ STATUS_LABEL[key] || key }}: {{ cnt }}
+          {{ statusLabel(key) }}: {{ cnt }}
         </el-tag>
       </el-space>
     </PageCard>
@@ -130,10 +116,10 @@ onMounted(load)
         <el-table-column prop="moduleName" label="功能模块" min-width="180" />
         <el-table-column prop="sectionName" label="章节" min-width="200" show-overflow-tooltip />
         <el-table-column prop="deliveryLevel" label="级别" width="72" />
-        <el-table-column prop="implStatus" label="状态" width="100">
+        <el-table-column label="状态" width="100">
           <template #default="{ row }">
             <el-tag size="small" :type="statusTagType(row.implStatus)">
-              {{ STATUS_LABEL[row.implStatus] || row.implStatus }}
+              {{ statusLabel(row.implStatus) }}
             </el-tag>
           </template>
         </el-table-column>

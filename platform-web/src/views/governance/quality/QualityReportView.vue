@@ -171,10 +171,14 @@ onBeforeUnmount(() => {
       <el-table :data="issues" stripe size="small">
         <el-table-column prop="targetTable" label="表" width="120" />
         <el-table-column prop="targetColumn" label="字段" width="100" />
-        <el-table-column prop="issueType" label="问题类型" width="100" />
+        <el-table-column label="问题类型" width="100">
+          <template #default="{ row }">{{ $statusLabel(row.issueType) }}</template>
+        </el-table-column>
         <el-table-column prop="issueValue" label="样例" min-width="120" show-overflow-tooltip />
         <el-table-column prop="issueCount" label="数量" width="70" />
-        <el-table-column prop="severity" label="级别" width="80" />
+        <el-table-column label="级别" width="80">
+          <template #default="{ row }">{{ $statusLabel(row.severity) }}</template>
+        </el-table-column>
       </el-table>
     </el-drawer>
   </div>

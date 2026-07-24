@@ -123,6 +123,7 @@ public class GovernanceExecuteService {
                 if (out.size() > MAX_ROWS) {
                     out = new ArrayList<>(out.subList(0, MAX_ROWS));
                 }
+                // FILTER：主输出为 TRUE 支路；FALSE 支路在 executeNode 内已写入 outputs
                 outputs.put(nodeId, out);
                 finalRows = out.size();
                 writeNodeLog(run.getId(), taskId, nodeId, node, "SUCCESS", inRows, out.size(),
@@ -216,7 +217,7 @@ public class GovernanceExecuteService {
         }
         return switch (type) {
             case "INPUT" -> execInput(node);
-            case "FILTER" -> execFilter(node, incoming);
+            case "FILTER" -> execFilter(node, nodeId, graph, outputs, incoming);
             case "FIELD_PROCESS" -> execFieldProcess(node, incoming);
             case "DEDUPLICATE" -> execDeduplicate(node, incoming);
             case "MASK" -> execMask(node, incoming);
@@ -270,27 +271,75 @@ public class GovernanceExecuteService {
         return rows;
     }
 
-    private List<Map<String, Object>> execFilter(NodeDef node, List<Map<String, Object>> incoming) {
+    private List<Map<String, Object>> execFilter(NodeDef node, String nodeId, GraphModel graph,
+                                                   Map<String, List<Map<String, Object>>> outputs,
+                                                   List<Map<String, Object>> incoming) {
         JsonNode cfg = node.config;
         String mode = text(cfg, "mode", "SIMPLE");
+        List<Map<String, Object>> passed = new ArrayList<>();
+        List<Map<String, Object>> rejected = new ArrayList<>();
         if ("SQL".equalsIgnoreCase(mode)) {
             String sqlExpr = text(cfg, "sqlExpr", "");
-            if (sqlExpr == null || sqlExpr.isBlank()) {
-                return new ArrayList<>(incoming);
+            for (Map<String, Object> row : incoming) {
+                boolean ok = sqlExpr == null || sqlExpr.isBlank() || matchSqlAllAnd(row, sqlExpr);
+                if (ok) {
+                    if (passed.size() < MAX_ROWS) passed.add(row);
+                } else if (rejected.size() < MAX_ROWS) {
+                    rejected.add(row);
+                }
             }
-            // 轻量近似：仅支持 field op value 的简单表达式解析（age > 18）
-            return execSimpleSqlFilter(incoming, sqlExpr);
+        } else {
+            JsonNode conditions = cfg != null ? cfg.get("conditions") : null;
+            String logic = text(cfg, "logic", "AND");
+            boolean orLogic = "OR".equalsIgnoreCase(logic);
+            for (Map<String, Object> row : incoming) {
+                boolean ok;
+                if (conditions != null && conditions.isArray() && conditions.size() > 0) {
+                    ok = !orLogic;
+                    for (JsonNode c : conditions) {
+                        String field = text(c, "field", null);
+                        String op = text(c, "op", "EQ");
+                        String value = text(c, "value", "");
+                        if (field == null || field.isBlank()) continue;
+                        boolean m = match(row.get(field), op, value);
+                        if (orLogic) {
+                            if (m) { ok = true; break; }
+                        } else if (!m) {
+                            ok = false;
+                            break;
+                        }
+                    }
+                } else {
+                    String field = text(cfg, "field", null);
+                    String op = text(cfg, "op", "EQ");
+                    String value = text(cfg, "value", "");
+                    if (field == null || field.isBlank()) {
+                        ok = true;
+                    } else {
+                        ok = match(row.get(field), op, value);
+                    }
+                }
+                if (ok) {
+                    if (passed.size() < MAX_ROWS) passed.add(row);
+                } else if (rejected.size() < MAX_ROWS) {
+                    rejected.add(row);
+                }
+            }
         }
-        String field = text(cfg, "field", null);
-        String op = text(cfg, "op", "EQ");
-        String value = text(cfg, "value", "");
-        if (field == null || field.isBlank()) {
-            return new ArrayList<>(incoming);
-        }
+        // 按出边角色分流：TRUE/默认拿 passed，FALSE 拿 rejected
+        outputs.put(branchKey(nodeId, "TRUE"), passed);
+        outputs.put(branchKey(nodeId, "FALSE"), rejected);
+        return passed;
+    }
+
+    private static String branchKey(String nodeId, String role) {
+        return nodeId + "::" + role;
+    }
+
+    private List<Map<String, Object>> execSimpleSqlFilter(List<Map<String, Object>> incoming, String expr) {
         List<Map<String, Object>> out = new ArrayList<>();
         for (Map<String, Object> row : incoming) {
-            Object raw = row.get(field);
-            if (match(raw, op, value)) {
+            if (matchSqlAllAnd(row, expr)) {
                 out.add(row);
             }
             if (out.size() >= MAX_ROWS) break;
@@ -298,25 +347,12 @@ public class GovernanceExecuteService {
         return out;
     }
 
-    private List<Map<String, Object>> execSimpleSqlFilter(List<Map<String, Object>> incoming, String expr) {
-        // 支持: field = 'x' | field > n | field AND field2 = 'y'（简化拆分）
+    private boolean matchSqlAllAnd(Map<String, Object> row, String expr) {
         String[] andParts = expr.split("(?i)\\s+AND\\s+");
-        List<Map<String, Object>> out = new ArrayList<>();
-        for (Map<String, Object> row : incoming) {
-            boolean ok = true;
-            for (String part : andParts) {
-                String p = part.trim();
-                if (!matchSqlClause(row, p)) {
-                    ok = false;
-                    break;
-                }
-            }
-            if (ok) {
-                out.add(row);
-            }
-            if (out.size() >= MAX_ROWS) break;
+        for (String part : andParts) {
+            if (!matchSqlClause(row, part.trim())) return false;
         }
-        return out;
+        return true;
     }
 
     private boolean matchSqlClause(Map<String, Object> row, String clause) {
@@ -506,12 +542,12 @@ public class GovernanceExecuteService {
             return new ArrayList<>();
         }
         if (preds.size() == 1) {
-            return new ArrayList<>(outputs.getOrDefault(preds.get(0), List.of()));
+            return new ArrayList<>(resolvePredOutput(graph, preds.get(0), nodeId, outputs));
         }
-        // 多入边：按行位置合并字段
-        List<Map<String, Object>> base = new ArrayList<>(outputs.getOrDefault(preds.get(0), List.of()));
+        // 多入边：按行位置合并字段（JOIN 等由 fusion 另取 allInputs）
+        List<Map<String, Object>> base = new ArrayList<>(resolvePredOutput(graph, preds.get(0), nodeId, outputs));
         for (int i = 1; i < preds.size(); i++) {
-            List<Map<String, Object>> other = outputs.getOrDefault(preds.get(i), List.of());
+            List<Map<String, Object>> other = resolvePredOutput(graph, preds.get(i), nodeId, outputs);
             int n = Math.min(base.size(), other.size());
             List<Map<String, Object>> merged = new ArrayList<>();
             for (int r = 0; r < n && merged.size() < MAX_ROWS; r++) {
@@ -522,6 +558,22 @@ public class GovernanceExecuteService {
             base = merged;
         }
         return base;
+    }
+
+    private List<Map<String, Object>> resolvePredOutput(GraphModel graph, String predId, String nodeId,
+                                                        Map<String, List<Map<String, Object>>> outputs) {
+        String role = graph.edgeRole.getOrDefault(predId + "->" + nodeId, "COPY");
+        NodeDef pred = graph.nodes.get(predId);
+        String predType = pred != null && pred.type != null ? pred.type.toUpperCase() : "";
+        if ("FILTER".equals(predType)) {
+            if ("FALSE".equalsIgnoreCase(role)) {
+                return outputs.getOrDefault(branchKey(predId, "FALSE"), List.of());
+            }
+            // TRUE / CASE / COPY / 未标注：走满足条件支路
+            List<Map<String, Object>> t = outputs.get(branchKey(predId, "TRUE"));
+            if (t != null) return t;
+        }
+        return outputs.getOrDefault(predId, List.of());
     }
 
     private List<String> topologicalSort(GraphModel graph) {
@@ -588,6 +640,23 @@ public class GovernanceExecuteService {
                 if (s.isBlank() || t.isBlank()) continue;
                 g.outgoing.computeIfAbsent(s, k -> new ArrayList<>()).add(t);
                 g.incoming.computeIfAbsent(t, k -> new ArrayList<>()).add(s);
+                String role = null;
+                JsonNode data = e.get("data");
+                if (data != null && data.has("edgeRole") && !data.get("edgeRole").isNull()) {
+                    role = data.get("edgeRole").asText();
+                }
+                if (role == null || role.isBlank()) {
+                    String sh = e.path("sourceHandle").asText("");
+                    String th = e.path("targetHandle").asText("");
+                    if ("out_true".equals(sh) || "true".equals(sh)) role = "TRUE";
+                    else if ("out_false".equals(sh) || "false".equals(sh)) role = "FALSE";
+                    else if ("out_default".equals(sh)) role = "DEFAULT";
+                    else if (sh.startsWith("out_case_")) role = "CASE";
+                    else if ("in_left".equals(th)) role = "LEFT";
+                    else if ("in_right".equals(th)) role = "RIGHT";
+                    else role = "COPY";
+                }
+                g.edgeRole.put(s + "->" + t, role.toUpperCase());
             }
         }
         return g;
@@ -643,6 +712,8 @@ public class GovernanceExecuteService {
         final Map<String, NodeDef> nodes = new LinkedHashMap<>();
         final Map<String, List<String>> outgoing = new HashMap<>();
         final Map<String, List<String>> incoming = new HashMap<>();
+        /** key = source->target，value = COPY|TRUE|FALSE|... */
+        final Map<String, String> edgeRole = new HashMap<>();
     }
 
     private static class NodeDef {

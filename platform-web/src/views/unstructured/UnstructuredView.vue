@@ -71,7 +71,9 @@ onMounted(load)
         <el-table-column prop="docCode" label="编码" min-width="140" />
         <el-table-column prop="title" label="标题" min-width="180" />
         <el-table-column prop="storageKey" label="存储键" min-width="220" />
-        <el-table-column prop="indexStatus" label="索引" width="120" />
+        <el-table-column label="索引" width="120">
+          <template #default="{ row }">{{ $statusLabel(row.indexStatus) }}</template>
+        </el-table-column>
         <el-table-column label="操作" width="100">
           <template #default="{ row }">
             <el-button

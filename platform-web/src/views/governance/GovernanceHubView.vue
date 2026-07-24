@@ -362,7 +362,9 @@ onMounted(() => { resolveFromRoute(); loadTabData() })
           <el-table :data="rules" stripe size="small">
             <el-table-column prop="ruleCode" label="编码" width="140" />
             <el-table-column prop="ruleName" label="名称" />
-            <el-table-column prop="ruleType" label="类型" width="120" />
+            <el-table-column label="类型" width="120">
+              <template #default="{ row }">{{ $statusLabel(row.ruleType) }}</template>
+            </el-table-column>
           </el-table>
           <el-divider />
           <el-form inline class="portal-inline-form portal-inline-form--block">

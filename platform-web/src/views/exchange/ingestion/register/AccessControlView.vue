@@ -308,7 +308,9 @@ onMounted(async () => {
               <template #default="{ row }">{{ row.scopeType === 'TABLE' ? '表' : '数据源' }}</template>
             </el-table-column>
             <el-table-column prop="scopeLabel" label="资源" />
-            <el-table-column prop="granteeType" label="对象类型" width="100" />
+            <el-table-column prop="granteeType" label="对象类型" width="100">
+              <template #default="{ row }">{{ $statusLabel(row.granteeType) }}</template>
+            </el-table-column>
             <el-table-column prop="granteeName" label="对象" width="140" />
             <el-table-column prop="perm" label="权限" width="90">
               <template #default="{ row }">{{ statusLabel(row.perm) }}</template>
@@ -357,7 +359,9 @@ onMounted(async () => {
           <el-table :data="crossRequests" stripe size="small">
             <el-table-column prop="applicantName" label="申请人" width="120" />
             <el-table-column prop="targetOrgId" label="目标机构" width="100" />
-            <el-table-column prop="resourceType" label="资源类型" width="100" />
+            <el-table-column label="资源类型" width="100">
+              <template #default="{ row }">{{ $statusLabel(row.resourceType) }}</template>
+            </el-table-column>
             <el-table-column prop="resourceId" label="资源ID" width="100" />
             <el-table-column prop="reason" label="原因" show-overflow-tooltip />
             <el-table-column label="状态" width="90">

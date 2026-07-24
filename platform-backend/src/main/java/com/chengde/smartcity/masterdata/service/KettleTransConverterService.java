@@ -14,6 +14,7 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import javax.xml.parsers.DocumentBuilderFactory;
 import org.slf4j.Logger;
@@ -47,7 +48,7 @@ public class KettleTransConverterService {
             Map.entry("FILTER", "FilterRows"),
             Map.entry("FIELD_PROCESS", "SelectValues"),
             Map.entry("DEDUPLICATE", "Unique"),
-            Map.entry("MASK", "Calculator"),
+            Map.entry("MASK", "ScriptValueMod"),
             Map.entry("OUTPUT", "TableOutput"),
             Map.entry("JOIN", "MergeJoin"),
             Map.entry("UNION", "Union"),
@@ -139,13 +140,32 @@ public class KettleTransConverterService {
             for (JsonNode n : nodes) {
                 JsonNode data = n.path("data");
                 String type = data.path("nodeType").asText("");
+                String label = data.path("label").asText(n.path("id").asText("node"));
+                JsonNode cfg = data.path("config");
+                if ("INPUT".equals(type)) {
+                    String mode = textOr(cfg, "inputMode", "TABLE");
+                    if ("TABLE".equalsIgnoreCase(mode)) {
+                        String table = textOr(cfg, "tableName", "");
+                        if (table.isBlank() || isPlaceholderTable(table)) {
+                            return "输入节点「" + label + "」指定表模式下未配置真实表名";
+                        }
+                        String conn = textOr(cfg, "connection", "");
+                        if (conn.isBlank()) {
+                            return "输入节点「" + label + "」未选择数据源";
+                        }
+                    } else if ("SQL".equalsIgnoreCase(mode)) {
+                        String sql = textOr(cfg, "sql", "");
+                        if (sql.isBlank() || isPlaceholderSql(sql)) {
+                            return "输入节点「" + label + "」SQL 模式下请填写有效查询（勿使用 table_name 占位）";
+                        }
+                    }
+                    continue;
+                }
                 if (!"OUTPUT".equals(type) && !"INSERT_UPDATE".equals(type)) {
                     continue;
                 }
-                JsonNode cfg = data.path("config");
                 String table = textOr(cfg, "table", textOr(cfg, "outputTable", ""));
                 String conn = textOr(cfg, "connection", textOr(cfg, "outputConnection", ""));
-                String label = data.path("label").asText(n.path("id").asText("output"));
                 if (table.isBlank() || "output_table".equals(table)) {
                     return "输出节点「" + label + "」未配置目标表";
                 }
@@ -223,15 +243,31 @@ public class KettleTransConverterService {
                 NodeDef from = graph.nodes.get(edge.source);
                 NodeDef to = graph.nodes.get(edge.target);
                 if (from == null || to == null) continue;
-                String fromName = labelOf(from);
-                String toName = labelOf(to);
+                String fromName = stepNameOf(from);
+                String toName = stepNameOf(to);
                 xml.append("    <hop>\n");
                 xml.append("      <from>").append(escapeXml(fromName)).append("</from>\n");
                 xml.append("      <to>").append(escapeXml(toName)).append("</to>\n");
                 xml.append("      <enabled>Y</enabled>\n");
+                if (edge.edgeRole != null && !edge.edgeRole.isBlank() && !"COPY".equalsIgnoreCase(edge.edgeRole)) {
+                    xml.append("      <!-- edgeRole=").append(escapeXml(edge.edgeRole));
+                    if (edge.caseValue != null && !edge.caseValue.isBlank()) {
+                        xml.append(" caseValue=").append(escapeXml(edge.caseValue));
+                    }
+                    if (edge.sourceHandle != null) {
+                        xml.append(" sourceHandle=").append(escapeXml(edge.sourceHandle));
+                    }
+                    if (edge.targetHandle != null) {
+                        xml.append(" targetHandle=").append(escapeXml(edge.targetHandle));
+                    }
+                    xml.append(" -->\n");
+                }
                 xml.append("    </hop>\n");
             }
             xml.append("  </order>\n");
+
+            // FILTER / SWITCH：把出口目标步写回步骤配置（基于边角色）
+            enrichBranchTargets(graph);
 
             for (NodeDef node : graph.nodes.values()) {
                 xml.append(generateStepXml(node));
@@ -278,10 +314,40 @@ public class KettleTransConverterService {
         }
         for (NodeDef n : graph.nodes.values()) {
             if (!targets.contains(n.id)) {
-                return labelOf(n);
+                return stepNameOf(n);
             }
         }
-        return labelOf(graph.nodes.values().iterator().next());
+        return stepNameOf(graph.nodes.values().iterator().next());
+    }
+
+    /** 画布节点数（用于与 Carte step 数对账） */
+    public int countGraphNodes(String graphJson) {
+        if (graphJson == null || graphJson.isBlank()) {
+            return 0;
+        }
+        try {
+            return parseGraph(graphJson).nodes.size();
+        } catch (Exception e) {
+            return 0;
+        }
+    }
+
+    /** KTR 中 <step> 顶层数量（粗计） */
+    public int countStepsInKtr(String ktrXml) {
+        if (ktrXml == null || ktrXml.isBlank()) {
+            return 0;
+        }
+        int n = 0;
+        int idx = 0;
+        while (true) {
+            idx = ktrXml.indexOf("<step>", idx);
+            if (idx < 0) {
+                break;
+            }
+            n++;
+            idx += 6;
+        }
+        return n;
     }
 
     /** 归档 KTR 到 compose/kettle-repository（若目录存在） */
@@ -418,18 +484,38 @@ public class KettleTransConverterService {
 
     private String generateStepXml(NodeDef node) {
         String nodeType = node.data.nodeType;
-        String stepName = labelOf(node);
+        String stepName = stepNameOf(node);
         String kettleType = NODE_TO_KETTLE.getOrDefault(nodeType, "Dummy");
+        if (("FIELD_PROCESS".equals(nodeType) || "TYPE_CONVERT".equals(nodeType))
+                && hasStringCalcMappings(node.data.config)) {
+            kettleType = "Calculator";
+        }
+        String label = labelOf(node);
         StringBuilder sb = new StringBuilder();
         sb.append("  <step>\n");
         sb.append("    <name>").append(escapeXml(stepName)).append("</name>\n");
         sb.append("    <type>").append(kettleType).append("</type>\n");
-        sb.append("    <description/>\n");
-        sb.append("    <distribute>Y</distribute>\n");
+        sb.append("    <description>").append(escapeXml(label)).append("</description>\n");
+        // FILTER/SWITCH 按条件路由；其它多出边默认复制分发
+        boolean branch = "FILTER".equals(nodeType) || "SWITCH_CASE".equals(nodeType);
+        sb.append("    <distribute>").append(branch ? "N" : "Y").append("</distribute>\n");
         sb.append("    <copies>1</copies>\n");
         sb.append(generateStepConfig(node));
         sb.append("  </step>\n");
         return sb.toString();
+    }
+
+    private boolean hasStringCalcMappings(JsonNode cfg) {
+        JsonNode mappings = cfg != null ? cfg.get("mappings") : null;
+        if (mappings == null || !mappings.isArray()) return false;
+        for (JsonNode m : mappings) {
+            String expr = cfgText(m, "expr", "COPY");
+            if (expr != null) {
+                String u = expr.toUpperCase(Locale.ROOT);
+                if ("UPPER".equals(u) || "LOWER".equals(u) || "TRIM".equals(u)) return true;
+            }
+        }
+        return false;
     }
 
     /**
@@ -486,23 +572,78 @@ public class KettleTransConverterService {
         String conn = resolveConn(cfg, "connection", "PLATFORM");
         String mode = cfgText(cfg, "inputMode", "TABLE");
         String table = cfgText(cfg, "tableName", "");
-        String sql = cfgText(cfg, "sql", "");
-        if (sql == null || sql.isBlank()) {
-            if (table != null && !table.isBlank()) {
-                sql = "SELECT * FROM " + table;
-            } else {
-                sql = "SELECT 1 AS id";
+        boolean unlimited = cfgBool(cfg, "unlimited", false) || cfgBool(cfg, "fullTable", false);
+        String sql;
+        int limit;
+
+        if ("SAMPLE".equalsIgnoreCase(mode)) {
+            // 不依赖物理表的单行样例；rowCount 仅作备注（TableInput 无法凭 limit 复制行）
+            sql = "SELECT 1 AS id, '张三' AS name, '13800000000' AS phone,"
+                    + " '110101199001011234' AS idCard, 100.5 AS amount, 'a@b.com' AS email";
+            limit = cfgInt(cfg, "rowCount", 10);
+            if (limit <= 0) {
+                limit = 10;
             }
-        }
-        int limit = cfgInt(cfg, "rowCount", 0);
-        if (limit <= 0) {
+        } else if ("TABLE".equalsIgnoreCase(mode)) {
+            // 指定表：必须用 tableName 生成 SQL，忽略表单残留的占位 sql
+            String safeTable = sanitizeIdent(table);
+            if (safeTable.isBlank()) {
+                safeTable = "table_name";
+            }
+            sql = "SELECT * FROM `" + safeTable + "`";
             limit = cfgInt(cfg, "limit", 0);
+            if (!unlimited && limit <= 0) {
+                limit = 1000;
+            }
+        } else {
+            // SQL 模式
+            sql = cfgText(cfg, "sql", "");
+            if (sql == null || sql.isBlank() || isPlaceholderSql(sql)) {
+                String safeTable = sanitizeIdent(table);
+                if (!safeTable.isBlank() && !isPlaceholderTable(safeTable)) {
+                    sql = "SELECT * FROM `" + safeTable + "`";
+                } else {
+                    sql = "SELECT 1 AS id";
+                }
+            }
+            limit = cfgInt(cfg, "limit", 0);
+            if (!unlimited && limit <= 0) {
+                limit = 1000;
+            }
         }
         return "    <connection>" + escapeXml(conn) + "</connection>\n"
                 + "    <sql>" + escapeXml(sql) + "</sql>\n"
                 + "    <limit>" + limit + "</limit>\n"
                 + "    <variables_active>Y</variables_active>\n"
                 + "    <!-- inputMode=" + escapeXml(mode) + " -->\n";
+    }
+
+    private static boolean isPlaceholderSql(String sql) {
+        if (sql == null || sql.isBlank()) {
+            return true;
+        }
+        String s = sql.trim().toLowerCase().replaceAll("\\s+", " ");
+        return s.contains("from table_name") || "select * from table_name".equals(s);
+    }
+
+    private static boolean isPlaceholderTable(String table) {
+        if (table == null || table.isBlank()) {
+            return true;
+        }
+        String t = table.trim().toLowerCase();
+        return "table_name".equals(t) || "output_table".equals(t);
+    }
+
+    private static String sanitizeIdent(String raw) {
+        if (raw == null) {
+            return "";
+        }
+        String t = raw.trim();
+        if (t.isEmpty()) {
+            return "";
+        }
+        // 仅保留库表常见标识符字符，防止注入到 KTR SQL
+        return t.replace("`", "").replaceAll("[^a-zA-Z0-9_]", "");
     }
 
     private String cfgOutput(JsonNode cfg) {
@@ -616,10 +757,33 @@ public class KettleTransConverterService {
     }
 
     private String cfgSwitchCase(JsonNode cfg) {
-        return "    <fieldname>" + escapeXml(cfgText(cfg, "field", "status")) + "</fieldname>\n"
-                + "    <use_contains>N</use_contains>\n"
-                + "    <case_value_type>String</case_value_type>\n"
-                + "    <default_target_step/>\n";
+        String field = cfgText(cfg, "field", "status");
+        String defaultTarget = cfgText(cfg, "defaultTarget", "");
+        StringBuilder sb = new StringBuilder();
+        sb.append("    <fieldname>").append(escapeXml(field)).append("</fieldname>\n");
+        sb.append("    <use_contains>N</use_contains>\n");
+        sb.append("    <case_value_type>String</case_value_type>\n");
+        sb.append("    <default_target_step>").append(escapeXml(defaultTarget)).append("</default_target_step>\n");
+        sb.append("    <cases>\n");
+        JsonNode cases = cfg != null ? cfg.get("cases") : null;
+        JsonNode caseTargets = cfg != null ? cfg.get("caseTargets") : null;
+        if (cases != null && cases.isArray()) {
+            int i = 0;
+            for (JsonNode c : cases) {
+                String value = cfgText(c, "value", "");
+                String target = "";
+                if (caseTargets != null && caseTargets.isArray() && i < caseTargets.size()) {
+                    target = cfgText(caseTargets.get(i), "target", "");
+                }
+                sb.append("      <case>\n");
+                sb.append("        <value>").append(escapeXml(value)).append("</value>\n");
+                sb.append("        <target_step>").append(escapeXml(target)).append("</target_step>\n");
+                sb.append("      </case>\n");
+                i++;
+            }
+        }
+        sb.append("    </cases>\n");
+        return sb.toString();
     }
 
     private String cfgValidator(JsonNode cfg) {
@@ -668,15 +832,54 @@ public class KettleTransConverterService {
                 + "    <method>" + escapeXml(cfgText(cfg, "method", "GET")) + "</method>\n";
     }
 
+    private void enrichBranchTargets(GraphModel graph) {
+        for (NodeDef node : graph.nodes.values()) {
+            if (node.data == null) continue;
+            String type = node.data.nodeType == null ? "" : node.data.nodeType;
+            if (!"FILTER".equals(type) && !"SWITCH_CASE".equals(type)) continue;
+            ObjectNode cfg = node.data.config != null && node.data.config.isObject()
+                    ? ((ObjectNode) node.data.config).deepCopy()
+                    : OM.createObjectNode();
+            for (EdgeDef edge : graph.edges) {
+                if (!node.id.equals(edge.source)) continue;
+                NodeDef target = graph.nodes.get(edge.target);
+                if (target == null) continue;
+                String targetStep = stepNameOf(target);
+                String role = edge.edgeRole == null ? "" : edge.edgeRole.toUpperCase(Locale.ROOT);
+                String sh = edge.sourceHandle == null ? "" : edge.sourceHandle;
+                if ("FILTER".equals(type)) {
+                    if ("TRUE".equals(role) || "out_true".equals(sh) || "true".equals(sh)) {
+                        cfg.put("trueTarget", targetStep);
+                    } else if ("FALSE".equals(role) || "out_false".equals(sh) || "false".equals(sh)) {
+                        cfg.put("falseTarget", targetStep);
+                    }
+                } else if ("SWITCH_CASE".equals(type)) {
+                    if ("DEFAULT".equals(role) || "out_default".equals(sh)) {
+                        cfg.put("defaultTarget", targetStep);
+                    } else if ("CASE".equals(role) || sh.startsWith("out_case_")) {
+                        ArrayNode arr = cfg.has("caseTargets") && cfg.get("caseTargets").isArray()
+                                ? (ArrayNode) cfg.get("caseTargets")
+                                : cfg.putArray("caseTargets");
+                        ObjectNode item = arr.addObject();
+                        item.put("target", targetStep);
+                        if (edge.caseValue != null) item.put("value", edge.caseValue);
+                    }
+                }
+            }
+            node.data.config = cfg;
+        }
+    }
+
     private String cfgFilter(JsonNode cfg) {
+        String trueTarget = cfgText(cfg, "trueTarget", "");
+        String falseTarget = cfgText(cfg, "falseTarget", "");
         StringBuilder sb = new StringBuilder();
-        sb.append("    <send_true_to/>\n");
-        sb.append("    <send_false_to/>\n");
+        sb.append("    <send_true_to>").append(escapeXml(trueTarget)).append("</send_true_to>\n");
+        sb.append("    <send_false_to>").append(escapeXml(falseTarget)).append("</send_false_to>\n");
         sb.append("    <compare>\n");
         String mode = cfgText(cfg, "mode", "SIMPLE");
         if ("SQL".equalsIgnoreCase(mode)) {
             String expr = cfgText(cfg, "sqlExpr", "1=1");
-            // FilterRows 无原生 SQL WHERE，将表达式写入 condition 文本供后续/文档兼容
             sb.append("      <condition>\n");
             sb.append("        <negated>N</negated>\n");
             sb.append("        <conditions>\n");
@@ -689,18 +892,35 @@ public class KettleTransConverterService {
             sb.append("        </conditions>\n");
             sb.append("      </condition>\n");
         } else {
-            String field = cfgText(cfg, "field", "id");
-            String op = mapFilterOp(cfgText(cfg, "op", "EQ"));
-            String value = cfgText(cfg, "value", "");
+            JsonNode conditions = cfg != null ? cfg.get("conditions") : null;
             sb.append("      <condition>\n");
             sb.append("        <negated>N</negated>\n");
+            String logic = cfgText(cfg, "logic", "AND");
+            sb.append("        <operator>").append("OR".equalsIgnoreCase(logic) ? "OR" : "AND").append("</operator>\n");
             sb.append("        <conditions>\n");
-            sb.append("          <condition>\n");
-            sb.append("            <negated>N</negated>\n");
-            sb.append("            <leftvalue>").append(escapeXml(field)).append("</leftvalue>\n");
-            sb.append("            <function>").append(escapeXml(op)).append("</function>\n");
-            sb.append("            <rightvalue>").append(escapeXml(value)).append("</rightvalue>\n");
-            sb.append("          </condition>\n");
+            if (conditions != null && conditions.isArray() && conditions.size() > 0) {
+                for (JsonNode c : conditions) {
+                    String field = cfgText(c, "field", "id");
+                    String op = mapFilterOp(cfgText(c, "op", "EQ"));
+                    String value = cfgText(c, "value", "");
+                    sb.append("          <condition>\n");
+                    sb.append("            <negated>N</negated>\n");
+                    sb.append("            <leftvalue>").append(escapeXml(field)).append("</leftvalue>\n");
+                    sb.append("            <function>").append(escapeXml(op)).append("</function>\n");
+                    sb.append("            <rightvalue>").append(escapeXml(value)).append("</rightvalue>\n");
+                    sb.append("          </condition>\n");
+                }
+            } else {
+                String field = cfgText(cfg, "field", "id");
+                String op = mapFilterOp(cfgText(cfg, "op", "EQ"));
+                String value = cfgText(cfg, "value", "");
+                sb.append("          <condition>\n");
+                sb.append("            <negated>N</negated>\n");
+                sb.append("            <leftvalue>").append(escapeXml(field)).append("</leftvalue>\n");
+                sb.append("            <function>").append(escapeXml(op)).append("</function>\n");
+                sb.append("            <rightvalue>").append(escapeXml(value)).append("</rightvalue>\n");
+                sb.append("          </condition>\n");
+            }
             sb.append("        </conditions>\n");
             sb.append("      </condition>\n");
         }
@@ -710,8 +930,54 @@ public class KettleTransConverterService {
 
     private String cfgFieldProcess(JsonNode cfg) {
         StringBuilder sb = new StringBuilder();
-        sb.append("    <fields>\n");
+        // 若含 UPPER/LOWER/TRIM：用 Calculator 先变换，再由 SelectValues 语义通过 rename 落列
         JsonNode mappings = cfg != null ? cfg.get("mappings") : null;
+        boolean needCalc = false;
+        if (mappings != null && mappings.isArray()) {
+            for (JsonNode m : mappings) {
+                String expr = cfgText(m, "expr", "COPY");
+                if (expr != null && !"COPY".equalsIgnoreCase(expr) && !"DROP".equalsIgnoreCase(expr)
+                        && !"KEEP".equalsIgnoreCase(expr)) {
+                    needCalc = true;
+                    break;
+                }
+            }
+        }
+        if (needCalc) {
+            sb.append("    <calculation>\n");
+            if (mappings != null) {
+                for (JsonNode m : mappings) {
+                    String from = cfgText(m, "from", null);
+                    String to = cfgText(m, "to", from);
+                    String expr = cfgText(m, "expr", "COPY");
+                    if (from == null || from.isBlank()) continue;
+                    if ("COPY".equalsIgnoreCase(expr) || "DROP".equalsIgnoreCase(expr) || "KEEP".equalsIgnoreCase(expr)) {
+                        continue;
+                    }
+                    String calcType = switch (expr.toUpperCase(Locale.ROOT)) {
+                        case "UPPER" -> "UPPER";
+                        case "LOWER" -> "LOWER";
+                        case "TRIM" -> "TRIM";
+                        default -> "COPY_FIELD";
+                    };
+                    sb.append("      <calc>\n");
+                    sb.append("        <field_name>").append(escapeXml(to != null ? to : from)).append("</field_name>\n");
+                    sb.append("        <calc_type>").append(calcType).append("</calc_type>\n");
+                    sb.append("        <field_a>").append(escapeXml(from)).append("</field_a>\n");
+                    sb.append("        <field_b/>\n");
+                    sb.append("        <field_c/>\n");
+                    sb.append("        <value_type>String</value_type>\n");
+                    sb.append("        <value_length>-1</value_length>\n");
+                    sb.append("        <value_precision>-1</value_precision>\n");
+                    boolean remove = cfg == null || !cfg.path("keepSource").asBoolean(true);
+                    sb.append("        <remove>").append(remove && to != null && !to.equals(from) ? "Y" : "N").append("</remove>\n");
+                    sb.append("      </calc>\n");
+                }
+            }
+            sb.append("    </calculation>\n");
+            return sb.toString();
+        }
+        sb.append("    <fields>\n");
         boolean any = false;
         if (mappings != null && mappings.isArray()) {
             for (JsonNode m : mappings) {
@@ -719,15 +985,17 @@ public class KettleTransConverterService {
                 String to = cfgText(m, "to", from);
                 String expr = cfgText(m, "expr", "COPY");
                 if (from == null || from.isBlank()) continue;
+                if ("DROP".equalsIgnoreCase(expr)) continue;
                 any = true;
                 sb.append("      <field>\n");
                 sb.append("        <name>").append(escapeXml(from)).append("</name>\n");
                 sb.append("        <rename>").append(escapeXml(to != null ? to : from)).append("</rename>\n");
+                String targetType = cfgText(m, "targetType", null);
+                if (targetType != null && !targetType.isBlank()) {
+                    sb.append("        <type>").append(escapeXml(targetType)).append("</type>\n");
+                }
                 sb.append("        <length>-1</length>\n");
                 sb.append("        <precision>-1</precision>\n");
-                if (expr != null && !"COPY".equalsIgnoreCase(expr)) {
-                    sb.append("        <comments>").append(escapeXml(expr)).append("</comments>\n");
-                }
                 sb.append("      </field>\n");
             }
         }
@@ -749,9 +1017,8 @@ public class KettleTransConverterService {
         if (keys.isEmpty()) {
             keys = cfgStringList(cfg, "keys");
         }
-        if (keys.isEmpty()) {
-            keys = List.of("id");
-        }
+        // 不再默认 id：ODS 表常无 id（如 record_id/unit_id），默认 id 会导致
+        // Couldn't find field [id] in row!
         String keep = cfgText(cfg, "keepStrategy", "FIRST");
         List<String> sortFields = cfgStringList(cfg, "sortFields");
         StringBuilder sb = new StringBuilder();
@@ -761,12 +1028,16 @@ public class KettleTransConverterService {
         sb.append("    <error_description/>\n");
         sb.append("    <fields>\n");
         for (String k : keys) {
+            if (k == null || k.isBlank()) continue;
             sb.append("      <field>\n");
             sb.append("        <name>").append(escapeXml(k)).append("</name>\n");
             sb.append("        <case_insensitive>N</case_insensitive>\n");
             sb.append("      </field>\n");
         }
         sb.append("    </fields>\n");
+        if (keys.isEmpty()) {
+            sb.append("    <!-- warn: 未配置去重键，Unique 可能无法正确去重 -->\n");
+        }
         if (!sortFields.isEmpty()) {
             sb.append("    <!-- sortFields=").append(escapeXml(String.join(",", sortFields)))
                     .append("; keepStrategy=").append(escapeXml(keep)).append(" -->\n");
@@ -779,35 +1050,68 @@ public class KettleTransConverterService {
     private String cfgMask(JsonNode cfg) {
         List<String> fields = cfgStringList(cfg, "fields");
         if (fields.isEmpty()) {
-            fields = List.of("phone");
+            String one = cfgText(cfg, "field", "");
+            fields = one == null || one.isBlank() ? List.of() : List.of(one);
         }
         String maskType = cfgText(cfg, "maskType", "BLUR");
         String maskChar = cfgText(cfg, "maskChar", "*");
-        StringBuilder sb = new StringBuilder();
-        sb.append("    <calculation>\n");
-        for (String f : fields) {
-            sb.append("      <calc>\n");
-            sb.append("        <field_name>").append(escapeXml(f)).append("_masked</field_name>\n");
-            sb.append("        <calc_type>");
-            if ("MD5".equalsIgnoreCase(maskType)) {
-                sb.append("MD5");
-            } else {
-                // 模糊：用 REPLACE 近似，备注掩码字符
-                sb.append("REPLACE");
-            }
-            sb.append("</calc_type>\n");
-            sb.append("        <field_a>").append(escapeXml(f)).append("</field_a>\n");
-            sb.append("        <field_b/>\n");
-            sb.append("        <field_c/>\n");
-            sb.append("        <value_type>String</value_type>\n");
-            sb.append("        <value_length>-1</value_length>\n");
-            sb.append("        <value_precision>-1</value_precision>\n");
-            sb.append("        <remove>N</remove>\n");
-            sb.append("        <comments>maskChar=").append(escapeXml(maskChar)).append("</comments>\n");
-            sb.append("      </calc>\n");
+        if (maskChar == null || maskChar.isBlank()) {
+            maskChar = "*";
         }
-        sb.append("    </calculation>\n");
-        return sb.toString();
+        // 单字符掩码，避免破坏 JS 字面量
+        String ch = maskChar.substring(0, 1).replace("\\", "").replace("'", "");
+        if (ch.isEmpty()) {
+            ch = "*";
+        }
+        boolean newColumn = "NEW_COLUMN".equalsIgnoreCase(cfgText(cfg, "writeMode", "OVERWRITE"));
+        String suffix = cfgText(cfg, "targetSuffix", "_masked");
+        if (suffix == null || suffix.isBlank()) {
+            suffix = "_masked";
+        }
+
+        StringBuilder js = new StringBuilder();
+        js.append("// auto-generated mask\n");
+        if (fields.isEmpty()) {
+            js.append("// warn: no mask fields configured\n");
+        }
+        for (String f : fields) {
+            if (f == null || f.isBlank()) {
+                continue;
+            }
+            String src = f.trim();
+            String target = newColumn ? src + suffix : src;
+            js.append("{\n");
+            js.append("  var __v = ").append(src).append(";\n");
+            js.append("  if (__v != null) {\n");
+            js.append("    var __s = '' + __v;\n");
+            if ("MD5".equalsIgnoreCase(maskType)) {
+                js.append("    try {\n");
+                js.append("      ").append(target)
+                        .append(" = Packages.org.apache.commons.codec.digest.DigestUtils.md5Hex(__s);\n");
+                js.append("    } catch (e) {\n");
+                js.append("      ").append(target).append(" = __s;\n");
+                js.append("    }\n");
+            } else {
+                // BLUR：保留首尾字符，中间替换为掩码字符
+                js.append("    if (__s.length <= 2) {\n");
+                js.append("      var __o = '';\n");
+                js.append("      for (var __i = 0; __i < __s.length; __i++) __o += '").append(ch).append("';\n");
+                js.append("      ").append(target).append(" = __o;\n");
+                js.append("    } else {\n");
+                js.append("      var __mid = '';\n");
+                js.append("      for (var __j = 0; __j < __s.length - 2; __j++) __mid += '").append(ch).append("';\n");
+                js.append("      ").append(target)
+                        .append(" = __s.substring(0,1) + __mid + __s.substring(__s.length - 1);\n");
+                js.append("    }\n");
+            }
+            js.append("  }\n");
+            js.append("}\n");
+        }
+        return "    <jsScripts>\n"
+                + "      <jsScript><jsScript_type>0</jsScript_type>"
+                + "<jsScript_name>Mask</jsScript_name>"
+                + "<jsScript_script>" + escapeXml(js.toString()) + "</jsScript_script></jsScript>\n"
+                + "    </jsScripts>\n";
     }
 
     private String cfgJoin(JsonNode cfg) {
@@ -831,26 +1135,45 @@ public class KettleTransConverterService {
     }
 
     private String cfgSort(JsonNode cfg) {
-        String field = cfgText(cfg, "field", "id");
-        String order = cfgText(cfg, "order", "ASC");
-        boolean asc = !"DESC".equalsIgnoreCase(order);
-        return "    <directory>%%java.io.tmpdir%%</directory>\n"
-                + "    <prefix>out</prefix>\n"
-                + "    <sort_size>1000000</sort_size>\n"
-                + "    <free_memory>25</free_memory>\n"
-                + "    <compress>N</compress>\n"
-                + "    <compress_variable/>\n"
-                + "    <unique_rows>N</unique_rows>\n"
-                + "    <fields>\n"
-                + "      <field>\n"
-                + "        <name>" + escapeXml(field) + "</name>\n"
-                + "        <ascending>" + (asc ? "Y" : "N") + "</ascending>\n"
-                + "        <case_sensitive>N</case_sensitive>\n"
-                + "        <collator_enabled>N</collator_enabled>\n"
-                + "        <collator_strength>0</collator_strength>\n"
-                + "        <presorted>N</presorted>\n"
-                + "      </field>\n"
-                + "    </fields>\n";
+        JsonNode sortKeys = cfg != null ? cfg.get("sortKeys") : null;
+        StringBuilder sb = new StringBuilder();
+        sb.append("    <directory>%%java.io.tmpdir%%</directory>\n");
+        sb.append("    <prefix>out</prefix>\n");
+        sb.append("    <sort_size>1000000</sort_size>\n");
+        sb.append("    <free_memory>25</free_memory>\n");
+        sb.append("    <compress>N</compress>\n");
+        sb.append("    <compress_variable/>\n");
+        sb.append("    <unique_rows>N</unique_rows>\n");
+        sb.append("    <fields>\n");
+        if (sortKeys != null && sortKeys.isArray() && sortKeys.size() > 0) {
+            for (JsonNode s : sortKeys) {
+                String field = cfgText(s, "field", null);
+                if (field == null || field.isBlank()) continue;
+                boolean asc = !"DESC".equalsIgnoreCase(cfgText(s, "order", "ASC"));
+                sb.append("      <field>\n");
+                sb.append("        <name>").append(escapeXml(field)).append("</name>\n");
+                sb.append("        <ascending>").append(asc ? "Y" : "N").append("</ascending>\n");
+                sb.append("        <case_sensitive>N</case_sensitive>\n");
+                sb.append("        <collator_enabled>N</collator_enabled>\n");
+                sb.append("        <collator_strength>0</collator_strength>\n");
+                sb.append("        <presorted>N</presorted>\n");
+                sb.append("      </field>\n");
+            }
+        } else {
+            String field = cfgText(cfg, "field", "id");
+            String order = cfgText(cfg, "order", "ASC");
+            boolean asc = !"DESC".equalsIgnoreCase(order);
+            sb.append("      <field>\n");
+            sb.append("        <name>").append(escapeXml(field)).append("</name>\n");
+            sb.append("        <ascending>").append(asc ? "Y" : "N").append("</ascending>\n");
+            sb.append("        <case_sensitive>N</case_sensitive>\n");
+            sb.append("        <collator_enabled>N</collator_enabled>\n");
+            sb.append("        <collator_strength>0</collator_strength>\n");
+            sb.append("        <presorted>N</presorted>\n");
+            sb.append("      </field>\n");
+        }
+        sb.append("    </fields>\n");
+        return sb.toString();
     }
 
     private String cfgAggregate(JsonNode cfg) {
@@ -1012,6 +1335,16 @@ public class KettleTransConverterService {
         }
     }
 
+    private static boolean cfgBool(JsonNode cfg, String field, boolean def) {
+        if (cfg == null || !cfg.has(field) || cfg.get(field).isNull()) return def;
+        JsonNode n = cfg.get(field);
+        if (n.isBoolean()) return n.asBoolean(def);
+        String s = n.asText("");
+        if ("true".equalsIgnoreCase(s) || "1".equals(s) || "Y".equalsIgnoreCase(s)) return true;
+        if ("false".equalsIgnoreCase(s) || "0".equals(s) || "N".equalsIgnoreCase(s)) return false;
+        return def;
+    }
+
     private static List<String> cfgStringList(JsonNode cfg, String field) {
         List<String> list = new ArrayList<>();
         if (cfg == null || !cfg.has(field) || cfg.get(field).isNull()) return list;
@@ -1032,8 +1365,41 @@ public class KettleTransConverterService {
         return list;
     }
 
+    /** 展示用中文标签（仅写 description，不作为 Kettle step name） */
     private static String labelOf(NodeDef node) {
         return node.data.label != null && !node.data.label.isBlank() ? node.data.label : node.id;
+    }
+
+    /**
+     * Kettle hop/step 名称：优先 ASCII 的 nodeId，避免中文在 registerTrans 编码损坏后撞名丢步。
+     */
+    private static String stepNameOf(NodeDef node) {
+        String id = node.id == null ? "" : node.id.trim();
+        if (!id.isBlank() && isSafeStepName(id)) {
+            return id;
+        }
+        String base = !id.isBlank() ? id : labelOf(node);
+        StringBuilder sb = new StringBuilder("s_");
+        for (int i = 0; i < base.length(); i++) {
+            char c = base.charAt(i);
+            if ((c >= 'a' && c <= 'z') || (c >= 'A' && c <= 'Z') || (c >= '0' && c <= '9') || c == '_' || c == '-') {
+                sb.append(c);
+            } else if (c > 127) {
+                sb.append(String.format("%04x", (int) c));
+            } else {
+                sb.append('_');
+            }
+        }
+        return sb.length() > 2 ? sb.toString() : "s_step";
+    }
+
+    private static boolean isSafeStepName(String s) {
+        for (int i = 0; i < s.length(); i++) {
+            char c = s.charAt(i);
+            if (c > 127) return false;
+            if (!(Character.isLetterOrDigit(c) || c == '_' || c == '-' || c == '.')) return false;
+        }
+        return true;
     }
 
     private static String textChild(Element parent, String tag) {
@@ -1079,10 +1445,38 @@ public class KettleTransConverterService {
                 EdgeDef edge = new EdgeDef();
                 edge.source = e.path("source").asText();
                 edge.target = e.path("target").asText();
+                edge.sourceHandle = textOrNull(e, "sourceHandle");
+                edge.targetHandle = textOrNull(e, "targetHandle");
+                JsonNode data = e.get("data");
+                if (data != null && data.isObject()) {
+                    edge.edgeRole = textOrNull(data, "edgeRole");
+                    edge.caseValue = textOrNull(data, "caseValue");
+                }
+                if (edge.edgeRole == null || edge.edgeRole.isBlank()) {
+                    edge.edgeRole = inferEdgeRole(edge.sourceHandle, edge.targetHandle);
+                }
                 graph.edges.add(edge);
             }
         }
         return graph;
+    }
+
+    private static String textOrNull(JsonNode n, String field) {
+        if (n == null || !n.has(field) || n.get(field).isNull()) return null;
+        String s = n.get(field).asText();
+        return s == null || s.isBlank() ? null : s.trim();
+    }
+
+    private static String inferEdgeRole(String sourceHandle, String targetHandle) {
+        String sh = sourceHandle == null ? "" : sourceHandle;
+        String th = targetHandle == null ? "" : targetHandle;
+        if ("out_true".equals(sh) || "true".equals(sh)) return "TRUE";
+        if ("out_false".equals(sh) || "false".equals(sh)) return "FALSE";
+        if ("out_default".equals(sh) || "default".equals(sh)) return "DEFAULT";
+        if (sh.startsWith("out_case_") || sh.startsWith("case_")) return "CASE";
+        if ("in_left".equals(th) || "left".equals(th)) return "LEFT";
+        if ("in_right".equals(th) || "right".equals(th)) return "RIGHT";
+        return "COPY";
     }
 
     private static class GraphModel {
@@ -1104,5 +1498,9 @@ public class KettleTransConverterService {
     private static class EdgeDef {
         String source;
         String target;
+        String sourceHandle;
+        String targetHandle;
+        String edgeRole;
+        String caseValue;
     }
 }

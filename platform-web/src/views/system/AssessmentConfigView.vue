@@ -114,7 +114,9 @@ onMounted(load)
       <el-table class="portal-table" :data="sources" stripe size="small" style="margin-top:12px">
         <el-table-column prop="sourceCode" label="编码" width="120" />
         <el-table-column prop="sourceName" label="来源" min-width="160" />
-        <el-table-column prop="sourceType" label="类型" width="100" />
+        <el-table-column label="类型" width="100">
+          <template #default="{ row }">{{ $statusLabel(row.sourceType) }}</template>
+        </el-table-column>
         <el-table-column prop="recordCount" label="记录数" width="100" />
         <el-table-column prop="lastSyncAt" label="最近同步" min-width="160" />
       </el-table>
@@ -137,7 +139,9 @@ onMounted(load)
       <el-table class="portal-table" :data="periods" stripe size="small">
         <el-table-column prop="periodCode" label="编码" width="120" />
         <el-table-column prop="periodName" label="名称" min-width="160" />
-        <el-table-column prop="cycleType" label="类型" width="90" />
+        <el-table-column label="类型" width="90">
+          <template #default="{ row }">{{ $statusLabel(row.cycleType) }}</template>
+        </el-table-column>
         <el-table-column label="状态" width="90">
           <template #default="{ row }">{{ $statusLabel(row.status) }}</template>
         </el-table-column>
@@ -166,7 +170,9 @@ onMounted(load)
       <el-table class="portal-table" :data="indicators" stripe size="small">
         <el-table-column prop="indicatorCode" label="编码" width="140" />
         <el-table-column prop="indicatorName" label="名称" min-width="140" />
-        <el-table-column prop="indicatorType" label="类型" width="72" />
+        <el-table-column label="类型" width="72">
+          <template #default="{ row }">{{ $statusLabel(row.indicatorType) }}</template>
+        </el-table-column>
         <el-table-column prop="weight" label="权重%" width="80" />
       </el-table>
     </PageCard>
@@ -191,7 +197,9 @@ onMounted(load)
       </el-form>
       <el-table class="portal-table" :data="executions" stripe size="small">
         <el-table-column prop="targetName" label="考核对象" min-width="140" />
-        <el-table-column prop="targetType" label="类型" width="90" />
+        <el-table-column label="类型" width="90">
+          <template #default="{ row }">{{ $statusLabel(row.targetType) }}</template>
+        </el-table-column>
         <el-table-column prop="totalScore" label="总分" width="80" />
         <el-table-column label="状态" width="100">
           <template #default="{ row }">{{ $statusLabel(row.status) }}</template>

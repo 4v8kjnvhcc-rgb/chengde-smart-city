@@ -56,7 +56,9 @@ onMounted(reload)
     <PageCard :title="title">
       <el-table v-if="['m069','m070','m073','m074','m075'].includes(module)" :data="policies" stripe>
         <el-table-column prop="policyName" label="策略" />
-        <el-table-column prop="policyType" label="类型" width="100" />
+        <el-table-column label="类型" width="100">
+          <template #default="{ row }">{{ $statusLabel(row.policyType) }}</template>
+        </el-table-column>
         <el-table-column prop="ruleExpr" label="规则" min-width="180" />
         <el-table-column v-if="['m073','m074','m075'].includes(module)" label="演练" width="100">
           <template #default="{ row }"><el-button link @click="runLifecycle(row.id)">执行</el-button></template>
@@ -74,7 +76,9 @@ onMounted(reload)
         <el-button @click="doSearch">搜索</el-button>
         <el-tag v-if="searchResult" style="margin-left:8px">引擎: {{ searchResult.engine }}</el-tag>
         <el-table v-if="searchResult?.hits" :data="searchResult.hits as Record<string,unknown>[]" stripe style="margin-top:12px">
-          <el-table-column prop="type" label="类型" width="100" />
+          <el-table-column label="类型" width="100">
+            <template #default="{ row }">{{ $statusLabel(row.type) }}</template>
+          </el-table-column>
           <el-table-column prop="title" label="标题" />
         </el-table>
       </template>
@@ -108,7 +112,9 @@ onMounted(reload)
       <el-table v-if="module === 'm077'" :data="health" stripe>
         <el-table-column prop="metricLabel" label="指标" />
         <el-table-column prop="metricValue" label="值" />
-        <el-table-column prop="alertLevel" label="级别" width="90" />
+        <el-table-column label="级别" width="90">
+          <template #default="{ row }">{{ $statusLabel(row.alertLevel) }}</template>
+        </el-table-column>
       </el-table>
     </PageCard>
   </div>

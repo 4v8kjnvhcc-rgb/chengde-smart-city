@@ -49,7 +49,9 @@ onMounted(reload)
     <PageCard :title="title">
       <el-table :data="channels" stripe>
         <el-table-column prop="channelName" label="通道" min-width="160" />
-        <el-table-column prop="channelType" label="类型" width="100" />
+        <el-table-column label="类型" width="100">
+          <template #default="{ row }">{{ $statusLabel(row.channelType) }}</template>
+        </el-table-column>
         <el-table-column label="状态" width="90">
           <template #default="{ row }">{{ $statusLabel(row.status) }}</template>
         </el-table-column>

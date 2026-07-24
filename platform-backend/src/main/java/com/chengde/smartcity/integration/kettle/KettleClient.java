@@ -57,15 +57,25 @@ public class KettleClient {
 
     public boolean isHealthy() {
         if (!props.isEnabled()) {
+            log.warn("Kettle health skipped: app.integration.enabled=false");
+            return false;
+        }
+        String base = props.getKettle() == null ? null : props.getKettle().getUrl();
+        if (base == null || base.isBlank()) {
+            log.warn("Kettle health skipped: app.integration.kettle.url empty");
             return false;
         }
         try {
-            String url = props.getKettle().getUrl() + "/kettle/status/?xml=Y";
+            String url = base + "/kettle/status/?xml=Y";
             HttpEntity<Void> req = new HttpEntity<>(authHeaders());
             ResponseEntity<String> res = rest.exchange(url, HttpMethod.GET, req, String.class);
-            return res.getStatusCode().is2xxSuccessful();
+            boolean ok = res.getStatusCode().is2xxSuccessful();
+            if (!ok) {
+                log.warn("Kettle Carte health check non-2xx url={} status={}", url, res.getStatusCode());
+            }
+            return ok;
         } catch (Exception e) {
-            log.warn("Kettle Carte health check failed: {}", e.getMessage());
+            log.warn("Kettle Carte health check failed url={}/kettle/status/: {}", base, e.getMessage());
             return false;
         }
     }
@@ -77,10 +87,17 @@ public class KettleClient {
         String url = props.getKettle().getUrl() + "/kettle/registerTrans/?xml=Y&name=" + enc(transName);
         try {
             HttpHeaders headers = authHeaders();
-            headers.setContentType(MediaType.APPLICATION_XML);
-            HttpEntity<String> request = new HttpEntity<>(ktrXml, headers);
+            // 必须 UTF-8：中文步名否则在 Carte 侧损坏/撞名，只剩部分 step
+            headers.setContentType(new MediaType("application", "xml", StandardCharsets.UTF_8));
+            byte[] body = (ktrXml == null ? "" : ktrXml).getBytes(StandardCharsets.UTF_8);
+            HttpEntity<byte[]> request = new HttpEntity<>(body, headers);
             ResponseEntity<String> response = rest.postForEntity(url, request, String.class);
-            return webResult(transName, response.getBody(), "转换注册");
+            Map<String, Object> out = webResult(transName, response.getBody(), "转换注册");
+            String carteId = extractTag(response.getBody(), "id");
+            if (carteId != null && !carteId.isBlank()) {
+                out.put("carteId", carteId);
+            }
+            return out;
         } catch (Exception e) {
             log.error("Kettle registerTrans {} failed: {}", transName, e.getMessage());
             return fail(transName, "转换注册失败: " + e.getMessage());
@@ -122,11 +139,19 @@ public class KettleClient {
 
     /** 获取转换执行状态，真实解析 Carte XML 的状态与各 step 行数。 */
     public Map<String, Object> getTransStatus(String transName) {
+        return getTransStatus(transName, null);
+    }
+
+    public Map<String, Object> getTransStatus(String transName, String carteId) {
         IntegrationConfig.requireIntegration(props, "Kettle");
-        String url = props.getKettle().getUrl() + "/kettle/transStatus/?xml=Y&name=" + enc(transName);
+        StringBuilder url = new StringBuilder(props.getKettle().getUrl())
+                .append("/kettle/transStatus/?xml=Y&name=").append(enc(transName));
+        if (carteId != null && !carteId.isBlank()) {
+            url.append("&id=").append(enc(carteId));
+        }
         try {
             HttpEntity<Void> req = new HttpEntity<>(authHeaders());
-            ResponseEntity<String> response = rest.exchange(url, HttpMethod.GET, req, String.class);
+            ResponseEntity<String> response = rest.exchange(url.toString(), HttpMethod.GET, req, String.class);
             return parseTransStatus(transName, response.getBody());
         } catch (Exception e) {
             log.error("Kettle getTransStatus {} failed: {}", transName, e.getMessage());
@@ -139,15 +164,26 @@ public class KettleClient {
     }
 
     public Map<String, Object> getTransLog(String transName) {
+        return getTransLog(transName, null);
+    }
+
+    public Map<String, Object> getTransLog(String transName, String carteId) {
         IntegrationConfig.requireIntegration(props, "Kettle");
-        String url = props.getKettle().getUrl() + "/kettle/transStatus/?xml=Y&name=" + enc(transName);
+        StringBuilder url = new StringBuilder(props.getKettle().getUrl())
+                .append("/kettle/transStatus/?xml=Y&name=").append(enc(transName));
+        if (carteId != null && !carteId.isBlank()) {
+            url.append("&id=").append(enc(carteId));
+        }
         try {
             HttpEntity<Void> req = new HttpEntity<>(authHeaders());
-            ResponseEntity<String> response = rest.exchange(url, HttpMethod.GET, req, String.class);
+            ResponseEntity<String> response = rest.exchange(url.toString(), HttpMethod.GET, req, String.class);
             String body = response.getBody();
-            String logText = extractTag(body, "logging_string");
-            return Map.of("transName", transName, "status", "SUCCESS",
-                    "log", logText != null ? logText : (body == null ? "" : body));
+            String logText = decodeLoggingString(extractTag(body, "logging_string"));
+            Map<String, Object> out = new LinkedHashMap<>();
+            out.put("transName", transName);
+            out.put("status", "SUCCESS");
+            out.put("log", logText != null ? logText : "");
+            return out;
         } catch (Exception e) {
             log.error("Kettle getTransLog {} failed: {}", transName, e.getMessage());
             return fail(transName, "获取日志失败: " + e.getMessage());
@@ -192,29 +228,62 @@ public class KettleClient {
         long linesOutput = 0;
         long linesRejected = 0;
         long errors = 0;
+        int stepCount = 0;
+        java.util.List<Map<String, Object>> stepList = new java.util.ArrayList<>();
         String statusDesc = extractTag(body, "status_desc");
+        String carteId = extractTag(body, "id");
+        String logText = decodeLoggingString(extractTag(body, "logging_string"));
         try {
             Document doc = parseXml(body);
             if (doc != null) {
                 NodeList steps = doc.getElementsByTagName("stepstatus");
+                stepCount = steps.getLength();
                 for (int i = 0; i < steps.getLength(); i++) {
                     Element st = (Element) steps.item(i);
-                    linesInput += longChild(st, "linesInput");
-                    linesOutput += longChild(st, "linesOutput");
-                    linesRejected += longChild(st, "linesRejected");
-                    errors += longChild(st, "errors");
+                    long in = longChild(st, "linesInput");
+                    long outRows = longChild(st, "linesOutput");
+                    long read = longChild(st, "linesRead");
+                    long written = longChild(st, "linesWritten");
+                    long rej = longChild(st, "linesRejected");
+                    long err = longChild(st, "errors");
+                    linesInput += in;
+                    linesOutput += outRows;
+                    linesRejected += rej;
+                    errors += err;
+                    String stepName = textChild(st, "stepname");
+                    String stepStatusDesc = textChild(st, "statusDescription");
+                    Map<String, Object> step = new LinkedHashMap<>();
+                    step.put("stepName", stepName == null ? ("step_" + i) : stepName);
+                    step.put("statusDesc", stepStatusDesc == null ? "" : stepStatusDesc);
+                    step.put("status", mapStatus(stepStatusDesc, err));
+                    step.put("linesInput", in);
+                    step.put("linesOutput", outRows);
+                    step.put("linesRead", read);
+                    step.put("linesWritten", written);
+                    step.put("linesRejected", rej);
+                    step.put("errors", err);
+                    step.put("seconds", textChild(st, "seconds"));
+                    step.put("speed", textChild(st, "speed"));
+                    stepList.add(step);
                 }
             }
         } catch (Exception e) {
             log.debug("解析 transStatus 失败: {}", e.getMessage());
         }
         String status = mapStatus(statusDesc, errors);
+        if ("UNKNOWN".equals(status)) {
+            log.warn("Kettle status unmapped transName={} statusDesc={}", transName, statusDesc);
+        }
         out.put("status", status);
         out.put("statusDesc", statusDesc == null ? "" : statusDesc);
+        out.put("carteId", carteId == null ? "" : carteId);
+        out.put("stepCount", stepCount);
+        out.put("steps", stepList);
         out.put("linesInput", linesInput);
         out.put("linesOutput", linesOutput);
         out.put("linesRejected", linesRejected);
         out.put("errors", errors);
+        out.put("log", logText == null ? "" : logText);
         out.put("rawResponse", body == null ? "" : body);
         return out;
     }
@@ -253,6 +322,40 @@ public class KettleClient {
             return txt == null || txt.isBlank() ? 0 : Long.parseLong(txt.trim());
         } catch (NumberFormatException e) {
             return 0;
+        }
+    }
+
+    private String textChild(Element parent, String tag) {
+        NodeList nl = parent.getElementsByTagName(tag);
+        if (nl.getLength() == 0) {
+            return null;
+        }
+        String txt = nl.item(0).getTextContent();
+        return txt == null ? null : txt.trim();
+    }
+
+    /** Carte logging_string 常为 Base64(GZIP(text))，失败则原样返回。 */
+    private String decodeLoggingString(String raw) {
+        if (raw == null || raw.isBlank()) {
+            return "";
+        }
+        String s = unwrapCdata(raw.trim());
+        // 偶发双重实体：&lt;![CDATA[...
+        if (s.startsWith("&lt;")) {
+            s = s.replace("&lt;", "<").replace("&gt;", ">").replace("&amp;", "&");
+            s = unwrapCdata(s.trim());
+        }
+        try {
+            byte[] decoded = Base64.getDecoder().decode(s.replaceAll("\\s", ""));
+            try {
+                java.util.zip.GZIPInputStream gz = new java.util.zip.GZIPInputStream(
+                        new ByteArrayInputStream(decoded));
+                return new String(gz.readAllBytes(), StandardCharsets.UTF_8);
+            } catch (Exception notGzip) {
+                return new String(decoded, StandardCharsets.UTF_8);
+            }
+        } catch (Exception e) {
+            return s;
         }
     }
 

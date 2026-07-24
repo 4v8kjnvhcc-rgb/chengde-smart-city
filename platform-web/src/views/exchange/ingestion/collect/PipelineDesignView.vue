@@ -55,7 +55,9 @@ onMounted(reload)
         <el-table-column prop="sourceName" label="数据源" />
         <el-table-column prop="nullRate" label="空值率" width="90" />
         <el-table-column prop="domainCheck" label="值域" width="100" />
-        <el-table-column prop="entityType" label="实体" width="100" />
+        <el-table-column label="实体" width="100">
+          <template #default="{ row }">{{ $statusLabel(row.entityType) }}</template>
+        </el-table-column>
         <el-table-column label="状态" width="90">
           <template #default="{ row }">{{ $statusLabel(row.status) }}</template>
         </el-table-column>
@@ -103,7 +105,9 @@ onMounted(reload)
           <el-table-column prop="batchNo" label="批次" width="140" />
           <el-table-column prop="matchedPct" label="匹配%" width="90" />
           <el-table-column prop="diffRows" label="差异行" width="90" />
-          <el-table-column prop="alertLevel" label="告警" width="90" />
+          <el-table-column label="告警" width="90">
+            <template #default="{ row }">{{ $statusLabel(row.alertLevel) }}</template>
+          </el-table-column>
           <el-table-column label="状态" width="90">
           <template #default="{ row }">{{ $statusLabel(row.status) }}</template>
         </el-table-column>

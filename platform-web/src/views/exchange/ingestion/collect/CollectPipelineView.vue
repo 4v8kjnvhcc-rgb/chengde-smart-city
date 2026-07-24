@@ -366,7 +366,9 @@ onMounted(() => {
 
         <el-table-column prop="jobName" label="任务" />
 
-        <el-table-column prop="jobType" label="类型" width="100" />
+        <el-table-column label="类型" width="100">
+          <template #default="{ row }">{{ $statusLabel(row.jobType) }}</template>
+        </el-table-column>
 
         <el-table-column label="状态" width="90">
           <template #default="{ row }">{{ $statusLabel(row.status) }}</template>
@@ -386,7 +388,9 @@ onMounted(() => {
 
           <el-table-column prop="diffRows" label="差异行" width="90" />
 
-          <el-table-column prop="alertLevel" label="告警" width="90" />
+          <el-table-column label="告警" width="90">
+            <template #default="{ row }">{{ $statusLabel(row.alertLevel) }}</template>
+          </el-table-column>
 
         </el-table>
 

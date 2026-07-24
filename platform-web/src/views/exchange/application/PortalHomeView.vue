@@ -667,7 +667,9 @@ onMounted(() => {
           <el-tab-pane label="异议" name="obj">
             <el-table :data="objections" stripe size="small">
               <el-table-column prop="catalogId" label="目录ID" width="90" />
-              <el-table-column prop="objectionType" label="类型" width="100" />
+              <el-table-column label="类型" width="100">
+                <template #default="{ row }">{{ $statusLabel(row.objectionType) }}</template>
+              </el-table-column>
               <el-table-column prop="content" label="内容" min-width="200" />
               <el-table-column label="状态" width="100">
           <template #default="{ row }">{{ $statusLabel(row.status) }}</template>
