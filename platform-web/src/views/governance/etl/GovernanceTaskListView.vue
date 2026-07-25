@@ -487,7 +487,8 @@ function scheduleModeLabel(row: TaskRow) {
 
 async function openOutputPreview(row: TaskRow, table?: string) {
   previewTaskId.value = row.id
-  previewTitle.value = `治理结果 · ${row.taskName}`
+  previewTitle.value = `治理后数据 · ${row.taskName}`
+  previewSelectedTable.value = ''
   previewVisible.value = true
   await loadOutputPreview(table)
 }
@@ -509,11 +510,11 @@ async function loadOutputPreview(table?: string) {
     previewTargets.value = d.targets || []
     previewSelectedTable.value = d.table || ''
     previewMeta.value = d.qualifiedName
-      ? `${d.layer || ''} · ${d.qualifiedName}`.replace(/^ · /, '')
+      ? `治理输出 ${d.layer || ''} · ${d.qualifiedName}`.replace(/\s+/g, ' ').trim()
       : ''
     previewColumns.value = d.columns || []
     previewRows.value = d.rows || []
-    previewMessage.value = d.message || ''
+    previewMessage.value = d.message || '仅展示写入 DWD/DWS/ADS 的治理结果，不含 ODS 原始数据'
   } catch (e: unknown) {
     const msg = (e as { response?: { data?: { message?: string } }; message?: string })?.response?.data?.message
       || (e as { message?: string })?.message
@@ -834,27 +835,34 @@ defineExpose({ reload: load })
     >
       <div v-loading="previewLoading" class="output-preview">
         <el-form inline class="portal-inline-form portal-inline-form--block">
-          <el-form-item v-if="previewTargets.length > 1" label="输出表" class="portal-field-xl">
+          <el-form-item v-if="previewTargets.length > 1" label="治理输出表" class="portal-field-xl">
             <el-select
               :model-value="previewSelectedTable"
-              placeholder="选择输出表"
+              placeholder="选择 DWD/DWS/ADS 表"
               @change="onPreviewTableChange"
             >
               <el-option
                 v-for="t in previewTargets"
                 :key="`${t.database}.${t.table}`"
-                :label="`${t.layer} · ${t.table}`"
+                :label="`${t.layer} · ${t.database}.${t.table}`"
                 :value="t.table"
               />
             </el-select>
           </el-form-item>
-          <el-form-item v-if="previewMeta" label="目标">
+          <el-form-item v-if="previewMeta" label="当前表">
             <span>{{ previewMeta }}</span>
           </el-form-item>
           <el-form-item class="portal-form-actions">
             <el-button @click="loadOutputPreview()">刷新</el-button>
           </el-form-item>
         </el-form>
+        <el-alert
+          type="warning"
+          show-icon
+          :closable="false"
+          class="output-preview__msg"
+          title="此处只读治理后落层结果（DWD/DWS/ADS），不会展示 ODS 原始数据"
+        />
         <el-alert
           v-if="previewMessage"
           :title="previewMessage"
@@ -880,7 +888,7 @@ defineExpose({ reload: load })
             show-overflow-tooltip
           />
         </el-table>
-        <el-empty v-else-if="!previewLoading" description="暂无样例数据" />
+        <el-empty v-else-if="!previewLoading" description="暂无治理后数据，请先成功运行任务写入 DWD/DWS/ADS" />
       </div>
     </el-drawer>
   </PageCard>

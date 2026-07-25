@@ -86,7 +86,37 @@ function displayMessage(msg?: string): string {
   // 隐藏内部 carteId= 前缀，只展示过程摘要
   const parts = msg.split('|')
   const body = parts.length > 1 ? parts.slice(1).join('|') : msg
-  return body.startsWith('carteId=') ? body.replace(/^carteId=[^|]*/, '').replace(/^\|/, '') || '—' : body
+  const cleaned = body.startsWith('carteId=')
+    ? body.replace(/^carteId=[^|]*/, '').replace(/^\|/, '') || '—'
+    : body
+  return formatProcessZh(cleaned)
+}
+
+/** Carte 过程摘要英文化 → 中文（含耗时/吞吐单位） */
+function formatProcessZh(raw?: string): string {
+  if (!raw || raw === '—') return '—'
+  let s = String(raw)
+  const statusMap: Array<[RegExp, string]> = [
+    [/Finished\s*\(with errors\)/gi, '完成（有错误）'],
+    [/Finished/gi, '已完成'],
+    [/Running/gi, '运行中'],
+    [/Stopped/gi, '已停止'],
+    [/Waiting/gi, '等待中'],
+    [/Initializing/gi, '初始化中'],
+    [/Preparing executing transformation/gi, '准备执行转换'],
+    [/Halting/gi, '正在中止'],
+    [/Idle/gi, '空闲'],
+    [/Disposed/gi, '已释放'],
+    [/Error/gi, '错误'],
+  ]
+  for (const [re, zh] of statusMap) {
+    s = s.replace(re, zh)
+  }
+  // · 0.4s → · 0.4秒；· 529 r/s → · 529 行/秒
+  s = s.replace(/·\s*([\d.]+)\s*s\b/gi, '· $1秒')
+  s = s.replace(/·\s*([\d.,]+)\s*r\/s\b/gi, '· $1 行/秒')
+  s = s.replace(/\b([\d.,]+)\s*r\/s\b/gi, '$1 行/秒')
+  return s.trim() || '—'
 }
 
 function formatSeconds(sec: number): string {
@@ -95,23 +125,6 @@ function formatSeconds(sec: number): string {
   const m = Math.floor(s / 60)
   const r = s % 60
   return `${m}分${r}秒`
-}
-
-/** 节点时长：优先用 Carte 上报的 seconds（过程信息里的 · 0.6s），避免 endedAt-start 墙钟虚高 */
-function nodeDuration(row: NodeLog): string {
-  const fromMsg = row.message?.match(/·\s*([\d.]+)\s*s/i)
-  if (fromMsg) {
-    return formatSeconds(parseFloat(fromMsg[1]))
-  }
-  if (row.detailJson) {
-    try {
-      const d = JSON.parse(row.detailJson)
-      if (d.seconds != null && String(d.seconds).trim() !== '') {
-        return formatSeconds(parseFloat(String(d.seconds)))
-      }
-    } catch { /* ignore */ }
-  }
-  return calcDuration(row.startedAt, row.endedAt || selectedRun.value?.endedAt, row.status || processSummary.value.status)
 }
 
 function calcDuration(start?: string, end?: string, frozenStatus?: string): string {
@@ -375,7 +388,7 @@ onUnmounted(clearPoll)
           <el-tag :type="statusTagType(processSummary.status)" size="small">
             {{ statusLabel(processSummary.status) }}
           </el-tag>
-          <span v-if="processInfo.statusDesc" class="muted">（Carte: {{ processInfo.statusDesc }}）</span>
+          <span v-if="processInfo.statusDesc" class="muted">（{{ formatProcessZh(processInfo.statusDesc) }}）</span>
         </el-descriptions-item>
         <el-descriptions-item label="步骤数">{{ processSummary.steps }}</el-descriptions-item>
         <el-descriptions-item label="输入行">{{ processSummary.inRows }}</el-descriptions-item>
@@ -395,74 +408,76 @@ onUnmounted(clearPoll)
       </el-descriptions>
     </div>
 
-    <el-row :gutter="12">
-      <el-col :span="10">
+    <el-row :gutter="12" class="monitor-row">
+      <el-col :span="15" class="monitor-col">
+        <div class="section-title">运行实例</div>
         <el-table
           v-loading="loading"
+          class="monitor-table"
           :data="runs"
           stripe
           size="small"
+          table-layout="fixed"
           highlight-current-row
           :row-class-name="({ row }: { row: RunRow }) => (row.id === selectedRunId ? 'is-current' : '')"
           @row-click="(row: RunRow) => openRun(row.id)"
         >
-          <el-table-column prop="id" label="实例标识" width="80" />
-          <el-table-column label="状态" width="88">
+          <el-table-column prop="id" label="实例" width="64" />
+          <el-table-column label="状态" width="76">
             <template #default="{ row }">
               <el-tag :type="statusTagType(row.status)" size="small">{{ statusLabel(row.status) }}</el-tag>
             </template>
           </el-table-column>
-          <el-table-column label="节点" width="72">
+          <el-table-column label="节点" width="56">
             <template #default="{ row }">{{ row.successNodes ?? 0 }}/{{ row.totalNodes ?? 0 }}</template>
           </el-table-column>
-          <el-table-column label="行数" width="60">
+          <el-table-column label="行数" width="64">
             <template #default="{ row }">{{ row.lineCount ?? row.rowCount ?? 0 }}</template>
           </el-table-column>
-          <el-table-column label="时长" width="80">
+          <el-table-column label="时长" width="64">
             <template #default="{ row }">{{ calcDuration(row.startedAt, row.endedAt, row.status) }}</template>
           </el-table-column>
-          <el-table-column label="过程信息" min-width="160" show-overflow-tooltip>
+          <el-table-column label="过程信息" min-width="120" show-overflow-tooltip>
             <template #default="{ row }">{{ displayMessage(row.message) }}</template>
           </el-table-column>
-          <el-table-column prop="triggeredBy" label="触发" width="72" show-overflow-tooltip />
-          <el-table-column prop="startedAt" label="开始时间" width="140" />
+          <el-table-column prop="triggeredBy" label="触发" width="64" show-overflow-tooltip />
+          <el-table-column prop="startedAt" label="开始时间" width="148" />
         </el-table>
       </el-col>
-      <el-col :span="14">
+      <el-col :span="9" class="monitor-col">
         <div class="section-title">
           节点运行情况 {{ selectedRunId ? `#${selectedRunId}` : '' }}
         </div>
         <el-table
+          class="monitor-table"
           :data="logs"
           stripe
           size="small"
-          max-height="280"
+          table-layout="fixed"
+          max-height="320"
           empty-text="暂无步骤过程（运行中将自动从 Carte 同步）"
           :row-class-name="({ row }: { row: NodeLog }) => (row.status === 'FAILED' ? 'is-failed' : '')"
           @row-contextmenu="(row: NodeLog, col: unknown, e: Event) => { e.preventDefault(); onNodeContextMenu(row, col, e) }"
         >
-          <el-table-column prop="nodeName" label="节点名称" min-width="120" show-overflow-tooltip />
-          <el-table-column label="节点状态" width="88">
+          <el-table-column prop="nodeName" label="节点" min-width="90" show-overflow-tooltip />
+          <el-table-column label="状态" width="72">
             <template #default="{ row }">
               <el-tag :type="statusTagType(row.status)" size="small">{{ statusLabel(row.status) }}</el-tag>
             </template>
           </el-table-column>
-          <el-table-column prop="inputRows" label="入行" width="64" />
-          <el-table-column prop="outputRows" label="出行" width="64" />
-          <el-table-column label="过程" min-width="140" show-overflow-tooltip>
-            <template #default="{ row }">{{ row.message || '—' }}</template>
+          <el-table-column prop="inputRows" label="入行" width="56" />
+          <el-table-column prop="outputRows" label="出行" width="56" />
+          <el-table-column label="过程" min-width="120" show-overflow-tooltip>
+            <template #default="{ row }">{{ formatProcessZh(row.message) }}</template>
           </el-table-column>
-          <el-table-column label="时长" width="72">
-            <template #default="{ row }">{{ nodeDuration(row) }}</template>
-          </el-table-column>
-          <el-table-column label="日志" width="90" fixed="right">
+          <el-table-column label="日志" width="52" align="center">
             <template #default="{ row }">
               <el-button link type="primary" @click="viewNodeLog(row)">查看</el-button>
             </template>
           </el-table-column>
         </el-table>
 
-        <div class="section-title" style="margin-top:12px">Kettle 执行日志</div>
+        <div class="section-title kettle-log-title">Kettle 执行日志</div>
         <el-input
           type="textarea"
           :rows="10"
@@ -479,10 +494,9 @@ onUnmounted(clearPoll)
           <el-descriptions-item label="节点名称">{{ currentLog.nodeName }}</el-descriptions-item>
           <el-descriptions-item label="节点类型">{{ statusLabel(currentLog.nodeType) }}</el-descriptions-item>
           <el-descriptions-item label="状态">{{ statusLabel(currentLog.status) }}</el-descriptions-item>
-          <el-descriptions-item label="时长">{{ currentLog ? nodeDuration(currentLog) : '—' }}</el-descriptions-item>
           <el-descriptions-item label="输入行数">{{ currentLog.inputRows }}</el-descriptions-item>
           <el-descriptions-item label="输出行数">{{ currentLog.outputRows }}</el-descriptions-item>
-          <el-descriptions-item label="消息" :span="2">{{ currentLog.message || '—' }}</el-descriptions-item>
+          <el-descriptions-item label="过程" :span="2">{{ formatProcessZh(currentLog.message) }}</el-descriptions-item>
         </el-descriptions>
         <div v-if="formattedDetail" style="margin-top:12px">
           <div style="font-weight:600;margin-bottom:6px">详情 JSON</div>
@@ -515,6 +529,27 @@ onUnmounted(clearPoll)
 .section-title {
   margin-bottom: 8px;
   font-weight: 600;
+}
+.monitor-row {
+  min-width: 0;
+}
+.monitor-col {
+  min-width: 0;
+  overflow-x: hidden;
+}
+.monitor-table {
+  width: 100%;
+}
+.monitor-table :deep(.el-table__inner-wrapper),
+.monitor-table :deep(.el-table__header-wrapper),
+.monitor-table :deep(.el-table__body-wrapper) {
+  width: 100% !important;
+}
+.monitor-table :deep(.el-scrollbar__wrap) {
+  overflow-x: hidden !important;
+}
+.kettle-log-title {
+  margin-top: 12px;
 }
 .muted {
   margin-left: 6px;

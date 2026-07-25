@@ -1019,8 +1019,12 @@ function applyProps(silent = false) {
     config.fields = propForm.fields.split(',').map((s) => s.trim()).filter(Boolean)
     config.maskType = propForm.maskType
     config.maskChar = propForm.maskChar
-    config.writeMode = maskWriteMode.value
-    config.targetSuffix = maskTargetSuffix.value
+    // MD5 为字符串哈希，禁止覆盖 DATE/数值原列，统一写新列
+    config.writeMode = propForm.maskType === 'MD5' ? 'NEW_COLUMN' : maskWriteMode.value
+    if (propForm.maskType === 'MD5') {
+      maskWriteMode.value = 'NEW_COLUMN'
+    }
+    config.targetSuffix = maskTargetSuffix.value || '_masked'
   } else if (type === 'JOIN') {
     config.joinType = propForm.joinType
     config.joinKeys = joinKeyRows.value.filter((j) => j.leftKey && j.rightKey)
@@ -1376,10 +1380,7 @@ async function publishTask() {
   }
 }
 
-async function switchEngine(_val?: string) {
-  engineType.value = 'KETTLE'
-}
-
+/** 治理任务仅 Kettle；运行前强制纠正引擎字段 */
 async function ensureKettleEngine() {
   try {
     await api.put(`/governance/gov-tasks/${props.taskId}/engine`, { engineType: 'KETTLE' })
@@ -1813,7 +1814,10 @@ onMounted(async () => {
                 <el-input v-else v-model="propForm.fields" placeholder="phone,idCard" />
               </el-form-item>
               <el-form-item label="脱敏类型">
-                <el-radio-group v-model="propForm.maskType">
+                <el-radio-group
+                  v-model="propForm.maskType"
+                  @change="(v) => { if (String(v) === 'MD5') maskWriteMode = 'NEW_COLUMN' }"
+                >
                   <el-radio value="BLUR">模糊处理</el-radio>
                   <el-radio value="MD5">MD5哈希</el-radio>
                 </el-radio-group>
@@ -1822,14 +1826,22 @@ onMounted(async () => {
                 <el-input v-model="propForm.maskChar" maxlength="1" />
               </el-form-item>
               <el-form-item label="写回方式">
-                <el-select v-model="maskWriteMode" style="width:100%">
-                  <el-option label="覆盖原字段" value="OVERWRITE" />
+                <el-select v-model="maskWriteMode" style="width:100%" :disabled="propForm.maskType === 'MD5'">
+                  <el-option label="覆盖原字段" value="OVERWRITE" :disabled="propForm.maskType === 'MD5'" />
                   <el-option label="写到新列" value="NEW_COLUMN" />
                 </el-select>
               </el-form-item>
-              <el-form-item v-if="maskWriteMode === 'NEW_COLUMN'" label="新列后缀">
+              <el-form-item v-if="maskWriteMode === 'NEW_COLUMN' || propForm.maskType === 'MD5'" label="新列后缀">
                 <el-input v-model="maskTargetSuffix" placeholder="_masked" />
               </el-form-item>
+              <el-alert
+                v-if="propForm.maskType === 'MD5'"
+                type="warning"
+                :closable="false"
+                show-icon
+                title="MD5 结果为字符串，将写入新列（如 birth_date_masked），不会覆盖原 DATE/数值字段"
+                style="margin-bottom: 8px"
+              />
             </template>
             <template v-else-if="selectedNode.data?.nodeType === 'JOIN'">
               <el-form-item label="关联类型">

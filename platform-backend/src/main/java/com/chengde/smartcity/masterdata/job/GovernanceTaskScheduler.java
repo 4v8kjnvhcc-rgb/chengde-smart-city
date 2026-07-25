@@ -37,7 +37,7 @@ public class GovernanceTaskScheduler {
             try {
                 log.info("GovernanceTaskScheduler trigger taskId={} engine={} cron={}",
                         task.getId(), task.getEngineType(), task.getScheduleCron());
-                // 走 taskService.run，按 engineType 分流到内存/Kettle
+                // 调度触发：统一走 Kettle（taskService.run）
                 taskService.run(null, task.getId());
                 taskService.refreshNextRunAfterExecute(task.getId());
             } catch (Exception e) {

@@ -10,9 +10,11 @@ import java.sql.ResultSetMetaData;
 import java.sql.Statement;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 import javax.sql.DataSource;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -89,16 +91,17 @@ public class GovernanceLayerTableService {
                     String targetDb = target.get("database");
                     String targetTable = target.get("table");
                     st.execute("CREATE DATABASE IF NOT EXISTS `" + targetDb + "`");
-                    if (tableExists(conn, targetDb, targetTable)) {
-                        continue;
-                    }
                     String targetQualified = DataLayerSupport.qualify(targetDb, targetTable);
-                    String ddl = "CREATE TABLE IF NOT EXISTS " + targetQualified
-                            + " LIKE " + sourceQualified;
-                    st.execute(ddl);
-                    created.add(targetQualified);
-                    log.info("governance auto-created target table: {} LIKE {}", targetQualified, sourceQualified);
+                    if (!tableExists(conn, targetDb, targetTable)) {
+                        String ddl = "CREATE TABLE IF NOT EXISTS " + targetQualified
+                                + " LIKE " + sourceQualified;
+                        st.execute(ddl);
+                        created.add(targetQualified);
+                        log.info("governance auto-created target table: {} LIKE {}", targetQualified, sourceQualified);
+                    }
                 }
+                // 脱敏写新列时补 VARCHAR，避免 MD5 字符串写入 DATE 原列失败
+                ensureMaskResultColumns(conn, st, nodes, targets);
             }
             return created;
         } catch (IllegalStateException e) {
@@ -109,10 +112,99 @@ public class GovernanceLayerTableService {
     }
 
     /**
-     * 按画布输出节点预览平台分层目标表样例行。
+     * 为 MASK 新列（含 MD5 强制新列、日期类字段强制新列）在目标表补充 VARCHAR 列。
+     */
+    private void ensureMaskResultColumns(Connection conn, Statement st, JsonNode nodes,
+                                         List<Map<String, String>> targets) throws Exception {
+        Set<String> newCols = collectMaskNewColumns(nodes);
+        if (newCols.isEmpty() || targets.isEmpty()) {
+            return;
+        }
+        for (Map<String, String> target : targets) {
+            String db = target.get("database");
+            String table = target.get("table");
+            if (!isGovernedResultLayer(target.get("layer")) || !tableExists(conn, db, table)) {
+                continue;
+            }
+            for (String col : newCols) {
+                if (!isSafeIdent(col) || columnExists(conn, db, table, col)) {
+                    continue;
+                }
+                String q = DataLayerSupport.qualify(db, table);
+                String ddl = "ALTER TABLE " + q + " ADD COLUMN `" + col + "` VARCHAR(64) NULL";
+                st.execute(ddl);
+                log.info("governance added mask column {}.{} {}", db, table, col);
+            }
+        }
+    }
+
+    private static Set<String> collectMaskNewColumns(JsonNode nodes) {
+        Set<String> cols = new LinkedHashSet<>();
+        if (nodes == null || !nodes.isArray()) {
+            return cols;
+        }
+        for (JsonNode n : nodes) {
+            JsonNode data = n.path("data");
+            if (!"MASK".equals(data.path("nodeType").asText(""))) {
+                continue;
+            }
+            JsonNode cfg = data.path("config");
+            String maskType = text(cfg, "maskType");
+            boolean md5 = maskType != null && "MD5".equalsIgnoreCase(maskType);
+            String writeMode = text(cfg, "writeMode");
+            boolean newColumn = md5 || "NEW_COLUMN".equalsIgnoreCase(writeMode == null ? "" : writeMode);
+            String suffix = text(cfg, "targetSuffix");
+            if (suffix == null || suffix.isBlank()) {
+                suffix = "_masked";
+            }
+            JsonNode fields = cfg.get("fields");
+            if (fields == null || !fields.isArray()) {
+                continue;
+            }
+            for (JsonNode f : fields) {
+                String src = f == null ? "" : f.asText("").trim();
+                if (src.isEmpty() || !isSafeIdent(src)) {
+                    continue;
+                }
+                boolean fieldNew = newColumn || looksLikeNonStringField(src);
+                if (fieldNew) {
+                    String col = sanitizeIdent(src + suffix);
+                    if (isSafeIdent(col)) {
+                        cols.add(col);
+                    }
+                }
+            }
+        }
+        return cols;
+    }
+
+    private static boolean looksLikeNonStringField(String fieldName) {
+        if (fieldName == null || fieldName.isBlank()) {
+            return false;
+        }
+        String n = fieldName.trim().toLowerCase(Locale.ROOT);
+        if (n.contains("idcard") || n.contains("id_card") || n.contains("phone") || n.contains("mobile")
+                || n.contains("email") || n.contains("name") || n.contains("address") || n.contains("code")) {
+            return false;
+        }
+        return n.contains("date") || n.contains("time") || n.endsWith("_at") || n.endsWith("_dt")
+                || n.startsWith("amt_") || n.endsWith("_amt") || n.contains("amount")
+                || n.contains("count") || n.contains("qty") || n.contains("price")
+                || n.startsWith("is_") || n.startsWith("has_");
+    }
+
+    private static boolean columnExists(Connection conn, String db, String table, String column) throws Exception {
+        try (ResultSet rs = conn.getMetaData().getColumns(db, null, table, column)) {
+            return rs.next();
+        }
+    }
+
+    /**
+     * 预览治理后落层结果：仅读取输出节点目标表（DWD/DWS/ADS），不读 ODS/源表原始数据。
      */
     public Map<String, Object> previewFromGraph(String graphJson, String preferredTable, Integer limit) {
         int lim = normalizeLimit(limit);
+        List<Map<String, String>> allTargets;
         List<Map<String, String>> targets;
         try {
             if (graphJson == null || graphJson.isBlank()) {
@@ -123,14 +215,23 @@ public class GovernanceLayerTableService {
             if (nodes == null || !nodes.isArray()) {
                 throw new BusinessException(400, "任务尚未配置输出表");
             }
-            targets = resolveOutputTargets(nodes);
+            allTargets = resolveOutputTargets(nodes);
+            // 「查看数据」只展示治理后的明细/汇总/应用层，排除 ODS 原始层
+            targets = allTargets.stream()
+                    .filter(t -> isGovernedResultLayer(t.get("layer")))
+                    .toList();
         } catch (BusinessException e) {
             throw e;
         } catch (Exception e) {
             throw new BusinessException(400, "解析任务画布失败: " + e.getMessage());
         }
-        if (targets.isEmpty()) {
+        if (allTargets.isEmpty()) {
             throw new BusinessException(400, "任务尚未配置平台分层输出表");
+        }
+        if (targets.isEmpty()) {
+            throw new BusinessException(400,
+                    "「查看数据」仅展示治理后写入 DWD/DWS/ADS 的结果。"
+                            + "当前输出落在 ODS/其它库，请将输出节点改为 DWD（或 DWS/ADS）后再查看");
         }
 
         Map<String, String> selected = pickTarget(targets, preferredTable);
@@ -145,6 +246,7 @@ public class GovernanceLayerTableService {
         out.put("layer", layer);
         out.put("qualifiedName", DataLayerSupport.qualify(database, table));
         out.put("limit", lim);
+        out.put("previewKind", "GOVERNED_RESULT");
 
         try (Connection conn = platformDataSource.getConnection()) {
             if (!tableExists(conn, database, table)) {
@@ -152,7 +254,8 @@ public class GovernanceLayerTableService {
                 out.put("columns", List.of());
                 out.put("rows", List.of());
                 out.put("rowCount", 0);
-                out.put("message", "目标表尚未创建或未写入，请先成功运行治理任务");
+                out.put("message", "治理目标表尚未创建或未写入，请先成功运行任务后再查看 "
+                        + DataLayerSupport.qualify(database, table));
                 return out;
             }
             String sql = "SELECT * FROM " + DataLayerSupport.qualify(database, table) + " LIMIT " + lim;
@@ -176,7 +279,13 @@ public class GovernanceLayerTableService {
                 out.put("columns", columns);
                 out.put("rows", rows);
                 out.put("rowCount", rows.size());
-                out.put("message", rows.isEmpty() ? "表已存在但暂无数据" : "已加载 " + rows.size() + " 行样例");
+                if (rows.isEmpty()) {
+                    out.put("message", "治理目标表 " + DataLayerSupport.qualify(database, table)
+                            + " 已存在但暂无数据，请确认任务已成功写入");
+                } else {
+                    out.put("message", "已加载治理后 " + layer + " 层样例 "
+                            + rows.size() + " 行（" + DataLayerSupport.qualify(database, table) + "）");
+                }
                 return out;
             }
         } catch (BusinessException e) {
@@ -192,6 +301,7 @@ public class GovernanceLayerTableService {
         for (JsonNode n : nodes) {
             JsonNode data = n.path("data");
             String type = data.path("nodeType").asText("");
+            // 只认输出节点，绝不读 INPUT 源表
             if (!"OUTPUT".equals(type) && !"INSERT_UPDATE".equals(type)) {
                 continue;
             }
@@ -225,6 +335,15 @@ public class GovernanceLayerTableService {
         return targets;
     }
 
+    /** 治理结果层：DWD/DWS/ADS（不含 ODS 原始层） */
+    private static boolean isGovernedResultLayer(String layer) {
+        if (layer == null || layer.isBlank()) {
+            return false;
+        }
+        String u = layer.trim().toUpperCase(Locale.ROOT);
+        return "DWD".equals(u) || "DWS".equals(u) || "ADS".equals(u);
+    }
+
     private static Map<String, String> pickTarget(List<Map<String, String>> targets, String preferredTable) {
         if (preferredTable != null && !preferredTable.isBlank()) {
             String want = preferredTable.trim();
@@ -234,7 +353,15 @@ public class GovernanceLayerTableService {
                     return t;
                 }
             }
-            throw new BusinessException(400, "指定输出表不在任务配置中: " + preferredTable);
+            throw new BusinessException(400, "指定输出表不在治理结果层（DWD/DWS/ADS）中: " + preferredTable);
+        }
+        // 默认优先 DWD，再 DWS、ADS
+        for (String prefer : List.of("DWD", "DWS", "ADS")) {
+            for (Map<String, String> t : targets) {
+                if (prefer.equalsIgnoreCase(t.get("layer"))) {
+                    return t;
+                }
+            }
         }
         return targets.get(0);
     }

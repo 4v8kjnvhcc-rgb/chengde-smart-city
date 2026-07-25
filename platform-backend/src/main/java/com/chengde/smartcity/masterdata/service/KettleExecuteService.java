@@ -19,8 +19,8 @@ import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 /**
- * Kettle 执行引擎服务
- * 整合转换引擎 + KettleClient API，提供完整的执行/监控能力
+ * 治理任务唯一执行引擎：画布 → KTR → Carte。
+ * 不提供、也不回退到 JVM 内存拓扑执行。
  */
 @Service
 public class KettleExecuteService {
@@ -435,9 +435,7 @@ public class KettleExecuteService {
             String desc = stringVal(step.get("statusDesc"));
             String speed = stringVal(step.get("speed"));
             String seconds = stringVal(step.get("seconds"));
-            nl.setMessage((desc == null ? "" : desc)
-                    + (seconds == null || seconds.isBlank() ? "" : " · " + seconds.trim() + "s")
-                    + (speed == null || speed.isBlank() ? "" : " · " + speed.trim() + " r/s"));
+            nl.setMessage(formatStepProcessZh(desc, seconds, speed));
             nl.setDetailJson("{\"errors\":" + toInt(step.get("errors"))
                     + ",\"linesRejected\":" + toInt(step.get("linesRejected"))
                     + ",\"seconds\":\"" + (seconds == null ? "" : seconds.trim().replace("\"", "")) + "\"}");
@@ -573,6 +571,64 @@ public class KettleExecuteService {
     private static boolean isStale(GovGovernanceTaskRun run) {
         return run.getStartedAt() != null
                 && run.getStartedAt().isBefore(LocalDateTime.now().minusMinutes(STALE_RUNNING_MINUTES));
+    }
+
+    /** 步骤过程摘要中文化（状态 + 耗时秒 + 吞吐） */
+    private static String formatStepProcessZh(String statusDesc, String seconds, String speed) {
+        String status = translateCarteStatus(statusDesc);
+        StringBuilder sb = new StringBuilder(status == null ? "" : status);
+        if (seconds != null && !seconds.isBlank()) {
+            if (sb.length() > 0) {
+                sb.append(" · ");
+            }
+            sb.append(seconds.trim()).append("秒");
+        }
+        if (speed != null && !speed.isBlank()) {
+            if (sb.length() > 0) {
+                sb.append(" · ");
+            }
+            sb.append(speed.trim()).append(" 行/秒");
+        }
+        return sb.toString();
+    }
+
+    private static String translateCarteStatus(String desc) {
+        if (desc == null || desc.isBlank()) {
+            return "";
+        }
+        String d = desc.trim();
+        String lower = d.toLowerCase();
+        if (lower.contains("finished") && lower.contains("error")) {
+            return "完成（有错误）";
+        }
+        if (lower.contains("finished")) {
+            return "已完成";
+        }
+        if (lower.contains("running")) {
+            return "运行中";
+        }
+        if (lower.contains("stopped")) {
+            return "已停止";
+        }
+        if (lower.contains("waiting")) {
+            return "等待中";
+        }
+        if (lower.contains("initializing") || lower.contains("preparing")) {
+            return "初始化中";
+        }
+        if (lower.contains("halting")) {
+            return "正在中止";
+        }
+        if (lower.contains("idle")) {
+            return "空闲";
+        }
+        if (lower.contains("disposed")) {
+            return "已释放";
+        }
+        if (lower.contains("error")) {
+            return "错误";
+        }
+        return d;
     }
 
     private static String firstErrorLine(String log) {

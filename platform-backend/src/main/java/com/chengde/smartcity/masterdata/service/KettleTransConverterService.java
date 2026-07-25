@@ -1063,23 +1063,34 @@ public class KettleTransConverterService {
         if (ch.isEmpty()) {
             ch = "*";
         }
-        boolean newColumn = "NEW_COLUMN".equalsIgnoreCase(cfgText(cfg, "writeMode", "OVERWRITE"));
+        // MD5 结果是 32 位十六进制字符串，覆盖 DATE/数值列会导致 TableOutput 报 Incorrect date/value
+        boolean md5 = "MD5".equalsIgnoreCase(maskType);
+        boolean newColumn = md5
+                || "NEW_COLUMN".equalsIgnoreCase(cfgText(cfg, "writeMode", "OVERWRITE"));
         String suffix = cfgText(cfg, "targetSuffix", "_masked");
         if (suffix == null || suffix.isBlank()) {
             suffix = "_masked";
         }
 
+        // ScriptValueMod：必须在 <fields> 声明 replace，脚本赋值才会写回行流
         StringBuilder js = new StringBuilder();
-        js.append("// auto-generated mask\n");
+        js.append("// auto-generated mask (Kettle ScriptValueMod)\n");
+        if (md5) {
+            js.append("// MD5 always writes new column to protect typed source fields\n");
+        }
         if (fields.isEmpty()) {
             js.append("// warn: no mask fields configured\n");
         }
+        StringBuilder fieldXml = new StringBuilder();
+        fieldXml.append("    <fields>\n");
         for (String f : fields) {
             if (f == null || f.isBlank()) {
                 continue;
             }
             String src = f.trim();
-            String target = newColumn ? src + suffix : src;
+            // 日期/时间类字段即使选了「覆盖」也强制写新列，避免破坏 DATE 类型落库
+            boolean fieldNewCol = newColumn || looksLikeNonStringField(src);
+            String target = fieldNewCol ? src + suffix : src;
             js.append("{\n");
             js.append("  var __v = ").append(src).append(";\n");
             js.append("  if (__v != null) {\n");
@@ -1104,14 +1115,47 @@ public class KettleTransConverterService {
                         .append(" = __s.substring(0,1) + __mid + __s.substring(__s.length - 1);\n");
                 js.append("    }\n");
             }
+            js.append("  } else {\n");
+            js.append("    ").append(target).append(" = __v;\n");
             js.append("  }\n");
             js.append("}\n");
+
+            fieldXml.append("      <field>\n");
+            fieldXml.append("        <name>").append(escapeXml(target)).append("</name>\n");
+            fieldXml.append("        <rename/>\n");
+            fieldXml.append("        <type>String</type>\n");
+            fieldXml.append("        <length>-1</length>\n");
+            fieldXml.append("        <precision>-1</precision>\n");
+            // 覆盖原列 Y；新增列 N（否则下游拿不到脱敏结果）
+            fieldXml.append("        <replace>").append(fieldNewCol ? "N" : "Y").append("</replace>\n");
+            fieldXml.append("      </field>\n");
         }
-        return "    <jsScripts>\n"
+        fieldXml.append("    </fields>\n");
+
+        return "    <compatible>N</compatible>\n"
+                + "    <optimizationLevel>9</optimizationLevel>\n"
+                + "    <jsScripts>\n"
                 + "      <jsScript><jsScript_type>0</jsScript_type>"
                 + "<jsScript_name>Mask</jsScript_name>"
                 + "<jsScript_script>" + escapeXml(js.toString()) + "</jsScript_script></jsScript>\n"
-                + "    </jsScripts>\n";
+                + "    </jsScripts>\n"
+                + fieldXml;
+    }
+
+    /** 日期/时间/数值倾向字段：脱敏结果为字符串，禁止覆盖原列 */
+    private static boolean looksLikeNonStringField(String fieldName) {
+        if (fieldName == null || fieldName.isBlank()) {
+            return false;
+        }
+        String n = fieldName.trim().toLowerCase(Locale.ROOT);
+        if (n.contains("idcard") || n.contains("id_card") || n.contains("phone") || n.contains("mobile")
+                || n.contains("email") || n.contains("name") || n.contains("address") || n.contains("code")) {
+            return false;
+        }
+        return n.contains("date") || n.contains("time") || n.endsWith("_at") || n.endsWith("_dt")
+                || n.startsWith("amt_") || n.endsWith("_amt") || n.contains("amount")
+                || n.contains("count") || n.contains("qty") || n.contains("price")
+                || n.startsWith("is_") || n.startsWith("has_");
     }
 
     private String cfgJoin(JsonNode cfg) {

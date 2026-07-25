@@ -86,7 +86,10 @@ public class GovernanceKtrController {
         return ApiResponse.ok(m);
     }
 
-    /** 切换执行引擎：IN_MEMORY / KETTLE */
+    /**
+     * 固定执行引擎为 Kettle。
+     * 治理任务不提供内存执行；历史 IN_MEMORY 调用一律纠正为 KETTLE。
+     */
     @PutMapping("/{id}/engine")
     @PreAuthorize("isAuthenticated()")
     public ApiResponse<Map<String, Object>> updateEngine(@PathVariable Long id,
@@ -95,16 +98,20 @@ public class GovernanceKtrController {
         if (task == null) {
             return ApiResponse.fail(404, "任务不存在");
         }
-        String engine = body.get("engineType") == null ? "KETTLE" : String.valueOf(body.get("engineType")).trim().toUpperCase();
-        if (!"IN_MEMORY".equals(engine) && !"KETTLE".equals(engine)) {
-            return ApiResponse.fail(400, "engineType 仅支持 IN_MEMORY 或 KETTLE");
+        String requested = body.get("engineType") == null ? "KETTLE"
+                : String.valueOf(body.get("engineType")).trim().toUpperCase();
+        if (!requested.isBlank() && !"KETTLE".equals(requested) && !"IN_MEMORY".equals(requested)) {
+            return ApiResponse.fail(400, "engineType 仅支持 KETTLE（治理任务全部由 Kettle/Carte 执行）");
         }
-        task.setEngineType(engine);
+        if ("IN_MEMORY".equals(requested)) {
+            return ApiResponse.fail(400, "已移除内存执行引擎，治理任务必须使用 KETTLE");
+        }
+        task.setEngineType("KETTLE");
         task.setUpdatedAt(LocalDateTime.now());
         taskMapper.updateById(task);
         Map<String, Object> m = new LinkedHashMap<>();
         m.put("id", id);
-        m.put("engineType", engine);
+        m.put("engineType", "KETTLE");
         return ApiResponse.ok(m);
     }
 }

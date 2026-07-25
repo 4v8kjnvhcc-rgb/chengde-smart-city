@@ -104,7 +104,8 @@ public class GovernanceTaskService {
         task.setDescription(str(body.get("description"), null));
         task.setGraphJson(graphJson);
         task.setStatus(status);
-        task.setEngineType(str(body.get("engineType"), "KETTLE"));
+        // 治理任务仅 Kettle 执行，忽略请求中的其它引擎值
+        task.setEngineType("KETTLE");
         if (operator != null) {
             task.setCreatedBy(operator.getUsername());
         }
@@ -266,12 +267,12 @@ public class GovernanceTaskService {
 
     public Map<String, Object> run(UserPrincipal operator, Long id, Map<String, String> runtimeVariables) {
         GovGovernanceTask task = requireTask(id);
-        // 产品侧仅 Kettle；历史 IN_MEMORY 强制改走 Kettle
+        // 治理任务全部由 Kettle/Carte 完成，无内存执行回退
         if (!kettleExecuteService.isCarteAvailable()) {
             throw new BusinessException(503,
                     "Kettle Carte 不可用，请启动 compose profile etl 并设置 INTEGRATION_ENABLED=true");
         }
-        if (task.getEngineType() == null || "IN_MEMORY".equalsIgnoreCase(task.getEngineType())) {
+        if (!"KETTLE".equalsIgnoreCase(String.valueOf(task.getEngineType()))) {
             task.setEngineType("KETTLE");
             task.setUpdatedAt(LocalDateTime.now());
             taskMapper.updateById(task);
@@ -628,10 +629,14 @@ public class GovernanceTaskService {
     }
 
     private static String outputConfigJson(String conn, String table) {
+        String c = conn != null && !conn.isBlank() ? conn : "smart_city_dwd";
         StringBuilder sb = new StringBuilder("{");
-        sb.append("\"connection\":\"").append(jsonEsc(conn != null ? conn : "")).append("\"");
+        sb.append("\"connection\":\"").append(jsonEsc(c)).append("\"");
+        sb.append(",\"outputConnection\":\"").append(jsonEsc(c)).append("\"");
         sb.append(",\"table\":\"").append(jsonEsc(table != null ? table : "")).append("\"");
-        sb.append(",\"outputMode\":\"INSERT\"");
+        sb.append(",\"outputTable\":\"").append(jsonEsc(table != null ? table : "")).append("\"");
+        // 默认清空后写入，避免查看数据时混入历史未治理行
+        sb.append(",\"outputMode\":\"TRUNCATE_INSERT\"");
         sb.append(",\"commit\":1000");
         sb.append('}');
         return sb.toString();
