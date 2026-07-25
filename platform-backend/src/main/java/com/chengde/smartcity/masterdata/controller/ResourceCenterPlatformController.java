@@ -5,6 +5,7 @@ import com.chengde.smartcity.masterdata.entity.RcAssetCatalogEntry;
 import com.chengde.smartcity.masterdata.entity.RcBackupArtifact;
 import com.chengde.smartcity.masterdata.entity.RcBaseLibrary;
 import com.chengde.smartcity.masterdata.entity.RcMonitorMetric;
+import com.chengde.smartcity.masterdata.entity.RcStoragePolicy;
 import com.chengde.smartcity.masterdata.service.ResourceCenterPlatformService;
 import com.chengde.smartcity.security.UserPrincipal;
 import java.util.List;
@@ -120,6 +121,19 @@ public class ResourceCenterPlatformController {
         return ApiResponse.ok(service.pretestPartition(principal, id));
     }
 
+    @GetMapping("/policies")
+    @PreAuthorize("isAuthenticated()")
+    public ApiResponse<List<RcStoragePolicy>> policies(@RequestParam(required = false) String actionType) {
+        return ApiResponse.ok(service.listPolicies(actionType));
+    }
+
+    @PostMapping("/policies")
+    @PreAuthorize("isAuthenticated()")
+    public ApiResponse<Long> createPolicy(@AuthenticationPrincipal UserPrincipal principal,
+                                          @RequestBody Map<String, Object> body) {
+        return ApiResponse.ok(service.createPolicy(principal, body));
+    }
+
     @PostMapping("/policies/{id}/execute")
     @PreAuthorize("isAuthenticated()")
     public ApiResponse<Map<String, Object>> executePolicy(@AuthenticationPrincipal UserPrincipal principal,
@@ -156,6 +170,13 @@ public class ResourceCenterPlatformController {
     @PreAuthorize("isAuthenticated()")
     public ApiResponse<Map<String, Object>> search(@RequestParam(required = false) String q) {
         return ApiResponse.ok(service.searchLibraries(q));
+    }
+
+    @GetMapping("/managed-tables/{id}/query")
+    @PreAuthorize("isAuthenticated()")
+    public ApiResponse<Map<String, Object>> queryManagedTable(@PathVariable Long id,
+                                                              @RequestParam(required = false) Integer limit) {
+        return ApiResponse.ok(service.queryManagedTable(id, limit));
     }
 
     @GetMapping("/statistics")

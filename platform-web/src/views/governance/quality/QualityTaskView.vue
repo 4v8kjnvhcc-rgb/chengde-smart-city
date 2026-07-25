@@ -1,10 +1,17 @@
 <script setup lang="ts">
-import { onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref, watch } from 'vue'
 import api from '@/api/http'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import PageCard from '@/components/common/PageCard.vue'
 import { statusLabel, statusTagType } from '@/utils/status-label'
-import { ingestionApi, type DataSource } from '@/views/exchange/ingestion/useIngestionHub'
+import {
+  catalogHintOfSourceId,
+  groupSourcesByRole,
+  loadQualitySourceOptions,
+  loadQualityTables,
+  type QualitySourceOption,
+  type QualityTableMeta,
+} from './useQualityTargetPicker'
 
 interface TaskRow {
   id: number
@@ -17,6 +24,7 @@ interface TaskRow {
   scheduleType?: string
   cronExpr?: string
   datasourceId?: number
+  metadataEntryCode?: string
   detailCount?: number
 }
 
@@ -34,13 +42,22 @@ interface RuleOpt {
   id: number
   ruleName: string
   ruleCode: string
-  config?: { checkType?: string; targetTable?: string; targetColumn?: string } | null
+  config?: {
+    checkType?: string
+    targetTable?: string
+    targetColumn?: string
+    metadataEntryCode?: string
+  } | null
 }
 
 const tasks = ref<TaskRow[]>([])
 const loading = ref(false)
 const drawer = ref(false)
-const dataSources = ref<DataSource[]>([])
+const sources = ref<QualitySourceOption[]>([])
+const tables = ref<QualityTableMeta[]>([])
+const sourceGroups = computed(() => groupSourcesByRole(sources.value))
+const layerHint = computed(() => catalogHintOfSourceId(form.datasourceId))
+const tablesLoading = ref(false)
 const rules = ref<RuleOpt[]>([])
 const details = ref<DetailRow[]>([])
 
@@ -51,6 +68,7 @@ const form = reactive({
   scheduleType: 'MANUAL',
   cronExpr: '',
   datasourceId: undefined as number | undefined,
+  metadataEntryCode: '',
 })
 
 const detailForm = reactive({
@@ -58,6 +76,11 @@ const detailForm = reactive({
   targetTable: '',
   targetColumn: '',
   checkType: '',
+})
+
+const columnOptions = computed(() => {
+  const t = tables.value.find((x) => x.sourceTable === detailForm.targetTable)
+  return t?.columns || []
 })
 
 async function loadTasks() {
@@ -75,13 +98,32 @@ async function loadRules() {
   rules.value = (await api.get('/governance/quality/rule-mgmt')).data || []
 }
 
-async function loadDataSources() {
+async function loadSources() {
+  sources.value = await loadQualitySourceOptions()
+}
+
+async function reloadTables(clearSelection: boolean) {
+  if (form.datasourceId == null) {
+    tables.value = []
+    return
+  }
+  tablesLoading.value = true
   try {
-    dataSources.value = (await ingestionApi.dataSources()).data || []
+    tables.value = await loadQualityTables(form.datasourceId)
+    if (clearSelection) {
+      detailForm.targetTable = ''
+      detailForm.targetColumn = ''
+    }
   } catch {
-    dataSources.value = []
+    tables.value = []
+  } finally {
+    tablesLoading.value = false
   }
 }
+
+watch(() => form.datasourceId, () => {
+  if (drawer.value) void reloadTables(true)
+})
 
 function openCreate() {
   form.id = null
@@ -89,11 +131,12 @@ function openCreate() {
   form.description = ''
   form.scheduleType = 'MANUAL'
   form.cronExpr = ''
-  form.datasourceId = undefined
+  form.datasourceId = -2
+  form.metadataEntryCode = ''
   details.value = []
   drawer.value = true
   void loadRules()
-  void loadDataSources()
+  void loadSources().then(() => reloadTables(true))
 }
 
 async function openEdit(row: TaskRow) {
@@ -102,9 +145,11 @@ async function openEdit(row: TaskRow) {
   form.description = row.description || ''
   form.scheduleType = row.scheduleType || 'MANUAL'
   form.cronExpr = row.cronExpr || ''
-  form.datasourceId = row.datasourceId
+  form.datasourceId = row.datasourceId ?? -2
+  form.metadataEntryCode = row.metadataEntryCode || ''
   drawer.value = true
-  await Promise.all([loadRules(), loadDataSources(), loadDetails(row.id)])
+  await Promise.all([loadRules(), loadSources(), loadDetails(row.id)])
+  await reloadTables(false)
 }
 
 async function loadDetails(taskId: number) {
@@ -116,12 +161,17 @@ async function saveTask() {
     ElMessage.warning('请填写任务名称')
     return
   }
+  if (form.datasourceId == null) {
+    ElMessage.warning('请选择稽核来源库')
+    return
+  }
   const body = {
     taskName: form.taskName,
     description: form.description,
     scheduleType: form.scheduleType,
     cronExpr: form.cronExpr || null,
-    datasourceId: form.datasourceId ?? null,
+    datasourceId: form.datasourceId,
+    metadataEntryCode: form.metadataEntryCode || null,
   }
   if (form.id) {
     await api.put(`/governance/quality/task-mgmt/${form.id}`, body)
@@ -143,9 +193,17 @@ async function addDetail() {
     ElMessage.warning('请选择规则')
     return
   }
+  if (!detailForm.targetTable.trim()) {
+    ElMessage.warning('请选择目标表')
+    return
+  }
+  if (detailForm.checkType !== 'RECORD_COUNT' && !detailForm.targetColumn.trim()) {
+    ElMessage.warning('请选择目标字段')
+    return
+  }
   await api.post(`/governance/quality/task-mgmt/${form.id}/details`, {
     ruleId: detailForm.ruleId,
-    targetTable: detailForm.targetTable || null,
+    targetTable: detailForm.targetTable,
     targetColumn: detailForm.targetColumn || null,
     checkType: detailForm.checkType || null,
   })
@@ -164,7 +222,16 @@ function onRulePick(ruleId: number) {
     detailForm.checkType = r.config.checkType || ''
     detailForm.targetTable = r.config.targetTable || ''
     detailForm.targetColumn = r.config.targetColumn || ''
+    if (r.config.metadataEntryCode) {
+      form.metadataEntryCode = r.config.metadataEntryCode
+    }
   }
+}
+
+function onTablePick(name: string) {
+  detailForm.targetColumn = ''
+  const meta = tables.value.find((t) => t.sourceTable === name)
+  if (meta?.entryCode) form.metadataEntryCode = meta.entryCode
 }
 
 async function removeDetail(detailId: number) {
@@ -184,9 +251,14 @@ async function removeTask(id: number) {
 }
 
 async function runTask(id: number) {
-  const res = await api.post(`/governance/quality/task-mgmt/${id}/run`)
-  ElMessage.success(`执行完成 · 评分 ${res.data.score}`)
-  await loadTasks()
+  try {
+    const res = await api.post(`/governance/quality/task-mgmt/${id}/run`)
+    ElMessage.success(`执行完成 · 评分 ${res.data.score}`)
+    await loadTasks()
+  } catch (e: unknown) {
+    const msg = (e as { response?: { data?: { message?: string } } })?.response?.data?.message
+    ElMessage.error(msg || '执行失败，请检查任务明细与目标表配置')
+  }
 }
 
 async function stopTask(id: number) {
@@ -204,11 +276,23 @@ function checkTypeLabel(v?: string) {
   } as Record<string, string>)[v || ''] || v || '—'
 }
 
+function sourceLabel(id?: number) {
+  if (id == null) return '—'
+  return sources.value.find((s) => s.id === id)?.label || `源#${id}`
+}
+
 onMounted(loadTasks)
 </script>
 
 <template>
-  <PageCard title="质量任务配置">
+  <PageCard title="数据质量任务">
+    <el-alert
+      type="warning"
+      :closable="false"
+      show-icon
+      style="margin-bottom: 12px"
+      title="任务绑定来源库即选定稽核层级：源层服务直通共享门禁；DWD 过程层只服务治理/融合；DWS/ADS 资源层服务加工共享编目前门禁。"
+    />
     <el-form inline class="portal-inline-form portal-inline-form--block">
       <el-form-item class="portal-form-actions">
         <el-button type="primary" @click="openCreate">新建任务</el-button>
@@ -238,8 +322,9 @@ onMounted(loadTasks)
         </template>
       </el-table-column>
     </el-table>
+    <el-empty v-if="!loading && !tasks.length" description="暂无质量任务，请新建并添加稽核明细" />
 
-    <el-drawer v-model="drawer" :title="form.id ? '配置质量任务' : '新建质量任务'" size="520px" destroy-on-close>
+    <el-drawer v-model="drawer" :title="form.id ? '配置质量任务' : '新建质量任务'" size="560px" destroy-on-close>
       <el-form label-width="96px">
         <el-form-item label="任务名称" required>
           <el-input v-model="form.taskName" />
@@ -247,10 +332,15 @@ onMounted(loadTasks)
         <el-form-item label="说明">
           <el-input v-model="form.description" type="textarea" :rows="2" />
         </el-form-item>
-        <el-form-item label="数据源">
-          <el-select v-model="form.datasourceId" clearable filterable placeholder="空=平台库" style="width: 100%">
-            <el-option v-for="s in dataSources" :key="s.id" :label="s.sourceName" :value="s.id" />
+        <el-form-item label="来源库" required>
+          <el-select v-model="form.datasourceId" filterable placeholder="按源层/过程层/资源层选择" style="width: 100%">
+            <el-option-group v-for="g in sourceGroups" :key="g.role" :label="g.label">
+              <el-option v-for="s in g.options" :key="s.id" :label="s.label" :value="s.id" />
+            </el-option-group>
           </el-select>
+          <div v-if="layerHint" class="hint" style="margin-top: 6px; color: var(--el-text-color-secondary); font-size: 12px">
+            {{ layerHint }}
+          </div>
         </el-form-item>
         <el-form-item label="调度方式">
           <el-select v-model="form.scheduleType" style="width: 160px">
@@ -266,7 +356,7 @@ onMounted(loadTasks)
         </el-form-item>
       </el-form>
 
-      <el-divider content-position="left">稽核明细（数据源/表/字段/规则）</el-divider>
+      <el-divider content-position="left">稽核明细（来源库 / 表 / 字段 / 规则）</el-divider>
       <el-form v-if="form.id" label-width="96px">
         <el-form-item label="规则">
           <el-select v-model="detailForm.ruleId" filterable style="width: 100%" @change="onRulePick">
@@ -281,11 +371,31 @@ onMounted(loadTasks)
             <el-option label="记录数" value="RECORD_COUNT" />
           </el-select>
         </el-form-item>
-        <el-form-item label="目标表">
-          <el-input v-model="detailForm.targetTable" placeholder="可覆盖规则配置" />
+        <el-form-item label="目标表" required>
+          <el-select
+            v-model="detailForm.targetTable"
+            filterable
+            allow-create
+            default-first-option
+            :loading="tablesLoading"
+            placeholder="从当前来源库选择"
+            style="width: 100%"
+            @change="onTablePick"
+          >
+            <el-option v-for="t in tables" :key="t.sourceTable" :label="t.sourceTable" :value="t.sourceTable" />
+          </el-select>
         </el-form-item>
-        <el-form-item label="目标字段">
-          <el-input v-model="detailForm.targetColumn" />
+        <el-form-item v-if="detailForm.checkType !== 'RECORD_COUNT'" label="目标字段" required>
+          <el-select
+            v-model="detailForm.targetColumn"
+            filterable
+            allow-create
+            default-first-option
+            placeholder="选择字段"
+            style="width: 100%"
+          >
+            <el-option v-for="c in columnOptions" :key="c" :label="c" :value="c" />
+          </el-select>
         </el-form-item>
         <el-form-item>
           <el-button type="primary" @click="addDetail">添加明细</el-button>
@@ -306,6 +416,16 @@ onMounted(loadTasks)
           </template>
         </el-table-column>
       </el-table>
+      <el-empty v-if="form.id && !details.length" description="尚未添加明细，执行前须至少一条" />
+      <div v-if="form.datasourceId != null" class="drawer-hint">当前来源：{{ sourceLabel(form.datasourceId) }}</div>
     </el-drawer>
   </PageCard>
 </template>
+
+<style scoped>
+.drawer-hint {
+  margin-top: 12px;
+  font-size: 12px;
+  color: var(--el-text-color-secondary);
+}
+</style>

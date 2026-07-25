@@ -1,0 +1,114 @@
+---
+description: V3.0 目录标题=Hub 模块名；子能力先映射已实现框架再做 D20 实用化
+alwaysApply: true
+---
+
+# V3.0 模块命名与能力映射（硬约束）
+
+## 原则
+
+1. **V3.0 是项目基本需求**：`catalog/v3-catalog.normalized.json` / 投标功能说明中的 **子系统、模块名称** = 门户 Hub **侧栏/页标题** 的权威来源。
+2. **先对齐名称，再做实用化**：命名对齐之后，再按 [`D20`](D20-模块实用化与交互验收标准.md) 做登记对象选择、真实执行、中文状态、无 mock 假成功等。
+3. **框架复用优先**：V3.0 子能力（如融合处理下的清洗/调度/执行）若工程上已由 **数据治理 ETL / Kettle / DolphinScheduler / 融合脚本** 覆盖，须在该模块下用 **Tab + 映射说明 + 深链** 挂载，禁止另起平行引擎或假页面。
+4. **过程数据 ≠ 目录资源**：治理过程层默认不进门户；目录挂直通源资源或融合主题/专题资源（见 `data-layer-process-vs-resource.mdc` / D07 §9.3.1）。
+5. 改造自检时核对：融合是否强调多表→DWS/ADS；质量选库是否按源/过程/资源分组。
+
+## 数据融合系统（对照）
+
+| V3.0 模块 | Hub | 实现要点 |
+|-----------|-----|----------|
+| 数据仓库建设 | `mSub=warehouse` | `FusionModelView` 域/实体/物理绑定 |
+| 数据融合处理 | `mSub=processing` | `FusionProcessingView`：脚本开发 / 数据清洗 / 工作流调度 / 任务执行 / 版本管理 |
+| 数据融合组件 | `mSub=components` | 复用 `GovernanceComponentsView`（与治理组件同库同状态） |
+
+「数据融合处理」子能力映射：
+
+| V3.0 子能力 | 落地 |
+|-------------|------|
+| 脚本开发 | `FusionScriptView`（SELECT/受控 UPDATE，写 `gov_fusion_script_run`） |
+| 数据清洗 | 融合/治理组件 MASK·过滤等 + ETL 画布 → Kettle |
+| 工作流调度 | 治理「任务定时」+ DolphinScheduler（M110） |
+| 任务执行 | 治理「任务运行/监控」；加工共享真实落库 |
+| 版本管理 | 融合脚本发布/回滚/版本列表 |
+
+## 数据质量管理系统（对照）
+
+| V3.0 模块 | Hub `qSub` | 页面 |
+|-----------|------------|------|
+| 数据标准体系 | `standards` | `StandardsView` |
+| 质量规则配置 | `rule-config` | `QualityRuleConfigView`（V3.0 正文含任务配置） |
+| 数据质量任务 | `task-mgmt` | `QualityTaskView`（规则配置的工程拆页，侧栏仍展示） |
+| 数据质量监控 | `monitor` | `QualityMonitorView` |
+| 数据质量评估 | `assess` | `QualityAssessView` |
+| 数据质量分析报告 | `reports` | `QualityReportView` |
+
+## 数据目录管理系统（对照）
+
+子系统名 Hub 组标题：**数据目录管理系统**（`tab=catalog`）。
+
+| V3.0 模块 | Hub `cSub` | 页面 |
+|-----------|------------|------|
+| 资源目录编制 | `resources` | `CatalogResourceView`（选登记元数据/`entry_code`，拒过程层） |
+| 目录注册发布 | `publish` | `CatalogRegisterPublishView`（分类维护 + 分类下关联/解绑资源） |
+| 资源目录审批 | `approvals` | `CatalogApprovalView`（含批量审批；发布不可旁路） |
+| 资源申请订阅 | `subscriptions` | `CatalogSubscriptionView` |
+| 资源目录门户 | `portal` | `CatalogPortalView`（表/卡、分类/提供方筛选） |
+
+编目硬口径：只挂直通源或加工主题/专题；过程 DWD 默认不可编目进门户（见 `data-layer-process-vs-resource.mdc`）。
+
+## 非结构数据融合治理平台（对照）
+
+系统 Hub 标题：**非结构数据融合治理平台**。侧栏顺序对齐 V3 `rowIndex`（文件资源管理 → 数据分类管理）。
+
+| V3.0 | Hub key | 落地 |
+|------|---------|------|
+| 文件资源管理 | `files` | 登记须选分类；发布/下线/建索 |
+| 数据分类管理 | `classify` | 分类 CRUD |
+| 文件资源检索 | `search` | 多维检索（DB/ES） |
+| 非结构化元数据管理 | `metadata` | 标签等元数据维护 |
+| 非结构化数据清洗转换处理 | `process.clean` | pipeline CLEAN |
+| 非结构化数据标识处理 | `process.tag` | pipeline TAG |
+| 非结构化数据关联处理 | `process.link` | pipeline LINK |
+
+## 大数据平台资源中心（对照）
+
+系统 Hub 标题：**大数据平台资源中心**。
+
+| V3.0 | Hub key | 落地 |
+|------|---------|------|
+| 数据资产区（子系统，4 模块） | `asset` | **侧栏单入口**；页内 Tab：`libraries` / `classify` / `modules` / `files` |
+| ├ 基础库、半结构化和非结构化库管理 | `asset` + `assetTab=libraries` | 基础/半结构/非结构库 |
+| ├ 数据资产管理与分类 | `assetTab=classify` | 主题库 + 元数据候选纳管 |
+| ├ 数据资产中心模块化管理 | `assetTab=modules` | 库区/主题模块 |
+| └ 文件目录库、文件索引库管理 | `assetTab=files` | 对接非结构化文档/索引概览 |
+| 分区设计管理 | `partition` | 分区策略（目标表须已纳管） |
+| 数据库存储管理 | `storage` | 页内 5 Tab：备份/归档/销毁/执行策略管理/执行策略监控 |
+| 资产目录管理 | `catalog` | 须关联纳管表 |
+| 数据库检索查询 | `search` | 页内 2 Tab：数据搜索与元数据检索 / 数据查询与下载 |
+| 数据库统计分析 | `stats` | 统计看板 |
+| 资源监控管理 | `monitor` | 容量监控 |
+
+纳管硬口径：须选已登记元数据；默认不纳管过程层 DWD。归档执行为台账（`LEDGER`）；销毁禁止自动物理删除。
+
+## 大数据挖掘分析平台（对照）
+
+平台含：**通用支撑平台**（统一用户管理七模块 + 智能 BI 六子能力）与 **业务支撑平台**（人口/法人/宏观/重点领域）。
+
+| V3.0 | Hub | 落地 |
+|------|-----|------|
+| 用户中心～系统对接 | `/analytics/support` + `/system/uum` | 侧栏 V3 全名；账号体系复用全局 UUM，不平行造库 |
+| 显示引擎～自助分析 | `/analytics/bi` | 侧栏无 M 码；DataEase 嵌入 `LIVE`/`LEDGER` 诚实降级 |
+| 人口/法人五区设计 | domain Hub「数据区设计」 | **挂载设计**：从元数据/纳管表/目录选型挂入五区（挂载≠复制）；侧栏仅五区 |
+| 共享服务区 | `zone.share` 页内 Tab | 资产挂载 + 目录/接口深链 + **指标库** + **分析模型列表**（模型不进侧栏） |
+| 宏观/重点 | domain Hub | 无五区时直接「指标与分析模型」设计器 |
+
+DataEase 可选：未启动时签发门户预览令牌，不返回假嵌入 URL。
+
+## 改造自检
+
+- [ ] 侧栏/PageCard 标题是否与 V3.0 `moduleName` 一致（禁止随意简称如「质量报告」替代「数据质量分析报告」）
+- [ ] 子能力是否有「对应已实现能力」说明 + 可达入口（禁止空 Tab）
+- [ ] 是否复用既定引擎，未新增内存假实现
+- [ ] 实用化是否满足 D20 底线 + 友好可用（见 `module-usability-d20.mdc`）
+- [ ] 变更写入 D17，并同步 OpenViking（用户要求记忆时）
+- [ ] Hub 是否去掉统一 PageHeader/状态条顶栏（与融合/资源中心一致）

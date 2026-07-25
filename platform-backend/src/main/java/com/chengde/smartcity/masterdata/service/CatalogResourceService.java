@@ -6,10 +6,13 @@ import com.chengde.smartcity.masterdata.entity.GovCatalogApproval;
 import com.chengde.smartcity.masterdata.entity.GovCatalogCategory;
 import com.chengde.smartcity.masterdata.entity.GovCatalogResource;
 import com.chengde.smartcity.masterdata.entity.GovCatalogResourceVersion;
+import com.chengde.smartcity.masterdata.entity.GovMetadataRegistry;
 import com.chengde.smartcity.masterdata.mapper.GovCatalogApprovalMapper;
 import com.chengde.smartcity.masterdata.mapper.GovCatalogCategoryMapper;
 import com.chengde.smartcity.masterdata.mapper.GovCatalogResourceMapper;
 import com.chengde.smartcity.masterdata.mapper.GovCatalogResourceVersionMapper;
+import com.chengde.smartcity.masterdata.mapper.GovMetadataRegistryMapper;
+import com.chengde.smartcity.masterdata.support.DataLayerSupport;
 import com.chengde.smartcity.security.UserPrincipal;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -19,6 +22,7 @@ import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import org.slf4j.Logger;
@@ -34,29 +38,43 @@ public class CatalogResourceService {
     private static final ObjectMapper OM = new ObjectMapper();
     private static final String[] EXPORT_HEADERS = {
             "resourceCode", "resourceName", "resourceType", "categoryId", "providerOrg",
-            "resourceFormat", "shareType", "updateCycle", "description", "secretFlag"
+            "resourceFormat", "shareType", "updateCycle", "description", "secretFlag",
+            "metadataEntryCode", "sourcePathType", "physicalTableName"
     };
+    /** 发布前质量分建议门槛（未评分不拦截，评分过低拦截） */
+    private static final BigDecimal MIN_QUALITY_SCORE = new BigDecimal("60");
 
     private final GovCatalogResourceMapper resourceMapper;
     private final GovCatalogCategoryMapper categoryMapper;
     private final GovCatalogApprovalMapper approvalMapper;
     private final GovCatalogResourceVersionMapper versionMapper;
+    private final GovMetadataRegistryMapper metadataRegistryMapper;
 
     public CatalogResourceService(GovCatalogResourceMapper resourceMapper,
                                   GovCatalogCategoryMapper categoryMapper,
                                   GovCatalogApprovalMapper approvalMapper,
-                                  GovCatalogResourceVersionMapper versionMapper) {
+                                  GovCatalogResourceVersionMapper versionMapper,
+                                  GovMetadataRegistryMapper metadataRegistryMapper) {
         this.resourceMapper = resourceMapper;
         this.categoryMapper = categoryMapper;
         this.approvalMapper = approvalMapper;
         this.versionMapper = versionMapper;
+        this.metadataRegistryMapper = metadataRegistryMapper;
     }
 
     public List<GovCatalogResource> list(Long categoryId, String resourceType, String publishStatus,
                                          String approvalStatus, String keyword) {
+        return list(categoryId, resourceType, publishStatus, approvalStatus, keyword, null, null, null);
+    }
+
+    public List<GovCatalogResource> list(Long categoryId, String resourceType, String publishStatus,
+                                         String approvalStatus, String keyword,
+                                         String sourcePathType, String providerOrg, Boolean unboundOnly) {
         LambdaQueryWrapper<GovCatalogResource> q = new LambdaQueryWrapper<GovCatalogResource>()
                 .orderByDesc(GovCatalogResource::getId);
-        if (categoryId != null) {
+        if (Boolean.TRUE.equals(unboundOnly)) {
+            q.and(w -> w.isNull(GovCatalogResource::getCategoryId).or().eq(GovCatalogResource::getCategoryId, 0L));
+        } else if (categoryId != null) {
             q.eq(GovCatalogResource::getCategoryId, categoryId);
         }
         if (resourceType != null && !resourceType.isBlank()) {
@@ -68,12 +86,57 @@ public class CatalogResourceService {
         if (approvalStatus != null && !approvalStatus.isBlank()) {
             q.eq(GovCatalogResource::getApprovalStatus, approvalStatus);
         }
+        if (sourcePathType != null && !sourcePathType.isBlank()) {
+            q.eq(GovCatalogResource::getSourcePathType, sourcePathType.trim().toUpperCase(Locale.ROOT));
+        }
+        if (providerOrg != null && !providerOrg.isBlank()) {
+            q.like(GovCatalogResource::getProviderOrg, providerOrg.trim());
+        }
         if (keyword != null && !keyword.isBlank()) {
             q.and(w -> w.like(GovCatalogResource::getResourceCode, keyword)
                     .or().like(GovCatalogResource::getResourceName, keyword)
-                    .or().like(GovCatalogResource::getProviderOrg, keyword));
+                    .or().like(GovCatalogResource::getProviderOrg, keyword)
+                    .or().like(GovCatalogResource::getMetadataEntryCode, keyword));
         }
         return resourceMapper.selectList(q);
+    }
+
+    /** 可编目登记对象：TABLE/资产类，排除过程层 DWD */
+    public List<Map<String, Object>> listEligibleMetadata(String keyword) {
+        LambdaQueryWrapper<GovMetadataRegistry> q = new LambdaQueryWrapper<GovMetadataRegistry>()
+                .ne(GovMetadataRegistry::getStatus, "OFFLINE")
+                .ne(GovMetadataRegistry::getEntryType, "COLUMN")
+                .orderByDesc(GovMetadataRegistry::getId)
+                .last("limit 200");
+        if (keyword != null && !keyword.isBlank()) {
+            String kw = keyword.trim();
+            q.and(w -> w.like(GovMetadataRegistry::getEntryCode, kw)
+                    .or().like(GovMetadataRegistry::getEntryName, kw)
+                    .or().like(GovMetadataRegistry::getPhysicalTableName, kw));
+        }
+        List<Map<String, Object>> out = new ArrayList<>();
+        for (GovMetadataRegistry e : metadataRegistryMapper.selectList(q)) {
+            String layer = resolveLayer(e);
+            if (DataLayerSupport.isProcessLayer(layer)) {
+                continue;
+            }
+            if (!DataLayerSupport.isCatalogableLayer(layer) && layer != null && !layer.isBlank()) {
+                continue;
+            }
+            Map<String, Object> row = new LinkedHashMap<>();
+            row.put("entryCode", e.getEntryCode());
+            row.put("entryName", e.getEntryName());
+            row.put("entryType", e.getEntryType());
+            row.put("dataLayer", layer);
+            row.put("databaseName", e.getDatabaseName());
+            row.put("physicalTableName", e.getPhysicalTableName());
+            row.put("dataSourceId", e.getDataSourceId());
+            row.put("ownerName", e.getOwnerName());
+            row.put("sourcePathType", DataLayerSupport.sourcePathTypeForLayer(layer));
+            row.put("catalogable", true);
+            out.add(row);
+        }
+        return out;
     }
 
     public GovCatalogResource get(Long id) {
@@ -84,6 +147,8 @@ public class CatalogResourceService {
     public Long create(UserPrincipal operator, Map<String, Object> body) {
         GovCatalogResource r = new GovCatalogResource();
         applyBody(r, body, true);
+        enrichFromMetadata(r, true);
+        assertCatalogable(r, true);
         r.setPublishStatus("DRAFT");
         r.setApprovalStatus("DRAFT");
         r.setVersionNo(1);
@@ -109,6 +174,8 @@ public class CatalogResourceService {
             throw new BusinessException(400, "审批中不可编辑");
         }
         applyBody(r, body, false);
+        enrichFromMetadata(r, false);
+        assertCatalogable(r, false);
         if (operator != null) {
             r.setUpdatedBy(operator.getUsername());
         }
@@ -145,12 +212,25 @@ public class CatalogResourceService {
         if ("PENDING".equalsIgnoreCase(r.getApprovalStatus())) {
             throw new BusinessException(400, "已有待审批申请");
         }
-        if ("PUBLISHED".equalsIgnoreCase(r.getPublishStatus())) {
-            throw new BusinessException(400, "已发布资源请走下线流程");
-        }
-        String actionType = str(body.get("actionType"), "PUBLISH").toUpperCase();
+        String actionType = str(body.get("actionType"), "PUBLISH").toUpperCase(Locale.ROOT);
         if (!ACTION_TYPES.contains(actionType)) {
             throw new BusinessException(400, "actionType 须为 PUBLISH/OFFLINE/UPDATE/DELETE");
+        }
+        if ("OFFLINE".equals(actionType)) {
+            if (!"PUBLISHED".equalsIgnoreCase(r.getPublishStatus())) {
+                throw new BusinessException(400, "仅已发布资源可提交下线审批");
+            }
+        } else {
+            if ("PUBLISHED".equalsIgnoreCase(r.getPublishStatus())) {
+                throw new BusinessException(400, "已发布资源请走下线审批");
+            }
+            if ("PUBLISH".equals(actionType)) {
+                assertCatalogable(r, true);
+                assertQualityGate(r);
+                if (r.getCategoryId() == null || r.getCategoryId() <= 0) {
+                    throw new BusinessException(400, "发布前请先在「目录注册发布」将资源关联到分类");
+                }
+            }
         }
         GovCatalogApproval a = new GovCatalogApproval();
         a.setResourceId(id);
@@ -243,62 +323,100 @@ public class CatalogResourceService {
 
     @Transactional
     public GovCatalogResource publish(UserPrincipal operator, Long id) {
-        GovCatalogResource r = require(id);
-        if ("PUBLISHED".equalsIgnoreCase(r.getPublishStatus())) {
-            throw new BusinessException(400, "当前已是发布状态");
-        }
-        if (!"APPROVED".equalsIgnoreCase(r.getApprovalStatus())
-                && !"DRAFT".equalsIgnoreCase(r.getApprovalStatus())) {
-            throw new BusinessException(400, "须审批通过或草稿态后方可发布（建议先提交审批）");
-        }
-        // 直接发布：创建审批记录并自动通过
-        GovCatalogApproval a = new GovCatalogApproval();
-        a.setResourceId(id);
-        a.setActionType("PUBLISH");
-        a.setStatus("APPROVED");
-        a.setSubmitComment("直接发布");
-        a.setReviewComment("直接发布通过");
-        if (operator != null) {
-            a.setSubmittedBy(operator.getUsername());
-            a.setReviewedBy(operator.getUsername());
-        }
-        a.setSubmittedAt(LocalDateTime.now());
-        a.setReviewedAt(LocalDateTime.now());
-        approvalMapper.insert(a);
+        throw new BusinessException(400, "禁止直接发布：请提交「发布」审批，由「资源目录审批」通过后自动上架");
+    }
 
-        r.setPublishStatus("PUBLISHED");
-        r.setApprovalStatus("APPROVED");
-        snapshotOnPublish(r, operator, "直接发布 v");
-        touch(r, operator);
-        resourceMapper.updateById(r);
-        return r;
+    /** 兼容旧入口：转为提交下线审批，不旁路 */
+    @Transactional
+    public GovCatalogResource offline(UserPrincipal operator, Long id) {
+        submit(operator, id, Map.of("actionType", "OFFLINE", "comment", "提交下线审批"));
+        return require(id);
     }
 
     @Transactional
-    public GovCatalogResource offline(UserPrincipal operator, Long id) {
-        GovCatalogResource r = require(id);
-        if (!"PUBLISHED".equalsIgnoreCase(r.getPublishStatus())) {
-            throw new BusinessException(400, "仅已发布资源可下线");
+    public Map<String, Object> batchApprove(UserPrincipal operator, List<Long> approvalIds, Map<String, Object> body) {
+        if (approvalIds == null || approvalIds.isEmpty()) {
+            throw new BusinessException(400, "ids 不能为空");
         }
-        GovCatalogApproval a = new GovCatalogApproval();
-        a.setResourceId(id);
-        a.setActionType("OFFLINE");
-        a.setStatus("APPROVED");
-        a.setSubmitComment("直接下线");
-        a.setReviewComment("直接下线通过");
-        if (operator != null) {
-            a.setSubmittedBy(operator.getUsername());
-            a.setReviewedBy(operator.getUsername());
+        int ok = 0;
+        List<String> errors = new ArrayList<>();
+        for (Long aid : approvalIds) {
+            try {
+                approve(operator, aid, body == null ? Map.of() : body);
+                ok++;
+            } catch (Exception e) {
+                errors.add(aid + ": " + e.getMessage());
+            }
         }
-        a.setSubmittedAt(LocalDateTime.now());
-        a.setReviewedAt(LocalDateTime.now());
-        approvalMapper.insert(a);
+        return Map.of("approved", ok, "errors", errors);
+    }
 
-        r.setPublishStatus("OFFLINE");
-        r.setApprovalStatus("APPROVED");
-        touch(r, operator);
-        resourceMapper.updateById(r);
-        return r;
+    @Transactional
+    public Map<String, Object> batchReject(UserPrincipal operator, List<Long> approvalIds, Map<String, Object> body) {
+        if (approvalIds == null || approvalIds.isEmpty()) {
+            throw new BusinessException(400, "ids 不能为空");
+        }
+        if (body == null || str(body.get("comment"), null) == null) {
+            throw new BusinessException(400, "批量驳回须填写审批意见");
+        }
+        int ok = 0;
+        List<String> errors = new ArrayList<>();
+        for (Long aid : approvalIds) {
+            try {
+                reject(operator, aid, body);
+                ok++;
+            } catch (Exception e) {
+                errors.add(aid + ": " + e.getMessage());
+            }
+        }
+        return Map.of("rejected", ok, "errors", errors);
+    }
+
+    @Transactional
+    public Map<String, Object> bindCategory(UserPrincipal operator, Long categoryId, List<Long> resourceIds) {
+        if (categoryId == null) {
+            throw new BusinessException(400, "categoryId 不能为空");
+        }
+        GovCatalogCategory cat = categoryMapper.selectById(categoryId);
+        if (cat == null) {
+            throw new BusinessException(400, "分类不存在");
+        }
+        if (resourceIds == null || resourceIds.isEmpty()) {
+            throw new BusinessException(400, "resourceIds 不能为空");
+        }
+        int n = 0;
+        for (Long rid : resourceIds) {
+            GovCatalogResource r = require(rid);
+            if ("PUBLISHED".equalsIgnoreCase(r.getPublishStatus())) {
+                throw new BusinessException(400, "已发布资源「" + r.getResourceName() + "」不可改挂分类，请先下线");
+            }
+            r.setCategoryId(categoryId);
+            r.setCategoryPath(cat.getCategoryPath());
+            touch(r, operator);
+            resourceMapper.updateById(r);
+            n++;
+        }
+        return Map.of("bound", n, "categoryId", categoryId);
+    }
+
+    @Transactional
+    public Map<String, Object> unbindCategory(UserPrincipal operator, List<Long> resourceIds) {
+        if (resourceIds == null || resourceIds.isEmpty()) {
+            throw new BusinessException(400, "resourceIds 不能为空");
+        }
+        int n = 0;
+        for (Long rid : resourceIds) {
+            GovCatalogResource r = require(rid);
+            if ("PUBLISHED".equalsIgnoreCase(r.getPublishStatus())) {
+                throw new BusinessException(400, "已发布资源「" + r.getResourceName() + "」不可解绑，请先下线");
+            }
+            r.setCategoryId(null);
+            r.setCategoryPath(null);
+            touch(r, operator);
+            resourceMapper.updateById(r);
+            n++;
+        }
+        return Map.of("unbound", n);
     }
 
     public List<Map<String, Object>> listApprovals(Long resourceId, String status) {
@@ -671,6 +789,89 @@ public class CatalogResourceService {
         if (body.containsKey("secretFlag")) {
             r.setSecretFlag(intVal(body.get("secretFlag"), 0));
         }
+    }
+
+    /** 按元数据条目回填物理表、来源路径、提供方等 */
+    private void enrichFromMetadata(GovCatalogResource r, boolean creating) {
+        String code = r.getMetadataEntryCode();
+        if (code == null || code.isBlank()) {
+            return;
+        }
+        GovMetadataRegistry entry = findMetadata(code);
+        if (entry == null) {
+            throw new BusinessException(400, "元数据条目不存在或已下线：" + code);
+        }
+        String layer = resolveLayer(entry);
+        if (r.getPhysicalTableName() == null || r.getPhysicalTableName().isBlank()) {
+            r.setPhysicalTableName(entry.getPhysicalTableName());
+        }
+        if (r.getDataSourceId() == null) {
+            r.setDataSourceId(entry.getDataSourceId());
+        }
+        if (creating || r.getSourcePathType() == null || r.getSourcePathType().isBlank()) {
+            r.setSourcePathType(DataLayerSupport.sourcePathTypeForLayer(layer));
+        }
+        if ((r.getProviderOrg() == null || r.getProviderOrg().isBlank()) && entry.getOwnerName() != null) {
+            r.setProviderOrg(entry.getOwnerName());
+        }
+        if ((r.getResourceName() == null || r.getResourceName().isBlank()) && entry.getEntryName() != null) {
+            r.setResourceName(entry.getEntryName());
+        }
+    }
+
+    private void assertCatalogable(GovCatalogResource r, boolean requireEntry) {
+        String code = r.getMetadataEntryCode();
+        if (requireEntry && (code == null || code.isBlank())) {
+            throw new BusinessException(400, "须选择已登记的元数据条目（entry_code），禁止手填空挂载");
+        }
+        if (code == null || code.isBlank()) {
+            return;
+        }
+        GovMetadataRegistry entry = findMetadata(code);
+        if (entry == null) {
+            throw new BusinessException(400, "元数据条目不存在或已下线：" + code);
+        }
+        String layer = resolveLayer(entry);
+        if (DataLayerSupport.isProcessLayer(layer)) {
+            throw new BusinessException(400, "过程层（DWD）不可编目进资源目录，仅源层或主题/专题资源可挂载");
+        }
+        if (!DataLayerSupport.isCatalogableLayer(layer) && layer != null && !layer.isBlank()
+                && !"CONTROL".equalsIgnoreCase(layer)) {
+            throw new BusinessException(400, "当前分层「" + layer + "」不可进资源目录");
+        }
+        String path = r.getSourcePathType();
+        if (path != null && !path.isBlank()
+                && !"DIRECT".equalsIgnoreCase(path) && !"PROCESSED".equalsIgnoreCase(path)) {
+            throw new BusinessException(400, "sourcePathType 须为 DIRECT 或 PROCESSED");
+        }
+        if ("DWS".equalsIgnoreCase(layer) || "ADS".equalsIgnoreCase(layer)) {
+            r.setSourcePathType("PROCESSED");
+        } else if ("ODS".equalsIgnoreCase(layer) || "SOURCE".equalsIgnoreCase(layer)) {
+            r.setSourcePathType("DIRECT");
+        }
+    }
+
+    private void assertQualityGate(GovCatalogResource r) {
+        if (r.getQualityScore() != null && r.getQualityScore().compareTo(MIN_QUALITY_SCORE) < 0) {
+            throw new BusinessException(400, "质量分低于 " + MIN_QUALITY_SCORE + "，不可提交发布审批");
+        }
+    }
+
+    private GovMetadataRegistry findMetadata(String entryCode) {
+        return metadataRegistryMapper.selectOne(new LambdaQueryWrapper<GovMetadataRegistry>()
+                .eq(GovMetadataRegistry::getEntryCode, entryCode.trim())
+                .ne(GovMetadataRegistry::getStatus, "OFFLINE")
+                .last("limit 1"));
+    }
+
+    private static String resolveLayer(GovMetadataRegistry e) {
+        if (e.getDataLayer() != null && !e.getDataLayer().isBlank()) {
+            return e.getDataLayer().trim().toUpperCase(Locale.ROOT);
+        }
+        if (e.getDatabaseName() != null && !e.getDatabaseName().isBlank()) {
+            return DataLayerSupport.layerForDatabase(e.getDatabaseName());
+        }
+        return DataLayerSupport.layerForTableName(e.getPhysicalTableName());
     }
 
     private void touch(GovCatalogResource r, UserPrincipal operator) {

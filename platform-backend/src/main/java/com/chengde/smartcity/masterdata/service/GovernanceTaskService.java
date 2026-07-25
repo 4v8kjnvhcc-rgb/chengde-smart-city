@@ -49,8 +49,13 @@ public class GovernanceTaskService {
         this.layerTableService = layerTableService;
     }
 
-    public List<Map<String, Object>> list() {
+    public static final String DOMAIN_GOVERNANCE = "GOVERNANCE";
+    public static final String DOMAIN_FUSION = "FUSION";
+
+    public List<Map<String, Object>> list(String taskDomain) {
+        String domain = normalizeDomain(taskDomain);
         List<GovGovernanceTask> tasks = taskMapper.selectList(new LambdaQueryWrapper<GovGovernanceTask>()
+                .eq(GovGovernanceTask::getTaskDomain, domain)
                 .orderByDesc(GovGovernanceTask::getId));
         Map<Long, GovGovernanceTaskRun> latestRunByTask = latestRunsByTask();
         List<Map<String, Object>> out = new ArrayList<>();
@@ -66,6 +71,11 @@ public class GovernanceTaskService {
         return out;
     }
 
+    /** @deprecated 请使用 list(taskDomain)；保留无参时默认仅治理域，避免误露出融合任务 */
+    public List<Map<String, Object>> list() {
+        return list(DOMAIN_GOVERNANCE);
+    }
+
     public Map<String, Object> get(Long id) {
         return toTaskMap(requireTask(id), true);
     }
@@ -76,15 +86,46 @@ public class GovernanceTaskService {
         if (name == null || name.isBlank()) {
             throw new BusinessException(400, "taskName 不能为空");
         }
+        String domain = normalizeDomain(str(body.get("taskDomain"), DOMAIN_GOVERNANCE));
         String sourceConn = str(body.get("sourceConnection"), null);
         String sourceTable = str(body.get("sourceTable"), null);
+        String sourceTable2 = str(body.get("sourceTable2"), null);
+        String joinKey = str(body.get("joinKey"), "id");
         String targetConn = str(body.get("targetConnection"), null);
         String targetTable = str(body.get("targetTable"), null);
         List<String> rules = parseRules(body.get("rules"));
 
+        if (DOMAIN_FUSION.equals(domain)) {
+            if (sourceConn == null || sourceConn.isBlank()) {
+                sourceConn = "smart_city_dwd";
+            }
+            if (!"smart_city_dwd".equals(sourceConn)) {
+                throw new BusinessException(400, "融合任务源库须为平台 DWD（过程层→主题/专题）");
+            }
+            if (targetConn == null || targetConn.isBlank()) {
+                targetConn = "smart_city_dws";
+            }
+            if (!isFusionTarget(targetConn)) {
+                throw new BusinessException(400, "融合任务目标库须为 DWS（主题/基础库）或 ADS（专题库）");
+            }
+            if (sourceTable == null || sourceTable.isBlank()) {
+                throw new BusinessException(400, "融合任务请至少选择一张 DWD 源表");
+            }
+        } else {
+            if (targetConn == null || targetConn.isBlank()) {
+                targetConn = "smart_city_dwd";
+            }
+            if (isFusionTarget(targetConn)) {
+                throw new BusinessException(400, "治理任务目标为过程层 DWD；主题/专题请在数据融合中新建融合任务");
+            }
+        }
+
         String graphJson = str(body.get("graphJson"), null);
         if (graphJson == null || graphJson.isBlank() || emptyGraph().equals(graphJson.trim())) {
-            if (sourceConn != null || targetConn != null || !rules.isEmpty()) {
+            if (DOMAIN_FUSION.equals(domain) && sourceTable2 != null && !sourceTable2.isBlank()) {
+                graphJson = buildFusionInitGraph(sourceConn, sourceTable, sourceTable2, joinKey,
+                        targetConn, targetTable, rules);
+            } else if (sourceConn != null || targetConn != null || !rules.isEmpty()) {
                 graphJson = buildInitGraph(sourceConn, sourceTable, targetConn, targetTable, rules);
             } else {
                 graphJson = emptyGraph();
@@ -99,13 +140,14 @@ public class GovernanceTaskService {
         }
 
         GovGovernanceTask task = new GovGovernanceTask();
-        task.setTaskCode(str(body.get("taskCode"), genCode()));
+        task.setTaskCode(str(body.get("taskCode"),
+                DOMAIN_FUSION.equals(domain) ? genFusionCode() : genCode()));
         task.setTaskName(name.trim());
         task.setDescription(str(body.get("description"), null));
         task.setGraphJson(graphJson);
         task.setStatus(status);
-        // 治理任务仅 Kettle 执行，忽略请求中的其它引擎值
         task.setEngineType("KETTLE");
+        task.setTaskDomain(domain);
         if (operator != null) {
             task.setCreatedBy(operator.getUsername());
         }
@@ -119,7 +161,8 @@ public class GovernanceTaskService {
             taskMapper.updateById(task);
         }
 
-        log.info("governance task created id={} code={} status={}", task.getId(), task.getTaskCode(), task.getStatus());
+        log.info("task created id={} code={} domain={} status={}",
+                task.getId(), task.getTaskCode(), domain, task.getStatus());
         return task.getId();
     }
 
@@ -182,7 +225,9 @@ public class GovernanceTaskService {
         if (g == null) {
             throw new BusinessException(400, "graphJson 不能为空");
         }
-        task.setGraphJson(g instanceof String ? (String) g : String.valueOf(g));
+        String graphJson = g instanceof String ? (String) g : String.valueOf(g);
+        assertGraphLayerForDomain(task.getTaskDomain(), graphJson);
+        task.setGraphJson(graphJson);
         if ("DRAFT".equals(task.getStatus()) || "READY".equals(task.getStatus())) {
             task.setStatus("CONFIGURED");
         }
@@ -397,14 +442,29 @@ public class GovernanceTaskService {
         }
     }
 
-    public List<GovGovernanceTaskRun> listRuns(Long taskId) {
-        LambdaQueryWrapper<GovGovernanceTaskRun> q = new LambdaQueryWrapper<GovGovernanceTaskRun>()
-                .orderByDesc(GovGovernanceTaskRun::getId)
-                .last("LIMIT 50");
+    public List<GovGovernanceTaskRun> listRuns(Long taskId, String taskDomain) {
         if (taskId != null) {
-            q.eq(GovGovernanceTaskRun::getTaskId, taskId);
+            return runMapper.selectList(new LambdaQueryWrapper<GovGovernanceTaskRun>()
+                    .eq(GovGovernanceTaskRun::getTaskId, taskId)
+                    .orderByDesc(GovGovernanceTaskRun::getId)
+                    .last("LIMIT 50"));
         }
-        return runMapper.selectList(q);
+        String domain = normalizeDomain(taskDomain);
+        List<GovGovernanceTask> domainTasks = taskMapper.selectList(new LambdaQueryWrapper<GovGovernanceTask>()
+                .eq(GovGovernanceTask::getTaskDomain, domain)
+                .select(GovGovernanceTask::getId));
+        if (domainTasks.isEmpty()) {
+            return List.of();
+        }
+        List<Long> ids = domainTasks.stream().map(GovGovernanceTask::getId).toList();
+        return runMapper.selectList(new LambdaQueryWrapper<GovGovernanceTaskRun>()
+                .in(GovGovernanceTaskRun::getTaskId, ids)
+                .orderByDesc(GovGovernanceTaskRun::getId)
+                .last("LIMIT 50"));
+    }
+
+    public List<GovGovernanceTaskRun> listRuns(Long taskId) {
+        return listRuns(taskId, DOMAIN_GOVERNANCE);
     }
 
     public List<GovGovernanceNodeLog> listNodeLogs(Long runId) {
@@ -457,6 +517,7 @@ public class GovernanceTaskService {
         m.put("intervalValue", t.getIntervalValue());
         m.put("nextRunAt", t.getNextRunAt());
         m.put("engineType", t.getEngineType() != null ? t.getEngineType() : "KETTLE");
+        m.put("taskDomain", normalizeDomain(t.getTaskDomain()));
         m.put("createdBy", t.getCreatedBy());
         m.put("createdAt", t.getCreatedAt());
         m.put("updatedAt", t.getUpdatedAt());
@@ -469,6 +530,122 @@ public class GovernanceTaskService {
     private static String genCode() {
         return "GT_" + LocalDateTime.now().format(CODE_FMT) + "_"
                 + ThreadLocalRandom.current().nextInt(1000, 9999);
+    }
+
+    private static String genFusionCode() {
+        return "FT_" + LocalDateTime.now().format(CODE_FMT) + "_"
+                + ThreadLocalRandom.current().nextInt(1000, 9999);
+    }
+
+    private static String normalizeDomain(String raw) {
+        if (raw == null || raw.isBlank()) {
+            return DOMAIN_GOVERNANCE;
+        }
+        String u = raw.trim().toUpperCase();
+        if (DOMAIN_FUSION.equals(u)) {
+            return DOMAIN_FUSION;
+        }
+        return DOMAIN_GOVERNANCE;
+    }
+
+    private static boolean isFusionTarget(String conn) {
+        return "smart_city_dws".equals(conn) || "smart_city_ads".equals(conn);
+    }
+
+    /** 融合任务输出节点不得落 DWD；治理任务输出不得落 DWS/ADS */
+    private static void assertGraphLayerForDomain(String domain, String graphJson) {
+        if (graphJson == null || graphJson.isBlank()) {
+            return;
+        }
+        try {
+            com.fasterxml.jackson.databind.JsonNode root =
+                    new com.fasterxml.jackson.databind.ObjectMapper().readTree(graphJson);
+            com.fasterxml.jackson.databind.JsonNode nodes = root.path("nodes");
+            if (!nodes.isArray()) {
+                return;
+            }
+            boolean fusion = DOMAIN_FUSION.equals(normalizeDomain(domain));
+            for (com.fasterxml.jackson.databind.JsonNode n : nodes) {
+                String type = n.path("data").path("nodeType").asText("");
+                if (!"OUTPUT".equalsIgnoreCase(type)) {
+                    continue;
+                }
+                com.fasterxml.jackson.databind.JsonNode cfg = n.path("data").path("config");
+                String conn = cfg.path("outputConnection").asText(cfg.path("connection").asText(""));
+                if (fusion) {
+                    if (!isFusionTarget(conn)) {
+                        throw new BusinessException(400, "融合任务输出须落 DWS/ADS，当前为: "
+                                + (conn.isBlank() ? "未设置" : conn));
+                    }
+                } else if (isFusionTarget(conn)) {
+                    throw new BusinessException(400, "治理任务输出应落 DWD；主题/专题请使用融合任务");
+                }
+            }
+        } catch (BusinessException e) {
+            throw e;
+        } catch (Exception e) {
+            log.warn("assertGraphLayerForDomain parse skip: {}", e.getMessage());
+        }
+    }
+
+    private static String buildFusionInitGraph(String sourceConn, String table1, String table2,
+                                               String joinKey, String targetConn, String targetTable,
+                                               List<String> rules) {
+        StringBuilder nodes = new StringBuilder("[");
+        StringBuilder edges = new StringBuilder("[");
+        int seq = 1;
+        String in1 = "n_INPUT_" + seq++;
+        String in2 = "n_INPUT_" + seq++;
+        nodes.append(nodeJson(in1, "INPUT", "输入1", "#409eff", 80, 60,
+                inputConfigJson(sourceConn, table1)));
+        nodes.append(',');
+        nodes.append(nodeJson(in2, "INPUT", "输入2", "#409eff", 80, 200,
+                inputConfigJson(sourceConn, table2)));
+        String joinId = "n_JOIN_" + seq++;
+        nodes.append(',');
+        String joinCfg = "{\"joinType\":\"INNER\",\"leftKeys\":[\"" + jsonEsc(joinKey)
+                + "\"],\"rightKeys\":[\"" + jsonEsc(joinKey) + "\"]}";
+        nodes.append(nodeJson(joinId, "JOIN", "关联", "#337ecc", 280, 120, joinCfg));
+        edges.append("{\"id\":\"e_").append(in1).append("_").append(joinId)
+                .append("\",\"source\":\"").append(in1).append("\",\"target\":\"").append(joinId)
+                .append("\",\"targetHandle\":\"in_left\",\"data\":{\"edgeRole\":\"LEFT\"}}");
+        edges.append(",{\"id\":\"e_").append(in2).append("_").append(joinId)
+                .append("\",\"source\":\"").append(in2).append("\",\"target\":\"").append(joinId)
+                .append("\",\"targetHandle\":\"in_right\",\"data\":{\"edgeRole\":\"RIGHT\"}}");
+        String prevId = joinId;
+        int x = 460;
+        for (String rule : rules) {
+            String label = switch (rule) {
+                case "FILTER" -> "过滤";
+                case "FIELD_PROCESS" -> "字段处理";
+                case "DEDUPLICATE" -> "去重";
+                case "MASK" -> "脱敏";
+                default -> rule;
+            };
+            String color = switch (rule) {
+                case "FILTER" -> "#67c23a";
+                case "FIELD_PROCESS" -> "#e6a23c";
+                case "DEDUPLICATE" -> "#909399";
+                case "MASK" -> "#f56c6c";
+                default -> "#909399";
+            };
+            String id = "n_" + rule + "_" + seq++;
+            nodes.append(',');
+            nodes.append(nodeJson(id, rule, label, color, x, 120, ruleDefaultConfig(rule)));
+            edges.append(",{\"id\":\"e_").append(prevId).append("_").append(id)
+                    .append("\",\"source\":\"").append(prevId).append("\",\"target\":\"").append(id).append("\"}");
+            prevId = id;
+            x += 180;
+        }
+        String outId = "n_OUTPUT_" + seq;
+        nodes.append(',');
+        nodes.append(nodeJson(outId, "OUTPUT", "输出", "#626aef", x, 120,
+                outputConfigJson(targetConn != null ? targetConn : "smart_city_dws", targetTable)));
+        edges.append(",{\"id\":\"e_").append(prevId).append("_").append(outId)
+                .append("\",\"source\":\"").append(prevId).append("\",\"target\":\"").append(outId).append("\"}");
+        nodes.append(']');
+        edges.append(']');
+        return "{\"nodes\":" + nodes + ",\"edges\":" + edges + "}";
     }
 
     private static LocalDateTime computeNextRun(String cron, LocalDateTime base) {
@@ -644,7 +821,7 @@ public class GovernanceTaskService {
 
     private static String ruleDefaultConfig(String rule) {
         return switch (rule) {
-            case "FILTER" -> "{\"mode\":\"SIMPLE\",\"field\":\"\",\"op\":\"EQ\",\"value\":\"\"}";
+            case "FILTER" -> "{\"mode\":\"SIMPLE\",\"field\":\"\",\"op\":\"EQ\",\"value\":\"\",\"passThrough\":true}";
             case "FIELD_PROCESS" -> "{\"mappings\":[{\"from\":\"name\",\"to\":\"name_upper\",\"expr\":\"UPPER\"}]}";
             case "DEDUPLICATE" -> "{\"keys\":[\"id\"],\"keepStrategy\":\"FIRST\"}";
             case "MASK" -> "{\"fields\":[\"phone\",\"idCard\"],\"maskType\":\"BLUR\",\"maskChar\":\"*\"}";

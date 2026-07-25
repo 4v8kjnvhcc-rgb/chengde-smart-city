@@ -139,9 +139,18 @@ public class StorageIntegrationClient {
     }
 
     public Map<String, Object> indexDocument(String docId, String title, String storageKey) {
-        IntegrationConfig.requireIntegration(props, "Elasticsearch");
+        if (!props.isEnabled() || !isElasticsearchHealthy()) {
+            return Map.of(
+                    "indexStatus", "FAILED",
+                    "index", "smartcity_docs",
+                    "source", "elasticsearch-offline",
+                    "note", "Elasticsearch 不可用，禁止标记为已索引");
+        }
         String index = "smartcity_docs";
-        Map<String, Object> doc = Map.of("docId", docId, "title", title, "storageKey", storageKey);
+        Map<String, Object> doc = new HashMap<>();
+        doc.put("docId", docId);
+        doc.put("title", title == null ? "" : title);
+        doc.put("storageKey", storageKey == null ? "" : storageKey);
         HttpHeaders h = new HttpHeaders();
         h.setContentType(MediaType.APPLICATION_JSON);
         String url = props.getStorage().getEsUrl() + "/" + index + "/_doc/" + docId;
@@ -149,7 +158,43 @@ public class StorageIntegrationClient {
             rest.exchange(url, HttpMethod.PUT, new HttpEntity<>(doc, h), String.class);
             return Map.of("indexStatus", "INDEXED", "index", index, "source", "elasticsearch-live");
         } catch (Exception e) {
-            return Map.of("indexStatus", "INDEXED", "index", index, "source", "elasticsearch-fallback", "note", e.getMessage());
+            return Map.of("indexStatus", "FAILED", "index", index, "source", "elasticsearch-error", "note", e.getMessage());
+        }
+    }
+
+    /** 非结构化文档检索：ES 健康时查 smartcity_docs，否则返回空由调用方回退台账 */
+    public List<Map<String, Object>> searchDocuments(String keyword, int size) {
+        if (!props.isEnabled() || !isElasticsearchHealthy() || keyword == null || keyword.isBlank()) {
+            return List.of();
+        }
+        String index = "smartcity_docs";
+        Map<String, Object> query = Map.of(
+                "query", Map.of("multi_match", Map.of(
+                        "query", keyword,
+                        "fields", List.of("title^3", "storageKey", "docId"),
+                        "type", "best_fields")),
+                "size", size <= 0 ? 50 : size);
+        HttpHeaders h = new HttpHeaders();
+        h.setContentType(MediaType.APPLICATION_JSON);
+        String url = props.getStorage().getEsUrl() + "/" + index + "/_search";
+        try {
+            ResponseEntity<String> resp = rest.exchange(url, HttpMethod.POST,
+                    new HttpEntity<>(query, h), String.class);
+            JsonNode root = objectMapper.readTree(resp.getBody());
+            List<Map<String, Object>> hits = new ArrayList<>();
+            for (JsonNode hit : root.path("hits").path("hits")) {
+                JsonNode src = hit.path("_source");
+                Map<String, Object> row = new HashMap<>();
+                row.put("id", src.path("docId").asText());
+                row.put("title", src.path("title").asText());
+                row.put("storageKey", src.path("storageKey").asText());
+                row.put("score", hit.path("_score").asDouble(0));
+                row.put("source", "elasticsearch");
+                hits.add(row);
+            }
+            return hits;
+        } catch (Exception e) {
+            return List.of();
         }
     }
 

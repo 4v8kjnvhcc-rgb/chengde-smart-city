@@ -179,12 +179,32 @@ public class MasterDataDemoService {
         doc.setDocCode(str(body.get("docCode"), "DOC_" + UUID.randomUUID().toString().substring(0, 8)));
         doc.setTitle(required(body.get("title"), "title"));
         doc.setContentType(str(body.get("contentType"), "application/pdf"));
-        if (integrationProperties.isEnabled() && storageClient.isSeaweedHealthy()) {
-            String key = storageClient.storeDocument(doc.getTitle(), doc.getContentType(),
-                    ("demo-" + doc.getTitle()).getBytes(java.nio.charset.StandardCharsets.UTF_8));
-            doc.setStorageKey(key);
+        byte[] payload = ("doc-" + doc.getTitle()).getBytes(java.nio.charset.StandardCharsets.UTF_8);
+        if (integrationProperties.isEnabled()) {
+            try {
+                doc.setStorageKey(storageClient.storeDocument(doc.getTitle(), doc.getContentType(), payload));
+            } catch (Exception e) {
+                // 本地落盘兜底，明确 local://，禁止伪装 s3 成功
+                java.nio.file.Path local = java.nio.file.Path.of("data", "nas-demo", "uns-docs",
+                        doc.getDocCode() + ".bin");
+                try {
+                    java.nio.file.Files.createDirectories(local.getParent());
+                    java.nio.file.Files.write(local, payload);
+                    doc.setStorageKey("local://" + local.toAbsolutePath());
+                } catch (Exception io) {
+                    throw new BusinessException(500, "文档落盘失败: " + io.getMessage());
+                }
+            }
         } else {
-            doc.setStorageKey("s3://demo-bucket/" + doc.getDocCode());
+            java.nio.file.Path local = java.nio.file.Path.of("data", "nas-demo", "uns-docs",
+                    doc.getDocCode() + ".bin");
+            try {
+                java.nio.file.Files.createDirectories(local.getParent());
+                java.nio.file.Files.write(local, payload);
+                doc.setStorageKey("local://" + local.toAbsolutePath());
+            } catch (Exception io) {
+                throw new BusinessException(500, "文档落盘失败: " + io.getMessage());
+            }
         }
         doc.setIndexStatus("PENDING");
         doc.setCreatedBy(operator.getUsername());
@@ -198,17 +218,20 @@ public class MasterDataDemoService {
     public Map<String, Object> indexDocument(UserPrincipal operator, Long id) {
         UnsDocument doc = documentMapper.selectById(id);
         if (doc == null) {
-            throw new BusinessException(404, "document not found");
+            throw new BusinessException(404, "文档不存在");
         }
-        Map<String, Object> indexed;
-        if (integrationProperties.isEnabled() && storageClient.isElasticsearchHealthy()) {
-            indexed = storageClient.indexDocument(String.valueOf(id), doc.getTitle(), doc.getStorageKey());
-            doc.setIndexStatus(String.valueOf(indexed.getOrDefault("indexStatus", "INDEXED")));
-        } else {
-            doc.setIndexStatus("INDEXED");
-            indexed = Map.of("docCode", doc.getDocCode(), "indexStatus", "INDEXED");
+        if (!integrationProperties.isEnabled() || !storageClient.isElasticsearchHealthy()) {
+            doc.setIndexStatus("FAILED");
+            documentMapper.updateById(doc);
+            throw new BusinessException(503, "Elasticsearch 不可用，无法建索（禁止假成功标记已索引）");
         }
+        Map<String, Object> indexed = storageClient.indexDocument(String.valueOf(id), doc.getTitle(), doc.getStorageKey());
+        String status = String.valueOf(indexed.getOrDefault("indexStatus", "FAILED"));
+        doc.setIndexStatus(status);
         documentMapper.updateById(doc);
+        if (!"INDEXED".equalsIgnoreCase(status)) {
+            throw new BusinessException(500, "建索失败: " + indexed.getOrDefault("note", status));
+        }
         auditService.log(operator.getUserId(), operator.getUsername(), operator.getOrgId(),
                 "UNS_DOC_INDEX", "uns_document", String.valueOf(id), doc.getTitle());
         indexed = new java.util.HashMap<>(indexed);

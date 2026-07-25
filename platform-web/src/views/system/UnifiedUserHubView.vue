@@ -1,9 +1,8 @@
 <script setup lang="ts">
-import { computed, nextTick, onMounted, reactive, ref, watch } from 'vue'
+import { nextTick, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import api from '@/api/http'
 import { ElMessage, ElMessageBox, type ElTree } from 'element-plus'
-import PageHeader from '@/components/common/PageHeader.vue'
 import PageCard from '@/components/common/PageCard.vue'
 import HubSideLayout from '@/components/common/HubSideLayout.vue'
 import { statusLabel } from '@/utils/status-label'
@@ -116,16 +115,6 @@ const grantForm = reactive({
 })
 const svcForm = reactive({ serviceName: '', servicePath: '/api/v1/', protocol: 'REST' })
 const applyForm = reactive({ serviceId: undefined as number | undefined, reason: '' })
-
-const tabTitle = computed(() => ({
-  users: '用户中心',
-  apps: '应用中心',
-  auth: '认证中心',
-  services: '服务中心',
-  config: '系统管理',
-  audit: '日志审计',
-  integration: '系统对接',
-}[tab.value] || '统一用户管理'))
 
 function resolveTab() {
   const t = String(route.query.tab || 'users').toLowerCase()
@@ -312,11 +301,7 @@ onMounted(async () => {
 </script>
 
 <template>
-  <div v-loading="loading">
-    <PageHeader
-      :title="`统一用户管理 · ${tabTitle}`"
-      description="3.1.1 用户中心 / 应用中心 / 认证中心 / 服务中心 / 系统管理 / 日志审计 / 系统对接（全局系统管理）"
-    />
+  <div v-loading="loading" class="uum-hub-root">
     <HubSideLayout v-model="tab" :items="navItems">
       <PageCard v-if="tab === 'users'" title="用户中心">
         <p class="hint">
@@ -582,6 +567,10 @@ onMounted(async () => {
 </template>
 
 <style scoped>
+.uum-hub-root {
+  height: calc(100vh - var(--portal-header-height) - 40px);
+  min-height: 0;
+}
 .hint { color: var(--el-text-color-secondary); margin: 0 0 12px; line-height: 1.6; }
 h4, .section-title { margin: 20px 0 12px; font-size: 14px; font-weight: 600; }
 .menu-perm-panel {

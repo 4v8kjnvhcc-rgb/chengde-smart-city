@@ -1,9 +1,19 @@
 <script setup lang="ts">
-import { onMounted, reactive, ref, watch } from 'vue'
+import { onMounted, reactive, ref, watch, computed } from 'vue'
+import { useRouter } from 'vue-router'
 import api from '@/api/http'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import PageCard from '@/components/common/PageCard.vue'
 import { statusLabel, statusTagType } from '@/utils/status-label'
+
+const router = useRouter()
+import {
+  groupSourcesByRole,
+  loadQualitySourceOptions,
+  loadQualityTables,
+  type QualitySourceOption,
+  type QualityTableMeta,
+} from '../quality/useQualityTargetPicker'
 
 interface DomainRow {
   id: number
@@ -60,6 +70,13 @@ const relations = ref<RelationRow[]>([])
 const physicals = ref<PhysicalRow[]>([])
 const selectedEntityId = ref<number | null>(null)
 const loading = ref(false)
+const sources = ref<QualitySourceOption[]>([])
+const sourceGroups = computed(() => groupSourcesByRole(sources.value))
+const tables = ref<QualityTableMeta[]>([])
+const tablesLoading = ref(false)
+const previewVisible = ref(false)
+const previewRows = ref<Record<string, unknown>[]>([])
+const previewTitle = ref('')
 
 const domainDlg = ref(false)
 const entityDlg = ref(false)
@@ -76,7 +93,12 @@ const relationForm = reactive({
   relationCode: '', relationName: '', fromEntityId: undefined as number | undefined,
   toEntityId: undefined as number | undefined, relationType: 'ONE_TO_MANY',
 })
-const physicalForm = reactive({ physicalCode: '', tableName: '', ddlSql: '' })
+const physicalForm = reactive({
+  physicalCode: '',
+  tableName: '',
+  datasourceId: -3 as number | undefined,
+  ddlSql: '',
+})
 
 async function loadDomains() {
   loading.value = true
@@ -250,22 +272,84 @@ async function removeRelation(row: RelationRow) {
   await loadDomainDetail()
 }
 
-function openPhysicalCreate() {
+async function ensureSources() {
+  if (!sources.value.length) {
+    sources.value = await loadQualitySourceOptions()
+  }
+}
+
+async function reloadTables() {
+  if (physicalForm.datasourceId == null) {
+    tables.value = []
+    return
+  }
+  tablesLoading.value = true
+  try {
+    tables.value = await loadQualityTables(physicalForm.datasourceId)
+  } catch {
+    tables.value = []
+    ElMessage.warning('加载表清单失败')
+  } finally {
+    tablesLoading.value = false
+  }
+}
+
+async function openPhysicalCreate() {
   physicalForm.physicalCode = ''
   physicalForm.tableName = ''
+  physicalForm.datasourceId = -3
   physicalForm.ddlSql = ''
   physicalDlg.value = true
+  await ensureSources()
+  await reloadTables()
+}
+
+watch(() => physicalForm.datasourceId, () => {
+  if (physicalDlg.value) {
+    physicalForm.tableName = ''
+    void reloadTables()
+  }
+})
+
+function onPhysicalTablePick(name: string) {
+  if (!physicalForm.physicalCode.trim() && name) {
+    physicalForm.physicalCode = `PHY_${name}`.slice(0, 64)
+  }
 }
 
 async function savePhysical() {
   if (!selectedEntityId.value) return
   if (!physicalForm.physicalCode.trim() || !physicalForm.tableName.trim()) {
-    ElMessage.warning('请填写物理编码与表名')
+    ElMessage.warning('请填写物理编码并选择表')
     return
   }
-  await api.post('/governance/fusion/models/physical', { ...physicalForm, entityId: selectedEntityId.value })
+  if (physicalForm.datasourceId == null) {
+    ElMessage.warning('请选择来源库')
+    return
+  }
+  await api.post('/governance/fusion/models/physical', {
+    physicalCode: physicalForm.physicalCode,
+    tableName: physicalForm.tableName,
+    datasourceId: physicalForm.datasourceId,
+    ddlSql: physicalForm.ddlSql || null,
+    entityId: selectedEntityId.value,
+  })
   physicalDlg.value = false
   ElMessage.success('物理映射已创建')
+  await loadEntityDetail()
+}
+
+async function importFieldsFromPhysicalForm() {
+  if (!selectedEntityId.value) return
+  if (!physicalForm.tableName || physicalForm.datasourceId == null) {
+    ElMessage.warning('请先选择来源库与表')
+    return
+  }
+  const res = await api.post(`/governance/fusion/models/entities/${selectedEntityId.value}/import-fields`, {
+    datasourceId: physicalForm.datasourceId,
+    tableName: physicalForm.tableName,
+  })
+  ElMessage.success(`已导入 ${res.data.imported} 个字段，跳过 ${res.data.skipped} 个`)
   await loadEntityDetail()
 }
 
@@ -273,6 +357,45 @@ async function removePhysical(row: PhysicalRow) {
   await api.delete(`/governance/fusion/models/physical/${row.id}`)
   ElMessage.success('已删除')
   await loadEntityDetail()
+}
+
+async function previewPhysical(row: PhysicalRow) {
+  try {
+    const res = await api.post(`/governance/fusion/models/physical/${row.id}/preview`)
+    previewTitle.value = `查看数据 · ${row.tableName}`
+    previewRows.value = res.data?.rows || []
+    previewVisible.value = true
+    if (!previewRows.value.length) {
+      ElMessage.info(res.data?.message || '表暂无数据')
+    }
+  } catch (e: unknown) {
+    const msg = (e as { response?: { data?: { message?: string } } })?.response?.data?.message
+    ElMessage.error(msg || '预览失败')
+  }
+}
+
+async function importFieldsFromRow(row: PhysicalRow) {
+  if (!selectedEntityId.value || row.datasourceId == null) {
+    ElMessage.warning('物理映射缺少来源库，请重新绑定')
+    return
+  }
+  const res = await api.post(`/governance/fusion/models/entities/${selectedEntityId.value}/import-fields`, {
+    datasourceId: row.datasourceId,
+    tableName: row.tableName,
+  })
+  ElMessage.success(`已导入 ${res.data.imported} 个字段，跳过 ${res.data.skipped} 个`)
+  await loadEntityDetail()
+}
+
+/** 真实落主题库：委托加工共享黄金路径（非本页第三引擎） */
+async function goProcessedShare(row?: PhysicalRow) {
+  const q: Record<string, string> = {
+    tab: 'model',
+    mSub: 'execute',
+    execTab: 'processed-share',
+  }
+  if (row?.tableName) q.hintTable = row.tableName
+  await router.push({ path: '/governance', query: q })
 }
 
 function entityName(id: number) {
@@ -289,7 +412,14 @@ onMounted(async () => {
 </script>
 
 <template>
-  <PageCard title="逻辑/物理融合模型">
+  <PageCard title="数据仓库建设">
+    <el-alert
+      type="success"
+      :closable="false"
+      show-icon
+      style="margin-bottom: 12px"
+      title="V3.0「数据仓库建设」：主题域 → 逻辑实体 → 物理表。目标是多表融合成基础库/主题库/专题库（DWS/ADS）。绑定后请用「加工落库」进入加工共享；治理过程表(DWD)不作为目录资源。"
+    />
     <el-row :gutter="12">
       <el-col :span="8">
         <div class="panel-head">
@@ -379,17 +509,21 @@ onMounted(async () => {
           <el-button size="small" :disabled="!selectedEntityId" @click="openPhysicalCreate">新增</el-button>
         </div>
         <el-table :data="physicals" stripe size="small">
-          <el-table-column prop="physicalCode" label="编码" width="90" />
-          <el-table-column prop="tableName" label="表名" />
+          <el-table-column prop="physicalCode" label="编码" width="80" />
+          <el-table-column prop="tableName" label="表名" min-width="100" />
           <el-table-column label="状态" width="70">
             <template #default="{ row }">{{ statusLabel(row.status) }}</template>
           </el-table-column>
-          <el-table-column label="" width="40">
+          <el-table-column label="操作" width="200">
             <template #default="{ row }">
+              <el-button link type="primary" @click="previewPhysical(row)">数据</el-button>
+              <el-button link @click="importFieldsFromRow(row)">导字段</el-button>
+              <el-button link type="success" @click="goProcessedShare(row)">加工落库</el-button>
               <el-button link type="danger" @click="removePhysical(row)">删</el-button>
             </template>
           </el-table-column>
         </el-table>
+        <el-empty v-if="selectedEntityId && !physicals.length" description="尚未绑定物理表" :image-size="48" />
       </el-col>
     </el-row>
 
@@ -458,17 +592,43 @@ onMounted(async () => {
       </template>
     </el-dialog>
 
-    <el-dialog v-model="physicalDlg" title="物理映射" width="460px">
-      <el-form label-width="80px">
+    <el-dialog v-model="physicalDlg" title="物理映射" width="520px">
+      <el-form label-width="88px">
+        <el-form-item label="来源库" required>
+          <el-select v-model="physicalForm.datasourceId" filterable style="width: 100%" placeholder="主题库优先选 DWS/ADS">
+            <el-option-group v-for="g in sourceGroups" :key="g.role" :label="g.label">
+              <el-option v-for="s in g.options" :key="s.id" :label="s.label" :value="s.id" />
+            </el-option-group>
+          </el-select>
+        </el-form-item>
+        <el-form-item label="物理表" required>
+          <el-select
+            v-model="physicalForm.tableName"
+            filterable
+            :loading="tablesLoading"
+            placeholder="从分层库/登记源选择"
+            style="width: 100%"
+            @change="onPhysicalTablePick"
+          >
+            <el-option v-for="t in tables" :key="t.sourceTable" :label="t.sourceTable" :value="t.sourceTable" />
+          </el-select>
+        </el-form-item>
         <el-form-item label="编码"><el-input v-model="physicalForm.physicalCode" /></el-form-item>
-        <el-form-item label="表名"><el-input v-model="physicalForm.tableName" /></el-form-item>
-        <el-form-item label="DDL"><el-input v-model="physicalForm.ddlSql" type="textarea" :rows="4" /></el-form-item>
+        <el-form-item label="DDL 备注">
+          <el-input v-model="physicalForm.ddlSql" type="textarea" :rows="3" placeholder="可选，仅作台账备注" />
+        </el-form-item>
       </el-form>
       <template #footer>
         <el-button @click="physicalDlg = false">取消</el-button>
-        <el-button type="primary" @click="savePhysical">保存</el-button>
+        <el-button @click="importFieldsFromPhysicalForm">导入字段</el-button>
+        <el-button type="primary" @click="savePhysical">保存映射</el-button>
       </template>
     </el-dialog>
+
+    <el-drawer v-model="previewVisible" :title="previewTitle" size="560px">
+      <el-table v-if="previewRows.length" :data="previewRows" stripe size="small" max-height="480" />
+      <el-empty v-else description="无数据行" />
+    </el-drawer>
   </PageCard>
 </template>
 

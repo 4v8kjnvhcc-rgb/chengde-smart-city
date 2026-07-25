@@ -41,8 +41,18 @@ public class CatalogResourceController {
                                                       @RequestParam(required = false) String resourceType,
                                                       @RequestParam(required = false) String publishStatus,
                                                       @RequestParam(required = false) String approvalStatus,
-                                                      @RequestParam(required = false) String keyword) {
-        return ApiResponse.ok(service.list(categoryId, resourceType, publishStatus, approvalStatus, keyword));
+                                                      @RequestParam(required = false) String keyword,
+                                                      @RequestParam(required = false) String sourcePathType,
+                                                      @RequestParam(required = false) String providerOrg,
+                                                      @RequestParam(required = false) Boolean unboundOnly) {
+        return ApiResponse.ok(service.list(categoryId, resourceType, publishStatus, approvalStatus, keyword,
+                sourcePathType, providerOrg, unboundOnly));
+    }
+
+    @GetMapping("/eligible-metadata")
+    @PreAuthorize("isAuthenticated()")
+    public ApiResponse<List<Map<String, Object>>> eligibleMetadata(@RequestParam(required = false) String keyword) {
+        return ApiResponse.ok(service.listEligibleMetadata(keyword));
     }
 
     @GetMapping("/approvals")
@@ -129,6 +139,31 @@ public class CatalogResourceController {
         return ApiResponse.ok(null);
     }
 
+    @PostMapping("/bind-category")
+    @PreAuthorize("isAuthenticated()")
+    public ApiResponse<Map<String, Object>> bindCategory(@AuthenticationPrincipal UserPrincipal principal,
+                                                         @RequestBody Map<String, Object> body) {
+        Long categoryId = body.get("categoryId") == null ? null : Long.valueOf(String.valueOf(body.get("categoryId")));
+        Object raw = body.get("resourceIds");
+        if (!(raw instanceof List<?> list)) {
+            return ApiResponse.fail(400, "resourceIds 须为数组");
+        }
+        List<Long> ids = list.stream().map(v -> Long.valueOf(String.valueOf(v))).toList();
+        return ApiResponse.ok(service.bindCategory(principal, categoryId, ids));
+    }
+
+    @PostMapping("/unbind-category")
+    @PreAuthorize("isAuthenticated()")
+    public ApiResponse<Map<String, Object>> unbindCategory(@AuthenticationPrincipal UserPrincipal principal,
+                                                           @RequestBody Map<String, Object> body) {
+        Object raw = body.get("resourceIds");
+        if (!(raw instanceof List<?> list)) {
+            return ApiResponse.fail(400, "resourceIds 须为数组");
+        }
+        List<Long> ids = list.stream().map(v -> Long.valueOf(String.valueOf(v))).toList();
+        return ApiResponse.ok(service.unbindCategory(principal, ids));
+    }
+
     @PostMapping("/{id}/submit")
     @PreAuthorize("isAuthenticated()")
     public ApiResponse<GovCatalogApproval> submit(@AuthenticationPrincipal UserPrincipal principal,
@@ -172,5 +207,29 @@ public class CatalogResourceController {
     public ApiResponse<GovCatalogApproval> withdraw(@AuthenticationPrincipal UserPrincipal principal,
                                                     @PathVariable Long approvalId) {
         return ApiResponse.ok(service.withdraw(principal, approvalId));
+    }
+
+    @PostMapping("/approvals/batch-approve")
+    @PreAuthorize("isAuthenticated()")
+    public ApiResponse<Map<String, Object>> batchApprove(@AuthenticationPrincipal UserPrincipal principal,
+                                                         @RequestBody Map<String, Object> body) {
+        Object raw = body.get("ids");
+        if (!(raw instanceof List<?> list)) {
+            return ApiResponse.fail(400, "ids 须为数组");
+        }
+        List<Long> ids = list.stream().map(v -> Long.valueOf(String.valueOf(v))).toList();
+        return ApiResponse.ok(service.batchApprove(principal, ids, body));
+    }
+
+    @PostMapping("/approvals/batch-reject")
+    @PreAuthorize("isAuthenticated()")
+    public ApiResponse<Map<String, Object>> batchReject(@AuthenticationPrincipal UserPrincipal principal,
+                                                        @RequestBody Map<String, Object> body) {
+        Object raw = body.get("ids");
+        if (!(raw instanceof List<?> list)) {
+            return ApiResponse.fail(400, "ids 须为数组");
+        }
+        List<Long> ids = list.stream().map(v -> Long.valueOf(String.valueOf(v))).toList();
+        return ApiResponse.ok(service.batchReject(principal, ids, body));
     }
 }

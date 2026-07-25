@@ -37,6 +37,13 @@ public class QualityRuleController {
         return ApiResponse.ok(service.listWithConfig());
     }
 
+    @PostMapping
+    @PreAuthorize("isAuthenticated()")
+    public ApiResponse<Long> create(@AuthenticationPrincipal UserPrincipal principal,
+                                    @RequestBody Map<String, Object> body) {
+        return ApiResponse.ok(service.create(principal, body));
+    }
+
     @GetMapping("/{id}")
     @PreAuthorize("isAuthenticated()")
     public ApiResponse<Map<String, Object>> get(@PathVariable Long id) {

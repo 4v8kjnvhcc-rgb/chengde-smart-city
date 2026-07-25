@@ -171,7 +171,7 @@
   {
     "id": 10,
     "parent_id": 8,
-    "menu_name": "非结构化治理",
+    "menu_name": "非结构数据融合治理平台",
     "menu_type": 2,
     "path": "/unstructured",
     "component": null,
@@ -179,7 +179,7 @@
     "icon": null,
     "sort_order": 10,
     "m_code": "M123",
-    "integration_type": "placeholder"
+    "integration_type": "self"
   },
   {
     "id": 6102,
@@ -210,7 +210,7 @@
   {
     "id": 11,
     "parent_id": 8,
-    "menu_name": "资源中心",
+    "menu_name": "大数据平台资源中心",
     "menu_type": 2,
     "path": "/resource-center",
     "component": null,
@@ -218,7 +218,7 @@
     "icon": null,
     "sort_order": 11,
     "m_code": "M130",
-    "integration_type": "placeholder"
+    "integration_type": "self"
   },
   {
     "id": 6103,

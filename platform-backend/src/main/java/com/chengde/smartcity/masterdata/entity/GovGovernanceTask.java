@@ -28,6 +28,8 @@ public class GovGovernanceTask {
     private LocalDateTime nextRunAt;
     private String variablesJson;
     private String engineType;
+    /** GOVERNANCE=ODS→DWD；FUSION=DWD→DWS/ADS */
+    private String taskDomain;
     private String createdBy;
     private LocalDateTime createdAt;
     private LocalDateTime updatedAt;
@@ -72,6 +74,8 @@ public class GovGovernanceTask {
     public void setVariablesJson(String variablesJson) { this.variablesJson = variablesJson; }
     public String getEngineType() { return engineType; }
     public void setEngineType(String engineType) { this.engineType = engineType; }
+    public String getTaskDomain() { return taskDomain; }
+    public void setTaskDomain(String taskDomain) { this.taskDomain = taskDomain; }
     public String getCreatedBy() { return createdBy; }
     public void setCreatedBy(String createdBy) { this.createdBy = createdBy; }
     public LocalDateTime getCreatedAt() { return createdAt; }

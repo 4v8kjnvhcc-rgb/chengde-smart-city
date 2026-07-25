@@ -4,16 +4,19 @@ import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.chengde.smartcity.common.exception.BusinessException;
 import com.chengde.smartcity.exchange.entity.IngDataSource;
 import com.chengde.smartcity.exchange.mapper.IngDataSourceMapper;
+import com.chengde.smartcity.masterdata.entity.GovMetadataRegistry;
 import com.chengde.smartcity.masterdata.entity.GovQualityIssue;
 import com.chengde.smartcity.masterdata.entity.GovQualityRuleConfig;
 import com.chengde.smartcity.masterdata.entity.GovQualityTask;
 import com.chengde.smartcity.masterdata.entity.GovQualityTaskDetail;
 import com.chengde.smartcity.masterdata.entity.GovQualityTaskRun;
+import com.chengde.smartcity.masterdata.mapper.GovMetadataRegistryMapper;
 import com.chengde.smartcity.masterdata.mapper.GovQualityIssueMapper;
 import com.chengde.smartcity.masterdata.mapper.GovQualityRuleConfigMapper;
 import com.chengde.smartcity.masterdata.mapper.GovQualityTaskDetailMapper;
 import com.chengde.smartcity.masterdata.mapper.GovQualityTaskMapper;
 import com.chengde.smartcity.masterdata.mapper.GovQualityTaskRunMapper;
+import com.chengde.smartcity.masterdata.support.DataLayerSupport;
 import com.chengde.smartcity.security.UserPrincipal;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -46,6 +49,10 @@ public class QualityExecuteService {
     private static final Logger log = LoggerFactory.getLogger(QualityExecuteService.class);
     private static final Pattern IDENT = Pattern.compile("^[A-Za-z_][A-Za-z0-9_]*$");
     private static final ObjectMapper OM = new ObjectMapper();
+    private static final long PLATFORM_ODS_ID = -1L;
+    private static final long PLATFORM_DWD_ID = -2L;
+    private static final long PLATFORM_DWS_ID = -3L;
+    private static final long PLATFORM_ADS_ID = -4L;
 
     private final GovQualityTaskMapper taskMapper;
     private final GovQualityTaskDetailMapper detailMapper;
@@ -53,6 +60,7 @@ public class QualityExecuteService {
     private final GovQualityIssueMapper issueMapper;
     private final GovQualityRuleConfigMapper configMapper;
     private final IngDataSourceMapper dataSourceMapper;
+    private final GovMetadataRegistryMapper metadataRegistryMapper;
     private final DataSource platformDataSource;
 
     public QualityExecuteService(GovQualityTaskMapper taskMapper,
@@ -61,6 +69,7 @@ public class QualityExecuteService {
                                  GovQualityIssueMapper issueMapper,
                                  GovQualityRuleConfigMapper configMapper,
                                  IngDataSourceMapper dataSourceMapper,
+                                 GovMetadataRegistryMapper metadataRegistryMapper,
                                  @Autowired(required = false) DataSource platformDataSource) {
         this.taskMapper = taskMapper;
         this.detailMapper = detailMapper;
@@ -68,6 +77,7 @@ public class QualityExecuteService {
         this.issueMapper = issueMapper;
         this.configMapper = configMapper;
         this.dataSourceMapper = dataSourceMapper;
+        this.metadataRegistryMapper = metadataRegistryMapper;
         this.platformDataSource = platformDataSource;
     }
 
@@ -94,6 +104,12 @@ public class QualityExecuteService {
             throw new BusinessException(400, "任务未配置稽核明细，请先添加规则");
         }
 
+        GovMetadataRegistry taskEntry = resolveEntry(task.getMetadataEntryCode());
+        List<ResolvedCheck> resolved = new ArrayList<>();
+        for (GovQualityTaskDetail detail : details) {
+            resolved.add(resolveCheck(task, taskEntry, detail));
+        }
+
         LocalDateTime started = LocalDateTime.now();
         GovQualityTaskRun run = new GovQualityTaskRun();
         run.setTaskId(taskId);
@@ -114,15 +130,15 @@ public class QualityExecuteService {
         int failedChecks = 0;
         String lastErr = null;
 
-        try (Connection conn = openConnection(task)) {
-            for (GovQualityTaskDetail detail : details) {
+        try (Connection conn = openConnection(task, taskEntry)) {
+            for (ResolvedCheck rc : resolved) {
                 totalChecks++;
-                GovQualityRuleConfig cfg = resolveConfig(detail);
-                String checkType = firstNonBlank(detail.getCheckType(), cfg != null ? cfg.getCheckType() : null, "NULL_CHECK");
-                String table = firstNonBlank(detail.getTargetTable(), cfg != null ? cfg.getTargetTable() : null);
-                String column = firstNonBlank(detail.getTargetColumn(), cfg != null ? cfg.getTargetColumn() : null);
-                BigDecimal threshold = cfg != null ? cfg.getThreshold() : null;
-                String configJson = cfg != null ? cfg.getConfigJson() : null;
+                GovQualityTaskDetail detail = rc.detail;
+                String checkType = rc.checkType;
+                String table = rc.table;
+                String column = rc.column;
+                BigDecimal threshold = rc.threshold;
+                String configJson = rc.configJson;
 
                 try {
                     CheckResult cr = runCheck(conn, checkType, table, column, threshold, configJson);
@@ -428,11 +444,54 @@ public class QualityExecuteService {
         return truncate(sb.toString(), 1000);
     }
 
-    private Connection openConnection(GovQualityTask task) throws Exception {
-        if (task.getDatasourceId() != null) {
-            IngDataSource ds = dataSourceMapper.selectById(task.getDatasourceId());
+    private ResolvedCheck resolveCheck(GovQualityTask task, GovMetadataRegistry taskEntry, GovQualityTaskDetail detail) {
+        GovQualityRuleConfig cfg = resolveConfig(detail);
+        GovMetadataRegistry entry = firstNonNull(
+                resolveEntry(cfg != null ? cfg.getMetadataEntryCode() : null),
+                taskEntry);
+        String checkType = firstNonBlank(detail.getCheckType(), cfg != null ? cfg.getCheckType() : null, "NULL_CHECK");
+        String table = firstNonBlank(
+                detail.getTargetTable(),
+                cfg != null ? cfg.getTargetTable() : null,
+                entry != null ? entry.getPhysicalTableName() : null);
+        String column = firstNonBlank(detail.getTargetColumn(), cfg != null ? cfg.getTargetColumn() : null);
+        if (table == null || table.isBlank()) {
+            throw new BusinessException(400, "稽核目标表未配置：请在规则或任务明细中选择表（可关联元数据 entry_code）");
+        }
+        if (!"RECORD_COUNT".equalsIgnoreCase(checkType) && (column == null || column.isBlank())) {
+            throw new BusinessException(400, "稽核目标字段未配置：检查类型 " + checkType + " 需要字段");
+        }
+        ResolvedCheck rc = new ResolvedCheck();
+        rc.detail = detail;
+        rc.checkType = checkType;
+        rc.table = table.trim();
+        rc.column = column == null ? null : column.trim();
+        rc.threshold = cfg != null ? cfg.getThreshold() : null;
+        rc.configJson = cfg != null ? cfg.getConfigJson() : null;
+        return rc;
+    }
+
+    private Connection openConnection(GovQualityTask task, GovMetadataRegistry taskEntry) throws Exception {
+        Long dsId = task.getDatasourceId();
+        if (dsId == null && taskEntry != null && taskEntry.getDataSourceId() != null) {
+            dsId = taskEntry.getDataSourceId();
+        }
+        String catalogHint = null;
+        if (taskEntry != null) {
+            catalogHint = firstNonBlank(taskEntry.getDatabaseName(), taskEntry.getSchemaName());
+        }
+        if (isPlatformLayerId(dsId)) {
+            if (platformDataSource == null) {
+                throw new BusinessException(500, "平台库数据源不可用");
+            }
+            Connection conn = platformDataSource.getConnection();
+            applyCatalog(conn, platformLayerDatabase(dsId));
+            return conn;
+        }
+        if (dsId != null) {
+            IngDataSource ds = dataSourceMapper.selectById(dsId);
             if (ds == null) {
-                throw new BusinessException(400, "数据源不存在: " + task.getDatasourceId());
+                throw new BusinessException(400, "数据源不存在: " + dsId);
             }
             String cfg = ds.getConnConfigJson();
             if (cfg == null || cfg.isBlank()) {
@@ -452,9 +511,63 @@ public class QualityExecuteService {
             return DriverManager.getConnection(url, username == null ? "" : username, password == null ? "" : password);
         }
         if (platformDataSource != null) {
-            return platformDataSource.getConnection();
+            Connection conn = platformDataSource.getConnection();
+            if (catalogHint != null && isKnownLayerDb(catalogHint)) {
+                applyCatalog(conn, catalogHint);
+            }
+            return conn;
         }
-        throw new BusinessException(500, "无可用 JDBC 数据源");
+        throw new BusinessException(500, "无可用 JDBC 数据源，请为任务选择平台分层库或登记数据源");
+    }
+
+    private GovMetadataRegistry resolveEntry(String entryCode) {
+        if (entryCode == null || entryCode.isBlank()) {
+            return null;
+        }
+        return metadataRegistryMapper.selectOne(new LambdaQueryWrapper<GovMetadataRegistry>()
+                .eq(GovMetadataRegistry::getEntryCode, entryCode.trim())
+                .last("LIMIT 1"));
+    }
+
+    private static void applyCatalog(Connection conn, String catalog) throws Exception {
+        if (catalog == null || catalog.isBlank()) {
+            return;
+        }
+        requireIdent(catalog, "database");
+        conn.setCatalog(catalog);
+    }
+
+    private static boolean isPlatformLayerId(Long id) {
+        return id != null && (id == PLATFORM_ODS_ID || id == PLATFORM_DWD_ID
+                || id == PLATFORM_DWS_ID || id == PLATFORM_ADS_ID);
+    }
+
+    private static String platformLayerDatabase(Long id) {
+        if (id == PLATFORM_ODS_ID) {
+            return DataLayerSupport.ODS;
+        }
+        if (id == PLATFORM_DWD_ID) {
+            return DataLayerSupport.DWD;
+        }
+        if (id == PLATFORM_DWS_ID) {
+            return DataLayerSupport.DWS;
+        }
+        if (id == PLATFORM_ADS_ID) {
+            return DataLayerSupport.ADS;
+        }
+        throw new BusinessException(400, "非平台分层数据源");
+    }
+
+    private static boolean isKnownLayerDb(String db) {
+        return DataLayerSupport.ODS.equalsIgnoreCase(db)
+                || DataLayerSupport.DWD.equalsIgnoreCase(db)
+                || DataLayerSupport.DWS.equalsIgnoreCase(db)
+                || DataLayerSupport.ADS.equalsIgnoreCase(db)
+                || DataLayerSupport.CONTROL.equalsIgnoreCase(db);
+    }
+
+    private static <T> T firstNonNull(T a, T b) {
+        return a != null ? a : b;
     }
 
     private static long queryLong(Connection conn, String sql) throws Exception {
@@ -508,6 +621,15 @@ public class QualityExecuteService {
     private static String truncate(String s, int max) {
         if (s == null) return null;
         return s.length() <= max ? s : s.substring(0, max);
+    }
+
+    private static class ResolvedCheck {
+        GovQualityTaskDetail detail;
+        String checkType;
+        String table;
+        String column;
+        BigDecimal threshold;
+        String configJson;
     }
 
     private static class CheckResult {

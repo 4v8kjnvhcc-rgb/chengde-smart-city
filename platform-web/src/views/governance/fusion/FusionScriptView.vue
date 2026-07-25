@@ -1,10 +1,20 @@
 <script setup lang="ts">
-import { onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref, watch } from 'vue'
 import api from '@/api/http'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import PageCard from '@/components/common/PageCard.vue'
 import { statusLabel, statusTagType } from '@/utils/status-label'
-import { ingestionApi, type DataSource } from '@/views/exchange/ingestion/useIngestionHub'
+
+const props = withDefaults(defineProps<{
+  /** 嵌在「数据融合处理」页内时不套外层 PageCard */
+  embedded?: boolean
+}>(), { embedded: false })
+import {
+  loadQualitySourceOptions,
+  loadQualityTables,
+  type QualitySourceOption,
+  type QualityTableMeta,
+} from '../quality/useQualityTargetPicker'
 
 interface ScriptRow {
   id: number
@@ -29,22 +39,50 @@ interface VersionRow {
   publishedAt?: string
 }
 
+interface RunRow {
+  id: number
+  scriptId: number
+  scriptName?: string
+  startedAt?: string
+  endedAt?: string
+  durationMs?: number
+  status?: string
+  message?: string
+}
+
 const scripts = ref<ScriptRow[]>([])
+const runs = ref<RunRow[]>([])
 const loading = ref(false)
 const drawer = ref(false)
 const versionDrawer = ref(false)
-const dataSources = ref<DataSource[]>([])
+const activeTab = ref('list')
+const sources = ref<QualitySourceOption[]>([])
+const tables = ref<QualityTableMeta[]>([])
+const tablesLoading = ref(false)
 const versions = ref<VersionRow[]>([])
-const execResult = ref<{ mode?: string; rowCount?: number; affectedRows?: number; rows?: Record<string, unknown>[]; message?: string } | null>(null)
+const execResult = ref<{
+  mode?: string
+  rowCount?: number
+  affectedRows?: number
+  rows?: Record<string, unknown>[]
+  message?: string
+  runId?: number
+} | null>(null)
 const publishSummary = ref('')
+const assistTable = ref('')
 
 const form = reactive({
   id: null as number | null,
   scriptCode: '',
   scriptName: '',
   scriptType: 'SELECT',
-  scriptContent: 'SELECT 1 AS demo_col',
-  datasourceId: undefined as number | undefined,
+  scriptContent: '',
+  datasourceId: -3 as number | undefined,
+})
+
+const columnOptions = computed(() => {
+  const t = tables.value.find((x) => x.sourceTable === assistTable.value)
+  return t?.columns || []
 })
 
 async function loadScripts() {
@@ -58,25 +96,52 @@ async function loadScripts() {
   }
 }
 
-async function loadDataSources() {
+async function loadRuns() {
   try {
-    dataSources.value = (await ingestionApi.dataSources()).data || []
+    runs.value = (await api.get('/governance/fusion/scripts/runs')).data || []
   } catch {
-    dataSources.value = []
+    runs.value = []
   }
 }
+
+async function loadSources() {
+  sources.value = await loadQualitySourceOptions()
+}
+
+async function reloadTables() {
+  if (form.datasourceId == null) {
+    tables.value = []
+    return
+  }
+  tablesLoading.value = true
+  try {
+    tables.value = await loadQualityTables(form.datasourceId)
+  } catch {
+    tables.value = []
+  } finally {
+    tablesLoading.value = false
+  }
+}
+
+watch(() => form.datasourceId, () => {
+  if (drawer.value) {
+    assistTable.value = ''
+    void reloadTables()
+  }
+})
 
 function openCreate() {
   form.id = null
   form.scriptCode = ''
   form.scriptName = ''
   form.scriptType = 'SELECT'
-  form.scriptContent = 'SELECT 1 AS demo_col'
-  form.datasourceId = undefined
+  form.scriptContent = ''
+  form.datasourceId = -3
+  assistTable.value = ''
   execResult.value = null
   publishSummary.value = ''
   drawer.value = true
-  void loadDataSources()
+  void loadSources().then(() => reloadTables())
 }
 
 async function openEdit(row: ScriptRow) {
@@ -86,11 +151,24 @@ async function openEdit(row: ScriptRow) {
   form.scriptName = detail.scriptName
   form.scriptType = detail.scriptType || 'SELECT'
   form.scriptContent = detail.scriptContent || ''
-  form.datasourceId = detail.datasourceId
+  form.datasourceId = detail.datasourceId ?? -3
+  assistTable.value = ''
   execResult.value = null
   publishSummary.value = ''
   drawer.value = true
-  void loadDataSources()
+  await loadSources()
+  await reloadTables()
+}
+
+function fillSelectFromTable() {
+  if (!assistTable.value) {
+    ElMessage.warning('请先选择表')
+    return
+  }
+  const cols = columnOptions.value
+  const list = cols.length ? cols.map((c) => `\`${c}\``).join(', ') : '*'
+  form.scriptType = 'SELECT'
+  form.scriptContent = `SELECT ${list}\nFROM \`${assistTable.value}\``
 }
 
 async function saveScript() {
@@ -98,12 +176,16 @@ async function saveScript() {
     ElMessage.warning('请填写编码、名称与脚本内容')
     return
   }
+  if (form.datasourceId == null) {
+    ElMessage.warning('请选择来源库')
+    return
+  }
   const body = {
     scriptCode: form.scriptCode,
     scriptName: form.scriptName,
     scriptType: form.scriptType,
     scriptContent: form.scriptContent,
-    datasourceId: form.datasourceId ?? null,
+    datasourceId: form.datasourceId,
   }
   if (form.id) {
     await api.put(`/governance/fusion/scripts/${form.id}`, body)
@@ -132,9 +214,10 @@ async function executeScript() {
   try {
     execResult.value = (await api.post(`/governance/fusion/scripts/${form.id}/execute`)).data
     ElMessage.success(execResult.value?.message || '执行完成')
-    await loadScripts()
-  } catch {
-    ElMessage.error('执行失败')
+    await Promise.all([loadScripts(), loadRuns()])
+  } catch (e: unknown) {
+    const msg = (e as { response?: { data?: { message?: string } } })?.response?.data?.message
+    ElMessage.error(msg || '执行失败')
   }
 }
 
@@ -169,19 +252,33 @@ async function rollbackVersion(ver: VersionRow) {
   await loadScripts()
 }
 
-onMounted(() => { void loadScripts() })
+onMounted(() => {
+  void loadScripts()
+  void loadRuns()
+})
 </script>
 
 <template>
-  <PageCard title="融合脚本">
-    <el-form inline class="portal-inline-form portal-inline-form--block">
+  <component :is="props.embedded ? 'div' : PageCard" v-bind="props.embedded ? {} : { title: '数据融合处理 · 脚本开发' }">
+    <el-alert
+      type="info"
+      :closable="false"
+      show-icon
+      style="margin-bottom: 12px"
+      title="脚本用于分层库校验/受控更新；多表融合成主题库请用「任务执行·加工共享」。脚本结果本身不是目录资源。"
+    />
+    <el-tabs v-model="activeTab" @tab-change="(name: string | number) => { if (name === 'runs') void loadRuns() }">
+      <el-tab-pane label="脚本列表" name="list" />
+      <el-tab-pane label="运行记录" name="runs" />
+    </el-tabs>
+    <el-form v-if="activeTab === 'list'" inline class="portal-inline-form portal-inline-form--block">
       <el-form-item class="portal-form-actions">
         <el-button type="primary" @click="openCreate">新建脚本</el-button>
         <el-button @click="loadScripts">刷新</el-button>
       </el-form-item>
     </el-form>
 
-    <el-table v-loading="loading" :data="scripts" stripe size="small">
+    <el-table v-if="activeTab === 'list'" v-loading="loading" :data="scripts" stripe size="small">
       <el-table-column prop="scriptCode" label="编码" width="120" />
       <el-table-column prop="scriptName" label="名称" min-width="140" />
       <el-table-column label="类型" width="80">
@@ -202,24 +299,68 @@ onMounted(() => { void loadScripts() })
         </template>
       </el-table-column>
     </el-table>
+    <el-empty v-if="activeTab === 'list' && !loading && !scripts.length" description="暂无融合脚本" />
 
-    <el-drawer v-model="drawer" :title="form.id ? `编辑 · ${form.scriptName}` : '新建脚本'" size="520px">
+    <template v-if="activeTab === 'runs'">
+      <el-form inline class="portal-inline-form portal-inline-form--block">
+        <el-form-item class="portal-form-actions">
+          <el-button @click="loadRuns">刷新运行</el-button>
+        </el-form-item>
+      </el-form>
+      <el-table :data="runs" stripe size="small">
+        <el-table-column prop="id" label="运行ID" width="80" />
+        <el-table-column label="脚本" min-width="140">
+          <template #default="{ row }">{{ row.scriptName || `脚本#${row.scriptId}` }}</template>
+        </el-table-column>
+        <el-table-column label="状态" width="90">
+          <template #default="{ row }">
+            <el-tag size="small" :type="statusTagType(row.status)">{{ statusLabel(row.status) }}</el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column prop="durationMs" label="耗时(ms)" width="90" />
+        <el-table-column prop="startedAt" label="开始" width="170" />
+        <el-table-column prop="message" label="摘要" min-width="160" show-overflow-tooltip />
+      </el-table>
+      <el-empty v-if="!runs.length" description="暂无运行记录；执行脚本后将写入此处" />
+    </template>
+
+    <el-drawer v-model="drawer" :title="form.id ? `编辑 · ${form.scriptName}` : '新建脚本'" size="560px">
       <el-form label-position="top" size="small">
         <el-form-item label="编码"><el-input v-model="form.scriptCode" :disabled="!!form.id" /></el-form-item>
         <el-form-item label="名称"><el-input v-model="form.scriptName" /></el-form-item>
         <el-form-item label="类型">
-          <el-select v-model="form.scriptType" style="width:100%">
+          <el-select v-model="form.scriptType" class="full-w">
             <el-option label="查询 SELECT" value="SELECT" />
             <el-option label="更新 UPDATE" value="UPDATE" />
           </el-select>
         </el-form-item>
-        <el-form-item label="数据源">
-          <el-select v-model="form.datasourceId" clearable placeholder="默认平台库" style="width:100%">
-            <el-option v-for="ds in dataSources" :key="ds.id" :label="ds.sourceName" :value="ds.id" />
+        <el-form-item label="来源库" required>
+          <el-select v-model="form.datasourceId" filterable class="full-w" placeholder="平台分层或登记源">
+            <el-option v-for="s in sources" :key="s.id" :label="s.label" :value="s.id" />
           </el-select>
         </el-form-item>
+        <el-form-item label="辅助选表（生成 SELECT）">
+          <div class="assist-row">
+            <el-select
+              v-model="assistTable"
+              filterable
+              clearable
+              :loading="tablesLoading"
+              placeholder="选择表后点生成"
+              class="full-w"
+            >
+              <el-option v-for="t in tables" :key="t.sourceTable" :label="t.sourceTable" :value="t.sourceTable" />
+            </el-select>
+            <el-button @click="fillSelectFromTable">生成查询</el-button>
+          </div>
+        </el-form-item>
         <el-form-item label="脚本 SQL">
-          <el-input v-model="form.scriptContent" type="textarea" :rows="12" placeholder="SELECT ... 或 UPDATE ..." />
+          <el-input
+            v-model="form.scriptContent"
+            type="textarea"
+            :rows="12"
+            placeholder="从上方选表生成，或手写 SELECT / UPDATE（禁止 DROP/INSERT/DELETE）"
+          />
         </el-form-item>
         <el-space>
           <el-button type="primary" @click="saveScript">保存</el-button>
@@ -229,7 +370,7 @@ onMounted(() => { void loadScripts() })
 
       <template v-if="execResult">
         <el-divider />
-        <div class="result-title">执行结果</div>
+        <div class="result-title">执行结果{{ execResult.runId ? ` · 运行 #${execResult.runId}` : '' }}</div>
         <el-alert :title="execResult.message" type="success" :closable="false" show-icon />
         <el-table
           v-if="execResult.mode === 'SELECT' && execResult.rows?.length"
@@ -264,7 +405,7 @@ onMounted(() => { void loadScripts() })
         </el-table-column>
       </el-table>
     </el-drawer>
-  </PageCard>
+  </component>
 </template>
 
 <style scoped>
@@ -277,5 +418,17 @@ onMounted(() => { void loadScripts() })
   margin-top: 8px;
   color: var(--el-text-color-secondary);
   font-size: 13px;
+}
+.full-w {
+  width: 100%;
+}
+.assist-row {
+  display: flex;
+  gap: 8px;
+  width: 100%;
+  align-items: center;
+}
+.assist-row .el-select {
+  flex: 1;
 }
 </style>

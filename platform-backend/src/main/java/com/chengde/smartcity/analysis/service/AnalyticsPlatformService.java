@@ -121,23 +121,34 @@ public class AnalyticsPlatformService {
             throw new BusinessException(404, "integration not found");
         }
         boolean ok = false;
-        String msg = "offline";
-        if ("DataEase".equals(row.getTargetSystem()) && integrationProperties.isEnabled()) {
-            ok = dataEaseClient.isHealthy();
-            msg = ok ? "DataEase reachable" : "DataEase unreachable";
+        String msg = "未连通";
+        if ("DataEase".equals(row.getTargetSystem())) {
+            if (!integrationProperties.isEnabled()) {
+                msg = "集成开关关闭，未探测 DataEase";
+                ok = false;
+            } else {
+                ok = dataEaseClient.isHealthy();
+                msg = ok ? "DataEase 可达" : "DataEase 不可达";
+            }
+        } else if ("DolphinScheduler".equals(row.getTargetSystem())) {
+            msg = integrationProperties.isEnabled() ? "已配置端点（请以实际调度探活为准）" : "集成开关关闭";
+            ok = false;
+        } else if ("OpenMetadata".equals(row.getTargetSystem())) {
+            msg = integrationProperties.isEnabled() ? "已配置端点（请以实际元数据探活为准）" : "集成开关关闭";
+            ok = false;
         } else if (integrationProperties.isEnabled()) {
-            ok = true;
-            msg = "endpoint configured";
+            msg = "端点已配置，未做主动探测";
+            ok = false;
         } else {
-            msg = "integration disabled (demo mode)";
-            ok = true;
+            msg = "集成开关关闭（演示模式不可伪造成功）";
+            ok = false;
         }
         row.setLastMessage(msg);
         row.setStatus(ok ? "ACTIVE" : "ERROR");
         integrationMapper.updateById(row);
         auditService.log(operator.getUserId(), operator.getUsername(), operator.getOrgId(),
                 "ANA_INT_TEST", "ana_platform_integration", String.valueOf(id), msg);
-        return Map.of("integrationCode", row.getIntegrationCode(), "status", row.getStatus(), "message", msg);
+        return Map.of("integrationCode", row.getIntegrationCode(), "status", row.getStatus(), "message", msg, "reachable", ok);
     }
 
     public Map<String, Object> biOverview() {

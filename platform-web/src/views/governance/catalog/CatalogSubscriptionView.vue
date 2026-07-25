@@ -128,7 +128,7 @@ onMounted(load)
 </script>
 
 <template>
-  <PageCard title="资源订阅">
+  <PageCard title="资源申请订阅">
     <el-tabs v-model="activeTab">
       <el-tab-pane label="我的申请" name="mine">
         <el-form inline class="portal-inline-form portal-inline-form--block">

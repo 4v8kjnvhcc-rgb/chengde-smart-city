@@ -3,15 +3,18 @@ import { computed, defineAsyncComponent } from 'vue'
 import GovernanceTaskListView from './GovernanceTaskListView.vue'
 import GovernanceComponentsView from './GovernanceComponentsView.vue'
 
-/** 画布依赖 @vue-flow，必须按需异步加载，避免 Hub/列表被 Outdated Optimize Dep 拖垮 */
 const GovernanceTaskDesignView = defineAsyncComponent(() => import('./GovernanceTaskDesignView.vue'))
 const GovernanceTaskMonitorView = defineAsyncComponent(() => import('./GovernanceTaskMonitorView.vue'))
 
-const props = defineProps<{
+const props = withDefaults(defineProps<{
   sub: string
   view: string
   taskId: number | null
-}>()
+  /** GOVERNANCE=ODS→DWD；FUSION=DWD→DWS/ADS；默认治理 */
+  taskDomain?: 'GOVERNANCE' | 'FUSION'
+}>(), {
+  taskDomain: 'GOVERNANCE',
+})
 
 const emit = defineEmits<{
   design: [id: number]
@@ -21,7 +24,8 @@ const emit = defineEmits<{
 const showDesign = computed(() => props.view === 'design' && props.taskId != null)
 const showTaskMonitor = computed(() => props.view === 'monitor')
 const showMonitorOnly = computed(() => !showDesign.value && !showTaskMonitor.value && props.sub === 'etl-monitor')
-const showComponents = computed(() => !showDesign.value && !showTaskMonitor.value && props.sub === 'components')
+const showComponents = computed(() =>
+  !showDesign.value && !showTaskMonitor.value && props.sub === 'components' && props.taskDomain === 'GOVERNANCE')
 const listMode = computed<'mgmt' | 'run' | 'schedule' | null>(() => {
   if (showDesign.value || showTaskMonitor.value || showMonitorOnly.value || showComponents.value) return null
   if (props.sub === 'task-run') return 'run'
@@ -34,17 +38,22 @@ const showList = computed(() => listMode.value != null)
 
 <template>
   <div class="gov-etl-panel" :class="{ 'gov-etl-panel--fill': showComponents }">
-    <GovernanceTaskDesignView v-if="showDesign" :task-id="taskId!" />
-    <GovernanceTaskMonitorView v-else-if="showTaskMonitor" :task-id="taskId || undefined" />
-    <GovernanceTaskMonitorView v-else-if="showMonitorOnly" />
+    <GovernanceTaskDesignView v-if="showDesign" :task-id="taskId!" :task-domain="taskDomain" />
+    <GovernanceTaskMonitorView
+      v-else-if="showTaskMonitor"
+      :task-id="taskId || undefined"
+      :task-domain="taskDomain"
+    />
+    <GovernanceTaskMonitorView v-else-if="showMonitorOnly" :task-domain="taskDomain" />
     <GovernanceComponentsView v-else-if="showComponents" />
     <GovernanceTaskListView
       v-else-if="showList && listMode"
       :mode="listMode"
+      :task-domain="taskDomain"
       @design="emit('design', $event)"
       @monitor="emit('monitor', $event)"
     />
-    <el-empty v-else description="请选择左侧数据治理功能" />
+    <el-empty v-else :description="taskDomain === 'FUSION' ? '请选择融合加工功能' : '请选择左侧数据治理功能'" />
   </div>
 </template>
 

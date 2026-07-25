@@ -413,6 +413,13 @@ onMounted(load)
 
 <template>
   <div>
+    <el-alert
+      type="info"
+      :closable="false"
+      show-icon
+      style="margin-bottom: 12px"
+      title="V3.0「数据标准体系」：数据元 / 编码 / 命名 / 标准文件；支持发布版本与业务映射。"
+    />
     <el-tabs v-model="activeTab">
       <el-tab-pane label="数据元" name="element">
         <PageCard title="数据元标准">

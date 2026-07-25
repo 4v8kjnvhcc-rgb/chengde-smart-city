@@ -16,6 +16,7 @@ const STATUS_ZH: Record<string, string> = {
   OFFLINE: '已下线',
   ARCHIVED: '已归档',
   ARCHIVE: '归档',
+  METADATA: '元数据',
   // 监控/预检
   OK: '正常',
   WARN: '预警',
@@ -38,6 +39,15 @@ const STATUS_ZH: Record<string, string> = {
   SUCCESS: '成功',
   PARTIAL: '部分成功',
   FAILED: '失败',
+  DISPLAY: '显示',
+  COMPONENT: '组件',
+  MAP: '地图',
+  DATASOURCE: '数据源',
+  DESIGN: '设计',
+  SELF_SERVICE: '自助',
+  DATA_OPS: '区设计',
+  ANALYSIS: '分析模型',
+  LEDGER: '台账处理',
   ERROR: '错误',
   COMPLETED: '已完成',
   FINISHED: '已完成',
@@ -169,9 +179,6 @@ const STATUS_ZH: Record<string, string> = {
   POC: 'PoC演示',
   STUB: '占位',
   MISSING: '待开发',
-  // 分析域模块类型
-  DATA_OPS: '数据运维',
-  ANALYSIS: '分析应用',
   // 共享方式 / 路径
   DB_SYNC: '库表同步',
   FILE_SYNC: '文件同步',
@@ -315,7 +322,7 @@ export function statusTagType(value: unknown): 'success' | 'warning' | 'info' | 
   if (['ACTIVE', 'ENABLED', 'SUCCESS', 'APPROVED', 'COMPLETED', 'FINISHED', 'CONFIRMED', 'PUBLISHED', 'READY', 'CONFIGURED', 'NORMAL', 'SUBSCRIBED', 'DISTRIBUTED', 'MAPPED', 'MATCHED', 'INDEXED', 'OK', 'IMPLEMENTED', 'ONLINE', 'UP', 'PASS'].includes(key)) {
     return 'success'
   }
-  if (['PENDING', 'RUNNING', 'ANALYZING', 'WAITING', 'DRAFT', 'SUPERVISING', 'DISPATCHED', 'FULFILLING', 'PARTIAL', 'WARN', 'POC', 'MEDIUM', 'RAW', 'TAGGED', 'CLEANED'].includes(key)) {
+  if (['PENDING', 'RUNNING', 'ANALYZING', 'WAITING', 'DRAFT', 'SUPERVISING', 'DISPATCHED', 'FULFILLING', 'PARTIAL', 'WARN', 'POC', 'MEDIUM', 'RAW', 'TAGGED', 'CLEANED', 'LEDGER'].includes(key)) {
     return 'warning'
   }
   if (['REJECTED', 'FAILED', 'ERROR', 'CANCELLED', 'ABNORMAL', 'EXPIRED', 'RETURNED', 'STOPPED', 'UNMAPPED', 'UNMATCHED', 'CRITICAL', 'BLOCKED', 'MISSING', 'HIGH', 'DOWN', 'FAIL'].includes(key)) {

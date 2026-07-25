@@ -102,22 +102,19 @@ public class GovernancePlatformService {
                 .isNotNull(GovQualityTaskRun::getScore)
                 .orderByDesc(GovQualityTaskRun::getId)
                 .last("LIMIT 20"));
-        BigDecimal score;
-        int runCount = 0;
         if (scoredRuns == null || scoredRuns.isEmpty()) {
-            // 无运行记录时退回合理默认分（非随机）
-            score = BigDecimal.valueOf(80.00).setScale(2, RoundingMode.HALF_UP);
-        } else {
-            BigDecimal sum = BigDecimal.ZERO;
-            for (GovQualityTaskRun run : scoredRuns) {
-                sum = sum.add(run.getScore());
-                runCount++;
-            }
-            score = sum.divide(BigDecimal.valueOf(runCount), 2, RoundingMode.HALF_UP);
+            throw new BusinessException(400, "尚无质量任务运行记录，请先在「质量任务」中执行稽核后再生成报告");
         }
+        BigDecimal sum = BigDecimal.ZERO;
+        int runCount = 0;
+        for (GovQualityTaskRun run : scoredRuns) {
+            sum = sum.add(run.getScore());
+            runCount++;
+        }
+        BigDecimal score = sum.divide(BigDecimal.valueOf(runCount), 2, RoundingMode.HALF_UP);
         r.setScore(score);
         r.setExportPayload("dimension=" + r.getDimension() + ",score=" + r.getScore()
-                + ",sourceRuns=" + runCount + (runCount == 0 ? ",fallback=DEFAULT_80" : ",fallback=NONE"));
+                + ",sourceRuns=" + runCount + ",fallback=NONE");
         reportMapper.insert(r);
         auditService.log(operator.getUserId(), operator.getUsername(), operator.getOrgId(),
                 "QUALITY_REPORT", "gov_quality_report", String.valueOf(r.getId()), r.getReportName());
@@ -176,21 +173,15 @@ public class GovernancePlatformService {
     public Map<String, Object> runFusionAsset(UserPrincipal operator, Long id) {
         GovFusionAsset asset = fusionMapper.selectById(id);
         if (asset == null) {
-            throw new BusinessException(404, "资产不存在");
+            throw new BusinessException(404, "融合资产不存在: " + id);
         }
-        asset.setStatus("SUCCESS");
-        asset.setLastRunAt(LocalDateTime.now());
-        String msg = "executed type=" + asset.getAssetType();
-        if ("KETTLE".equals(asset.getAssetType())) {
-            msg += " integration=kettle route=/integration/kettle";
-        } else if ("GOVERN_TASK".equals(asset.getAssetType()) || "WORKFLOW".equals(asset.getAssetType())) {
-            msg += " integration=ds route=/integration/ds";
-        }
-        asset.setLastMessage(msg);
-        fusionMapper.updateById(asset);
-        auditService.log(operator.getUserId(), operator.getUsername(), operator.getOrgId(),
-                "FUSION_RUN", "gov_fusion_asset", String.valueOf(id), msg);
-        return Map.of("assetId", id, "status", "SUCCESS", "message", msg);
+        // D20：禁止 mock SUCCESS；真实落库走加工共享黄金路径或治理 ETL
+        throw new BusinessException(400,
+                "融合资产「一键运行」已停用（原为演示假成功）。请改用："
+                        + "① 加工共享黄金路径 POST /governance/processed-share/fusion/run；"
+                        + "② 数据治理 ETL 画布运行；"
+                        + "③ 融合脚本 SELECT/UPDATE 校验（/governance/fusion/scripts/{id}/execute）。"
+                        + " assetId=" + id + " type=" + asset.getAssetType());
     }
 
     public List<GovCatalogResource> listCatalogResources(String resourceType) {

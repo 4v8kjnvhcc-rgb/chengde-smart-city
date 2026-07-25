@@ -369,9 +369,7 @@ onMounted(async () => {
   overflow: hidden;
   border: 1px solid var(--card-border);
   box-sizing: border-box;
-  transition:
-    opacity 400ms cubic-bezier(0.16, 1, 0.3, 1),
-    height 400ms cubic-bezier(0.16, 1, 0.3, 1);
+  transition: opacity 200ms ease;
 }
 .drawer-card:not(.is-open) {
   height: 202px;
@@ -402,7 +400,6 @@ onMounted(async () => {
   background: var(--card-header-bg);
   border: none;
   outline: none;
-  transition: flex 400ms cubic-bezier(0.16, 1, 0.3, 1), padding 300ms ease;
 }
 .drawer-card.is-open .card-header {
   flex: 0 0 202px;
@@ -422,10 +419,6 @@ onMounted(async () => {
   justify-content: center;
   background: var(--card-icon-bg);
   color: var(--card-icon-color);
-  transition: transform 300ms cubic-bezier(0.16, 1, 0.3, 1);
-}
-.drawer-card:hover .card-icon-wrap {
-  transform: translateY(-2px);
 }
 
 .card-title {
@@ -448,7 +441,6 @@ onMounted(async () => {
   height: 6px;
   border-radius: 3px;
   background: var(--card-accent);
-  transition: all 300ms ease;
 }
 .drawer-card.is-open .card-arrow {
   width: 54px;
@@ -461,10 +453,6 @@ onMounted(async () => {
   overflow: hidden;
   background: #fafbfd;
   border-top: 1px solid transparent;
-  transition:
-    max-height 400ms cubic-bezier(0.16, 1, 0.3, 1),
-    flex 400ms cubic-bezier(0.16, 1, 0.3, 1),
-    border-color 200ms ease;
 }
 .drawer-card.is-open .drawer-body {
   flex: 0 0 auto;
@@ -561,10 +549,6 @@ onMounted(async () => {
 
 @media (prefers-reduced-motion: reduce) {
   .drawer-card,
-  .card-header,
-  .card-icon-wrap,
-  .card-arrow,
-  .drawer-body,
   .sub-item,
   .sub-arrow {
     transition: none !important;

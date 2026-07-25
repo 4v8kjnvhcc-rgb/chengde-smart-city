@@ -177,4 +177,18 @@ public class FusionModelController {
         service.deletePhysical(principal, id);
         return ApiResponse.ok(null);
     }
+
+    @PostMapping("/physical/{id}/preview")
+    @PreAuthorize("isAuthenticated()")
+    public ApiResponse<Map<String, Object>> previewPhysical(@PathVariable Long id) {
+        return ApiResponse.ok(service.previewPhysical(id));
+    }
+
+    @PostMapping("/entities/{id}/import-fields")
+    @PreAuthorize("isAuthenticated()")
+    public ApiResponse<Map<String, Object>> importFields(@AuthenticationPrincipal UserPrincipal principal,
+                                                         @PathVariable Long id,
+                                                         @RequestBody Map<String, Object> body) {
+        return ApiResponse.ok(service.importFieldsFromTable(principal, id, body));
+    }
 }

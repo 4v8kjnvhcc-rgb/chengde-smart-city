@@ -13,6 +13,15 @@ import {
   saveEnabledTypes,
 } from './governance-components'
 
+const props = withDefaults(defineProps<{
+  /** V3.0「数据融合组件」复用本页时覆盖标题 */
+  pageTitle?: string
+  /** 融合入口：前往画布时带上融合上下文说明 */
+  contextHint?: string
+}>(), {
+  pageTitle: '数据治理组件',
+})
+
 const router = useRouter()
 const route = useRoute()
 const auth = useAuthStore()
@@ -75,7 +84,7 @@ onMounted(() => {
 <template>
   <!-- 外层承接高度：工具栏固定，仅列表滚动（PageCard 根节点不受父级 scoped 样式控制） -->
   <div class="comp-page">
-    <PageCard title="数据治理组件">
+    <PageCard :title="props.pageTitle">
       <div class="comp-toolbar">
         <el-form inline class="portal-inline-form portal-inline-form--block">
           <el-form-item class="portal-form-actions">
@@ -84,7 +93,9 @@ onMounted(() => {
             <el-button @click="enableAll">全部启用</el-button>
           </el-form-item>
         </el-form>
-        <p class="hint">勾选「启用到画布」后，对应组件会出现在可视化开发左侧工具栏。执行统一由 Kettle Carte 完成。</p>
+        <p class="hint">
+          {{ props.contextHint || '勾选「启用到画布」后，对应组件会出现在可视化开发左侧工具栏。执行统一由 Kettle Carte 完成。' }}
+        </p>
       </div>
 
       <div class="comp-list">

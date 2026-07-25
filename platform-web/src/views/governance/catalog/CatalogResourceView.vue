@@ -110,7 +110,23 @@ const form = reactive({
   updateCycle: 'DAILY',
   description: '',
   secretFlag: 0,
+  metadataEntryCode: '',
+  sourcePathType: 'DIRECT',
+  physicalTableName: '',
+  qualityScore: undefined as number | undefined,
 })
+
+interface MetaOpt {
+  entryCode: string
+  entryName: string
+  dataLayer?: string
+  physicalTableName?: string
+  dataSourceId?: number
+  ownerName?: string
+  sourcePathType?: string
+}
+const metaOptions = ref<MetaOpt[]>([])
+const metaLoading = ref(false)
 
 const flatCategories = computed(() => {
   const out: { id: number; label: string }[] = []
@@ -170,10 +186,37 @@ function resetForm() {
   form.updateCycle = 'DAILY'
   form.description = ''
   form.secretFlag = 0
+  form.metadataEntryCode = ''
+  form.sourcePathType = 'DIRECT'
+  form.physicalTableName = ''
+  form.qualityScore = undefined
+}
+
+async function loadEligibleMeta(keyword?: string) {
+  metaLoading.value = true
+  try {
+    const res = await api.get('/governance/catalog/resources-mgmt/eligible-metadata', {
+      params: { keyword: keyword || undefined },
+    })
+    metaOptions.value = res.data || []
+  } finally {
+    metaLoading.value = false
+  }
+}
+
+function onMetaPick(code: string) {
+  const m = metaOptions.value.find((x) => x.entryCode === code)
+  if (!m) return
+  form.metadataEntryCode = m.entryCode
+  if (!form.resourceName) form.resourceName = m.entryName
+  form.physicalTableName = m.physicalTableName || ''
+  form.sourcePathType = m.sourcePathType || 'DIRECT'
+  if (m.ownerName) form.providerOrg = m.ownerName
 }
 
 function openCreate() {
   resetForm()
+  void loadEligibleMeta()
   dialogVisible.value = true
 }
 
@@ -194,19 +237,29 @@ function openEdit(row: CatalogRes) {
   form.updateCycle = row.updateCycle || 'DAILY'
   form.description = row.description || ''
   form.secretFlag = row.secretFlag || 0
+  form.metadataEntryCode = row.metadataEntryCode || ''
+  form.sourcePathType = row.sourcePathType || 'DIRECT'
+  form.physicalTableName = ''
+  form.qualityScore = row.qualityScore
+  void loadEligibleMeta(row.metadataEntryCode)
   dialogVisible.value = true
 }
 
 async function save() {
+  if (!form.metadataEntryCode) {
+    ElMessage.warning('请选择已登记的元数据条目')
+    return
+  }
   if (!form.resourceName) {
     ElMessage.warning('请填写资源名称')
     return
   }
+  const payload = { ...form }
   if (editMode.value && editingId.value != null) {
-    await api.put(`/governance/catalog/resources-mgmt/${editingId.value}`, { ...form })
+    await api.put(`/governance/catalog/resources-mgmt/${editingId.value}`, payload)
     ElMessage.success('已更新')
   } else {
-    await api.post('/governance/catalog/resources-mgmt', { ...form })
+    await api.post('/governance/catalog/resources-mgmt', payload)
     ElMessage.success('已创建')
   }
   dialogVisible.value = false
@@ -238,19 +291,17 @@ async function submitApproval(row: CatalogRes) {
     actionType: 'PUBLISH',
     comment: '提交发布审批',
   })
-  ElMessage.success('已提交审批')
+  ElMessage.success('已提交发布审批（须先完成目录注册挂载）')
   await loadResources()
 }
 
-async function publish(row: CatalogRes) {
-  await api.post(`/governance/catalog/resources-mgmt/${row.id}/publish`)
-  ElMessage.success('已发布')
-  await loadResources()
-}
-
-async function offline(row: CatalogRes) {
-  await api.post(`/governance/catalog/resources-mgmt/${row.id}/offline`)
-  ElMessage.success('已下线')
+async function submitOffline(row: CatalogRes) {
+  await ElMessageBox.confirm(`确认提交「${row.resourceName}」下线审批？`, '下线审批', { type: 'warning' })
+  await api.post(`/governance/catalog/resources-mgmt/${row.id}/submit`, {
+    actionType: 'OFFLINE',
+    comment: '提交下线审批',
+  })
+  ElMessage.success('已提交下线审批')
   await loadResources()
 }
 
@@ -343,11 +394,18 @@ onMounted(async () => {
 </script>
 
 <template>
-  <PageCard title="资源编目">
+  <PageCard title="资源目录编制">
+    <el-alert
+      type="info"
+      :closable="false"
+      show-icon
+      title="仅挂载直通源或加工主题/专题资源；过程层 DWD 不可编目。须选择已登记元数据；发布须经审批，禁止直接上架。分类挂载请到「目录注册发布」。"
+      style="margin-bottom: 12px"
+    />
     <div class="catalog-layout">
       <aside class="catalog-tree">
         <div class="tree-toolbar">
-          <span>资源分类</span>
+          <span>按分类筛选</span>
           <el-button link type="primary" @click="clearCategory">全部</el-button>
         </div>
         <el-tree
@@ -417,7 +475,7 @@ onMounted(async () => {
               <el-tag size="small" :type="statusTagType(row.approvalStatus)">{{ statusLabel(row.approvalStatus) }}</el-tag>
             </template>
           </el-table-column>
-          <el-table-column label="操作" width="260" fixed="right">
+          <el-table-column label="操作" width="280" fixed="right">
             <template #default="{ row }">
               <el-button link type="primary" @click="openEdit(row)">编辑</el-button>
               <el-button link @click="openVersions(row)">版本</el-button>
@@ -425,9 +483,12 @@ onMounted(async () => {
                 v-if="row.publishStatus !== 'PUBLISHED' && row.approvalStatus !== 'PENDING'"
                 link
                 @click="submitApproval(row)"
-              >提交</el-button>
-              <el-button v-if="row.publishStatus !== 'PUBLISHED'" link @click="publish(row)">发布</el-button>
-              <el-button v-if="row.publishStatus === 'PUBLISHED'" link @click="offline(row)">下线</el-button>
+              >提交发布</el-button>
+              <el-button
+                v-if="row.publishStatus === 'PUBLISHED' && row.approvalStatus !== 'PENDING'"
+                link
+                @click="submitOffline(row)"
+              >提交下线</el-button>
               <el-button link type="danger" @click="removeOne(row)">删除</el-button>
             </template>
           </el-table-column>
@@ -435,17 +496,40 @@ onMounted(async () => {
       </main>
     </div>
 
-    <el-dialog v-model="dialogVisible" :title="editMode ? '编辑资源' : '新增资源'" width="560px" destroy-on-close>
-      <el-form label-width="100px">
+    <el-dialog v-model="dialogVisible" :title="editMode ? '编辑资源' : '新增资源'" width="600px" destroy-on-close>
+      <el-form label-width="110px">
+        <el-form-item label="元数据条目" required>
+          <el-select
+            v-model="form.metadataEntryCode"
+            filterable
+            remote
+            :remote-method="loadEligibleMeta"
+            :loading="metaLoading"
+            style="width:100%"
+            placeholder="搜索已登记可编目对象（排除 DWD）"
+            @change="onMetaPick"
+          >
+            <el-option
+              v-for="m in metaOptions"
+              :key="m.entryCode"
+              :label="`${m.entryName}（${m.entryCode} · ${m.dataLayer || '?'}）`"
+              :value="m.entryCode"
+            />
+          </el-select>
+        </el-form-item>
         <el-form-item label="资源编码"><el-input v-model="form.resourceCode" placeholder="可空，自动生成" /></el-form-item>
         <el-form-item label="资源名称" required><el-input v-model="form.resourceName" /></el-form-item>
+        <el-form-item label="来源路径">
+          <el-tag>{{ form.sourcePathType === 'PROCESSED' ? '加工共享' : '直通共享' }}</el-tag>
+          <span v-if="form.physicalTableName" style="margin-left:8px;color:var(--el-text-color-secondary)">{{ form.physicalTableName }}</span>
+        </el-form-item>
         <el-form-item label="资源类型">
           <el-select v-model="form.resourceType" style="width:100%">
             <el-option label="数据" value="DATA" /><el-option label="服务" value="SERVICE" />
           </el-select>
         </el-form-item>
         <el-form-item label="所属分类">
-          <el-select v-model="form.categoryId" clearable filterable style="width:100%">
+          <el-select v-model="form.categoryId" clearable filterable style="width:100%" placeholder="可后在「目录注册发布」挂载">
             <el-option v-for="c in flatCategories" :key="c.id" :label="c.label" :value="c.id" />
           </el-select>
         </el-form-item>
@@ -464,6 +548,9 @@ onMounted(async () => {
           <el-select v-model="form.updateCycle" style="width:100%">
             <el-option v-for="(lab, val) in CYCLE_ZH" :key="val" :label="lab" :value="val" />
           </el-select>
+        </el-form-item>
+        <el-form-item label="质量分">
+          <el-input-number v-model="form.qualityScore" :min="0" :max="100" :precision="1" controls-position="right" />
         </el-form-item>
         <el-form-item label="描述"><el-input v-model="form.description" type="textarea" :rows="2" /></el-form-item>
       </el-form>

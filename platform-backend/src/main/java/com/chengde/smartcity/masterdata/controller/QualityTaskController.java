@@ -3,7 +3,6 @@ package com.chengde.smartcity.masterdata.controller;
 import com.chengde.smartcity.common.api.ApiResponse;
 import com.chengde.smartcity.masterdata.entity.GovQualityIssue;
 import com.chengde.smartcity.masterdata.entity.GovQualityTaskDetail;
-import com.chengde.smartcity.masterdata.entity.GovQualityTaskRun;
 import com.chengde.smartcity.masterdata.service.QualityTaskService;
 import com.chengde.smartcity.security.UserPrincipal;
 import java.util.List;
@@ -48,8 +47,8 @@ public class QualityTaskController {
 
     @GetMapping("/runs")
     @PreAuthorize("isAuthenticated()")
-    public ApiResponse<List<GovQualityTaskRun>> runs(@RequestParam(required = false) Long taskId) {
-        return ApiResponse.ok(service.listRuns(taskId));
+    public ApiResponse<List<Map<String, Object>>> runs(@RequestParam(required = false) Long taskId) {
+        return ApiResponse.ok(service.listRunViews(taskId));
     }
 
     @GetMapping("/runs/{runId}/issues")

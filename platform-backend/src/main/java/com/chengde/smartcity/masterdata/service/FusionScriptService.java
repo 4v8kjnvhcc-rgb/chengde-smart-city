@@ -5,9 +5,12 @@ import com.chengde.smartcity.common.exception.BusinessException;
 import com.chengde.smartcity.exchange.entity.IngDataSource;
 import com.chengde.smartcity.exchange.mapper.IngDataSourceMapper;
 import com.chengde.smartcity.masterdata.entity.GovFusionScript;
+import com.chengde.smartcity.masterdata.entity.GovFusionScriptRun;
 import com.chengde.smartcity.masterdata.entity.GovFusionScriptVersion;
 import com.chengde.smartcity.masterdata.mapper.GovFusionScriptMapper;
+import com.chengde.smartcity.masterdata.mapper.GovFusionScriptRunMapper;
 import com.chengde.smartcity.masterdata.mapper.GovFusionScriptVersionMapper;
+import com.chengde.smartcity.masterdata.support.DataLayerSupport;
 import com.chengde.smartcity.security.UserPrincipal;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -16,6 +19,7 @@ import java.sql.DriverManager;
 import java.sql.ResultSet;
 import java.sql.ResultSetMetaData;
 import java.sql.Statement;
+import java.time.Duration;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -37,20 +41,28 @@ public class FusionScriptService {
     private static final Pattern FORBIDDEN = Pattern.compile(
             "\\b(DROP|TRUNCATE|ALTER|CREATE|GRANT|REVOKE|DELETE\\s+FROM|INSERT\\s+INTO|REPLACE\\s+INTO|CALL\\s|EXEC\\s|EXECUTE\\s|--|;\\s*\\S)",
             Pattern.CASE_INSENSITIVE);
+    private static final Pattern IDENT = Pattern.compile("^[A-Za-z_][A-Za-z0-9_]*$");
     private static final int SELECT_LIMIT = 100;
     private static final ObjectMapper OM = new ObjectMapper();
+    private static final long PLATFORM_ODS_ID = -1L;
+    private static final long PLATFORM_DWD_ID = -2L;
+    private static final long PLATFORM_DWS_ID = -3L;
+    private static final long PLATFORM_ADS_ID = -4L;
 
     private final GovFusionScriptMapper scriptMapper;
     private final GovFusionScriptVersionMapper versionMapper;
+    private final GovFusionScriptRunMapper runMapper;
     private final IngDataSourceMapper dataSourceMapper;
     private final DataSource platformDataSource;
 
     public FusionScriptService(GovFusionScriptMapper scriptMapper,
                                GovFusionScriptVersionMapper versionMapper,
+                               GovFusionScriptRunMapper runMapper,
                                IngDataSourceMapper dataSourceMapper,
                                @Autowired(required = false) DataSource platformDataSource) {
         this.scriptMapper = scriptMapper;
         this.versionMapper = versionMapper;
+        this.runMapper = runMapper;
         this.dataSourceMapper = dataSourceMapper;
         this.platformDataSource = platformDataSource;
     }
@@ -120,11 +132,21 @@ public class FusionScriptService {
         if (sql == null || sql.isBlank()) {
             throw new BusinessException(400, "脚本内容为空");
         }
+        if (sql.contains("demo_col") || sql.trim().equalsIgnoreCase("SELECT 1 AS demo_col")) {
+            throw new BusinessException(400, "请选择真实表后生成查询，禁止使用演示占位 SQL");
+        }
         validateSql(sql, s.getScriptType());
         String normalized = normalizeSelect(sql);
 
         Map<String, Object> result = new LinkedHashMap<>();
-        LocalDateTime now = LocalDateTime.now();
+        LocalDateTime started = LocalDateTime.now();
+        GovFusionScriptRun run = new GovFusionScriptRun();
+        run.setScriptId(id);
+        run.setStartedAt(started);
+        run.setStatus("RUNNING");
+        run.setCreatedAt(started);
+        runMapper.insert(run);
+
         try (Connection conn = openConnection(s.getDatasourceId())) {
             String upper = sql.trim().toUpperCase(Locale.ROOT);
             if (upper.startsWith("UPDATE")) {
@@ -143,24 +165,46 @@ public class FusionScriptService {
                     result.put("rows", rows);
                     result.put("rowCount", rows.size());
                     result.put("status", "SUCCESS");
-                    result.put("message", "返回 " + rows.size() + " 行");
+                    result.put("message", "返回 " + rows.size() + " 行（最多 " + SELECT_LIMIT + "）");
                     s.setLastMessage("SELECT 返回 " + rows.size() + " 行");
                 }
             }
+            LocalDateTime ended = LocalDateTime.now();
+            run.setEndedAt(ended);
+            run.setDurationMs(Duration.between(started, ended).toMillis());
+            run.setStatus("SUCCESS");
+            run.setMessage(truncate(String.valueOf(result.get("message")), 500));
+            runMapper.updateById(run);
+            result.put("runId", run.getId());
         } catch (BusinessException e) {
+            failRun(run, started, e.getMessage());
+            s.setLastMessage(truncate(e.getMessage(), 500));
+            s.setLastRunAt(LocalDateTime.now());
+            s.setUpdatedAt(LocalDateTime.now());
+            scriptMapper.updateById(s);
             throw e;
         } catch (Exception e) {
             log.warn("fusion script execute failed id={}: {}", id, e.getMessage());
+            failRun(run, started, e.getMessage());
             s.setLastMessage(truncate(e.getMessage(), 500));
-            s.setLastRunAt(now);
-            s.setUpdatedAt(now);
+            s.setLastRunAt(LocalDateTime.now());
+            s.setUpdatedAt(LocalDateTime.now());
             scriptMapper.updateById(s);
             throw new BusinessException(500, "执行失败: " + e.getMessage());
         }
-        s.setLastRunAt(now);
-        s.setUpdatedAt(now);
+        s.setLastRunAt(LocalDateTime.now());
+        s.setUpdatedAt(LocalDateTime.now());
         scriptMapper.updateById(s);
         return result;
+    }
+
+    private void failRun(GovFusionScriptRun run, LocalDateTime started, String message) {
+        LocalDateTime ended = LocalDateTime.now();
+        run.setEndedAt(ended);
+        run.setDurationMs(Duration.between(started, ended).toMillis());
+        run.setStatus("FAILED");
+        run.setMessage(truncate(message, 500));
+        runMapper.updateById(run);
     }
 
     @Transactional
@@ -191,6 +235,36 @@ public class FusionScriptService {
         return versionMapper.selectList(new LambdaQueryWrapper<GovFusionScriptVersion>()
                 .eq(GovFusionScriptVersion::getScriptId, id)
                 .orderByDesc(GovFusionScriptVersion::getVersionNo));
+    }
+
+    public List<Map<String, Object>> listRuns(Long scriptId) {
+        LambdaQueryWrapper<GovFusionScriptRun> q = new LambdaQueryWrapper<GovFusionScriptRun>()
+                .orderByDesc(GovFusionScriptRun::getId)
+                .last("LIMIT 100");
+        if (scriptId != null) {
+            require(scriptId);
+            q.eq(GovFusionScriptRun::getScriptId, scriptId);
+        }
+        List<GovFusionScriptRun> runs = runMapper.selectList(q);
+        Map<Long, String> nameCache = new LinkedHashMap<>();
+        List<Map<String, Object>> out = new ArrayList<>();
+        for (GovFusionScriptRun r : runs) {
+            Map<String, Object> row = new LinkedHashMap<>();
+            row.put("id", r.getId());
+            row.put("scriptId", r.getScriptId());
+            String name = nameCache.computeIfAbsent(r.getScriptId(), sid -> {
+                GovFusionScript s = scriptMapper.selectById(sid);
+                return s != null ? s.getScriptName() : ("脚本#" + sid);
+            });
+            row.put("scriptName", name);
+            row.put("startedAt", r.getStartedAt());
+            row.put("endedAt", r.getEndedAt());
+            row.put("durationMs", r.getDurationMs());
+            row.put("status", r.getStatus());
+            row.put("message", r.getMessage());
+            out.add(row);
+        }
+        return out;
     }
 
     @Transactional
@@ -255,6 +329,16 @@ public class FusionScriptService {
     }
 
     private Connection openConnection(Long datasourceId) throws Exception {
+        if (isPlatformLayerId(datasourceId)) {
+            if (platformDataSource == null) {
+                throw new BusinessException(500, "平台库数据源不可用");
+            }
+            Connection conn = platformDataSource.getConnection();
+            String catalog = platformLayerDatabase(datasourceId);
+            requireIdent(catalog, "database");
+            conn.setCatalog(catalog);
+            return conn;
+        }
         if (datasourceId != null) {
             IngDataSource ds = dataSourceMapper.selectById(datasourceId);
             if (ds == null) {
@@ -276,7 +360,26 @@ public class FusionScriptService {
         if (platformDataSource != null) {
             return platformDataSource.getConnection();
         }
-        throw new BusinessException(500, "无可用 JDBC 数据源");
+        throw new BusinessException(500, "无可用 JDBC 数据源，请选择平台分层库或登记源");
+    }
+
+    private static boolean isPlatformLayerId(Long id) {
+        return id != null && (id == PLATFORM_ODS_ID || id == PLATFORM_DWD_ID
+                || id == PLATFORM_DWS_ID || id == PLATFORM_ADS_ID);
+    }
+
+    private static String platformLayerDatabase(Long id) {
+        if (id == PLATFORM_ODS_ID) return DataLayerSupport.ODS;
+        if (id == PLATFORM_DWD_ID) return DataLayerSupport.DWD;
+        if (id == PLATFORM_DWS_ID) return DataLayerSupport.DWS;
+        if (id == PLATFORM_ADS_ID) return DataLayerSupport.ADS;
+        throw new BusinessException(400, "非平台分层数据源");
+    }
+
+    private static void requireIdent(String name, String field) {
+        if (name == null || name.isBlank() || !IDENT.matcher(name).matches()) {
+            throw new BusinessException(400, field + " 非法: " + name);
+        }
     }
 
     private Map<String, Object> toMap(GovFusionScript s) {

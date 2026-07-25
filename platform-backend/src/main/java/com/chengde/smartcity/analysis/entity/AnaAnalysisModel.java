@@ -14,6 +14,8 @@ public class AnaAnalysisModel {
     private String domainCode;
     private String mCode;
     private String deDashboardId;
+    private String dimensionJson;
+    private String description;
     private Integer sampleRowCount;
     private String status;
     private LocalDateTime createdAt;
@@ -31,6 +33,10 @@ public class AnaAnalysisModel {
     public void setMCode(String mCode) { this.mCode = mCode; }
     public String getDeDashboardId() { return deDashboardId; }
     public void setDeDashboardId(String deDashboardId) { this.deDashboardId = deDashboardId; }
+    public String getDimensionJson() { return dimensionJson; }
+    public void setDimensionJson(String dimensionJson) { this.dimensionJson = dimensionJson; }
+    public String getDescription() { return description; }
+    public void setDescription(String description) { this.description = description; }
     public Integer getSampleRowCount() { return sampleRowCount; }
     public void setSampleRowCount(Integer sampleRowCount) { this.sampleRowCount = sampleRowCount; }
     public String getStatus() { return status; }

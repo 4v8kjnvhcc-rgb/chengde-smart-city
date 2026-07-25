@@ -6,7 +6,12 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import PageCard from '@/components/common/PageCard.vue'
 import { statusLabel, statusTagType } from '@/utils/status-label'
 
-const props = defineProps<{ taskId?: number }>()
+const props = withDefaults(defineProps<{
+  taskId?: number
+  taskDomain?: 'GOVERNANCE' | 'FUSION'
+}>(), {
+  taskDomain: 'GOVERNANCE',
+})
 
 const route = useRoute()
 const router = useRouter()
@@ -162,7 +167,8 @@ async function loadTaskStatus() {
 async function loadRuns() {
   loading.value = true
   try {
-    const params = props.taskId ? { taskId: props.taskId } : {}
+    const params: Record<string, string | number> = { taskDomain: props.taskDomain }
+    if (props.taskId) params.taskId = props.taskId
     runs.value = (await api.get('/governance/gov-tasks/runs', { params })).data || []
     if (runs.value.length) {
       const current = selectedRunId.value && runs.value.some(r => r.id === selectedRunId.value)

@@ -31,7 +31,8 @@ const ACTION_ZH: Record<string, string> = {
 
 const rows = ref<ApprovalRow[]>([])
 const loading = ref(false)
-const statusFilter = ref('')
+const statusFilter = ref('PENDING')
+const selected = ref<ApprovalRow[]>([])
 
 async function load() {
   loading.value = true
@@ -76,11 +77,50 @@ async function withdraw(row: ApprovalRow) {
   await load()
 }
 
+async function batchApprove() {
+  const ids = selected.value.filter((r) => r.status === 'PENDING').map((r) => r.id)
+  if (!ids.length) {
+    ElMessage.warning('请勾选待处理审批')
+    return
+  }
+  await ElMessageBox.confirm(`确认批量通过 ${ids.length} 条？`, '批量通过', { type: 'warning' })
+  const res = await api.post('/governance/catalog/resources-mgmt/approvals/batch-approve', {
+    ids,
+    comment: '批量同意',
+  })
+  const d = res.data || {}
+  ElMessage.success(`已通过 ${d.approved || 0} 条`)
+  if (d.errors?.length) ElMessage.warning(d.errors.slice(0, 3).join('；'))
+  selected.value = []
+  await load()
+}
+
+async function batchReject() {
+  const ids = selected.value.filter((r) => r.status === 'PENDING').map((r) => r.id)
+  if (!ids.length) {
+    ElMessage.warning('请勾选待处理审批')
+    return
+  }
+  const { value } = await ElMessageBox.prompt('请填写驳回意见（将应用于所选）', '批量驳回', {
+    inputPattern: /\S+/,
+    inputErrorMessage: '意见不能为空',
+  })
+  const res = await api.post('/governance/catalog/resources-mgmt/approvals/batch-reject', {
+    ids,
+    comment: value,
+  })
+  const d = res.data || {}
+  ElMessage.success(`已驳回 ${d.rejected || 0} 条`)
+  if (d.errors?.length) ElMessage.warning(d.errors.slice(0, 3).join('；'))
+  selected.value = []
+  await load()
+}
+
 onMounted(load)
 </script>
 
 <template>
-  <PageCard title="目录审批">
+  <PageCard title="资源目录审批">
     <el-form inline class="portal-inline-form portal-inline-form--block">
       <el-form-item label="状态" class="portal-field-sm">
         <el-select v-model="statusFilter" clearable placeholder="全部" @change="load">
@@ -92,9 +132,18 @@ onMounted(load)
       </el-form-item>
       <el-form-item class="portal-form-actions">
         <el-button type="primary" @click="load">刷新</el-button>
+        <el-button type="success" :disabled="!selected.length" @click="batchApprove">批量通过</el-button>
+        <el-button type="danger" plain :disabled="!selected.length" @click="batchReject">批量驳回</el-button>
       </el-form-item>
     </el-form>
-    <el-table v-loading="loading" :data="rows" stripe size="small">
+    <el-table
+      v-loading="loading"
+      :data="rows"
+      stripe
+      size="small"
+      @selection-change="(rows: ApprovalRow[]) => (selected = rows)"
+    >
+      <el-table-column type="selection" width="42" :selectable="(row: ApprovalRow) => row.status === 'PENDING'" />
       <el-table-column prop="resourceCode" label="资源编码" width="130" />
       <el-table-column prop="resourceName" label="资源名称" min-width="140" />
       <el-table-column label="操作类型" width="90">

@@ -54,7 +54,14 @@ import {
 
 const nodeTypes = { gov: markRaw(GovFlowNode) }
 
-const props = defineProps<{ taskId: number }>()
+const props = withDefaults(defineProps<{
+  taskId: number
+  taskDomain?: 'GOVERNANCE' | 'FUSION'
+}>(), {
+  taskDomain: 'GOVERNANCE',
+})
+
+const isFusionTask = computed(() => props.taskDomain === 'FUSION')
 
 const route = useRoute()
 const router = useRouter()
@@ -422,10 +429,14 @@ function suggestOutputTable(sourceTable: string) {
 }
 
 const outputConnectionOptions = computed(() => {
+  if (isFusionTask.value) {
+    return [
+      { value: 'smart_city_dws', label: '平台 DWS（主题/基础库）— 融合默认' },
+      { value: 'smart_city_ads', label: '平台 ADS（专题/应用）' },
+    ]
+  }
   const base = [
     { value: 'smart_city_dwd', label: '平台 DWD（smart_city_dwd）— 默认治理产出' },
-    { value: 'smart_city_dws', label: '平台 DWS（smart_city_dws）' },
-    { value: 'smart_city_ads', label: '平台 ADS（smart_city_ads）' },
   ]
   if (propForm.allowOdsWriteback) {
     return [
@@ -1166,11 +1177,11 @@ function defaultNodeConfig(type: string): Record<string, unknown> {
     case 'OUTPUT':
     case 'INSERT_UPDATE':
       return {
-        connection: 'smart_city_dwd',
-        outputConnection: 'smart_city_dwd',
+        connection: isFusionTask.value ? 'smart_city_dws' : 'smart_city_dwd',
+        outputConnection: isFusionTask.value ? 'smart_city_dws' : 'smart_city_dwd',
         table: '',
         outputTable: '',
-        outputMode: 'INSERT',
+        outputMode: 'TRUNCATE_INSERT',
         commitSize: 1000,
         allowOdsWriteback: false,
       }

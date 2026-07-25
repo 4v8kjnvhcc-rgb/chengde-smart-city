@@ -147,6 +147,14 @@ public class QualityTaskService {
         d.setTargetTable(str(body.get("targetTable"), cfg != null ? cfg.getTargetTable() : null));
         d.setTargetColumn(str(body.get("targetColumn"), cfg != null ? cfg.getTargetColumn() : null));
         d.setCheckType(str(body.get("checkType"), cfg != null ? cfg.getCheckType() : null));
+        if (d.getTargetTable() == null || d.getTargetTable().isBlank()) {
+            throw new BusinessException(400, "目标表不能为空，请从登记库选择表");
+        }
+        String checkType = d.getCheckType() == null ? "NULL_CHECK" : d.getCheckType();
+        if (!"RECORD_COUNT".equalsIgnoreCase(checkType)
+                && (d.getTargetColumn() == null || d.getTargetColumn().isBlank())) {
+            throw new BusinessException(400, "目标字段不能为空");
+        }
         d.setSortOrder(body.get("sortOrder") != null ? Integer.valueOf(String.valueOf(body.get("sortOrder"))) : 0);
         d.setStatus(str(body.get("status"), "ENABLED"));
         d.setCreatedAt(LocalDateTime.now());
@@ -196,6 +204,17 @@ public class QualityTaskService {
         }
         q.last("LIMIT 200");
         return runMapper.selectList(q);
+    }
+
+    /** 运行列表附带任务名称，供监控页展示（避免只显示 taskId）。 */
+    public List<Map<String, Object>> listRunViews(Long taskId) {
+        List<GovQualityTaskRun> runs = listRuns(taskId);
+        Map<Long, String> nameCache = new LinkedHashMap<>();
+        List<Map<String, Object>> out = new ArrayList<>();
+        for (GovQualityTaskRun r : runs) {
+            out.add(toRunView(r, nameCache));
+        }
+        return out;
     }
 
     public List<GovQualityIssue> listIssues(Long runId) {
@@ -278,10 +297,30 @@ public class QualityTaskService {
         out.put("successToday", successToday);
         out.put("failToday", failToday);
         out.put("issueToday", issueToday);
-        out.put("avgScore", avgScore);
+        out.put("avgScore", scored.isEmpty() ? null : avgScore);
         out.put("trend", trend);
-        out.put("recentRuns", listRuns(null).stream().limit(20).toList());
+        out.put("recentRuns", listRunViews(null).stream().limit(20).toList());
         return out;
+    }
+
+    private Map<String, Object> toRunView(GovQualityTaskRun r, Map<Long, String> nameCache) {
+        Map<String, Object> row = new LinkedHashMap<>();
+        row.put("id", r.getId());
+        row.put("taskId", r.getTaskId());
+        String taskName = nameCache.computeIfAbsent(r.getTaskId(), id -> {
+            GovQualityTask t = taskMapper.selectById(id);
+            return t != null ? t.getTaskName() : ("任务#" + id);
+        });
+        row.put("taskName", taskName);
+        row.put("status", r.getStatus());
+        row.put("startedAt", r.getStartedAt());
+        row.put("endedAt", r.getEndedAt());
+        row.put("score", r.getScore());
+        row.put("totalChecks", r.getTotalChecks());
+        row.put("issueCount", r.getIssueCount());
+        row.put("message", r.getMessage());
+        row.put("triggeredBy", r.getTriggeredBy());
+        return row;
     }
 
     private void applyBody(GovQualityTask task, Map<String, Object> body, boolean creating) {

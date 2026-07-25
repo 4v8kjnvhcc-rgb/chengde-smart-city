@@ -48,6 +48,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 import java.util.regex.Pattern;
 import javax.sql.DataSource;
 import org.springframework.stereotype.Service;
@@ -176,19 +177,28 @@ public class ResourceCenterPlatformService {
     public List<Map<String, Object>> candidateProduceTables() {
         List<GovMetadataRegistry> entries = registryMapper.selectList(new LambdaQueryWrapper<GovMetadataRegistry>()
                 .eq(GovMetadataRegistry::getEntryType, "TABLE")
-                .likeRight(GovMetadataRegistry::getEntryCode, "TBL_FUS_")
-                .eq(GovMetadataRegistry::getStatus, "ACTIVE")
+                .ne(GovMetadataRegistry::getStatus, "OFFLINE")
                 .orderByDesc(GovMetadataRegistry::getId)
-                .last("LIMIT 50"));
+                .last("LIMIT 100"));
         List<Map<String, Object>> out = new ArrayList<>();
         for (GovMetadataRegistry e : entries) {
-            if (e.getPhysicalTableName() == null) continue;
+            if (e.getPhysicalTableName() == null || e.getPhysicalTableName().isBlank()) continue;
+            String layer = e.getDataLayer();
+            if (layer == null || layer.isBlank()) {
+                layer = e.getDatabaseName() != null
+                        ? com.chengde.smartcity.masterdata.support.DataLayerSupport.layerForDatabase(e.getDatabaseName())
+                        : com.chengde.smartcity.masterdata.support.DataLayerSupport.layerForTableName(e.getPhysicalTableName());
+            }
+            // 资源中心纳管：源/主题/专题；过程 DWD 不作为可共享资产纳管首选
+            if ("DWD".equalsIgnoreCase(layer)) continue;
             Map<String, Object> m = new LinkedHashMap<>();
             m.put("entryCode", e.getEntryCode());
             m.put("entryName", e.getEntryName());
             m.put("physicalTable", e.getPhysicalTableName());
+            m.put("dataLayer", layer);
             m.put("managed", managedTableMapper.selectCount(new LambdaQueryWrapper<RcManagedTable>()
-                    .eq(RcManagedTable::getPhysicalTable, e.getPhysicalTableName())) > 0);
+                    .eq(RcManagedTable::getPhysicalTable, e.getPhysicalTableName())
+                    .eq(RcManagedTable::getStatus, "ACTIVE")) > 0);
             out.add(m);
         }
         return out;
@@ -216,9 +226,20 @@ public class ResourceCenterPlatformService {
     public Long manageTable(UserPrincipal operator, Map<String, Object> body) {
         Long themeId = longVal(body.get("themeId"));
         String physical = requireIdent(str(body.get("physicalTable"), null), "physicalTable");
-        if (themeId == null) throw new BusinessException(400, "themeId 必填");
+        if (themeId == null) throw new BusinessException(400, "请选择主题/专题库");
         if (themeMapper.selectById(themeId) == null) throw new BusinessException(404, "主题/专题库不存在");
         if (!tableExists(physical)) throw new BusinessException(404, "物理表不存在: " + physical);
+        String meta = str(body.get("metaEntryCode"), findMetaEntry(physical));
+        if (meta == null || meta.isBlank()) {
+            throw new BusinessException(400, "须选择已登记元数据条目（metaEntryCode），禁止空挂载");
+        }
+        GovMetadataRegistry entry = registryMapper.selectOne(new LambdaQueryWrapper<GovMetadataRegistry>()
+                .eq(GovMetadataRegistry::getEntryCode, meta)
+                .ne(GovMetadataRegistry::getStatus, "OFFLINE")
+                .last("LIMIT 1"));
+        if (entry == null) {
+            throw new BusinessException(400, "元数据条目不存在或已下线：" + meta);
+        }
 
         RcManagedTable existing = managedTableMapper.selectOne(new LambdaQueryWrapper<RcManagedTable>()
                 .eq(RcManagedTable::getPhysicalTable, physical).last("LIMIT 1"));
@@ -226,7 +247,7 @@ public class ResourceCenterPlatformService {
         RcManagedTable mt = creating ? new RcManagedTable() : existing;
         mt.setThemeId(themeId);
         mt.setPhysicalTable(physical);
-        mt.setMetaEntryCode(str(body.get("metaEntryCode"), findMetaEntry(physical)));
+        mt.setMetaEntryCode(meta);
         mt.setCatalogResourceCode(str(body.get("catalogResourceCode"), findCatalogCode(physical)));
         mt.setFusionPhysicalId(longVal(body.get("fusionPhysicalId")));
         mt.setStatus("ACTIVE");
@@ -267,12 +288,23 @@ public class ResourceCenterPlatformService {
 
     @Transactional
     public Long createPartition(UserPrincipal operator, Map<String, Object> body) {
+        String tableName = str(body.get("tableName"), null);
+        if (tableName == null || tableName.isBlank()) {
+            throw new BusinessException(400, "请选择已纳管的目标表");
+        }
+        requireIdent(tableName, "tableName");
+        long managed = managedTableMapper.selectCount(new LambdaQueryWrapper<RcManagedTable>()
+                .eq(RcManagedTable::getPhysicalTable, tableName)
+                .eq(RcManagedTable::getStatus, "ACTIVE"));
+        if (managed == 0) {
+            throw new BusinessException(400, "目标表须为已纳管物理表：" + tableName);
+        }
         RcPartitionDef p = new RcPartitionDef();
         p.setPartitionCode(str(body.get("partitionCode"), "PART_" + System.currentTimeMillis()));
         p.setPartitionName(required(body.get("partitionName"), "partitionName").toString());
         p.setPartitionType(str(body.get("partitionType"), "RANGE").toUpperCase(Locale.ROOT));
         p.setThemeId(longVal(body.get("themeId")));
-        p.setTableName(str(body.get("tableName"), null));
+        p.setTableName(tableName);
         p.setPartitionColumn(str(body.get("partitionColumn"), null));
         p.setExpressionText(str(body.get("expressionText"), null));
         p.setPretestStatus("DRAFT");
@@ -325,6 +357,35 @@ public class ResourceCenterPlatformService {
     }
 
     @Transactional
+    public Long createPolicy(UserPrincipal operator, Map<String, Object> body) {
+        String action = str(body.get("actionType"), "BACKUP").toUpperCase(Locale.ROOT);
+        if (!Set.of("BACKUP", "ARCHIVE", "DESTROY").contains(action)) {
+            throw new BusinessException(400, "actionType 须为 BACKUP / ARCHIVE / DESTROY");
+        }
+        Long managedId = longVal(body.get("managedTableId"));
+        if (("BACKUP".equals(action) || "ARCHIVE".equals(action) || "DESTROY".equals(action))
+                && managedId != null) {
+            RcManagedTable mt = managedTableMapper.selectById(managedId);
+            if (mt == null || !"ACTIVE".equalsIgnoreCase(mt.getStatus())) {
+                throw new BusinessException(400, "纳管表不存在或已解绑");
+            }
+        }
+        RcStoragePolicy p = new RcStoragePolicy();
+        p.setPolicyCode(str(body.get("policyCode"), "POL_" + System.currentTimeMillis()));
+        p.setPolicyName(required(body.get("policyName"), "policyName").toString());
+        p.setActionType(action);
+        p.setRetentionDays(body.get("retentionDays") == null ? 30
+                : Integer.valueOf(String.valueOf(body.get("retentionDays"))));
+        p.setThemeId(longVal(body.get("themeId")));
+        p.setManagedTableId(managedId);
+        p.setStatus("ACTIVE");
+        policyMapper.insert(p);
+        auditService.log(operator.getUserId(), operator.getUsername(), operator.getOrgId(),
+                "RC_POLICY_CREATE", "rc_storage_policy", String.valueOf(p.getId()), action);
+        return p.getId();
+    }
+
+    @Transactional
     public Map<String, Object> executePolicy(UserPrincipal operator, Long policyId) {
         RcStoragePolicy p = policyMapper.selectById(policyId);
         if (p == null) throw new BusinessException(404, "策略不存在");
@@ -339,12 +400,12 @@ public class ResourceCenterPlatformService {
             out.putAll(backup);
             out.put("status", "SUCCESS");
         } else if ("ARCHIVE".equals(action)) {
-            out.put("status", "SUCCESS");
+            out.put("status", "LEDGER");
             out.put("message", "归档状态已记录（台账），未移动物理数据");
         } else if ("DESTROY".equals(action)) {
             throw new BusinessException(403, "销毁策略禁止自动执行物理删除");
         } else {
-            out.put("status", "SUCCESS");
+            throw new BusinessException(400, "不支持的策略动作: " + action);
         }
         auditService.log(operator.getUserId(), operator.getUsername(), operator.getOrgId(),
                 "RC_POLICY_RUN", "rc_storage_policy", String.valueOf(policyId), action);
@@ -507,12 +568,35 @@ public class ResourceCenterPlatformService {
 
     @Transactional
     public Long createCatalogEntry(UserPrincipal operator, Map<String, Object> body) {
+        Long managedTableId = longVal(body.get("managedTableId"));
+        String metaEntryCode = str(body.get("metaEntryCode"), null);
+        if (managedTableId == null && (metaEntryCode == null || metaEntryCode.isBlank())) {
+            throw new BusinessException(400, "资产目录须关联已纳管表或元数据条目，禁止空手填");
+        }
+        String entryName = str(body.get("entryName"), null);
+        String driveTask = str(body.get("driveTask"), "exchange-task");
+        Long libId = longVal(body.get("libId"));
+        if (managedTableId != null) {
+            RcManagedTable mt = managedTableMapper.selectById(managedTableId);
+            if (mt == null || !"ACTIVE".equalsIgnoreCase(mt.getStatus())) {
+                throw new BusinessException(400, "纳管表不存在或已解绑");
+            }
+            if (entryName == null || entryName.isBlank()) {
+                entryName = mt.getPhysicalTable();
+            }
+            if (metaEntryCode == null || metaEntryCode.isBlank()) {
+                metaEntryCode = mt.getMetaEntryCode();
+            }
+            if (libId == null && mt.getThemeId() != null) {
+                libId = mt.getThemeId();
+            }
+            driveTask = str(body.get("driveTask"), "managed:" + mt.getPhysicalTable());
+        }
         RcAssetCatalogEntry e = new RcAssetCatalogEntry();
-        e.setEntryCode(str(body.get("entryCode"), "ACE_" + System.currentTimeMillis()));
-        e.setEntryName(required(body.get("entryName"), "entryName").toString());
-        Object libId = body.get("libId");
-        if (libId != null) e.setLibId(Long.valueOf(String.valueOf(libId)));
-        e.setDriveTask(str(body.get("driveTask"), "collect-task"));
+        e.setEntryCode(str(body.get("entryCode"), metaEntryCode != null ? metaEntryCode : ("ACE_" + System.currentTimeMillis())));
+        e.setEntryName(required(entryName, "entryName").toString());
+        if (libId != null) e.setLibId(libId);
+        e.setDriveTask(driveTask);
         e.setStatus("ACTIVE");
         catalogMapper.insert(e);
         return e.getId();
@@ -530,10 +614,80 @@ public class ResourceCenterPlatformService {
                 .eq(RcManagedTable::getStatus, "ACTIVE")
                 .like(q != null && !q.isBlank(), RcManagedTable::getPhysicalTable, q)
                 .last("LIMIT 20"))) {
-            hits.add(Map.of("libCode", mt.getPhysicalTable(), "libName", mt.getPhysicalTable(),
-                    "libType", "MANAGED", "recordCount", mt.getRecordCount() == null ? 0 : mt.getRecordCount()));
+            Map<String, Object> hit = new LinkedHashMap<>();
+            hit.put("libCode", mt.getPhysicalTable());
+            hit.put("libName", mt.getPhysicalTable());
+            hit.put("libType", "MANAGED");
+            hit.put("recordCount", mt.getRecordCount() == null ? 0 : mt.getRecordCount());
+            hit.put("managedTableId", mt.getId());
+            hit.put("metaEntryCode", mt.getMetaEntryCode() == null ? "" : mt.getMetaEntryCode());
+            hits.add(hit);
+        }
+        // 元数据登记条目（供「数据搜索与元数据检索」）
+        if (q != null && !q.isBlank()) {
+            for (GovMetadataRegistry reg : registryMapper.selectList(new LambdaQueryWrapper<GovMetadataRegistry>()
+                    .and(w -> w.like(GovMetadataRegistry::getEntryCode, q)
+                            .or().like(GovMetadataRegistry::getEntryName, q)
+                            .or().like(GovMetadataRegistry::getPhysicalTableName, q))
+                    .last("LIMIT 20"))) {
+                Map<String, Object> hit = new LinkedHashMap<>();
+                hit.put("libCode", reg.getEntryCode() == null ? "" : reg.getEntryCode());
+                hit.put("libName", reg.getEntryName() == null ? "" : reg.getEntryName());
+                hit.put("libType", "METADATA");
+                hit.put("recordCount", 0);
+                hit.put("physicalTable", reg.getPhysicalTableName() == null ? "" : reg.getPhysicalTableName());
+                hits.add(hit);
+            }
         }
         return Map.of("query", q == null ? "" : q, "hits", hits);
+    }
+
+    public Map<String, Object> queryManagedTable(Long managedTableId, Integer limit) {
+        if (managedTableId == null) throw new BusinessException(400, "managedTableId required");
+        RcManagedTable mt = managedTableMapper.selectById(managedTableId);
+        if (mt == null || !"ACTIVE".equalsIgnoreCase(mt.getStatus())) {
+            throw new BusinessException(404, "纳管表不存在或已解绑");
+        }
+        String table = requireIdent(mt.getPhysicalTable(), "physicalTable");
+        int lim = limit == null ? 100 : Math.min(Math.max(limit, 1), 500);
+        List<String> columns = new ArrayList<>();
+        List<Map<String, Object>> rows = new ArrayList<>();
+        try (Connection conn = platformDataSource.getConnection();
+             Statement st = conn.createStatement();
+             ResultSet rs = st.executeQuery("SELECT * FROM `" + table + "` LIMIT " + lim)) {
+            ResultSetMetaData meta = rs.getMetaData();
+            int cc = meta.getColumnCount();
+            for (int i = 1; i <= cc; i++) columns.add(meta.getColumnLabel(i));
+            while (rs.next()) {
+                Map<String, Object> row = new LinkedHashMap<>();
+                for (String col : columns) {
+                    Object v = rs.getObject(col);
+                    row.put(col, v == null ? null : String.valueOf(v));
+                }
+                rows.add(row);
+            }
+        } catch (BusinessException e) {
+            throw e;
+        } catch (Exception e) {
+            throw new BusinessException(500, "查询失败: " + e.getMessage());
+        }
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("managedTableId", managedTableId);
+        out.put("physicalTable", table);
+        out.put("metaEntryCode", mt.getMetaEntryCode());
+        out.put("limit", lim);
+        out.put("columns", columns);
+        out.put("rows", rows);
+        out.put("rowCount", rows.size());
+        return out;
+    }
+
+    public List<RcStoragePolicy> listPolicies(String actionType) {
+        LambdaQueryWrapper<RcStoragePolicy> q = new LambdaQueryWrapper<RcStoragePolicy>().orderByDesc(RcStoragePolicy::getId);
+        if (actionType != null && !actionType.isBlank()) {
+            q.eq(RcStoragePolicy::getActionType, actionType.toUpperCase(Locale.ROOT));
+        }
+        return policyMapper.selectList(q);
     }
 
     public Map<String, Object> statistics() {

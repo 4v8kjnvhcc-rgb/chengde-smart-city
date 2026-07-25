@@ -270,7 +270,7 @@ public class KettleTransConverterService {
             enrichBranchTargets(graph);
 
             for (NodeDef node : graph.nodes.values()) {
-                xml.append(generateStepXml(node));
+                xml.append(generateStepXml(node, graph));
             }
 
             xml.append("  <step_error_handling></step_error_handling>\n");
@@ -482,13 +482,17 @@ public class KettleTransConverterService {
         }
     }
 
-    private String generateStepXml(NodeDef node) {
+    private String generateStepXml(NodeDef node, GraphModel graph) {
         String nodeType = node.data.nodeType;
         String stepName = stepNameOf(node);
         String kettleType = NODE_TO_KETTLE.getOrDefault(nodeType, "Dummy");
         if (("FIELD_PROCESS".equals(nodeType) || "TYPE_CONVERT".equals(nodeType))
                 && hasStringCalcMappings(node.data.config)) {
             kettleType = "Calculator";
+        }
+        // 未配置条件的 FILTER：退化为 Dummy，避免 FilterRows 空比较导致 prepareExecution 失败
+        if ("FILTER".equals(nodeType) && isPassThroughFilter(node.data.config)) {
+            kettleType = "Dummy";
         }
         String label = labelOf(node);
         StringBuilder sb = new StringBuilder();
@@ -497,10 +501,15 @@ public class KettleTransConverterService {
         sb.append("    <type>").append(kettleType).append("</type>\n");
         sb.append("    <description>").append(escapeXml(label)).append("</description>\n");
         // FILTER/SWITCH 按条件路由；其它多出边默认复制分发
-        boolean branch = "FILTER".equals(nodeType) || "SWITCH_CASE".equals(nodeType);
+        boolean branch = "FILTER".equals(nodeType) && !"Dummy".equals(kettleType)
+                || "SWITCH_CASE".equals(nodeType);
         sb.append("    <distribute>").append(branch ? "N" : "Y").append("</distribute>\n");
         sb.append("    <copies>1</copies>\n");
-        sb.append(generateStepConfig(node));
+        if ("Dummy".equals(kettleType) && "FILTER".equals(nodeType)) {
+            sb.append("    <!-- pass-through empty FILTER -->\n");
+        } else {
+            sb.append(generateStepConfig(node, graph));
+        }
         sb.append("  </step>\n");
         return sb.toString();
     }
@@ -521,17 +530,17 @@ public class KettleTransConverterService {
     /**
      * 根据画布节点 config 生成 Kettle Step 内部配置 XML。
      */
-    private String generateStepConfig(NodeDef node) {
+    private String generateStepConfig(NodeDef node, GraphModel graph) {
         String nodeType = node.data.nodeType == null ? "" : node.data.nodeType;
         JsonNode cfg = node.data.config;
         return switch (nodeType) {
-            case "INPUT" -> cfgInput(cfg);
+            case "INPUT" -> cfgInput(cfg, orderByKeysForInput(node, graph));
             case "OUTPUT", "INSERT_UPDATE" -> cfgOutput(cfg);
             case "FILTER" -> cfgFilter(cfg);
             case "FIELD_PROCESS", "SELECT_FIELDS", "TYPE_CONVERT" -> cfgFieldProcess(cfg);
             case "DEDUPLICATE" -> cfgDeduplicate(cfg);
             case "MASK" -> cfgMask(cfg);
-            case "JOIN" -> cfgJoin(cfg);
+            case "JOIN" -> cfgJoin(cfg, predecessorStepNames(graph, node.id));
             case "UNION" -> cfgUnion(cfg);
             case "SORT" -> cfgSort(cfg);
             case "AGGREGATE" -> cfgAggregate(cfg);
@@ -568,7 +577,7 @@ public class KettleTransConverterService {
         return c;
     }
 
-    private String cfgInput(JsonNode cfg) {
+    private String cfgInput(JsonNode cfg, List<String> orderByKeys) {
         String conn = resolveConn(cfg, "connection", "PLATFORM");
         String mode = cfgText(cfg, "inputMode", "TABLE");
         String table = cfgText(cfg, "tableName", "");
@@ -591,6 +600,18 @@ public class KettleTransConverterService {
                 safeTable = "table_name";
             }
             sql = "SELECT * FROM `" + safeTable + "`";
+            if (orderByKeys != null && !orderByKeys.isEmpty()) {
+                StringBuilder ob = new StringBuilder();
+                for (String k : orderByKeys) {
+                    String sk = sanitizeIdent(k);
+                    if (sk.isBlank()) continue;
+                    if (ob.length() > 0) ob.append(", ");
+                    ob.append('`').append(sk).append('`');
+                }
+                if (ob.length() > 0) {
+                    sql = sql + " ORDER BY " + ob;
+                }
+            }
             limit = cfgInt(cfg, "limit", 0);
             if (!unlimited && limit <= 0) {
                 limit = 1000;
@@ -840,6 +861,7 @@ public class KettleTransConverterService {
             ObjectNode cfg = node.data.config != null && node.data.config.isObject()
                     ? ((ObjectNode) node.data.config).deepCopy()
                     : OM.createObjectNode();
+            List<String> untypedTargets = new ArrayList<>();
             for (EdgeDef edge : graph.edges) {
                 if (!node.id.equals(edge.source)) continue;
                 NodeDef target = graph.nodes.get(edge.target);
@@ -852,6 +874,8 @@ public class KettleTransConverterService {
                         cfg.put("trueTarget", targetStep);
                     } else if ("FALSE".equals(role) || "out_false".equals(sh) || "false".equals(sh)) {
                         cfg.put("falseTarget", targetStep);
+                    } else {
+                        untypedTargets.add(targetStep);
                     }
                 } else if ("SWITCH_CASE".equals(type)) {
                     if ("DEFAULT".equals(role) || "out_default".equals(sh)) {
@@ -865,6 +889,10 @@ public class KettleTransConverterService {
                         if (edge.caseValue != null) item.put("value", edge.caseValue);
                     }
                 }
+            }
+            // 单出口未标 TRUE/FALSE 时，默认走真分支（融合初始化图常见）
+            if ("FILTER".equals(type) && !cfg.has("trueTarget") && untypedTargets.size() == 1) {
+                cfg.put("trueTarget", untypedTargets.get(0));
             }
             node.data.config = cfg;
         }
@@ -1158,18 +1186,121 @@ public class KettleTransConverterService {
                 || n.startsWith("is_") || n.startsWith("has_");
     }
 
-    private String cfgJoin(JsonNode cfg) {
-        String leftKey = cfgText(cfg, "leftKey", "id");
-        String rightKey = cfgText(cfg, "rightKey", leftKey);
+    private String cfgJoin(JsonNode cfg, List<String> predecessorSteps) {
         String joinType = cfgText(cfg, "joinType", "INNER");
-        String kettleJoin = switch (joinType.toUpperCase()) {
+        String kettleJoin = switch (joinType.toUpperCase(Locale.ROOT)) {
             case "LEFT" -> "LEFT OUTER";
             case "FULL" -> "FULL OUTER";
             default -> "INNER";
         };
-        return "    <join_type>" + escapeXml(kettleJoin) + "</join_type>\n"
-                + "    <key_1>" + escapeXml(leftKey) + "</key_1>\n"
-                + "    <key_2>" + escapeXml(rightKey) + "</key_2>\n";
+        List<String> leftKeys = cfgStringList(cfg, "leftKeys");
+        List<String> rightKeys = cfgStringList(cfg, "rightKeys");
+        if (leftKeys.isEmpty()) {
+            String lk = cfgText(cfg, "leftKey", "id");
+            if (lk != null && !lk.isBlank()) leftKeys.add(lk);
+        }
+        if (rightKeys.isEmpty()) {
+            String rk = cfgText(cfg, "rightKey", leftKeys.isEmpty() ? "id" : leftKeys.get(0));
+            if (rk != null && !rk.isBlank()) rightKeys.add(rk);
+        }
+        if (leftKeys.isEmpty()) leftKeys.add("id");
+        if (rightKeys.isEmpty()) rightKeys.add(leftKeys.get(0));
+
+        String step1 = predecessorSteps.size() > 0 ? predecessorSteps.get(0) : "";
+        String step2 = predecessorSteps.size() > 1 ? predecessorSteps.get(1) : "";
+
+        StringBuilder sb = new StringBuilder();
+        sb.append("    <join_type>").append(escapeXml(kettleJoin)).append("</join_type>\n");
+        sb.append("    <step1>").append(escapeXml(step1)).append("</step1>\n");
+        sb.append("    <step2>").append(escapeXml(step2)).append("</step2>\n");
+        sb.append("    <keys_1>\n");
+        for (String k : leftKeys) {
+            sb.append("      <key>").append(escapeXml(k)).append("</key>\n");
+        }
+        sb.append("    </keys_1>\n");
+        sb.append("    <keys_2>\n");
+        for (String k : rightKeys) {
+            sb.append("      <key>").append(escapeXml(k)).append("</key>\n");
+        }
+        sb.append("    </keys_2>\n");
+        return sb.toString();
+    }
+
+    /** MergeJoin 两路前驱：LEFT 优先于 RIGHT，否则按边顺序 */
+    private List<String> predecessorStepNames(GraphModel graph, String nodeId) {
+        List<EdgeDef> ins = new ArrayList<>();
+        for (EdgeDef e : graph.edges) {
+            if (nodeId.equals(e.target)) {
+                ins.add(e);
+            }
+        }
+        ins.sort((a, b) -> Integer.compare(joinSideRank(a), joinSideRank(b)));
+        List<String> names = new ArrayList<>();
+        for (EdgeDef e : ins) {
+            NodeDef from = graph.nodes.get(e.source);
+            if (from != null) {
+                names.add(stepNameOf(from));
+            }
+        }
+        return names;
+    }
+
+    private static int joinSideRank(EdgeDef e) {
+        String role = e.edgeRole == null ? "" : e.edgeRole.toUpperCase(Locale.ROOT);
+        String th = e.targetHandle == null ? "" : e.targetHandle;
+        if ("LEFT".equals(role) || "in_left".equals(th) || "left".equals(th)) return 0;
+        if ("RIGHT".equals(role) || "in_right".equals(th) || "right".equals(th)) return 1;
+        return 2;
+    }
+
+    /**
+     * 输入步若直接连到 JOIN：按本侧关联键 ORDER BY，满足 MergeJoin 有序流要求。
+     */
+    private List<String> orderByKeysForInput(NodeDef inputNode, GraphModel graph) {
+        for (EdgeDef e : graph.edges) {
+            if (!inputNode.id.equals(e.source)) continue;
+            NodeDef to = graph.nodes.get(e.target);
+            if (to == null || to.data == null || !"JOIN".equals(to.data.nodeType)) continue;
+            JsonNode joinCfg = to.data.config;
+            int side = joinSideRank(e);
+            List<String> keys;
+            if (side == 1) {
+                keys = cfgStringList(joinCfg, "rightKeys");
+                if (keys.isEmpty()) {
+                    String rk = cfgText(joinCfg, "rightKey", null);
+                    if (rk != null) keys.add(rk);
+                }
+            } else {
+                keys = cfgStringList(joinCfg, "leftKeys");
+                if (keys.isEmpty()) {
+                    String lk = cfgText(joinCfg, "leftKey", "id");
+                    if (lk != null) keys.add(lk);
+                }
+            }
+            if (keys.isEmpty()) keys.add("id");
+            return keys;
+        }
+        return List.of();
+    }
+
+    /** 无有效过滤条件：视为直通，不生成 FilterRows */
+    private static boolean isPassThroughFilter(JsonNode cfg) {
+        if (cfg == null || cfg.isNull() || cfg.isMissingNode()) return true;
+        String mode = cfgText(cfg, "mode", "SIMPLE");
+        if ("SQL".equalsIgnoreCase(mode)) {
+            String expr = cfgText(cfg, "sqlExpr", "");
+            return expr == null || expr.isBlank();
+        }
+        JsonNode conditions = cfg.get("conditions");
+        if (conditions != null && conditions.isArray() && conditions.size() > 0) {
+            for (JsonNode c : conditions) {
+                String field = cfgText(c, "field", "");
+                if (field != null && !field.isBlank()) return false;
+            }
+            return true;
+        }
+        String field = cfg.has("field") && !cfg.get("field").isNull() ? cfg.get("field").asText("") : "";
+        return field == null || field.isBlank();
     }
 
     private String cfgUnion(JsonNode cfg) {

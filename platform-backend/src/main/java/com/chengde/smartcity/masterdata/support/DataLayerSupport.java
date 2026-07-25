@@ -78,6 +78,34 @@ public final class DataLayerSupport {
         return PLATFORM_DBS.contains(db.trim().toLowerCase(Locale.ROOT));
     }
 
+    /** 过程层：默认可治理/融合，不可进目录门户 */
+    public static boolean isProcessLayer(String layer) {
+        return layer != null && "DWD".equalsIgnoreCase(layer.trim());
+    }
+
+    /**
+     * 可编目进资源目录：源层 ODS（直通）或资源层 DWS/ADS（加工）；DWD/CONTROL 不可。
+     * 空层按表名推断；仍无法判定时默认允许并由调用方补齐 sourcePathType。
+     */
+    public static boolean isCatalogableLayer(String layer) {
+        if (layer == null || layer.isBlank()) {
+            return true;
+        }
+        String u = layer.trim().toUpperCase(Locale.ROOT);
+        return "ODS".equals(u) || "DWS".equals(u) || "ADS".equals(u) || "SOURCE".equals(u);
+    }
+
+    public static String sourcePathTypeForLayer(String layer) {
+        if (layer == null || layer.isBlank()) {
+            return "DIRECT";
+        }
+        String u = layer.trim().toUpperCase(Locale.ROOT);
+        if ("DWS".equals(u) || "ADS".equals(u)) {
+            return "PROCESSED";
+        }
+        return "DIRECT";
+    }
+
     private static String sanitizeIdent(String name) {
         return name == null ? "" : name.replace("`", "");
     }

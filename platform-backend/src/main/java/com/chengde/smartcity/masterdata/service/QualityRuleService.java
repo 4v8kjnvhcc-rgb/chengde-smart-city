@@ -14,6 +14,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.UUID;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
@@ -68,6 +69,28 @@ public class QualityRuleService {
         return row;
     }
 
+    @Transactional
+    public Long create(UserPrincipal operator, Map<String, Object> body) {
+        String name = str(body.get("ruleName"), null);
+        if (name == null) {
+            throw new BusinessException(400, "规则名称不能为空");
+        }
+        GovQualityRule rule = new GovQualityRule();
+        rule.setRuleCode(str(body.get("ruleCode"), "QR_" + UUID.randomUUID().toString().substring(0, 8)));
+        rule.setRuleName(name);
+        rule.setRuleType(str(body.get("ruleType"), "COMPLETENESS"));
+        if (operator != null) {
+            rule.setOrgId(operator.getOrgId());
+            rule.setCreatedBy(operator.getUsername());
+        }
+        rule.setStatus(str(body.get("status"), "ENABLED"));
+        rule.setCreatedAt(LocalDateTime.now());
+        rule.setUpdatedAt(LocalDateTime.now());
+        ruleMapper.insert(rule);
+        log.info("quality rule created id={} code={}", rule.getId(), rule.getRuleCode());
+        return rule.getId();
+    }
+
     public GovQualityRuleConfig getConfig(Long ruleId) {
         requireRule(ruleId);
         GovQualityRuleConfig cfg = findConfig(ruleId);
@@ -98,6 +121,13 @@ public class QualityRuleService {
         cfg.setCheckType(checkType);
         cfg.setTargetTable(str(body.get("targetTable"), null));
         cfg.setTargetColumn(str(body.get("targetColumn"), null));
+        if (cfg.getTargetTable() == null || cfg.getTargetTable().isBlank()) {
+            throw new BusinessException(400, "目标表不能为空，请从平台分层库或登记源选择表");
+        }
+        if (!"RECORD_COUNT".equalsIgnoreCase(checkType)
+                && (cfg.getTargetColumn() == null || cfg.getTargetColumn().isBlank())) {
+            throw new BusinessException(400, "目标字段不能为空");
+        }
         if (body.containsKey("configJson")) {
             Object cj = body.get("configJson");
             cfg.setConfigJson(cj == null ? null : String.valueOf(cj));

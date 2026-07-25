@@ -1,13 +1,14 @@
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref, watch } from 'vue'
+import { nextTick, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import api from '@/api/http'
 import { ElMessage } from 'element-plus'
-import PageHeader from '@/components/common/PageHeader.vue'
 import PageCard from '@/components/common/PageCard.vue'
-import HubSideLayout from '@/components/common/HubSideLayout.vue'
+import HubSideLayout, { type HubNavItem } from '@/components/common/HubSideLayout.vue'
+import { statusLabel, statusTagType } from '@/utils/status-label'
 
-const navItems = [
+/** V3.0 统一用户管理系统七模块 */
+const navItems: HubNavItem[] = [
   { key: 'users', label: '用户中心' },
   { key: 'apps', label: '应用中心' },
   { key: 'auth', label: '认证中心' },
@@ -17,10 +18,16 @@ const navItems = [
   { key: 'integration', label: '系统对接' },
 ]
 
-interface App { id: number; appCode: string; appName: string; appType: string; endpointUrl?: string; status: string }
-interface Service { id: number; serviceCode: string; serviceName: string; servicePath: string; protocol: string; status: string }
 interface Config { id: number; configKey: string; configValue: string; configGroup: string; description?: string }
-interface Integration { id: number; integrationCode: string; integrationName: string; targetSystem: string; endpoint: string; status: string; lastMessage?: string }
+interface Integration {
+  id: number
+  integrationCode: string
+  integrationName: string
+  targetSystem: string
+  endpoint: string
+  status: string
+  lastMessage?: string
+}
 
 const route = useRoute()
 const router = useRouter()
@@ -35,43 +42,52 @@ const tabMap: Record<string, string> = {
   integration: 'integration', m145: 'integration',
 }
 
-const tab = ref('users')
-const overview = ref<{
-  apps: App[]
-  services: Service[]
-  configs: Config[]
-  integrations: Integration[]
-} | null>(null)
+const DEFAULT_NAV = 'users'
+const tab = ref(DEFAULT_NAV)
+let applyingRoute = false
 
-const appForm = reactive({ appName: '', appType: 'WEB', endpointUrl: '/' })
-const svcForm = reactive({ serviceName: '', servicePath: '/api/v1/', protocol: 'REST' })
+const configs = ref<Config[]>([])
+const integrations = ref<Integration[]>([])
+let configsLoaded = false
+let integrationsLoaded = false
 
-function resolveTab() {
-  tab.value = tabMap[String(route.query.tab || 'users').toLowerCase()] || 'users'
+function resolveFromRoute() {
+  applyingRoute = true
+  tab.value = tabMap[String(route.query.tab || DEFAULT_NAV).toLowerCase()] || DEFAULT_NAV
+  nextTick(() => { applyingRoute = false })
 }
 
-async function load() {
+function syncQuery() {
+  const q: Record<string, string> = {}
+  for (const [k, v] of Object.entries(route.query)) {
+    if (v == null || k === 'tab') continue
+    q[k] = Array.isArray(v) ? String(v[0]) : String(v)
+  }
+  q.tab = tab.value
+  router.replace({ query: q })
+}
+
+async function loadConfigs(force = false) {
+  if (configsLoaded && !force) return
+  const ov = (await api.get('/analytics/platform/support/overview')).data
+  configs.value = ((ov?.configs as Config[]) || []).filter((c) => c.configGroup === 'SYSTEM')
+  configsLoaded = true
+}
+
+async function loadIntegrations(force = false) {
+  if (integrationsLoaded && !force) return
+  const ov = (await api.get('/analytics/platform/support/overview')).data
+  integrations.value = (ov?.integrations as Integration[]) || []
+  integrationsLoaded = true
+}
+
+async function loadTabData() {
   try {
-    overview.value = (await api.get('/analytics/platform/support/overview')).data
+    if (tab.value === 'config') await loadConfigs()
+    else if (tab.value === 'integration') await loadIntegrations()
   } catch {
     ElMessage.error('加载失败')
   }
-}
-
-async function createApp() {
-  if (!appForm.appName) return
-  await api.post('/analytics/platform/apps', appForm)
-  ElMessage.success('应用已注册')
-  appForm.appName = ''
-  await load()
-}
-
-async function createService() {
-  if (!svcForm.serviceName) return
-  await api.post('/analytics/platform/services', svcForm)
-  ElMessage.success('服务已发布')
-  svcForm.serviceName = ''
-  await load()
 }
 
 async function saveConfig(row: Config) {
@@ -81,65 +97,60 @@ async function saveConfig(row: Config) {
 
 async function testIntegration(id: number) {
   const res = await api.post(`/analytics/platform/integrations/${id}/test`, {})
-  ElMessage.success(res.data.message)
-  await load()
+  if (res.data?.reachable) ElMessage.success(res.data.message || '可达')
+  else ElMessage.warning(res.data?.message || '未连通')
+  await loadIntegrations(true)
 }
 
 function goSystem(path: string) {
   router.push(path)
 }
 
-const tabTitle = computed(() => ({
-  users: 'M139 用户中心',
-  apps: 'M140 应用中心',
-  auth: 'M141 认证中心',
-  services: 'M142 服务中心',
-  config: 'M143 系统管理',
-  audit: 'M144 日志审计',
-  integration: 'M145 系统对接',
-}[tab.value] || '通用支撑'))
-
 watch(tab, () => {
-  router.replace({ query: { ...route.query, tab: tab.value } })
+  if (!applyingRoute) syncQuery()
+  loadTabData()
 })
-watch(() => route.query.tab, resolveTab)
-onMounted(() => { resolveTab(); load() })
+watch(() => route.query.tab, () => { resolveFromRoute() })
+onMounted(() => {
+  resolveFromRoute()
+  loadTabData()
+})
 </script>
 
 <template>
-  <div>
-    <PageHeader
-      :title="`通用支撑平台 · ${tabTitle}`"
-      description="入口在系统管理：统一用户管理（3.1.1）及审计/等保；本页为分析侧聚合导航"
-    />
+  <div class="ana-hub-root">
     <HubSideLayout v-model="tab" :items="navItems">
-      <PageCard v-if="tab === 'users'" title="M139 用户中心">
-        <p>账号、角色、组织与访问控制已在全局系统管理「身份与权限」实现。</p>
-        <el-button type="primary" @click="goSystem('/system/uum?tab=users')">打开统一用户管理</el-button>
-        <el-button @click="goSystem('/system/users')">用户管理</el-button>
-        <el-button @click="goSystem('/system/roles')">角色管理</el-button>
-        <el-button @click="goSystem('/system/orgs')">组织管理</el-button>
-        <el-button @click="goSystem('/system/access')">访问控制</el-button>
+      <PageCard v-if="tab === 'users'" title="用户中心">
+        <p class="ana-hint">账号、角色、组织与访问控制已在全局「统一用户管理」实现（框架复用，不平行造账号体系）。</p>
+        <el-form inline class="portal-inline-form portal-inline-form--block">
+          <el-form-item class="portal-form-actions">
+            <el-button type="primary" @click="goSystem('/system/uum?tab=users')">打开统一用户管理</el-button>
+            <el-button @click="goSystem('/system/users')">用户管理</el-button>
+            <el-button @click="goSystem('/system/roles')">角色管理</el-button>
+            <el-button @click="goSystem('/system/orgs')">组织管理</el-button>
+            <el-button @click="goSystem('/system/access')">访问控制</el-button>
+          </el-form-item>
+        </el-form>
       </PageCard>
 
-      <PageCard v-if="tab === 'apps'" title="M140 应用中心">
-        <p>应用注册与用户/角色授权已并入全局系统管理「统一用户管理」。</p>
+      <PageCard v-else-if="tab === 'apps'" title="应用中心">
+        <p class="ana-hint">应用注册与授权已并入全局统一用户管理 · 应用中心。</p>
         <el-button type="primary" @click="goSystem('/system/uum?tab=apps')">打开应用中心</el-button>
       </PageCard>
 
-      <PageCard v-if="tab === 'auth'" title="M141 认证中心（SSO 扩展）">
-        <p>认证方式与 SSO 配置已并入全局系统管理。</p>
+      <PageCard v-else-if="tab === 'auth'" title="认证中心">
+        <p class="ana-hint">统一身份认证 / SSO 扩展已并入全局系统管理。</p>
         <el-button type="primary" @click="goSystem('/system/uum?tab=auth')">打开认证中心</el-button>
         <el-button @click="goSystem('/system/security')">等保开关</el-button>
       </PageCard>
 
-      <PageCard v-if="tab === 'services'" title="M142 服务中心">
-        <p>服务注册、调用统计与审批已并入全局系统管理。</p>
+      <PageCard v-else-if="tab === 'services'" title="服务中心">
+        <p class="ana-hint">服务注册、调用统计与审批已并入全局统一用户管理 · 服务中心。</p>
         <el-button type="primary" @click="goSystem('/system/uum?tab=services')">打开服务中心</el-button>
       </PageCard>
 
-      <PageCard v-if="tab === 'config'" title="M143 系统管理">
-        <el-table v-if="overview" :data="overview.configs.filter(c => c.configGroup === 'SYSTEM')" stripe size="small">
+      <PageCard v-else-if="tab === 'config'" title="系统管理">
+        <el-table :data="configs" stripe size="small">
           <el-table-column prop="configKey" label="配置项" width="200" />
           <el-table-column prop="description" label="说明" />
           <el-table-column label="值" min-width="120">
@@ -156,21 +167,29 @@ onMounted(() => { resolveTab(); load() })
         <el-button style="margin-top:12px" @click="goSystem('/system/security')">等保安全配置</el-button>
       </PageCard>
 
-      <PageCard v-if="tab === 'audit'" title="M144 日志审计">
-        <p>审计日志查询与导出已在系统管理中实现。</p>
+      <PageCard v-else-if="tab === 'audit'" title="日志审计">
+        <p class="ana-hint">审计日志查询与导出已在系统管理中实现。</p>
         <el-button type="primary" @click="goSystem('/system/audit')">打开审计日志</el-button>
       </PageCard>
 
-      <PageCard v-if="tab === 'integration'" title="M145 系统对接">
-        <el-table v-if="overview" :data="overview.integrations" stripe size="small">
+      <PageCard v-else-if="tab === 'integration'" title="系统对接">
+        <el-alert
+          type="info"
+          :closable="false"
+          title="探测结果如实展示；未启动目标服务时为「错误/未连通」，不会伪造成功。"
+          style="margin-bottom:12px"
+        />
+        <el-table :data="integrations" stripe size="small">
           <el-table-column prop="integrationCode" label="编码" width="100" />
           <el-table-column prop="integrationName" label="名称" />
           <el-table-column prop="targetSystem" label="目标系统" width="140" />
-          <el-table-column prop="endpoint" label="端点" min-width="200" />
-          <el-table-column label="状态" width="90">
-          <template #default="{ row }">{{ $statusLabel(row.status) }}</template>
-        </el-table-column>
-          <el-table-column prop="lastMessage" label="最近检测" min-width="140" />
+          <el-table-column prop="endpoint" label="端点" min-width="200" show-overflow-tooltip />
+          <el-table-column label="状态" width="100">
+            <template #default="{ row }">
+              <el-tag :type="statusTagType(row.status)" size="small">{{ statusLabel(row.status) }}</el-tag>
+            </template>
+          </el-table-column>
+          <el-table-column prop="lastMessage" label="最近检测" min-width="160" show-overflow-tooltip />
           <el-table-column label="操作" width="80">
             <template #default="{ row }">
               <el-button link type="primary" @click="testIntegration(row.id)">检测</el-button>
@@ -181,3 +200,16 @@ onMounted(() => { resolveTab(); load() })
     </HubSideLayout>
   </div>
 </template>
+
+<style scoped>
+.ana-hub-root {
+  height: calc(100vh - var(--portal-header-height) - 40px);
+  min-height: 0;
+}
+.ana-hint {
+  margin: 0 0 12px;
+  color: var(--el-text-color-secondary);
+  font-size: 13px;
+  line-height: 1.5;
+}
+</style>

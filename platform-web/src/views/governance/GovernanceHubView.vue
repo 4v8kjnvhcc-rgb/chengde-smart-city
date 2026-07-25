@@ -1,10 +1,6 @@
 <script setup lang="ts">
-import { computed, defineAsyncComponent, nextTick, onMounted, reactive, ref, watch } from 'vue'
+import { computed, defineAsyncComponent, nextTick, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import api from '@/api/http'
-import { ElMessage } from 'element-plus'
-import PageHeader from '@/components/common/PageHeader.vue'
-import PageCard from '@/components/common/PageCard.vue'
 import HubSideLayout, { type HubNavItem } from '@/components/common/HubSideLayout.vue'
 import { metaSectionItems, resolveMetaSection } from './metadata/meta-nav'
 import GovernanceEtlPanel from './etl/GovernanceEtlPanel.vue'
@@ -14,13 +10,19 @@ const StandardsView = defineAsyncComponent(() => import('./quality/StandardsView
 const QualityRuleConfigView = defineAsyncComponent(() => import('./quality/QualityRuleConfigView.vue'))
 const QualityTaskView = defineAsyncComponent(() => import('./quality/QualityTaskView.vue'))
 const QualityMonitorView = defineAsyncComponent(() => import('./quality/QualityMonitorView.vue'))
+const QualityAssessView = defineAsyncComponent(() => import('./quality/QualityAssessView.vue'))
 const QualityReportView = defineAsyncComponent(() => import('./quality/QualityReportView.vue'))
 const CatalogResourceView = defineAsyncComponent(() => import('./catalog/CatalogResourceView.vue'))
+const CatalogRegisterPublishView = defineAsyncComponent(() => import('./catalog/CatalogRegisterPublishView.vue'))
 const CatalogApprovalView = defineAsyncComponent(() => import('./catalog/CatalogApprovalView.vue'))
 const CatalogSubscriptionView = defineAsyncComponent(() => import('./catalog/CatalogSubscriptionView.vue'))
 const CatalogPortalView = defineAsyncComponent(() => import('./catalog/CatalogPortalView.vue'))
 const FusionModelView = defineAsyncComponent(() => import('./fusion/FusionModelView.vue'))
-const FusionScriptView = defineAsyncComponent(() => import('./fusion/FusionScriptView.vue'))
+const FusionCapabilityHost = defineAsyncComponent(() => import('./fusion/FusionCapabilityHost.vue'))
+const GovernanceComponentsView = defineAsyncComponent(() => import('./etl/GovernanceComponentsView.vue'))
+
+/** V3.0：数据融合处理下挂五子能力，侧栏三级可见 */
+const FUSION_CAPS = ['script', 'clean', 'schedule', 'execute', 'version'] as const
 
 const navItems: HubNavItem[] = [
   {
@@ -41,32 +43,44 @@ const navItems: HubNavItem[] = [
   },
   {
     key: 'quality',
-    label: '数据质量管理',
+    label: '数据质量管理系统',
     children: [
-      { key: 'quality.standards', label: '数据标准' },
+      { key: 'quality.standards', label: '数据标准体系' },
       { key: 'quality.rule-config', label: '质量规则配置' },
-      { key: 'quality.task-mgmt', label: '质量任务' },
-      { key: 'quality.monitor', label: '质量监控' },
-      { key: 'quality.reports', label: '质量报告' },
-      { key: 'quality.tasks', label: '规则与任务' },
+      { key: 'quality.task-mgmt', label: '数据质量任务' },
+      { key: 'quality.monitor', label: '数据质量监控' },
+      { key: 'quality.assess', label: '数据质量评估' },
+      { key: 'quality.reports', label: '数据质量分析报告' },
     ],
   },
   {
     key: 'model',
-    label: '数据融合',
+    label: '数据融合系统',
     children: [
-      { key: 'model.logic', label: '逻辑/物理模型' },
-      { key: 'model.script', label: '融合脚本' },
+      { key: 'model.warehouse', label: '数据仓库建设' },
+      {
+        key: 'model.processing',
+        label: '数据融合处理',
+        children: [
+          { key: 'model.script', label: '脚本开发' },
+          { key: 'model.clean', label: '数据清洗', subLabel: '多表融合加工→DWS/ADS' },
+          { key: 'model.schedule', label: '工作流调度' },
+          { key: 'model.execute', label: '任务执行', subLabel: '加工/直通共享' },
+          { key: 'model.version', label: '版本管理' },
+        ],
+      },
+      { key: 'model.components', label: '数据融合组件' },
     ],
   },
   {
     key: 'catalog',
-    label: '数据目录管理',
+    label: '数据目录管理系统',
     children: [
-      { key: 'catalog.resources', label: '资源编目' },
-      { key: 'catalog.approvals', label: '目录审批' },
-      { key: 'catalog.subscriptions', label: '订阅' },
-      { key: 'catalog.portal', label: '门户' },
+      { key: 'catalog.resources', label: '资源目录编制' },
+      { key: 'catalog.publish', label: '目录注册发布' },
+      { key: 'catalog.approvals', label: '资源目录审批' },
+      { key: 'catalog.subscriptions', label: '资源申请订阅' },
+      { key: 'catalog.portal', label: '资源目录门户' },
     ],
   },
 ]
@@ -76,10 +90,6 @@ const activeNav = ref(DEFAULT_NAV)
 
 const etlView = ref('list')
 const etlTaskId = ref<number | null>(null)
-
-interface Rule { id: number; ruleCode: string; ruleName: string; ruleType: string; status: string }
-interface QTask { id: number; taskName: string; status: string; lastScore?: number; lastMessage?: string }
-interface Standard { id: number; itemCode: string; itemName: string; itemType: string; standardRef?: string }
 
 const route = useRoute()
 const router = useRouter()
@@ -92,14 +102,6 @@ const tabMap: Record<string, string> = {
   catalog: 'catalog', m112: 'catalog', m122: 'catalog',
 }
 
-const integration = ref<Record<string, unknown>>({})
-const rules = ref<Rule[]>([])
-const qTasks = ref<QTask[]>([])
-const standards = ref<Standard[]>([])
-
-const ruleForm = reactive({ ruleName: '', ruleType: 'COMPLETENESS' })
-const taskForm = reactive({ taskName: '', ruleId: undefined as number | undefined })
-
 const tab = computed(() => {
   if (activeNav.value === 'etl' || activeNav.value.startsWith('etl.')) return 'etl'
   const mod = activeNav.value.split('.')[0]
@@ -111,7 +113,26 @@ const metaSection = computed(() => {
   if (!activeNav.value.startsWith('metadata.')) return 'model'
   return resolveMetaSection(activeNav.value.slice('metadata.'.length))
 })
-const modelSub = computed(() => (activeNav.value === 'model.script' ? 'script' : 'logic'))
+/** 兼容旧 mSub；processing 无叶子时落到脚本开发 */
+function normalizeModelSub(raw: string): string {
+  const s = String(raw || 'warehouse')
+  if (s === 'logic' || s === 'model') return 'warehouse'
+  if (s === 'processing') return 'script'
+  if (s === 'direct-share' || s === 'processed-share') return 'execute'
+  if (s === 'warehouse' || s === 'components') return s
+  if ((FUSION_CAPS as readonly string[]).includes(s)) return s
+  return 'warehouse'
+}
+
+const modelSub = computed(() => {
+  if (!activeNav.value.startsWith('model.')) return 'warehouse'
+  const leaf = activeNav.value.slice('model.'.length)
+  // model.processing 仅为展开节点，不是叶子
+  if (leaf === 'processing') return 'script'
+  return normalizeModelSub(leaf)
+})
+
+const isFusionCap = computed(() => (FUSION_CAPS as readonly string[]).includes(modelSub.value))
 const catalogSub = computed(() => (activeNav.value.startsWith('catalog.') ? activeNav.value.slice('catalog.'.length) : 'resources'))
 const etlSub = computed(() => (activeNav.value.startsWith('etl.') ? activeNav.value.slice('etl.'.length) : 'task-mgmt'))
 
@@ -121,7 +142,7 @@ function defaultNavForTab(t: string): string {
   if (t === 'quality') return 'quality.standards'
   if (t === 'metadata') return 'metadata.model'
   if (t === 'etl') return 'etl.task-mgmt'
-  if (t === 'model') return 'model.logic'
+  if (t === 'model') return 'model.warehouse'
   if (t === 'catalog') return 'catalog.resources'
   return DEFAULT_NAV
 }
@@ -140,11 +161,28 @@ function resolveFromRoute() {
     const sec = resolveMetaSection(route.query.section)
     activeNav.value = `metadata.${sec}`
   } else if (mapped === 'quality') {
-    const sub = String(route.query.qSub || 'standards')
+    // 旧 mock 入口 quality.tasks → 正式任务配置
+    let sub = String(route.query.qSub || 'standards')
+    if (sub === 'tasks') sub = 'task-mgmt'
     activeNav.value = `quality.${sub}`
   } else if (mapped === 'model') {
-    const sub = String(route.query.mSub || 'logic')
-    activeNav.value = sub === 'script' ? 'model.script' : 'model.logic'
+    let raw = String(route.query.mSub || 'warehouse')
+    // 旧 procTab 兼容：processing + procTab=script|clean|...
+    if (raw === 'processing') {
+      const pt = String(route.query.procTab || 'script')
+      raw = normalizeModelSub(pt === 'processing' ? 'script' : pt)
+    }
+    if (raw === 'direct-share' || raw === 'processed-share') {
+      activeNav.value = 'model.execute'
+      nextTick(() => {
+        const q = { ...route.query, tab: 'model', mSub: 'execute', execTab: raw } as Record<string, string>
+        delete (q as Record<string, unknown>).procTab
+        router.replace({ query: q })
+      })
+    } else {
+      const leaf = normalizeModelSub(raw)
+      activeNav.value = `model.${leaf}`
+    }
   } else if (mapped === 'catalog') {
     const sub = String(route.query.cSub || 'resources')
     activeNav.value = `catalog.${sub}`
@@ -182,7 +220,7 @@ function syncQuery() {
   for (const [k, v] of Object.entries(route.query)) {
     if (v == null) continue
     // 跳过由 Hub 托管的键，下面按当前状态重写
-    if (['tab', 'section', 'qSub', 'mSub', 'cSub', 'etlSub', 'etlView', 'taskId'].includes(k)) continue
+    if (['tab', 'section', 'qSub', 'mSub', 'cSub', 'etlSub', 'etlView', 'taskId', 'procTab'].includes(k)) continue
     q[k] = Array.isArray(v) ? String(v[0]) : String(v)
   }
   q.tab = tab.value
@@ -190,13 +228,14 @@ function syncQuery() {
   if (tab.value === 'quality') q.qSub = qualitySub.value
   if (tab.value === 'model') q.mSub = modelSub.value
   if (tab.value === 'catalog') q.cSub = catalogSub.value
-  if (tab.value === 'etl') {
-    q.etlSub = etlSub.value || 'task-mgmt'
+  const fusionNeedsEtl = tab.value === 'model' && ['clean', 'schedule', 'execute'].includes(modelSub.value)
+  if (tab.value === 'etl' || fusionNeedsEtl) {
+    if (tab.value === 'etl') q.etlSub = etlSub.value || 'task-mgmt'
     if ((etlView.value === 'design' || etlView.value === 'monitor') && etlTaskId.value != null) {
       q.etlView = etlView.value
       q.taskId = String(etlTaskId.value)
     }
-  } else {
+  } else if (!fusionNeedsEtl) {
     etlView.value = 'list'
     etlTaskId.value = null
   }
@@ -220,7 +259,15 @@ function resetEtlToListIfNeeded(navKey: string) {
 }
 
 function onHubNavSelect(key: string) {
-  if (etlSubOf(key) == null) return
+  // 融合处理子能力切换时也退出画布
+  if (key.startsWith('model.') && ['model.clean', 'model.schedule', 'model.execute', 'model.script', 'model.version'].includes(key)) {
+    etlView.value = 'list'
+    etlTaskId.value = null
+  }
+  if (etlSubOf(key) == null) {
+    if (key.startsWith('model.')) syncQuery()
+    return
+  }
   resetEtlToListIfNeeded(key)
   syncQuery()
 }
@@ -237,74 +284,10 @@ function openEtlMonitor(id: number) {
   syncQuery()
 }
 
-async function loadIntegration() {
-  try {
-    integration.value = (await api.get('/integration/health')).data || {}
-  } catch { integration.value = {} }
-}
-
-async function loadQuality() {
-  if (qualitySub.value !== 'tasks') return
-  const res = await api.get('/governance/platform/quality/overview')
-  rules.value = res.data.rules
-  qTasks.value = res.data.tasks
-  standards.value = res.data.standards || []
-}
-
-async function loadEtl() {
-  // ETL页面数据加载
-}
-
-async function loadTabData() {
-  await loadIntegration()
-  try {
-    if (tab.value === 'quality') await loadQuality()
-    if (tab.value === 'etl') await loadEtl()
-  } catch { ElMessage.error('加载失败') }
-}
-
-async function createRule() {
-  await api.post('/governance/quality/rules', ruleForm)
-  ElMessage.success('规则已创建')
-  ruleForm.ruleName = ''
-  await loadQuality()
-}
-
-async function createTask() {
-  await api.post('/governance/quality/tasks', taskForm)
-  ElMessage.success('任务已创建')
-  taskForm.taskName = ''
-  await loadQuality()
-}
-
-async function runTask(id: number) {
-  const res = await api.post(`/governance/quality/tasks/${id}/run`)
-  ElMessage.success(`评分 ${res.data.score}`)
-  await loadQuality()
-}
-
-async function genReport() {
-  await api.post('/governance/platform/quality/reports', { reportName: '六性质量报告', dimension: '完整性+准确性' })
-  ElMessage.success('报告已生成')
-  await loadQuality()
-}
-
-const tabTitle = computed(() => ({
-  metadata: '元数据管理',
-  etl: '数据治理',
-  quality: '数据质量管理',
-  model: '数据融合',
-  catalog: '数据目录管理',
-}[tab.value] || '元数据管理'))
-
 watch(activeNav, (nav) => {
   if (applyingRoute) return
   resetEtlToListIfNeeded(nav)
   syncQuery()
-  loadTabData()
-})
-watch(qualitySub, () => {
-  if (tab.value === 'quality') loadQuality()
 })
 watch(
   () => [route.query.tab, route.query.section, route.query.qSub, route.query.mSub, route.query.cSub, route.query.etlSub],
@@ -313,20 +296,12 @@ watch(
 watch(() => [route.query.etlView, route.query.taskId], () => {
   if (applyingRoute) return
   resolveEtlView()
-  if (tab.value === 'etl') void loadEtl()
 })
-onMounted(() => { resolveFromRoute(); loadTabData() })
+onMounted(() => { resolveFromRoute() })
 </script>
 
 <template>
-  <div>
-    <PageHeader
-      :title="`数据融合治理平台 · ${tabTitle}`"
-      description="元数据管理、数据治理、数据质量管理、数据融合、数据目录管理"
-    />
-    <el-alert v-if="integration.openmetadata !== undefined" type="info" :closable="false" show-icon
-      :title="`OpenMetadata=${integration.openmetadata ? 'UP' : 'DOWN'} · 集成=${integration.enabled ? 'ON' : 'OFF'}`"
-      style="margin-bottom:12px" />
+  <div class="gov-hub-root">
     <HubSideLayout v-model="activeNav" :items="navItems" @select="onHubNavSelect">
       <div class="gov-hub-panel">
         <MetadataSubsystemView v-if="tab === 'metadata'" :section="metaSection" />
@@ -344,53 +319,26 @@ onMounted(() => { resolveFromRoute(); loadTabData() })
         <QualityRuleConfigView v-else-if="tab === 'quality' && qualitySub === 'rule-config'" />
         <QualityTaskView v-else-if="tab === 'quality' && qualitySub === 'task-mgmt'" />
         <QualityMonitorView v-else-if="tab === 'quality' && qualitySub === 'monitor'" />
+        <QualityAssessView v-else-if="tab === 'quality' && qualitySub === 'assess'" />
         <QualityReportView v-else-if="tab === 'quality' && qualitySub === 'reports'" />
-        <PageCard v-else-if="tab === 'quality' && qualitySub === 'tasks'" title="质量规则与任务">
-          <el-form inline class="portal-inline-form portal-inline-form--block">
-            <el-form-item label="规则" class="portal-field-md"><el-input v-model="ruleForm.ruleName" /></el-form-item>
-            <el-form-item label="类型" class="portal-field-sm">
-              <el-select v-model="ruleForm.ruleType">
-                <el-option label="完整性" value="COMPLETENESS" />
-                <el-option label="准确性" value="ACCURACY" />
-              </el-select>
-            </el-form-item>
-            <el-form-item class="portal-form-actions">
-              <el-button type="primary" @click="createRule">新增规则</el-button>
-              <el-button @click="genReport">生成报告</el-button>
-            </el-form-item>
-          </el-form>
-          <el-table :data="rules" stripe size="small">
-            <el-table-column prop="ruleCode" label="编码" width="140" />
-            <el-table-column prop="ruleName" label="名称" />
-            <el-table-column label="类型" width="120">
-              <template #default="{ row }">{{ $statusLabel(row.ruleType) }}</template>
-            </el-table-column>
-          </el-table>
-          <el-divider />
-          <el-form inline class="portal-inline-form portal-inline-form--block">
-            <el-form-item label="任务" class="portal-field-md"><el-input v-model="taskForm.taskName" /></el-form-item>
-            <el-form-item label="关联规则" class="portal-field-lg">
-              <el-select v-model="taskForm.ruleId" clearable>
-                <el-option v-for="r in rules" :key="r.id" :label="r.ruleName" :value="r.id" />
-              </el-select>
-            </el-form-item>
-            <el-form-item class="portal-form-actions">
-              <el-button type="primary" @click="createTask">创建任务</el-button>
-            </el-form-item>
-          </el-form>
-          <el-table :data="qTasks" stripe size="small">
-            <el-table-column prop="taskName" label="任务" />
-            <el-table-column prop="lastScore" label="评分" width="80" />
-            <el-table-column label="操作" width="80">
-              <template #default="{ row }"><el-button link @click="runTask(row.id)">执行</el-button></template>
-            </el-table-column>
-          </el-table>
-        </PageCard>
 
-        <FusionModelView v-else-if="tab === 'model' && modelSub === 'logic'" />
-        <FusionScriptView v-else-if="tab === 'model' && modelSub === 'script'" />
+        <FusionModelView v-else-if="tab === 'model' && modelSub === 'warehouse'" />
+        <FusionCapabilityHost
+          v-else-if="tab === 'model' && isFusionCap"
+          :capability="modelSub"
+          :etl-view="etlView"
+          :etl-task-id="etlTaskId"
+          @design="openEtlDesign"
+          @monitor="openEtlMonitor"
+        />
+        <GovernanceComponentsView
+          v-else-if="tab === 'model' && modelSub === 'components'"
+          page-title="数据融合组件"
+          context-hint="融合组件支撑多表成主题/专题库（优先输出 DWS/ADS）。与「数据治理组件」同库同状态；单表过程清洗属数据治理（DWD）。执行统一 Kettle Carte。"
+        />
 
         <CatalogResourceView v-else-if="tab === 'catalog' && catalogSub === 'resources'" />
+        <CatalogRegisterPublishView v-else-if="tab === 'catalog' && catalogSub === 'publish'" />
         <CatalogApprovalView v-else-if="tab === 'catalog' && catalogSub === 'approvals'" />
         <CatalogSubscriptionView v-else-if="tab === 'catalog' && catalogSub === 'subscriptions'" />
         <CatalogPortalView v-else-if="tab === 'catalog' && catalogSub === 'portal'" />
@@ -400,3 +348,14 @@ onMounted(() => { resolveFromRoute(); loadTabData() })
     </HubSideLayout>
   </div>
 </template>
+
+<style scoped>
+.gov-hub-root {
+  height: calc(100vh - var(--portal-header-height) - 40px);
+  min-height: 0;
+}
+.gov-hub-panel {
+  height: 100%;
+  min-height: 0;
+}
+</style>

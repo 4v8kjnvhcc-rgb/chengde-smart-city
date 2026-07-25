@@ -34,14 +34,17 @@ public class GovernanceTaskController {
 
     @GetMapping
     @PreAuthorize("isAuthenticated()")
-    public ApiResponse<List<Map<String, Object>>> list() {
-        return ApiResponse.ok(service.list());
+    public ApiResponse<List<Map<String, Object>>> list(
+            @RequestParam(required = false, defaultValue = "GOVERNANCE") String taskDomain) {
+        return ApiResponse.ok(service.list(taskDomain));
     }
 
     @GetMapping("/runs")
     @PreAuthorize("isAuthenticated()")
-    public ApiResponse<List<GovGovernanceTaskRun>> runs(@RequestParam(required = false) Long taskId) {
-        return ApiResponse.ok(service.listRuns(taskId));
+    public ApiResponse<List<GovGovernanceTaskRun>> runs(
+            @RequestParam(required = false) Long taskId,
+            @RequestParam(required = false, defaultValue = "GOVERNANCE") String taskDomain) {
+        return ApiResponse.ok(service.listRuns(taskId, taskDomain));
     }
 
     @GetMapping("/runs/{runId}/node-logs")

@@ -39,7 +39,6 @@ const reports = ref<ReportRow[]>([])
 const trend = ref<TrendPoint[]>([])
 const loading = ref(false)
 const selectedId = ref<number | null>(null)
-const detailText = ref('')
 const issues = ref<IssueRow[]>([])
 const drillVisible = ref(false)
 const chartRef = ref<HTMLDivElement | null>(null)
@@ -86,17 +85,30 @@ async function loadTrend() {
   }
 }
 
+interface ReportDetail {
+  report?: ReportRow
+  recentRuns?: Array<{ id: number; taskId?: number; score?: number; status?: string; startedAt?: string }>
+  avgRunScore?: number | null
+  runCount?: number
+}
+
+const detail = ref<ReportDetail | null>(null)
+
 async function showDetail(row: ReportRow) {
   selectedId.value = row.id
   const res = await api.get(`/governance/quality/reports-mgmt/${row.id}`)
-  detailText.value = JSON.stringify(res.data, null, 2)
+  detail.value = { ...(res.data || {}), report: res.data?.report || row }
 }
 
 async function openDrill(row: ReportRow) {
   selectedId.value = row.id
   const res = await api.get(`/governance/quality/reports-mgmt/${row.id}/drill`)
   issues.value = res.data?.issues || []
-  detailText.value = JSON.stringify({ score: res.data?.score, runCount: (res.data?.runs || []).length, issueCount: res.data?.issueCount }, null, 2)
+  detail.value = {
+    report: row,
+    avgRunScore: res.data?.score,
+    runCount: (res.data?.runs || []).length,
+  }
   drillVisible.value = true
 }
 
@@ -113,10 +125,15 @@ async function doExport(row: ReportRow) {
 }
 
 async function generate() {
-  await api.post('/governance/platform/quality/reports', { reportName: '六性质量报告', dimension: '完整性+准确性' })
-  ElMessage.success('报告已生成')
-  await loadList()
-  await loadTrend()
+  try {
+    await api.post('/governance/platform/quality/reports', { reportName: '六性质量报告', dimension: '完整性+准确性' })
+    ElMessage.success('报告已生成')
+    await loadList()
+    await loadTrend()
+  } catch (e: unknown) {
+    const msg = (e as { response?: { data?: { message?: string } } })?.response?.data?.message
+    ElMessage.error(msg || '生成失败：需先有真实运行评分')
+  }
 }
 
 function onResize() {
@@ -138,7 +155,14 @@ onBeforeUnmount(() => {
 
 <template>
   <div>
-    <PageCard title="质量报告">
+    <PageCard title="数据质量分析报告">
+      <el-alert
+        type="info"
+        :closable="false"
+        show-icon
+        style="margin-bottom: 12px"
+        title="分析报告服务问题定位与知识沉淀。面向目录发布请选用源层或资源层任务运行结果；过程层报告仅用于治理整改闭环。"
+      />
       <el-form inline class="portal-inline-form portal-inline-form--block">
         <el-form-item class="portal-form-actions">
           <el-button type="primary" @click="generate">生成报告</el-button>
@@ -162,9 +186,26 @@ onBeforeUnmount(() => {
           </template>
         </el-table-column>
       </el-table>
+      <el-empty v-if="!loading && !reports.length" description="暂无报告；需先有任务运行评分后再生成" />
 
       <el-divider>详情</el-divider>
-      <pre style="white-space:pre-wrap;font-size:12px;max-height:220px;overflow:auto;background:#f8f8f8;padding:8px;border-radius:4px">{{ detailText || '点击「详情」查看' }}</pre>
+      <template v-if="detail?.report || selectedId">
+        <el-descriptions :column="2" size="small" border>
+          <el-descriptions-item label="报告评分">{{ detail?.report?.score ?? reports.find(r => r.id === selectedId)?.score ?? '—' }}</el-descriptions-item>
+          <el-descriptions-item label="关联运行数">{{ detail?.runCount ?? '—' }}</el-descriptions-item>
+          <el-descriptions-item label="运行均分">{{ detail?.avgRunScore ?? '—' }}</el-descriptions-item>
+          <el-descriptions-item label="维度">{{ detail?.report?.dimension || reports.find(r => r.id === selectedId)?.dimension || '—' }}</el-descriptions-item>
+        </el-descriptions>
+        <el-table v-if="detail?.recentRuns?.length" :data="detail.recentRuns" stripe size="small" style="margin-top: 12px">
+          <el-table-column prop="id" label="运行ID" width="80" />
+          <el-table-column prop="score" label="评分" width="80" />
+          <el-table-column label="状态" width="90">
+            <template #default="{ row }">{{ $statusLabel(row.status) }}</template>
+          </el-table-column>
+          <el-table-column prop="startedAt" label="开始时间" min-width="160" />
+        </el-table>
+      </template>
+      <el-empty v-else description="点击「详情」查看结构化摘要" />
     </PageCard>
 
     <el-drawer v-model="drillVisible" title="问题下钻" size="560px">
@@ -180,6 +221,7 @@ onBeforeUnmount(() => {
           <template #default="{ row }">{{ $statusLabel(row.severity) }}</template>
         </el-table-column>
       </el-table>
+      <el-empty v-if="!issues.length" description="无关联问题" />
     </el-drawer>
   </div>
 </template>

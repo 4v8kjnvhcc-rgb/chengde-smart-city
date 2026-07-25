@@ -157,22 +157,23 @@ public class AnalysisDemoService {
         return Map.of("workflowCode", wf.getWorkflowCode(), "status", "SUCCESS", "message", wf.getLastMessage());
     }
 
-    /** DataEase embed SSO token (capability-equivalent POC) */
+    /** DataEase embed SSO token；未就绪时仅签发门户预览令牌（mode=LEDGER），不伪造在线嵌入 */
     @Transactional
     public Map<String, Object> issueEmbedToken(UserPrincipal operator, String targetType, String targetId) {
+        LocalDateTime expires = LocalDateTime.now().plusMinutes(30);
         if (integrationProperties.isEnabled() && dataEaseClient.isHealthy()) {
             Map<String, Object> embed = new HashMap<>(dataEaseClient.buildEmbed(targetType, targetId, operator.getUserId()));
-            LocalDateTime expires = LocalDateTime.now().plusMinutes(30);
             jdbcTemplate.update(
                     "INSERT INTO ana_embed_token(token, user_id, target_type, target_id, expires_at) VALUES (?,?,?,?,?)",
                     embed.get("token"), operator.getUserId(), targetType, targetId, expires);
             auditService.log(operator.getUserId(), operator.getUsername(), operator.getOrgId(),
                     "DE_EMBED_TOKEN", targetType, targetId, String.valueOf(embed.get("token")));
             embed.put("expiresAt", expires.toString());
+            embed.put("mode", "LIVE");
+            embed.put("message", "DataEase 嵌入令牌已签发");
             return embed;
         }
         String token = "DE_" + UUID.randomUUID().toString().replace("-", "");
-        LocalDateTime expires = LocalDateTime.now().plusMinutes(30);
         jdbcTemplate.update(
                 "INSERT INTO ana_embed_token(token, user_id, target_type, target_id, expires_at) VALUES (?,?,?,?,?)",
                 token, operator.getUserId(), targetType, targetId, expires);
@@ -180,12 +181,16 @@ public class AnalysisDemoService {
                 + "&targetId=" + targetId + "&token=" + token;
         auditService.log(operator.getUserId(), operator.getUsername(), operator.getOrgId(),
                 "DE_EMBED_TOKEN", targetType, targetId, token);
-        return Map.of(
-                "token", token,
-                "expiresAt", expires.toString(),
-                "embedUrl", embedUrl,
-                "dataeaseUrl", "https://dataease.local/embedded/" + targetId + "?token=" + token
-        );
+        Map<String, Object> out = new HashMap<>();
+        out.put("token", token);
+        out.put("expiresAt", expires.toString());
+        out.put("embedUrl", embedUrl);
+        out.put("dataeaseUrl", null);
+        out.put("mode", "LEDGER");
+        out.put("message", "DataEase 未就绪：已签发门户预览令牌，未连接真实嵌入");
+        out.put("targetType", targetType);
+        out.put("targetId", targetId);
+        return out;
     }
 
     public Map<String, Object> validateEmbedToken(String token) {
@@ -205,8 +210,11 @@ public class AnalysisDemoService {
         row.put("valid", true);
         if (integrationProperties.isEnabled() && dataEaseClient.isHealthy()) {
             row.put("dataeaseUrl", dataEaseClient.buildEmbedUrl(targetId, storedToken, userId));
+            row.put("mode", "LIVE");
         } else {
-            row.put("dataeaseUrl", "https://dataease.local/embedded/" + targetId + "?token=" + storedToken);
+            row.put("dataeaseUrl", null);
+            row.put("mode", "LEDGER");
+            row.put("message", "DataEase 未就绪，无真实嵌入地址");
         }
         return row;
     }

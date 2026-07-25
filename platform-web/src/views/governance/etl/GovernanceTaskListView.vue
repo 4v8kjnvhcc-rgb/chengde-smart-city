@@ -53,13 +53,25 @@ const RULE_OPTIONS = [
   { type: 'MASK', label: '脱敏' },
 ]
 
-const PLATFORM_SOURCES: DsOption[] = [
+const PLATFORM_SOURCES_GOV: DsOption[] = [
   { value: 'smart_city_ods', label: '平台 ODS（smart_city_ods）', kind: 'platform' },
   { value: 'smart_city_dwd', label: '平台 DWD（smart_city_dwd）', kind: 'platform' },
-  { value: 'smart_city_dws', label: '平台 DWS（smart_city_dws）', kind: 'platform' },
 ]
 
-/** 与元数据采集侧平台分层虚拟源 ID 对齐：ODS=-1 / DWD=-2 / DWS=-3 / ADS=-4 */
+const PLATFORM_SOURCES_FUSION: DsOption[] = [
+  { value: 'smart_city_dwd', label: '平台 DWD（过程层，融合输入）', kind: 'platform' },
+]
+
+const TARGET_SOURCES_GOV: DsOption[] = [
+  { value: 'smart_city_dwd', label: '平台 DWD（过程层产出）', kind: 'platform' },
+]
+
+const TARGET_SOURCES_FUSION: DsOption[] = [
+  { value: 'smart_city_dws', label: '平台 DWS（主题/基础库）', kind: 'platform' },
+  { value: 'smart_city_ads', label: '平台 ADS（专题/应用）', kind: 'platform' },
+]
+
+/** 与元数据采集侧平台分层虚拟源 ID 对齐 */
 const PLATFORM_LAYER_IDS: Record<string, number> = {
   smart_city_ods: -1,
   smart_city_dwd: -2,
@@ -67,13 +79,17 @@ const PLATFORM_LAYER_IDS: Record<string, number> = {
   smart_city_ads: -4,
 }
 
-const TARGET_SOURCES: DsOption[] = [
-  { value: 'smart_city_dwd', label: '平台 DWD（smart_city_dwd）', kind: 'platform' },
-  { value: 'smart_city_dws', label: '平台 DWS（smart_city_dws）', kind: 'platform' },
-  { value: 'smart_city_ads', label: '平台 ADS（smart_city_ads）', kind: 'platform' },
-]
+const props = withDefaults(defineProps<{
+  mode?: ListMode
+  taskDomain?: 'GOVERNANCE' | 'FUSION'
+}>(), {
+  mode: 'mgmt',
+  taskDomain: 'GOVERNANCE',
+})
 
-const props = withDefaults(defineProps<{ mode?: ListMode }>(), { mode: 'mgmt' })
+const isFusion = computed(() => props.taskDomain === 'FUSION')
+const PLATFORM_SOURCES = computed(() => (isFusion.value ? PLATFORM_SOURCES_FUSION : PLATFORM_SOURCES_GOV))
+const TARGET_SOURCES = computed(() => (isFusion.value ? TARGET_SOURCES_FUSION : TARGET_SOURCES_GOV))
 
 const emit = defineEmits<{
   design: [id: number]
@@ -99,7 +115,7 @@ const varForm = ref<Record<string, string>>({})
 
 const previewVisible = ref(false)
 const previewLoading = ref(false)
-const previewTitle = ref('治理结果')
+const previewTitle = ref('查看结果')
 const previewMeta = ref('')
 const previewMessage = ref('')
 const previewColumns = ref<string[]>([])
@@ -108,7 +124,7 @@ const previewTargets = ref<Array<{ database: string; table: string; layer: strin
 const previewSelectedTable = ref('')
 const previewTaskId = ref<number | null>(null)
 
-const sourceOptions = ref<DsOption[]>([...PLATFORM_SOURCES])
+const sourceOptions = ref<DsOption[]>([...PLATFORM_SOURCES_GOV])
 const allTables = ref<TableOption[]>([])
 const platformTables = ref<string[]>([])
 const platformTablesLoading = ref(false)
@@ -118,6 +134,8 @@ const form = reactive({
   description: '',
   sourceConnection: '',
   sourceTable: '',
+  sourceTable2: '',
+  joinKey: 'id',
   targetConnection: 'smart_city_dwd',
   targetTable: '',
   rules: [] as string[],
@@ -144,10 +162,15 @@ const scheduleForm = reactive({
 })
 
 const pageTitle = computed(() => {
-  if (props.mode === 'run') return '任务运行'
-  if (props.mode === 'schedule') return '任务定时'
-  return '任务管理'
+  const prefix = isFusion.value ? '融合加工' : '治理'
+  if (props.mode === 'run') return `${prefix}任务运行`
+  if (props.mode === 'schedule') return `${prefix}任务定时`
+  return `${prefix}任务管理`
 })
+
+const createDialogTitle = computed(() =>
+  isFusion.value ? '新建融合加工任务（DWD→DWS/ADS）' : '新增治理任务（ODS→DWD）',
+)
 
 /** 运行页：排除草稿与停用，展示可执行任务 */
 const displayTasks = computed(() => {
@@ -227,6 +250,10 @@ watch(() => form.sourceConnection, (conn) => {
 })
 
 function goEtlSub(sub: string, taskId?: number) {
+  if (isFusion.value) {
+    if (taskId != null) emit('monitor', taskId)
+    return
+  }
   const q: Record<string, unknown> = { ...route.query, tab: 'etl', etlSub: sub }
   delete q.etlView
   if (taskId != null) {
@@ -241,9 +268,11 @@ function goEtlSub(sub: string, taskId?: number) {
 async function load() {
   loading.value = true
   try {
-    tasks.value = (await api.get('/governance/gov-tasks')).data || []
+    tasks.value = (await api.get('/governance/gov-tasks', {
+      params: { taskDomain: props.taskDomain },
+    })).data || []
   } catch {
-    ElMessage.error('加载治理任务失败')
+    ElMessage.error(isFusion.value ? '加载融合任务失败' : '加载治理任务失败')
   } finally {
     loading.value = false
   }
@@ -251,6 +280,11 @@ async function load() {
 
 async function loadCreateOptions() {
   try {
+    if (isFusion.value) {
+      sourceOptions.value = [...PLATFORM_SOURCES_FUSION]
+      allTables.value = []
+      return
+    }
     const [dsRes, tbRes] = await Promise.all([
       api.get('/exchange/ingestion/data-sources'),
       api.get('/exchange/ingestion/register/tables'),
@@ -261,7 +295,7 @@ async function loadCreateOptions() {
       sourceId: s.id,
       kind: 'external' as const,
     }))
-    sourceOptions.value = [...PLATFORM_SOURCES, ...external]
+    sourceOptions.value = [...PLATFORM_SOURCES_GOV, ...external]
     allTables.value = ((tbRes.data || []) as TableOption[]).map(t => ({
       id: t.id,
       sourceId: t.sourceId,
@@ -271,7 +305,7 @@ async function loadCreateOptions() {
       sourceSchema: t.sourceSchema,
     }))
   } catch {
-    sourceOptions.value = [...PLATFORM_SOURCES]
+    sourceOptions.value = [...(isFusion.value ? PLATFORM_SOURCES_FUSION : PLATFORM_SOURCES_GOV)]
     allTables.value = []
   }
 }
@@ -279,9 +313,11 @@ async function loadCreateOptions() {
 function openCreate() {
   form.taskName = ''
   form.description = ''
-  form.sourceConnection = ''
+  form.sourceConnection = isFusion.value ? 'smart_city_dwd' : ''
   form.sourceTable = ''
-  form.targetConnection = 'smart_city_dwd'
+  form.sourceTable2 = ''
+  form.joinKey = 'id'
+  form.targetConnection = isFusion.value ? 'smart_city_dws' : 'smart_city_dwd'
   form.targetTable = ''
   form.rules = []
   form.scheduleEnabled = false
@@ -292,11 +328,20 @@ function openCreate() {
   form.intervalValue = 1
   createVisible.value = true
   void loadCreateOptions()
+  if (isFusion.value) void loadPlatformTables('smart_city_dwd')
 }
 
 async function submitCreate() {
   if (!form.taskName.trim()) {
     ElMessage.warning('请输入任务名称')
+    return
+  }
+  if (isFusion.value && !form.sourceTable.trim()) {
+    ElMessage.warning('请选择至少一张 DWD 源表')
+    return
+  }
+  if (isFusion.value && form.sourceTable2 && form.sourceTable2 === form.sourceTable) {
+    ElMessage.warning('第二张源表不能与第一张相同')
     return
   }
   if (form.scheduleEnabled && form.scheduleMode === 'CRON' && !form.scheduleCron.trim()) {
@@ -310,10 +355,13 @@ async function submitCreate() {
   creating.value = true
   try {
     const id = (await api.post('/governance/gov-tasks', {
+      taskDomain: props.taskDomain,
       taskName: form.taskName.trim(),
       description: form.description || undefined,
       sourceConnection: form.sourceConnection || undefined,
       sourceTable: form.sourceTable || undefined,
+      sourceTable2: form.sourceTable2 || undefined,
+      joinKey: form.joinKey || 'id',
       targetConnection: form.targetConnection || undefined,
       targetTable: form.targetTable || undefined,
       rules: form.rules,
@@ -324,12 +372,13 @@ async function submitCreate() {
       timeUnit: form.timeUnit,
       intervalValue: form.intervalValue,
     })).data
-    ElMessage.success('已创建，可进入开发调整')
+    ElMessage.success(isFusion.value ? '融合任务已创建' : '已创建，可进入开发调整')
     createVisible.value = false
     await load()
     openDesign(id as number)
-  } catch {
-    ElMessage.error('创建失败')
+  } catch (e: unknown) {
+    const msg = (e as { response?: { data?: { message?: string } } })?.response?.data?.message
+    ElMessage.error(msg || '创建失败')
   } finally {
     creating.value = false
   }
@@ -532,15 +581,27 @@ async function onPreviewTableChange(table: string) {
 }
 
 onMounted(load)
+watch(() => props.taskDomain, () => { void load() })
 
 defineExpose({ reload: load })
 </script>
 
 <template>
   <PageCard :title="pageTitle">
+    <el-alert
+      :type="isFusion ? 'success' : 'info'"
+      :closable="false"
+      show-icon
+      style="margin-bottom: 12px"
+      :title="isFusion
+        ? '融合任务域：源=DWD 过程层 → 目标=DWS/ADS 主题或专题。本列表不含数据治理任务。'
+        : '治理任务域：源=ODS/登记源 → 目标=DWD 过程层。主题/专题请到数据融合·数据清洗。'"
+    />
     <el-form inline class="portal-inline-form portal-inline-form--block">
       <el-form-item class="portal-form-actions">
-        <el-button v-if="mode === 'mgmt'" type="primary" @click="openCreate">新增任务</el-button>
+        <el-button v-if="mode === 'mgmt'" type="primary" @click="openCreate">
+          {{ isFusion ? '新建融合任务' : '新增治理任务' }}
+        </el-button>
         <el-button @click="load">刷新</el-button>
         <el-button
           v-if="mode === 'mgmt'"
@@ -639,7 +700,7 @@ defineExpose({ reload: load })
       </el-table-column>
     </el-table>
 
-    <el-dialog v-model="createVisible" title="新增治理任务" width="640px" destroy-on-close>
+    <el-dialog v-model="createVisible" :title="createDialogTitle" width="640px" destroy-on-close>
       <el-form label-width="100px">
         <el-form-item label="任务名称" required>
           <el-input v-model="form.taskName" maxlength="128" placeholder="支持中文" />
@@ -647,12 +708,19 @@ defineExpose({ reload: load })
         <el-form-item label="描述">
           <el-input v-model="form.description" type="textarea" :rows="2" />
         </el-form-item>
-        <el-form-item label="来源库">
-          <el-select v-model="form.sourceConnection" clearable filterable placeholder="已登记数据源或平台库" style="width:100%">
-            <el-option-group label="平台分层库">
+        <el-form-item :label="isFusion ? '源库(DWD)' : '来源库'" :required="isFusion">
+          <el-select
+            v-model="form.sourceConnection"
+            :clearable="!isFusion"
+            filterable
+            :disabled="isFusion"
+            :placeholder="isFusion ? '过程层 DWD' : '已登记数据源或平台库'"
+            style="width:100%"
+          >
+            <el-option-group :label="isFusion ? '融合输入层' : '平台分层库'">
               <el-option v-for="s in PLATFORM_SOURCES" :key="s.value" :label="s.label" :value="s.value" />
             </el-option-group>
-            <el-option-group v-if="sourceOptions.some(s => s.kind === 'external')" label="已登记外部源">
+            <el-option-group v-if="!isFusion && sourceOptions.some(s => s.kind === 'external')" label="已登记外部源">
               <el-option
                 v-for="s in sourceOptions.filter(s => s.kind === 'external')"
                 :key="s.value"
@@ -662,7 +730,7 @@ defineExpose({ reload: load })
             </el-option-group>
           </el-select>
         </el-form-item>
-        <el-form-item label="来源表">
+        <el-form-item :label="isFusion ? '源表1' : '来源表'" :required="isFusion">
           <el-select
             v-if="form.sourceConnection"
             v-model="form.sourceTable"
@@ -670,7 +738,7 @@ defineExpose({ reload: load })
             filterable
             allow-create
             :loading="platformTablesLoading"
-            placeholder="选择已采集/已登记表，也可手工输入"
+            placeholder="选择表"
             style="width:100%"
           >
             <el-option
@@ -682,18 +750,38 @@ defineExpose({ reload: load })
           </el-select>
           <el-input v-else v-model="form.sourceTable" placeholder="请先选择来源库" disabled />
         </el-form-item>
+        <el-form-item v-if="isFusion" label="源表2(可选)">
+          <el-select
+            v-model="form.sourceTable2"
+            clearable
+            filterable
+            allow-create
+            placeholder="选第二张表则生成横连接"
+            style="width:100%"
+          >
+            <el-option
+              v-for="t in sourceTableSelectOptions"
+              :key="`b-${t.value}`"
+              :label="t.label"
+              :value="t.value"
+            />
+          </el-select>
+        </el-form-item>
+        <el-form-item v-if="isFusion && form.sourceTable2" label="关联键">
+          <el-input v-model="form.joinKey" placeholder="如 id" />
+        </el-form-item>
         <el-form-item label="目标库">
-          <el-select v-model="form.targetConnection" filterable placeholder="治理产出层（默认 DWD）" style="width:100%">
+          <el-select v-model="form.targetConnection" filterable style="width:100%">
             <el-option v-for="s in TARGET_SOURCES" :key="s.value" :label="s.label" :value="s.value" />
           </el-select>
           <div style="font-size:12px;color:var(--el-text-color-secondary);margin-top:4px">
-            标准治理写入 DWD；回写 ODS 请在画布输出节点显式勾选「允许回写 ODS」
+            {{ isFusion ? '融合产出：DWS 主题库 / ADS 专题库' : '治理产出：过程层 DWD（主题请用融合任务）' }}
           </div>
         </el-form-item>
         <el-form-item label="目标表">
-          <el-input v-model="form.targetTable" placeholder="如 dwd_xxx" />
+          <el-input v-model="form.targetTable" :placeholder="isFusion ? '如 dws_xxx' : '如 dwd_xxx'" />
         </el-form-item>
-        <el-form-item label="治理规则">
+        <el-form-item :label="isFusion ? '清洗规则' : '治理规则'">
           <el-checkbox-group v-model="form.rules">
             <el-checkbox v-for="r in RULE_OPTIONS" :key="r.type" :label="r.type">
               {{ r.label }}

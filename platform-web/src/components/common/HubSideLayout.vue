@@ -1,18 +1,9 @@
 <script setup lang="ts">
 import { computed } from 'vue'
+import HubNavNodes from './HubNavNodes.vue'
+import type { HubNavItem, HubNavGroup } from './hub-nav'
 
-export interface HubNavItem {
-  key: string
-  label: string
-  subLabel?: string
-  /** 子菜单项（展开在一级菜单下方） */
-  children?: HubNavItem[]
-}
-
-export interface HubNavGroup {
-  title: string
-  items: HubNavItem[]
-}
+export type { HubNavItem, HubNavGroup } from './hub-nav'
 
 const props = defineProps<{
   modelValue: string
@@ -33,10 +24,14 @@ function onSelect(key: string) {
   emit('select', key)
 }
 
-function parentKeyOf(leaf: string, list: HubNavItem[]): string | null {
+/** 从根到叶子的祖先 key，用于 default-openeds */
+function ancestorKeysOf(leaf: string, list: HubNavItem[], path: string[] = []): string[] | null {
   for (const item of list) {
-    if (item.children?.some((c) => c.key === leaf)) return item.key
-    if (item.key === leaf) return item.key
+    if (item.key === leaf) return path
+    if (item.children?.length) {
+      const found = ancestorKeysOf(leaf, item.children, [...path, item.key])
+      if (found) return found
+    }
   }
   return null
 }
@@ -48,10 +43,7 @@ const flatItems = computed(() => {
   return props.items || []
 })
 
-const defaultOpeneds = computed(() => {
-  const p = parentKeyOf(props.modelValue, flatItems.value)
-  return p ? [p] : []
-})
+const defaultOpeneds = computed(() => ancestorKeysOf(props.modelValue, flatItems.value) || [])
 
 /** 仅在父级变化时重挂菜单，避免展开态丢失过多；仍保证 active 正确 */
 const menuRemountKey = computed(() => defaultOpeneds.value.join(',') || 'root')
@@ -68,48 +60,16 @@ const menuRemountKey = computed(() => defaultOpeneds.value.join(',') || 'root')
         :default-active="modelValue"
         :default-openeds="defaultOpeneds"
         :key="`hub-menu-${menuRemountKey}-${modelValue}`"
-        :unique-opened="true"
+        :unique-opened="false"
         @select="onSelect"
       >
         <template v-if="groups?.length">
           <template v-for="group in groups" :key="group.title">
             <div v-if="group.title" class="hub-side-group-title">{{ group.title }}</div>
-            <template v-for="item in group.items" :key="item.key">
-              <el-sub-menu v-if="item.children?.length" :index="item.key">
-                <template #title>
-                  <span class="hub-side-label hub-side-label--single">{{ item.label }}</span>
-                </template>
-                <el-menu-item v-for="child in item.children" :key="child.key" :index="child.key">
-                  <span class="hub-side-label hub-side-label--single">{{ child.label }}</span>
-                </el-menu-item>
-              </el-sub-menu>
-              <el-menu-item v-else :index="item.key">
-                <el-tooltip v-if="item.subLabel" :content="item.subLabel" placement="right" :show-after="300">
-                  <span class="hub-side-label hub-side-label--single">{{ item.label }}</span>
-                </el-tooltip>
-                <span v-else class="hub-side-label hub-side-label--single">{{ item.label }}</span>
-              </el-menu-item>
-            </template>
+            <HubNavNodes :items="group.items" />
           </template>
         </template>
-        <template v-else>
-          <template v-for="item in items" :key="item.key">
-            <el-sub-menu v-if="item.children?.length" :index="item.key">
-              <template #title>
-                <span class="hub-side-label hub-side-label--single">{{ item.label }}</span>
-              </template>
-              <el-menu-item v-for="child in item.children" :key="child.key" :index="child.key">
-                <span class="hub-side-label hub-side-label--single">{{ child.label }}</span>
-              </el-menu-item>
-            </el-sub-menu>
-            <el-menu-item v-else :index="item.key">
-              <el-tooltip v-if="item.subLabel" :content="item.subLabel" placement="right" :show-after="300">
-                <span class="hub-side-label hub-side-label--single">{{ item.label }}</span>
-              </el-tooltip>
-              <span v-else class="hub-side-label hub-side-label--single">{{ item.label }}</span>
-            </el-menu-item>
-          </template>
-        </template>
+        <HubNavNodes v-else :items="items || []" />
       </el-menu>
     </aside>
     <main class="hub-side-layout__main">
@@ -124,9 +84,9 @@ const menuRemountKey = computed(() => defaultOpeneds.value.join(',') || 'root')
 .hub-side-layout {
   display: flex;
   gap: 0;
-  /* 定高：避免主区内容把整页撑高，导致侧栏一起被滚走 */
-  height: calc(100vh - var(--portal-header-height) - 120px);
-  max-height: calc(100vh - var(--portal-header-height) - 120px);
+  /* 仅扣顶栏与 portal-main 上下 padding（20+20），不再为已移除的 PageHeader 预留高度 */
+  height: calc(100vh - var(--portal-header-height) - 40px);
+  max-height: calc(100vh - var(--portal-header-height) - 40px);
   min-height: 320px;
   border: 1px solid var(--portal-border);
   border-radius: var(--portal-radius);
@@ -172,7 +132,6 @@ const menuRemountKey = computed(() => defaultOpeneds.value.join(',') || 'root')
   background: var(--portal-primary) !important;
   color: #fff;
 }
-/* 展开后的内嵌子菜单：与主侧栏同色底，避免 Element 默认白底黑字 */
 .hub-side-menu :deep(.el-sub-menu .el-menu) {
   background: transparent !important;
 }
@@ -183,19 +142,16 @@ const menuRemountKey = computed(() => defaultOpeneds.value.join(',') || 'root')
   color: rgba(255, 255, 255, 0.75);
   background: transparent;
 }
+.hub-side-menu :deep(.el-sub-menu .el-sub-menu .el-menu-item) {
+  padding-left: 48px !important;
+  font-size: 13px;
+}
+.hub-side-menu :deep(.el-sub-menu .el-sub-menu > .el-sub-menu__title) {
+  padding-left: 36px !important;
+  font-size: 13px;
+}
 .hub-side-menu :deep(.el-sub-menu__icon-arrow) {
   color: rgba(255, 255, 255, 0.65);
-}
-.hub-side-label {
-  font-size: 14px;
-  color: inherit;
-}
-.hub-side-label--single {
-  display: inline-block;
-  max-width: 100%;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  vertical-align: middle;
 }
 .hub-side-layout__main {
   flex: 1;
@@ -213,8 +169,8 @@ const menuRemountKey = computed(() => defaultOpeneds.value.join(',') || 'root')
   font-size: 14px;
 }
 .hub-side-layout--nested {
-  height: calc(100vh - var(--portal-header-height) - 160px);
-  max-height: calc(100vh - var(--portal-header-height) - 160px);
+  height: calc(100vh - var(--portal-header-height) - 80px);
+  max-height: calc(100vh - var(--portal-header-height) - 80px);
   min-height: 320px;
   border: none;
   border-radius: 0;
@@ -225,5 +181,20 @@ const menuRemountKey = computed(() => defaultOpeneds.value.join(',') || 'root')
 .hub-side-layout--nested .hub-side-layout__main {
   padding: 0 0 0 12px;
   background: transparent;
+}
+</style>
+
+<style>
+/* HubNavNodes 在子组件内渲染，标签 class 需全局可读（侧栏内） */
+.hub-side-menu .hub-side-label {
+  font-size: 14px;
+  color: inherit;
+}
+.hub-side-menu .hub-side-label--single {
+  display: inline-block;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  vertical-align: middle;
 }
 </style>

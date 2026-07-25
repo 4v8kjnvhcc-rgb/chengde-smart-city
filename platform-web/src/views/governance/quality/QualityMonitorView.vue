@@ -16,6 +16,7 @@ interface TrendPoint {
 interface RunRow {
   id: number
   taskId: number
+  taskName?: string
   status: string
   startedAt?: string
   endedAt?: string
@@ -129,6 +130,13 @@ async function rerun(runId: number) {
   await load()
 }
 
+/** 问题状态：OPEN 在全局可能表示「开放共享」，此处按工单语义展示 */
+function issueStatusLabel(status?: string) {
+  if (status === 'OPEN') return '待处理'
+  if (status === 'CLOSED') return '已关闭'
+  return statusLabel(status)
+}
+
 function onResize() {
   chart?.resize()
 }
@@ -146,6 +154,13 @@ onBeforeUnmount(() => {
 
 <template>
   <div v-loading="loading">
+    <el-alert
+      type="warning"
+      :closable="false"
+      show-icon
+      style="margin-bottom: 12px"
+      title="数据质量监控：源层门禁→直通编目；资源层门禁→加工编目；过程层(DWD)问题驱动整改，默认不进目录门户。"
+    />
     <el-row :gutter="12" style="margin-bottom: 12px">
       <el-col :xs="12" :sm="6">
         <PageCard title="任务总数">
@@ -177,7 +192,9 @@ onBeforeUnmount(() => {
     <PageCard title="运行记录">
       <el-table :data="runs" stripe size="small" highlight-current-row @current-change="(row: RunRow | null) => row && openIssues(row.id)">
         <el-table-column prop="id" label="运行ID" width="80" />
-        <el-table-column prop="taskId" label="任务ID" width="80" />
+        <el-table-column label="任务" min-width="140">
+          <template #default="{ row }">{{ row.taskName || `任务#${row.taskId}` }}</template>
+        </el-table-column>
         <el-table-column label="状态" width="90">
           <template #default="{ row }">
             <el-tag size="small" :type="statusTagType(row.status)">{{ statusLabel(row.status) }}</el-tag>
@@ -194,6 +211,7 @@ onBeforeUnmount(() => {
           </template>
         </el-table-column>
       </el-table>
+      <el-empty v-if="!loading && !runs.length" description="暂无运行记录，请先在「数据质量任务」中执行" />
     </PageCard>
 
     <PageCard v-if="selectedRunId" :title="`问题下钻 · 运行 #${selectedRunId}`" style="margin-top: 12px">
@@ -212,8 +230,8 @@ onBeforeUnmount(() => {
           <template #default="{ row }">{{ $statusLabel(row.severity) }}</template>
         </el-table-column>
         <el-table-column prop="sampleData" label="样本" min-width="160" show-overflow-tooltip />
-        <el-table-column label="状态" width="80">
-          <template #default="{ row }">{{ statusLabel(row.status) }}</template>
+        <el-table-column label="状态" width="90">
+          <template #default="{ row }">{{ issueStatusLabel(row.status) }}</template>
         </el-table-column>
       </el-table>
       <el-empty v-if="!issues.length" description="本次运行无问题记录" />
