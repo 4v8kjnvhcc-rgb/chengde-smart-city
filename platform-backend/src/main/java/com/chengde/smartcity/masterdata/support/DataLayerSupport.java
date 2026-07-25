@@ -78,6 +78,25 @@ public final class DataLayerSupport {
         return PLATFORM_DBS.contains(db.trim().toLowerCase(Locale.ROOT));
     }
 
+    /** 控制面库（smart_city）：平台自身表，不作为数据资产目录内容 */
+    public static boolean isControlDatabase(String db) {
+        return db != null && CONTROL.equalsIgnoreCase(db.trim());
+    }
+
+    /** 控制面分层：CONTROL 或库名为 smart_city */
+    public static boolean isControlLayer(String layer) {
+        return layer != null && "CONTROL".equalsIgnoreCase(layer.trim());
+    }
+
+    /** 数据面分层（ODS/DWD/DWS/ADS），不含控制面 */
+    public static boolean isDataPlaneLayer(String layer) {
+        if (layer == null || layer.isBlank()) {
+            return false;
+        }
+        String u = layer.trim().toUpperCase(Locale.ROOT);
+        return "ODS".equals(u) || "DWD".equals(u) || "DWS".equals(u) || "ADS".equals(u);
+    }
+
     /** 过程层：默认可治理/融合，不可进目录门户 */
     public static boolean isProcessLayer(String layer) {
         return layer != null && "DWD".equalsIgnoreCase(layer.trim());

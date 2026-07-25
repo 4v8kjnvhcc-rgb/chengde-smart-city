@@ -15,6 +15,7 @@ interface Entry {
   parentCode?: string
   databaseName?: string
   dataLayer?: string
+  physicalTableName?: string
   securityLevel?: string
   ownerName?: string
   description?: string
@@ -29,6 +30,15 @@ interface Inventory {
   byLayer?: Record<string, number>
   idleEntryCodes?: string[]
 }
+
+interface TreeNode {
+  label: string
+  code: string
+  children?: TreeNode[]
+  entry?: Entry
+}
+
+const ASSET_LAYER_ORDER = ['ODS', 'DWD', 'DWS', 'ADS'] as const
 
 const router = useRouter()
 
@@ -47,6 +57,29 @@ function layerLabel(layer?: string) {
   return opt?.label || statusLabel(layer)
 }
 
+/** 控制面 smart_city 系统表，不作为数据资产展示 */
+function isControlEntry(e: Entry) {
+  if (e.dataLayer === 'CONTROL') return true
+  if (e.databaseName === 'smart_city') return true
+  return false
+}
+
+function resolveLayer(e: Entry) {
+  if (e.dataLayer && ASSET_LAYER_ORDER.includes(e.dataLayer as typeof ASSET_LAYER_ORDER[number])) {
+    return e.dataLayer
+  }
+  if (e.databaseName === 'smart_city_ods') return 'ODS'
+  if (e.databaseName === 'smart_city_dwd') return 'DWD'
+  if (e.databaseName === 'smart_city_dws') return 'DWS'
+  if (e.databaseName === 'smart_city_ads') return 'ADS'
+  const name = (e.physicalTableName || e.entryName || '').toLowerCase()
+  if (name.startsWith('dwd_')) return 'DWD'
+  if (name.startsWith('dws_')) return 'DWS'
+  if (name.startsWith('ads_')) return 'ADS'
+  if (name.startsWith('ods_')) return 'ODS'
+  return 'ODS'
+}
+
 function isIdleRow(row: Entry) {
   if (row.entryType !== 'TABLE') return false
   const codes = inventory.value.idleEntryCodes || []
@@ -59,30 +92,81 @@ const inventoryBar = computed(() => {
     parts.push(`闲置 ${inventory.value.idleCount} 张`)
   }
   const byLayer = inventory.value.byLayer || {}
-  const layerParts = Object.entries(byLayer).map(([k, v]) => `${layerLabel(k)} ${v}`)
+  const layerParts = ASSET_LAYER_ORDER
+    .filter(k => byLayer[k] != null)
+    .map(k => `${layerLabel(k)} ${byLayer[k]}`)
   if (layerParts.length) parts.push(layerParts.join(' · '))
   return parts.join(' ｜ ')
 })
 
-const treeData = computed(() => {
-  const roots = entries.value.filter(e => {
-    if (treeType.value === 'source') return e.entryType === 'SOURCE' || e.entryType === 'CONNECTOR'
-    return e.entryType === 'TABLE' || e.entryType === 'CATALOG' || e.entryType === 'MODEL'
+const treeData = computed((): TreeNode[] => {
+  if (treeType.value === 'source') {
+    const roots = entries.value.filter(e => e.entryType === 'SOURCE' || e.entryType === 'CONNECTOR')
+    return roots.map(r => ({
+      label: r.entryName,
+      code: r.entryCode,
+      children: entries.value
+        .filter(c => c.parentCode === r.entryCode && c.entryType === 'TABLE' && !isControlEntry(c))
+        .map(c => ({ label: c.entryName, code: c.entryCode, entry: c })),
+      entry: r,
+    }))
+  }
+  // 资产树：按 ODS/DWD/DWS/ADS；ODS 下再按登记源分组（手动上传落在此层）
+  const sourceName = (code?: string) => {
+    if (!code) return '未归属数据源'
+    const s = entries.value.find(e => e.entryCode === code && (e.entryType === 'SOURCE' || e.entryType === 'CONNECTOR'))
+    return s?.entryName || code
+  }
+  return ASSET_LAYER_ORDER.map(layer => {
+    const tables = entries.value.filter(e =>
+      e.entryType === 'TABLE' && !isControlEntry(e) && resolveLayer(e) === layer,
+    )
+    const bySource = new Map<string, Entry[]>()
+    for (const t of tables) {
+      const key = t.parentCode || '__none__'
+      if (!bySource.has(key)) bySource.set(key, [])
+      bySource.get(key)!.push(t)
+    }
+    const children: TreeNode[] = []
+    for (const [srcCode, list] of bySource) {
+      if (list.length === 1 && srcCode === '__none__') {
+        children.push({ label: list[0].entryName, code: list[0].entryCode, entry: list[0] })
+        continue
+      }
+      children.push({
+        label: `${sourceName(srcCode === '__none__' ? undefined : srcCode)}（${list.length}）`,
+        code: `__src_${layer}_${srcCode}`,
+        children: list.map(t => ({ label: t.entryName, code: t.entryCode, entry: t })),
+      })
+    }
+    return {
+      label: `${layerLabel(layer)}（${tables.length}）`,
+      code: `__layer_${layer}`,
+      children,
+    }
   })
-  return roots.map(r => ({
-    label: r.entryName,
-    code: r.entryCode,
-    children: entries.value
-      .filter(c => c.parentCode === r.entryCode && c.entryType !== 'COLUMN')
-      .map(c => ({ label: c.entryName, code: c.entryCode, entry: c })),
-    entry: r,
-  }))
 })
 
 const tableRows = computed(() => {
-  let rows = entries.value.filter(e => e.entryType !== 'COLUMN')
-  if (selectedCode.value) {
+  let rows = entries.value.filter(e => e.entryType !== 'COLUMN' && !isControlEntry(e))
+  if (selectedCode.value.startsWith('__layer_')) {
+    const layer = selectedCode.value.slice('__layer_'.length)
+    rows = rows.filter(e => e.entryType === 'TABLE' && resolveLayer(e) === layer)
+  } else if (selectedCode.value.startsWith('__src_')) {
+    // __src_ODS_SRC_xxx
+    const rest = selectedCode.value.slice('__src_'.length)
+    const idx = rest.indexOf('_')
+    const layer = idx >= 0 ? rest.slice(0, idx) : ''
+    const srcCode = idx >= 0 ? rest.slice(idx + 1) : ''
+    rows = rows.filter(e => {
+      if (e.entryType !== 'TABLE' || resolveLayer(e) !== layer) return false
+      if (srcCode === '__none__') return !e.parentCode
+      return e.parentCode === srcCode
+    })
+  } else if (selectedCode.value) {
     rows = rows.filter(e => e.entryCode === selectedCode.value || e.parentCode === selectedCode.value)
+  } else if (treeType.value === 'asset') {
+    rows = rows.filter(e => e.entryType === 'TABLE')
   }
   return rows
 })
@@ -172,7 +256,14 @@ onMounted(async () => {
       </el-form-item>
     </el-form>
 
-    <el-alert type="info" :closable="false" :title="inventoryBar" style="margin-bottom: 12px" />
+    <el-alert type="info" :closable="false" :title="inventoryBar" style="margin-bottom: 8px" />
+    <el-alert
+      type="success"
+      :closable="false"
+      show-icon
+      style="margin-bottom: 12px"
+      title="手动上传 / 库表汇聚写入 smart_city_ods 后，在「资产树 → ODS 原始层」按数据源分组展示；也可切换「数据源树」按登记源查看。"
+    />
 
     <el-row :gutter="12">
       <el-col :span="6">
@@ -221,7 +312,7 @@ onMounted(async () => {
           </el-table-column>
           <el-table-column prop="databaseName" label="库名" width="120" show-overflow-tooltip />
           <el-table-column label="分层" width="110">
-            <template #default="{ row }">{{ layerLabel(row.dataLayer) }}</template>
+            <template #default="{ row }">{{ layerLabel(row.dataLayer || resolveLayer(row)) }}</template>
           </el-table-column>
           <el-table-column label="分级" width="80">
             <template #default="{ row }">{{ $statusLabel(row.securityLevel) }}</template>

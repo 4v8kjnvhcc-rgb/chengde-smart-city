@@ -15,6 +15,7 @@ import com.chengde.smartcity.exchange.mapper.IngDataTableMapper;
 import com.chengde.smartcity.exchange.mapper.IngProjectMapper;
 import com.chengde.smartcity.exchange.mapper.IngUploadRecordMapper;
 import com.chengde.smartcity.exchange.mapper.IngUploadTemplateMapper;
+import com.chengde.smartcity.masterdata.service.MetadataSubsystemService;
 import com.chengde.smartcity.security.UserPrincipal;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -75,6 +76,7 @@ public class ExcelManualUploadService {
     private final IngDataSourceMapper dataSourceMapper;
     private final IngProjectMapper projectMapper;
     private final AuditService auditService;
+    private final MetadataSubsystemService metadataSubsystemService;
     private final String datasourceUrl;
     private final String datasourceUser;
     private final String datasourcePassword;
@@ -87,6 +89,7 @@ public class ExcelManualUploadService {
                                     IngDataSourceMapper dataSourceMapper,
                                     IngProjectMapper projectMapper,
                                     AuditService auditService,
+                                    MetadataSubsystemService metadataSubsystemService,
                                     @Value("${spring.datasource.url}") String datasourceUrl,
                                     @Value("${spring.datasource.username}") String datasourceUser,
                                     @Value("${spring.datasource.password:}") String datasourcePassword) {
@@ -97,6 +100,7 @@ public class ExcelManualUploadService {
         this.dataSourceMapper = dataSourceMapper;
         this.projectMapper = projectMapper;
         this.auditService = auditService;
+        this.metadataSubsystemService = metadataSubsystemService;
         this.datasourceUrl = datasourceUrl;
         this.datasourceUser = datasourceUser;
         this.datasourcePassword = datasourcePassword == null ? "" : datasourcePassword;
@@ -215,6 +219,11 @@ public class ExcelManualUploadService {
             if (assetTableId != null) {
                 markAssetCollected(assetTableId, targetTable, data.rows().size());
                 syncAssetColumns(assetTableId, binding.columns());
+                try {
+                    metadataSubsystemService.registerAfterCollect(operator, assetTableId, targetTable, "手动上传");
+                } catch (Exception e) {
+                    log.warn("手动上传后元数据登记失败 tableId={} ods={}: {}", assetTableId, targetTable, e.getMessage());
+                }
             }
             IngUploadRecord r = new IngUploadRecord();
             r.setTemplateCode(templateCode);

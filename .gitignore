@@ -9,4 +9,10 @@ mysql-data/
 data/
 platform-backend/data/
 ~$*
+diag-*/
+diag-*.zip
+*.diag.zip
+backend-run.log
+backend-run.err.log
+frontend-run.log
 

@@ -234,16 +234,17 @@ public class MetadataSubsystemController {
 
     @GetMapping("/catalog/search")
     @PreAuthorize("isAuthenticated()")
-    public ApiResponse<List<GovMetadataRegistry>> catalogSearch(@RequestParam(required = false) String keyword,
+    public ApiResponse<List<GovMetadataRegistry>> catalogSearch(@AuthenticationPrincipal UserPrincipal principal,
+                                                                @RequestParam(required = false) String keyword,
                                                                 @RequestParam(required = false) String type,
                                                                 @RequestParam(required = false) String tag) {
-        return ApiResponse.ok(service.searchCatalog(keyword, type, tag));
+        return ApiResponse.ok(service.searchCatalog(keyword, type, tag, principal));
     }
 
     @GetMapping("/catalog/inventory")
     @PreAuthorize("isAuthenticated()")
-    public ApiResponse<Map<String, Object>> catalogInventory() {
-        return ApiResponse.ok(service.catalogInventory());
+    public ApiResponse<Map<String, Object>> catalogInventory(@AuthenticationPrincipal UserPrincipal principal) {
+        return ApiResponse.ok(service.catalogInventory(principal));
     }
 
     @PostMapping("/catalog/{id}/offline")

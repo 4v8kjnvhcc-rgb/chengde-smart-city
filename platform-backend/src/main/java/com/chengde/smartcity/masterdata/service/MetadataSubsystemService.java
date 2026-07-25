@@ -676,6 +676,16 @@ public class MetadataSubsystemService {
     }
 
     public List<GovMetadataRegistry> searchCatalog(String keyword, String type, String tag) {
+        return searchCatalog(keyword, type, tag, null);
+    }
+
+    public List<GovMetadataRegistry> searchCatalog(String keyword, String type, String tag, UserPrincipal operator) {
+        // 打开目录时回填已有 ODS 上传/汇聚资产，保证资产树可见
+        try {
+            syncOdsIngestAssetsToMetadata(operator);
+        } catch (Exception e) {
+            log.warn("目录检索前回填 ODS 资产失败: {}", e.getMessage());
+        }
         LambdaQueryWrapper<GovMetadataRegistry> q = new LambdaQueryWrapper<GovMetadataRegistry>()
                 .ne(GovMetadataRegistry::getStatus, "OFFLINE")
                 .orderByAsc(GovMetadataRegistry::getEntryType)
@@ -691,17 +701,16 @@ public class MetadataSubsystemService {
             q.like(GovMetadataRegistry::getTags, tag.trim());
         }
         List<GovMetadataRegistry> all = registryMapper.selectList(q);
-        if (type == null || type.isBlank()) {
-            return all;
-        }
-        String t = type.trim().toLowerCase();
+        String t = type == null ? "" : type.trim().toLowerCase();
         if ("source".equals(t)) {
             return all.stream().filter(e -> isSourceType(e.getEntryType())).collect(Collectors.toList());
         }
+        // 资产/全部：排除控制面 smart_city 系统表及其字段
+        List<GovMetadataRegistry> plane = excludeControlPlaneEntries(all);
         if ("asset".equals(t)) {
-            return all.stream().filter(e -> isAssetType(e.getEntryType())).collect(Collectors.toList());
+            return plane.stream().filter(e -> isAssetType(e.getEntryType())).collect(Collectors.toList());
         }
-        return all;
+        return plane;
     }
 
     public Map<String, Object> catalogViews() {
@@ -711,7 +720,8 @@ public class MetadataSubsystemService {
         List<GovMetadataRegistry> sources = all.stream()
                 .filter(e -> isSourceType(e.getEntryType()))
                 .collect(Collectors.toList());
-        List<GovMetadataRegistry> assets = all.stream()
+        List<GovMetadataRegistry> plane = excludeControlPlaneEntries(all);
+        List<GovMetadataRegistry> assets = plane.stream()
                 .filter(e -> isAssetType(e.getEntryType()))
                 .collect(Collectors.toList());
         List<Map<String, Object>> omTables = List.of();
@@ -723,7 +733,7 @@ public class MetadataSubsystemService {
         }
         Map<String, Object> out = new LinkedHashMap<>();
         out.put("sourceCatalog", sources);
-        out.put("assetCatalog", assets.isEmpty() ? all : assets);
+        out.put("assetCatalog", assets);
         out.put("omTables", omTables);
         out.put("omHealthy", openMetadataClient.isHealthy());
         return out;
@@ -1354,6 +1364,54 @@ public class MetadataSubsystemService {
                 || "TABLE".equalsIgnoreCase(entryType) || "COLUMN".equalsIgnoreCase(entryType);
     }
 
+    /** 控制面表：dataLayer=CONTROL 或物理库 smart_city */
+    private boolean isControlPlaneTable(GovMetadataRegistry e) {
+        if (e == null || !"TABLE".equalsIgnoreCase(e.getEntryType())) {
+            return false;
+        }
+        if (DataLayerSupport.isControlLayer(e.getDataLayer())) {
+            return true;
+        }
+        return DataLayerSupport.isControlDatabase(e.getDatabaseName());
+    }
+
+    private List<GovMetadataRegistry> excludeControlPlaneEntries(List<GovMetadataRegistry> all) {
+        Set<String> controlTableCodes = all.stream()
+                .filter(this::isControlPlaneTable)
+                .map(GovMetadataRegistry::getEntryCode)
+                .collect(Collectors.toSet());
+        if (controlTableCodes.isEmpty()) {
+            return all;
+        }
+        return all.stream()
+                .filter(e -> {
+                    if (isControlPlaneTable(e)) {
+                        return false;
+                    }
+                    // 控制面表下的字段一并排除
+                    if ("COLUMN".equalsIgnoreCase(e.getEntryType())
+                            && e.getParentCode() != null
+                            && controlTableCodes.contains(e.getParentCode())) {
+                        return false;
+                    }
+                    return true;
+                })
+                .collect(Collectors.toList());
+    }
+
+    private String resolveDataPlaneLayer(GovMetadataRegistry t) {
+        if (t.getDataLayer() != null && !t.getDataLayer().isBlank()
+                && DataLayerSupport.isDataPlaneLayer(t.getDataLayer())) {
+            return t.getDataLayer().trim().toUpperCase(Locale.ROOT);
+        }
+        if (t.getDatabaseName() != null && DataLayerSupport.isPlatformLayerDb(t.getDatabaseName())
+                && !DataLayerSupport.isControlDatabase(t.getDatabaseName())) {
+            return DataLayerSupport.layerForDatabase(t.getDatabaseName());
+        }
+        String name = t.getPhysicalTableName() != null ? t.getPhysicalTableName() : t.getEntryName();
+        return DataLayerSupport.layerForTableName(name);
+    }
+
     private UserPrincipal systemPrincipal() {
         return new UserPrincipal(0L, "system", null, "系统调度", List.of("SYSTEM"), List.of());
     }
@@ -1531,14 +1589,28 @@ public class MetadataSubsystemService {
     }
 
     public Map<String, Object> catalogInventory() {
+        return catalogInventory(null);
+    }
+
+    public Map<String, Object> catalogInventory(UserPrincipal operator) {
+        try {
+            syncOdsIngestAssetsToMetadata(operator);
+        } catch (Exception e) {
+            log.warn("盘点前回填 ODS 资产失败: {}", e.getMessage());
+        }
         List<GovMetadataRegistry> tables = registryMapper.selectList(new LambdaQueryWrapper<GovMetadataRegistry>()
                 .eq(GovMetadataRegistry::getEntryType, "TABLE")
                 .ne(GovMetadataRegistry::getStatus, "OFFLINE"));
+        tables = tables.stream().filter(t -> !isControlPlaneTable(t)).collect(Collectors.toList());
         Map<String, Long> byLayer = new LinkedHashMap<>();
+        // 固定分层顺序，便于前端盘点条展示
+        for (String layer : List.of("ODS", "DWD", "DWS", "ADS")) {
+            byLayer.put(layer, 0L);
+        }
         long idleCount = 0;
         List<String> idleEntryCodes = new ArrayList<>();
         for (GovMetadataRegistry t : tables) {
-            String layer = t.getDataLayer() == null || t.getDataLayer().isBlank() ? "UNKNOWN" : t.getDataLayer();
+            String layer = resolveDataPlaneLayer(t);
             byLayer.merge(layer, 1L, Long::sum);
             if (!hasDownstreamLineage(t.getEntryCode())) {
                 idleCount++;
@@ -1651,6 +1723,15 @@ public class MetadataSubsystemService {
 
     @Transactional
     public void registerAfterCollect(UserPrincipal operator, Long tableId, String odsTable) {
+        registerAfterCollect(operator, tableId, odsTable, null);
+    }
+
+    /**
+     * 汇聚/手动上传写入 ODS 后登记元数据：SOURCE → TABLE(ODS) → COLUMN，供元数据目录资产树展示。
+     * @param lineageLabel 血缘标签；空则按数据源类型推断（FILE=手动上传，其它=Kettle汇聚）
+     */
+    @Transactional
+    public void registerAfterCollect(UserPrincipal operator, Long tableId, String odsTable, String lineageLabel) {
         IngDataTable table = ingDataTableMapper.selectById(tableId);
         if (table == null) {
             return;
@@ -1660,14 +1741,16 @@ public class MetadataSubsystemService {
             return;
         }
         String sourceCode = stableEntryCode("SRC_ING_" + ds.getId());
+        String sourceDesc = "FILE".equalsIgnoreCase(ds.getSourceType()) ? "手动上传数据源" : "汇聚登记数据源";
         GovMetadataRegistry sourceEntry = upsertRegistryEntry(sourceCode, ds.getSourceName(), "SOURCE",
-                null, operator, "汇聚登记数据源");
+                null, operator, sourceDesc);
         sourceEntry.setDataSourceId(ds.getId());
         registryMapper.updateById(sourceEntry);
 
         String tableCode = stableEntryCode("TBL_ING_" + ds.getId() + "_" + odsTable);
+        String tableDesc = "FILE".equalsIgnoreCase(ds.getSourceType()) ? "手动上传 ODS 表" : "汇聚产出表";
         GovMetadataRegistry tbl = upsertRegistryEntry(tableCode, table.getTableName(), "TABLE",
-                sourceCode, operator, "汇聚产出表");
+                sourceCode, operator, tableDesc);
         tbl.setParentCode(sourceCode);
         tbl.setDataSourceId(ds.getId());
         tbl.setSourceTableId(tableId);
@@ -1692,7 +1775,11 @@ public class MetadataSubsystemService {
             ce.setDataLayer("ODS");
             registryMapper.updateById(ce);
         }
-        // 汇聚血缘：数据源 → ODS 表
+        String label = lineageLabel;
+        if (label == null || label.isBlank()) {
+            label = "FILE".equalsIgnoreCase(ds.getSourceType()) ? "手动上传" : "Kettle汇聚";
+        }
+        // 血缘：数据源 → ODS 表
         GovMetaRelation existRel = relationMapper.selectOne(new LambdaQueryWrapper<GovMetaRelation>()
                 .eq(GovMetaRelation::getFromCode, sourceCode)
                 .eq(GovMetaRelation::getToCode, tableCode)
@@ -1703,12 +1790,45 @@ public class MetadataSubsystemService {
             r.setFromCode(sourceCode);
             r.setToCode(tableCode);
             r.setRelationType("LINEAGE");
-            r.setLabel("Kettle汇聚");
+            r.setLabel(label);
             r.setStatus("ACTIVE");
             relationMapper.insert(r);
         }
         auditService.log(operator.getUserId(), operator.getUsername(), operator.getOrgId(),
                 "META_REGISTER_AFTER_COLLECT", "gov_metadata_registry", String.valueOf(tbl.getId()), tableCode);
+    }
+
+    /**
+     * 将已写入 ODS 的汇聚/手动上传资产回填到元数据目录（幂等），避免「有上传无树节点」。
+     */
+    public void syncOdsIngestAssetsToMetadata(UserPrincipal operator) {
+        UserPrincipal op = operator != null ? operator : systemPrincipal();
+        List<IngDataTable> assets = ingDataTableMapper.selectList(new LambdaQueryWrapper<IngDataTable>()
+                .eq(IngDataTable::getStatus, "ACTIVE")
+                .isNotNull(IngDataTable::getPhysicalTableName)
+                .ne(IngDataTable::getPhysicalTableName, "")
+                .orderByAsc(IngDataTable::getId));
+        for (IngDataTable asset : assets) {
+            String schema = asset.getSourceSchema();
+            if (schema != null && !schema.isBlank()
+                    && !DataLayerSupport.ODS.equalsIgnoreCase(schema.trim())
+                    && !"ODS".equalsIgnoreCase(schema.trim())) {
+                continue;
+            }
+            String odsTable = asset.getPhysicalTableName().trim();
+            String tableCode = stableEntryCode("TBL_ING_" + asset.getSourceId() + "_" + odsTable);
+            Long cnt = registryMapper.selectCount(new LambdaQueryWrapper<GovMetadataRegistry>()
+                    .eq(GovMetadataRegistry::getEntryCode, tableCode)
+                    .ne(GovMetadataRegistry::getStatus, "OFFLINE"));
+            if (cnt != null && cnt > 0) {
+                continue;
+            }
+            try {
+                registerAfterCollect(op, asset.getId(), odsTable);
+            } catch (Exception e) {
+                log.warn("ODS 资产回填元数据失败 tableId={} ods={}: {}", asset.getId(), odsTable, e.getMessage());
+            }
+        }
     }
 
     private GovOmConnector findOrCreateConnectorFromIngSource(IngDataSource ds, UserPrincipal operator) {
@@ -1853,8 +1973,12 @@ public class MetadataSubsystemService {
     private void enrichRegistryLayerFields(GovMetadataRegistry tbl, String tableName,
                                            GovOmConnector connector, GovMetaCollectTask task) {
         String db = connector.getJdbcDatabase();
+        // 未指定库时默认数据面 ODS，禁止落入控制面 smart_city
         if (db == null || db.isBlank()) {
-            db = DataLayerSupport.CONTROL;
+            db = DataLayerSupport.ODS;
+        }
+        if (DataLayerSupport.isControlDatabase(db)) {
+            throw new BusinessException(400, "禁止将控制面库 smart_city 登记为数据资产元数据");
         }
         if (DataLayerSupport.isPlatformLayerDb(db)) {
             tbl.setDatabaseName(db);
