@@ -11,27 +11,29 @@ export interface IngestionModuleMeta {
   label: string
   subLabel?: string
   system: IngestionSystem
+  /** 与 sys_menu.permission（V80 hub 节点）对齐，用于侧栏按角色授权过滤 */
+  permission: string
 }
 
 export const REGISTER_MODULES: IngestionModuleMeta[] = [
-  { key: 'm039', mCode: 'M039', label: '填报指引', subLabel: '登记引导', system: 'register' },
-  { key: 'm040', mCode: 'M040', label: '项目/系统信息登记', subLabel: '项目与系统', system: 'register' },
-  { key: 'm041', mCode: 'M041', label: '数据库/表/项登记', subLabel: '数据源与模型', system: 'register' },
-  { key: 'm042', mCode: 'M042', label: '数据字典登记', subLabel: '字典登记', system: 'register' },
-  { key: 'm043', mCode: 'M043', label: '数据资产标签登记', subLabel: '标签登记', system: 'register' },
-  { key: 'm044', mCode: 'M044', label: '数据项管理', subLabel: '数据项', system: 'register' },
-  { key: 'm045', mCode: 'M045', label: '数据资产标签管理', subLabel: '标签体系', system: 'register' },
-  { key: 'm046', mCode: 'M046', label: '数据资产报告', subLabel: '资产大屏', system: 'register' },
-  { key: 'm047', mCode: 'M047', label: '数据资产图谱分析', subLabel: '血缘图谱', system: 'register' },
-  { key: 'm048', mCode: 'M048', label: '访问控制管理', subLabel: '已迁至系统管理', system: 'register' },
-  { key: 'm049', mCode: 'M049', label: '系统维护管理', subLabel: '跳转系统管理', system: 'register' },
-  { key: 'm050', mCode: 'M050', label: '数据字典管理', subLabel: '字典管理', system: 'register' },
+  { key: 'm039', mCode: 'M039', label: '填报指引', subLabel: '登记引导', system: 'register', permission: 'hub:ingestion:register:m039' },
+  { key: 'm040', mCode: 'M040', label: '项目/系统信息登记', subLabel: '项目与系统', system: 'register', permission: 'hub:ingestion:register:m040' },
+  { key: 'm041', mCode: 'M041', label: '数据库/表/项登记', subLabel: '数据源与模型', system: 'register', permission: 'hub:ingestion:register:m041' },
+  { key: 'm042', mCode: 'M042', label: '数据字典登记', subLabel: '字典登记', system: 'register', permission: 'hub:ingestion:register:m042' },
+  { key: 'm043', mCode: 'M043', label: '数据资产标签登记', subLabel: '标签登记', system: 'register', permission: 'hub:ingestion:register:m043' },
+  { key: 'm044', mCode: 'M044', label: '数据项管理', subLabel: '数据项', system: 'register', permission: 'hub:ingestion:register:m044' },
+  { key: 'm045', mCode: 'M045', label: '数据资产标签管理', subLabel: '标签体系', system: 'register', permission: 'hub:ingestion:register:m045' },
+  { key: 'm046', mCode: 'M046', label: '数据资产报告', subLabel: '资产大屏', system: 'register', permission: 'hub:ingestion:register:m046' },
+  { key: 'm047', mCode: 'M047', label: '数据资产图谱分析', subLabel: '血缘图谱', system: 'register', permission: 'hub:ingestion:register:m047' },
+  { key: 'm048', mCode: 'M048', label: '访问控制管理', subLabel: '已迁至系统管理', system: 'register', permission: 'hub:ingestion:register:m048' },
+  { key: 'm049', mCode: 'M049', label: '系统维护管理', subLabel: '跳转系统管理', system: 'register', permission: 'hub:ingestion:register:m049' },
+  { key: 'm050', mCode: 'M050', label: '数据字典管理', subLabel: '字典管理', system: 'register', permission: 'hub:ingestion:register:m050' },
 ]
 
 export const COLLECT_MODULES: IngestionModuleMeta[] = [
-  { key: 'ingest', mCode: 'M054', label: '数据汇聚接入', subLabel: '结构化·文件·其他接入', system: 'collect' },
-  { key: 'pipeline', mCode: 'M061', label: '规范设计', subLabel: '探查·定义·任务·对账', system: 'collect' },
-  { key: 'catalog', mCode: 'M065', label: '指标与目录体系构建', subLabel: '关联登记·编目·审批', system: 'collect' },
+  { key: 'ingest', mCode: 'M054', label: '数据汇聚接入', subLabel: '结构化·文件·其他接入', system: 'collect', permission: 'hub:ingestion:collect:ingest' },
+  { key: 'pipeline', mCode: 'M061', label: '规范设计', subLabel: '探查·定义·任务·对账', system: 'collect', permission: 'hub:ingestion:collect:pipeline' },
+  { key: 'catalog', mCode: 'M065', label: '指标与目录体系构建', subLabel: '关联登记·编目·审批', system: 'collect', permission: 'hub:ingestion:collect:catalog' },
 ]
 
 const REGISTER_BY_KEY = Object.fromEntries(REGISTER_MODULES.map((m) => [m.key, m])) as Record<string, IngestionModuleMeta>
@@ -80,6 +82,24 @@ export function collectNavItems(): HubNavItem[] {
 /** @deprecated 使用 collectNavItems */
 export function collectNavGroups(): HubNavGroup[] {
   return [{ title: '', items: COLLECT_MODULES.map(toNavItem) }]
+}
+
+/** 按角色权限严格过滤侧栏；无对应 hub 权限则不展示（禁止「无权限时回退全量」） */
+export function filterIngestionModules(
+  modules: IngestionModuleMeta[],
+  opts: { isSystemAdmin: boolean; permissions: string[] },
+): IngestionModuleMeta[] {
+  if (opts.isSystemAdmin) return modules
+  const perms = opts.permissions || []
+  return modules.filter((m) => perms.includes(m.permission))
+}
+
+export function filterRegisterNavItems(opts: { isSystemAdmin: boolean; permissions: string[] }): HubNavItem[] {
+  return filterIngestionModules(REGISTER_MODULES, opts).map(toNavItem)
+}
+
+export function filterCollectNavItems(opts: { isSystemAdmin: boolean; permissions: string[] }): HubNavItem[] {
+  return filterIngestionModules(COLLECT_MODULES, opts).map(toNavItem)
 }
 
 function toNavItem(m: IngestionModuleMeta): HubNavItem {

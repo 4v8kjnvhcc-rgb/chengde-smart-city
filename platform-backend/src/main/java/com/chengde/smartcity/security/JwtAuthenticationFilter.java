@@ -51,9 +51,13 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
                     sessionRedisService.touchSession(userId);
                 }
                 UserPrincipal principal = userDetailsService.loadByUserId(userId);
-                var authorities = principal.getPermissions().stream()
+                var authorities = new java.util.ArrayList<>(principal.getPermissions().stream()
                         .map(SimpleGrantedAuthority::new)
-                        .toList();
+                        .toList());
+                // 超级管理员：额外授予 ROLE_SYSTEM_ADMIN，避免侧栏隐藏菜单导致权限码缺失时被拒
+                if (principal.isSystemAdmin()) {
+                    authorities.add(new SimpleGrantedAuthority("ROLE_SYSTEM_ADMIN"));
+                }
                 var auth = new UsernamePasswordAuthenticationToken(principal, null, authorities);
                 SecurityContextHolder.getContext().setAuthentication(auth);
                 sessionRedisService.touchSession(userId);

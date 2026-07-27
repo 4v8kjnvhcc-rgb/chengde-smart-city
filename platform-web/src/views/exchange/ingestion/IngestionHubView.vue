@@ -3,10 +3,15 @@ import { computed, defineAsyncComponent, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import PageHeader from '@/components/common/PageHeader.vue'
 import HubSideLayout from '@/components/common/HubSideLayout.vue'
+import { useAuthStore } from '@/stores/auth'
 import {
-  collectNavItems,
+  COLLECT_MODULES,
+  DEFAULT_MODULE,
+  filterCollectNavItems,
+  filterIngestionModules,
+  filterRegisterNavItems,
   moduleTitle,
-  registerNavItems,
+  REGISTER_MODULES,
   resolveIngestionNav,
   systemTitle,
   type IngestionSystem,
@@ -14,6 +19,7 @@ import {
 
 const route = useRoute()
 const router = useRouter()
+const auth = useAuthStore()
 
 const system = ref<IngestionSystem>('register')
 const module = ref('m039')
@@ -37,12 +43,47 @@ const moduleComponents: Record<string, ReturnType<typeof defineAsyncComponent>> 
   catalog: defineAsyncComponent(() => import('./collect/CollectCatalogView.vue')),
 }
 
+const permOpts = computed(() => ({
+  isSystemAdmin: auth.isSystemAdmin,
+  permissions: auth.permissions,
+}))
+
+const allowedRegister = computed(() => filterIngestionModules(REGISTER_MODULES, permOpts.value))
+const allowedCollect = computed(() => filterIngestionModules(COLLECT_MODULES, permOpts.value))
+const canRegister = computed(() => allowedRegister.value.length > 0)
+const canCollect = computed(() => allowedCollect.value.length > 0)
+
 const navItems = computed(() => {
-  if (system.value === 'register') return registerNavItems()
-  return collectNavItems()
+  if (system.value === 'register') return filterRegisterNavItems(permOpts.value)
+  return filterCollectNavItems(permOpts.value)
 })
 const activeComponent = computed(() => moduleComponents[module.value])
 const pageTitle = computed(() => `大数据归集平台 · ${systemTitle(system.value)} · ${moduleTitle(module.value)}`)
+
+function firstAllowedModule(sys: IngestionSystem): string {
+  const list = sys === 'register' ? allowedRegister.value : allowedCollect.value
+  return list[0]?.key || DEFAULT_MODULE[sys]
+}
+
+function ensureAllowedModule() {
+  const allowed = system.value === 'register' ? allowedRegister.value : allowedCollect.value
+  if (!allowed.length) {
+    if (system.value === 'register' && canCollect.value) {
+      system.value = 'collect'
+      module.value = firstAllowedModule('collect')
+      pushQuery()
+    } else if (system.value === 'collect' && canRegister.value) {
+      system.value = 'register'
+      module.value = firstAllowedModule('register')
+      pushQuery()
+    }
+    return
+  }
+  if (!allowed.some((m) => m.key === module.value)) {
+    module.value = allowed[0].key
+    pushQuery()
+  }
+}
 
 function syncFromRoute() {
   const legacyTab = String(route.query.tab || '').toLowerCase()
@@ -54,6 +95,7 @@ function syncFromRoute() {
   const resolved = resolveIngestionNav(route.query as Record<string, unknown>)
   system.value = resolved.system
   module.value = resolved.module
+  ensureAllowedModule()
 }
 
 function pushQuery() {
@@ -62,18 +104,31 @@ function pushQuery() {
 }
 
 function onSystemChange(next: IngestionSystem) {
+  if (next === 'register' && !canRegister.value) return
+  if (next === 'collect' && !canCollect.value) return
   system.value = next
-  module.value = next === 'register' ? 'm039' : 'ingest'
+  module.value = firstAllowedModule(next)
   pushQuery()
 }
 
 function onModuleChange(key: string) {
+  const allowed = system.value === 'register' ? allowedRegister.value : allowedCollect.value
+  if (!allowed.some((m) => m.key === key)) return
   module.value = key
   pushQuery()
 }
 
 watch(() => [route.query.system, route.query.module, route.query.tab], syncFromRoute)
-onMounted(syncFromRoute)
+watch(() => auth.permissions.slice(), ensureAllowedModule)
+onMounted(async () => {
+  // 进入 Hub 时刷新权限，避免角色改菜单后仍用登录时缓存的全量侧栏
+  try {
+    await auth.fetchProfile()
+  } catch {
+    /* 保持现有会话权限 */
+  }
+  syncFromRoute()
+})
 </script>
 
 <template>
@@ -85,13 +140,14 @@ onMounted(syncFromRoute)
     </PageHeader>
     <div class="ingestion-system-bar">
       <el-radio-group :model-value="system" @change="onSystemChange">
-        <el-radio-button value="register">数据资产登记管理</el-radio-button>
-        <el-radio-button value="collect">数据资源采集汇聚</el-radio-button>
+        <el-radio-button v-if="canRegister" value="register">数据资产登记管理</el-radio-button>
+        <el-radio-button v-if="canCollect" value="collect">数据资源采集汇聚</el-radio-button>
       </el-radio-group>
       <el-button link type="primary" @click="router.push('/governance?tab=quality')">数据质量中心</el-button>
     </div>
     <HubSideLayout :model-value="module" :items="navItems" @update:model-value="onModuleChange">
-      <keep-alive :max="12">
+      <el-empty v-if="!navItems.length" description="当前角色未授权任何归集子模块" />
+      <keep-alive v-else :max="12">
         <component :is="activeComponent" :key="module" :module="module" />
       </keep-alive>
     </HubSideLayout>

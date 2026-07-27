@@ -340,6 +340,48 @@
     "status": 0
   },
   {
+    "id": 6510,
+    "parent_id": 25,
+    "menu_name": "角色新增",
+    "menu_type": 3,
+    "path": null,
+    "component": null,
+    "permission": "system:role:add",
+    "icon": null,
+    "sort_order": 1,
+    "m_code": "M211",
+    "integration_type": "self",
+    "status": 1
+  },
+  {
+    "id": 6511,
+    "parent_id": 25,
+    "menu_name": "角色编辑",
+    "menu_type": 3,
+    "path": null,
+    "component": null,
+    "permission": "system:role:edit",
+    "icon": null,
+    "sort_order": 2,
+    "m_code": "M211",
+    "integration_type": "self",
+    "status": 1
+  },
+  {
+    "id": 6512,
+    "parent_id": 25,
+    "menu_name": "角色删除",
+    "menu_type": 3,
+    "path": null,
+    "component": null,
+    "permission": "system:role:delete",
+    "icon": null,
+    "sort_order": 3,
+    "m_code": "M211",
+    "integration_type": "self",
+    "status": 1
+  },
+  {
     "id": 26,
     "parent_id": 6400,
     "menu_name": "机构管理",
@@ -533,7 +575,8 @@
     "icon": null,
     "sort_order": 31,
     "m_code": "M050",
-    "integration_type": "self"
+    "integration_type": "self",
+    "status": 1
   },
   {
     "id": 6300,

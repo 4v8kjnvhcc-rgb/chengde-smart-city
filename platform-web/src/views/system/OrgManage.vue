@@ -7,6 +7,7 @@ import { useAuthStore } from '@/stores/auth'
 import PageHeader from '@/components/common/PageHeader.vue'
 import PageCard from '@/components/common/PageCard.vue'
 import { statusLabel } from '@/utils/status-label'
+import { leafKeysForTreeCheck } from '@/utils/menu-tree-check'
 
 interface Org {
   id: number
@@ -348,10 +349,11 @@ async function viewUserPerms(row: UserRow) {
   for (const res of assigned) {
     for (const id of res.data || []) menuIds.add(Number(id))
   }
-  permTree.value = buildCheckTree(menusRes.data || [])
+  const rows = (menusRes.data || []) as Array<{ id: number; parentId?: number; menuType?: number }>
+  permTree.value = buildCheckTree(rows)
   permDialogVisible.value = true
   await nextTick()
-  permTreeRef.value?.setCheckedKeys([...menuIds], false)
+  permTreeRef.value?.setCheckedKeys(leafKeysForTreeCheck(rows, [...menuIds]), false)
 }
 
 onMounted(async () => {

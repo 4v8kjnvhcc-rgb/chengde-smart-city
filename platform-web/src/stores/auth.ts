@@ -66,8 +66,8 @@ export const useAuthStore = defineStore('auth', {
         api.get('/system/menus/me'),
         api.get('/system/permissions/me'),
       ])
-      this.menus = menusRes.data
-      this.permissions = permRes.data
+      this.menus = Array.isArray(menusRes.data) ? menusRes.data : []
+      this.permissions = Array.isArray(permRes.data) ? permRes.data : []
     },
     async logout() {
       try {
@@ -85,7 +85,7 @@ export const useAuthStore = defineStore('auth', {
       }
     },
     hasPermission(code: string) {
-      return this.permissions.includes(code)
+      return Array.isArray(this.permissions) && this.permissions.includes(code)
     },
   },
 })

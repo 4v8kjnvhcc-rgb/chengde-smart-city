@@ -7,7 +7,9 @@ import com.chengde.smartcity.system.dto.MenuTreeNode;
 import com.chengde.smartcity.system.dto.OrgCreateRequest;
 import com.chengde.smartcity.system.dto.OrgUpdateRequest;
 import com.chengde.smartcity.system.dto.PortalCardLinkRequest;
+import com.chengde.smartcity.system.dto.RoleCreateRequest;
 import com.chengde.smartcity.system.dto.RoleMenuAssignRequest;
+import com.chengde.smartcity.system.dto.RoleUpdateRequest;
 import com.chengde.smartcity.system.dto.UserCreateRequest;
 import com.chengde.smartcity.system.dto.UserListItem;
 import com.chengde.smartcity.system.dto.UserUpdateRequest;
@@ -65,11 +67,11 @@ public class SystemController {
 
     @GetMapping("/menus/me")
     public ApiResponse<List<MenuTreeNode>> myMenus(@AuthenticationPrincipal UserPrincipal principal) {
-        return ApiResponse.ok(menuService.treeForUser(principal.getUserId()));
+        return ApiResponse.ok(menuService.treeForUser(principal));
     }
 
     @GetMapping("/menus")
-    @PreAuthorize("hasAuthority('system:menu:list')")
+    @PreAuthorize("hasRole('SYSTEM_ADMIN') or hasAuthority('system:menu:list') or hasAuthority('system:role:list') or hasAuthority('system:org:list') or hasAuthority('system:role:edit')")
     public ApiResponse<List<SysMenu>> allMenus() {
         return ApiResponse.ok(menuService.listAll());
     }
@@ -129,12 +131,38 @@ public class SystemController {
     }
 
     @GetMapping("/roles")
-    public ApiResponse<List<SysRole>> roles() {
-        return ApiResponse.ok(roleService.list());
+    public ApiResponse<List<SysRole>> roles(
+            @RequestParam(required = false) String keyword,
+            @RequestParam(required = false) Boolean includeDisabled) {
+        return ApiResponse.ok(roleService.list(keyword, includeDisabled));
+    }
+
+    @PostMapping("/roles")
+    @PreAuthorize("hasRole('SYSTEM_ADMIN') or hasAuthority('system:role:add')")
+    public ApiResponse<Long> createRole(@AuthenticationPrincipal UserPrincipal principal,
+                                        @Valid @RequestBody RoleCreateRequest request) {
+        return ApiResponse.ok(roleService.create(principal, request));
+    }
+
+    @PutMapping("/roles/{id}")
+    @PreAuthorize("hasRole('SYSTEM_ADMIN') or hasAuthority('system:role:edit')")
+    public ApiResponse<Void> updateRole(@AuthenticationPrincipal UserPrincipal principal,
+                                        @PathVariable Long id,
+                                        @RequestBody RoleUpdateRequest request) {
+        roleService.update(principal, id, request);
+        return ApiResponse.ok(null);
+    }
+
+    @DeleteMapping("/roles/{id}")
+    @PreAuthorize("hasRole('SYSTEM_ADMIN') or hasAuthority('system:role:delete')")
+    public ApiResponse<Void> deleteRole(@AuthenticationPrincipal UserPrincipal principal,
+                                        @PathVariable Long id) {
+        roleService.delete(principal, id);
+        return ApiResponse.ok(null);
     }
 
     @PutMapping("/roles/{id}/menus")
-    @PreAuthorize("hasAuthority('system:role:list') or hasAuthority('system:org:list')")
+    @PreAuthorize("hasRole('SYSTEM_ADMIN') or hasAuthority('system:role:list') or hasAuthority('system:role:edit') or hasAuthority('system:org:list')")
     public ApiResponse<Void> assignRoleMenus(@AuthenticationPrincipal UserPrincipal principal,
                                              @PathVariable Long id,
                                              @Valid @RequestBody RoleMenuAssignRequest request) {
@@ -143,7 +171,7 @@ public class SystemController {
     }
 
     @GetMapping("/roles/{id}/menus")
-    @PreAuthorize("hasAuthority('system:role:list') or hasAuthority('system:org:list')")
+    @PreAuthorize("hasRole('SYSTEM_ADMIN') or hasAuthority('system:role:list') or hasAuthority('system:org:list')")
     public ApiResponse<List<Long>> roleMenus(@PathVariable Long id) {
         return ApiResponse.ok(roleService.menuIdsOfRole(id));
     }

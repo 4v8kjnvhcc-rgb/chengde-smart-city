@@ -52,7 +52,7 @@ const currentAccountLabel = computed(() => {
 })
 
 const projectDialogTitle = computed(() =>
-  projectDialogMode.value === 'edit' ? '编辑项目 / 系统' : '登记项目 / 系统',
+  projectDialogMode.value === 'edit' ? '编辑项目 / 系统' : '新建项目 / 系统',
 )
 
 const detailProject = computed(() =>
@@ -362,7 +362,7 @@ onMounted(reload)
         <el-form inline class="portal-inline-form portal-inline-form--block">
           <el-form-item class="portal-form-actions">
             <div class="project-actions">
-              <el-button v-if="canCreateProject" type="primary" @click="openCreateProject">登记项目</el-button>
+              <el-button v-if="canCreateProject" type="primary" @click="openCreateProject">新建项目</el-button>
               <el-button
                 v-if="canCreateProject"
                 :disabled="!selectedProject"
@@ -420,7 +420,7 @@ onMounted(reload)
             </template>
           </el-table-column>
         </el-table>
-        <el-empty v-else description="暂无项目，请点击「登记项目」" :image-size="64" />
+        <el-empty v-else description="暂无项目，请点击「新建项目」" :image-size="64" />
       </PageCard>
     </template>
 
@@ -478,7 +478,7 @@ onMounted(reload)
       <template #footer>
         <el-button @click="projectDialog = false">取消</el-button>
         <el-button type="primary" :loading="projectSaving" @click="submitProjectDialog">
-          {{ projectDialogMode === 'edit' ? '保存' : '确定登记' }}
+          保存
         </el-button>
       </template>
     </el-dialog>

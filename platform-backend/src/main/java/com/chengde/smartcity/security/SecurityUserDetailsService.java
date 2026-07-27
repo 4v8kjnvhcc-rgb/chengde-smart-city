@@ -2,11 +2,12 @@ package com.chengde.smartcity.security;
 
 import com.chengde.smartcity.system.entity.SysUser;
 import com.chengde.smartcity.system.mapper.SysUserMapper;
-import org.springframework.security.authentication.LockedException;
-import org.springframework.stereotype.Service;
+import com.chengde.smartcity.system.service.MenuService;
 import java.time.LocalDateTime;
 import java.util.List;
 import java.util.concurrent.ConcurrentHashMap;
+import org.springframework.security.authentication.LockedException;
+import org.springframework.stereotype.Service;
 
 @Service
 public class SecurityUserDetailsService {
@@ -14,10 +15,12 @@ public class SecurityUserDetailsService {
     private static final long PRINCIPAL_CACHE_TTL_MS = 5 * 60 * 1000L;
 
     private final SysUserMapper userMapper;
+    private final MenuService menuService;
     private final ConcurrentHashMap<Long, CachedPrincipal> principalCache = new ConcurrentHashMap<>();
 
-    public SecurityUserDetailsService(SysUserMapper userMapper) {
+    public SecurityUserDetailsService(SysUserMapper userMapper, MenuService menuService) {
         this.userMapper = userMapper;
+        this.menuService = menuService;
     }
 
     public UserPrincipal loadByUsername(String username) {
@@ -64,10 +67,16 @@ public class SecurityUserDetailsService {
             throw new LockedException("账号已锁定，请稍后再试");
         }
         List<String> roles = userMapper.findRoleCodesByUserId(user.getId());
-        List<String> permissions = userMapper.findPermissionsByUserId(user.getId());
+        List<String> permissions;
+        if (roles != null && roles.contains("SYSTEM_ADMIN")) {
+            // 超级管理员权限不因角色菜单勾选削减（含侧栏隐藏菜单的权限码）
+            permissions = menuService.allActivePermissions();
+            principalCache.remove(user.getId());
+        } else {
+            permissions = userMapper.findPermissionsByUserId(user.getId());
+        }
         return new UserPrincipal(user.getId(), user.getUsername(), user.getOrgId(), user.getDisplayName(), roles, permissions);
     }
 
     private record CachedPrincipal(UserPrincipal principal, long expiresAtMs) {}
 }
-

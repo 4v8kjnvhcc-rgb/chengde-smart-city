@@ -6,6 +6,7 @@ import { ElMessage, ElMessageBox, type ElTree } from 'element-plus'
 import PageCard from '@/components/common/PageCard.vue'
 import HubSideLayout from '@/components/common/HubSideLayout.vue'
 import { statusLabel } from '@/utils/status-label'
+import { leafKeysForTreeCheck } from '@/utils/menu-tree-check'
 
 const navItems = [
   { key: 'users', label: '用户中心' },
@@ -126,28 +127,33 @@ async function loadOverview() {
 }
 
 async function loadUsersTab() {
-  const [ov, r, m] = await Promise.all([
-    api.get('/system/uum/overview'),
-    api.get('/system/roles'),
-    api.get('/system/menus'),
-  ])
-  overview.value = ov.data
-  roles.value = r.data || []
-  allMenus.value = m.data || []
-  menuCatalogTree.value = buildCatalogTree(allMenus.value)
-  menuCheckTree.value = buildCheckTree(allMenus.value)
-  if (!selectedRoleId.value && roles.value.length) {
-    selectedRoleId.value = roles.value[0].id
-  }
-  if (selectedRoleId.value) {
-    await loadRoleMenus(selectedRoleId.value)
+  try {
+    const [ov, r, m] = await Promise.all([
+      api.get('/system/uum/overview'),
+      api.get('/system/roles'),
+      api.get('/system/menus'),
+    ])
+    overview.value = ov.data
+    roles.value = r.data || []
+    allMenus.value = Array.isArray(m.data) ? m.data : []
+    menuCatalogTree.value = buildCatalogTree(allMenus.value)
+    menuCheckTree.value = buildCheckTree(allMenus.value)
+    if (!selectedRoleId.value && roles.value.length) {
+      selectedRoleId.value = roles.value[0].id
+    }
+    if (selectedRoleId.value) {
+      await loadRoleMenus(selectedRoleId.value)
+    }
+  } catch (e: unknown) {
+    ElMessage.error(e instanceof Error ? e.message : '加载用户中心失败')
   }
 }
 
 async function loadRoleMenus(roleId: number) {
   const assignedRes = await api.get(`/system/roles/${roleId}/menus`)
   await nextTick()
-  menuTreeRef.value?.setCheckedKeys(assignedRes.data || [], false)
+  const leafKeys = leafKeysForTreeCheck(allMenus.value, assignedRes.data || [])
+  menuTreeRef.value?.setCheckedKeys(leafKeys, false)
 }
 
 async function onRoleChange(roleId: number | undefined) {
@@ -310,6 +316,7 @@ onMounted(async () => {
         <el-space wrap>
           <el-button type="primary" @click="router.push('/system/orgs')">组织与账号</el-button>
           <el-button @click="router.push('/system/roles')">角色管理</el-button>
+          <el-button @click="router.push('/system/menus')">菜单管理</el-button>
           <el-button @click="router.push('/system/access')">访问控制（功能/资源/数据）</el-button>
         </el-space>
         <el-descriptions v-if="overview" :column="3" border style="margin-top:16px">
