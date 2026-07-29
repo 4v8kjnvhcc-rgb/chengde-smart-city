@@ -15,4 +15,6 @@ diag-*.zip
 backend-run.log
 backend-run.err.log
 frontend-run.log
+debug-*.log
+platform-backend/src/main/resources/db/migration.zip
 

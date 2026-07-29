@@ -84,7 +84,7 @@ npm install
 npm run dev
 ```
 
-门户：`http://localhost:3000`  
+门户：`http://localhost:4000`  
 账号：`sys_admin` / `Test@12345`
 
 ## 菜单 seed 再生

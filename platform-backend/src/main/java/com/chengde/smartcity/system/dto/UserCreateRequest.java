@@ -8,6 +8,7 @@ public record UserCreateRequest(
         @NotBlank String username,
         @NotBlank String password,
         @NotBlank String displayName,
+        @NotBlank String phone,
         @NotNull Long orgId,
         List<Long> roleIds
 ) {

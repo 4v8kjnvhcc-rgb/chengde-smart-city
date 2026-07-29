@@ -74,6 +74,7 @@ const userForm = reactive({
   username: '',
   password: 'Test@12345',
   displayName: '',
+  phone: '',
   orgId: undefined as number | undefined,
   roleIds: [] as number[],
 })
@@ -181,14 +182,24 @@ watch(selectedOrgId, () => {
   loadUsers()
 })
 
-async function openCreateOrg() {
+/** 在组织树选中节点下新增下级机构 */
+async function openCreateChildOrg() {
+  if (!selectedOrgId.value) {
+    ElMessage.warning('请先在组织树中选择上级单位')
+    return
+  }
   orgForm.orgCode = ''
   orgForm.orgName = ''
-  orgForm.parentId = selectedOrgId.value || orgs.value.find((o) => o.parentId === 0)?.id || 0
+  orgForm.parentId = selectedOrgId.value
   orgDialogVisible.value = true
 }
 
-function openEditOrg(row: Org) {
+function openEditOrg() {
+  if (!selectedOrg.value) {
+    ElMessage.warning('请先选择要编辑的单位')
+    return
+  }
+  const row = selectedOrg.value
   orgEditForm.id = row.id
   orgEditForm.orgName = row.orgName
   orgEditForm.parentId = row.parentId
@@ -201,10 +212,14 @@ async function submitCreateOrg() {
     ElMessage.warning('请填写编码与名称')
     return
   }
+  if (!orgForm.parentId) {
+    ElMessage.warning('请选择上级单位')
+    return
+  }
   submitting.value = true
   try {
     await api.post('/system/orgs', orgForm)
-    ElMessage.success('机构已创建')
+    ElMessage.success('下级机构已创建')
     orgDialogVisible.value = false
     await loadOrgs()
   } catch (e: unknown) {
@@ -232,12 +247,18 @@ async function submitEditOrg() {
   }
 }
 
-async function removeOrg(row: Org) {
+async function removeOrg() {
+  if (!selectedOrg.value) {
+    ElMessage.warning('请先选择要删除的单位')
+    return
+  }
+  const row = selectedOrg.value
   try {
     await ElMessageBox.confirm(`确认删除机构「${row.orgName}」？`, '删除机构', { type: 'warning' })
     await api.delete(`/system/orgs/${row.id}`)
     ElMessage.success('机构已删除')
     if (selectedOrgId.value === row.id) selectedOrgId.value = null
+    orgEditVisible.value = false
     await loadOrgs()
   } catch (e: unknown) {
     if (e !== 'cancel' && e !== 'close') {
@@ -253,6 +274,7 @@ function openCreateUser() {
   }
   userForm.username = ''
   userForm.displayName = ''
+  userForm.phone = ''
   userForm.password = 'Test@12345'
   userForm.orgId = selectedOrgId.value
   userForm.roleIds = []
@@ -271,8 +293,8 @@ async function openEditUser(row: UserRow) {
 }
 
 async function submitCreateUser() {
-  if (!userForm.username || !userForm.password || !userForm.displayName || !userForm.orgId) {
-    ElMessage.warning('请填写完整信息')
+  if (!userForm.username || !userForm.password || !userForm.displayName || !userForm.phone?.trim() || !userForm.orgId) {
+    ElMessage.warning('请填写完整信息（含联系方式）')
     return
   }
   submitting.value = true
@@ -349,7 +371,7 @@ async function viewUserPerms(row: UserRow) {
   for (const res of assigned) {
     for (const id of res.data || []) menuIds.add(Number(id))
   }
-  const rows = (menusRes.data || []) as Array<{ id: number; parentId?: number; menuType?: number }>
+  const rows = (menusRes.data || []) as MenuRow[]
   permTree.value = buildCheckTree(rows)
   permDialogVisible.value = true
   await nextTick()
@@ -365,7 +387,6 @@ onMounted(async () => {
 <template>
   <div>
     <PageHeader title="组织与账号" description="在组织树中点选单位，查看并管理该单位下的账号、角色与菜单权限">
-      <el-button v-if="auth.hasPermission('system:org:add')" @click="openCreateOrg">新增机构</el-button>
       <el-button
         v-if="auth.hasPermission('system:user:add')"
         type="primary"
@@ -378,6 +399,35 @@ onMounted(async () => {
 
     <div class="org-user-layout">
       <PageCard class="org-pane" title="组织机构">
+        <div class="org-toolbar">
+          <el-button
+            v-if="auth.hasPermission('system:org:add')"
+            type="primary"
+            size="small"
+            :disabled="!selectedOrgId"
+            @click="openCreateChildOrg"
+          >
+            新增下级
+          </el-button>
+          <el-button
+            v-if="auth.hasPermission('system:org:edit')"
+            size="small"
+            :disabled="!selectedOrgId"
+            @click="openEditOrg"
+          >
+            编辑
+          </el-button>
+          <el-button
+            v-if="auth.hasPermission('system:org:delete')"
+            type="danger"
+            plain
+            size="small"
+            :disabled="!selectedOrgId"
+            @click="removeOrg"
+          >
+            删除
+          </el-button>
+        </div>
         <el-tree
           :data="orgTree"
           node-key="id"
@@ -410,12 +460,6 @@ onMounted(async () => {
               </el-form-item>
               <el-form-item class="portal-form-actions">
                 <el-button type="primary" @click="userPage = 1; loadUsers()">查询</el-button>
-                <el-button
-                  v-if="auth.hasPermission('system:org:edit')"
-                  @click="openEditOrg(selectedOrg)"
-                >
-                  编辑本单位
-                </el-button>
               </el-form-item>
             </el-form>
           </div>
@@ -487,16 +531,13 @@ onMounted(async () => {
       </PageCard>
     </div>
 
-    <el-dialog v-model="orgDialogVisible" title="新增机构" width="440px" destroy-on-close>
+    <el-dialog v-model="orgDialogVisible" title="新增下级机构" width="440px" destroy-on-close>
       <el-form label-position="top">
-        <el-form-item label="编码" required><el-input v-model="orgForm.orgCode" /></el-form-item>
-        <el-form-item label="名称" required><el-input v-model="orgForm.orgName" /></el-form-item>
-        <el-form-item label="上级机构">
-          <el-select v-model="orgForm.parentId" filterable style="width: 100%">
-            <el-option :value="0" label="无（顶级）" />
-            <el-option v-for="o in orgs" :key="o.id" :label="`${o.orgName} (${o.orgCode})`" :value="o.id" />
-          </el-select>
+        <el-form-item label="上级单位">
+          <el-input :model-value="selectedOrg?.orgName" disabled />
         </el-form-item>
+        <el-form-item label="编码" required><el-input v-model="orgForm.orgCode" placeholder="机构编码，需唯一" /></el-form-item>
+        <el-form-item label="名称" required><el-input v-model="orgForm.orgName" placeholder="机构名称" /></el-form-item>
       </el-form>
       <template #footer>
         <el-button @click="orgDialogVisible = false">取消</el-button>
@@ -532,7 +573,7 @@ onMounted(async () => {
           v-if="auth.hasPermission('system:org:delete')"
           type="danger"
           plain
-          @click="removeOrg(selectedOrg!)"
+          @click="removeOrg"
         >
           删除
         </el-button>
@@ -546,6 +587,9 @@ onMounted(async () => {
         </el-form-item>
         <el-form-item label="用户名" required><el-input v-model="userForm.username" /></el-form-item>
         <el-form-item label="姓名" required><el-input v-model="userForm.displayName" /></el-form-item>
+        <el-form-item label="联系方式" required>
+          <el-input v-model="userForm.phone" placeholder="手机号或座机，必填" maxlength="32" />
+        </el-form-item>
         <el-form-item label="密码" required>
           <el-input v-model="userForm.password" type="password" show-password />
         </el-form-item>
@@ -625,6 +669,12 @@ onMounted(async () => {
 .org-pane {
   max-height: calc(100vh - 180px);
   overflow: auto;
+}
+.org-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 12px;
 }
 .user-pane {
   min-width: 0;

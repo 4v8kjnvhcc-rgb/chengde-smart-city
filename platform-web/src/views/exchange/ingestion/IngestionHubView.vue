@@ -37,6 +37,8 @@ const moduleComponents: Record<string, ReturnType<typeof defineAsyncComponent>> 
   m048: defineAsyncComponent(() => import('./register/SystemLinkView.vue')),
   m049: defineAsyncComponent(() => import('./register/SystemLinkView.vue')),
   m050: defineAsyncComponent(() => import('./register/DictRegisterView.vue')),
+  'asset-catalog-reg': defineAsyncComponent(() => import('./register/AssetCatalogRegView.vue')),
+  'asset-catalog-mgmt': defineAsyncComponent(() => import('./register/AssetCatalogMgmtView.vue')),
   upload: defineAsyncComponent(() => import('./collect/CollectIngestView.vue')),
   ingest: defineAsyncComponent(() => import('./collect/CollectIngestView.vue')),
   pipeline: defineAsyncComponent(() => import('./collect/CollectPipelineView.vue')),

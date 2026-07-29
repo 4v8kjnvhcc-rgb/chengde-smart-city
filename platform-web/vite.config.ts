@@ -26,18 +26,18 @@ function agentLog(hypothesisId: string, message: string, data: Record<string, un
     /* ignore */
   }
 }
-async function probePort3000() {
-  const port = 3000
+async function probeDevPort() {
+  const port = 4000
   const inUse = await new Promise<boolean>((resolve) => {
     const s = net.createServer()
     s.once('error', () => resolve(true))
     s.once('listening', () => s.close(() => resolve(false)))
     s.listen(port, '127.0.0.1')
   })
-  agentLog('A', 'port_3000_probe', { port, inUse, strictPort: true })
+  agentLog('A', 'port_4000_probe', { port, inUse, strictPort: true })
   let occupant: { pid?: string; cmd?: string } = {}
   try {
-    const out = execSync('netstat -ano | findstr ":3000" | findstr LISTENING', {
+    const out = execSync('netstat -ano | findstr ":4000" | findstr LISTENING', {
       encoding: 'utf8',
       shell: 'cmd.exe',
     })
@@ -63,7 +63,7 @@ async function probePort3000() {
   agentLog('C', 'strictPort_will_hard_fail', { strictPort: true, willFailIfInUse: inUse && true })
   agentLog('D', 'same_repo_zombie', { isThisProject, inUse })
 }
-void probePort3000()
+void probeDevPort()
 // #endregion
 
 export default defineConfig({
@@ -74,14 +74,14 @@ export default defineConfig({
     },
   },
   server: {
-    // 固定 3000。若 EACCES：管理员执行 net stop winnat 后
-    // netsh int ipv4 add excludedportrange protocol=tcp startport=3000 numberofports=1 store=persistent
-    // 再 net start winnat（避免 Hyper-V 动态预留吞掉 3000）
-    port: 3000,
+    // 固定 4000。若 EACCES：管理员执行 net stop winnat 后
+    // netsh int ipv4 add excludedportrange protocol=tcp startport=4000 numberofports=1 store=persistent
+    // 再 net start winnat（避免 Hyper-V 动态预留吞掉 4000）
+    port: 4000,
     strictPort: true,
     proxy: {
       '/api': {
-        target: 'http://localhost:8080',
+        target: 'http://localhost:9090',
         changeOrigin: true,
       },
     },

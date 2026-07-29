@@ -16,7 +16,7 @@
 2. 执行 `scripts/setup_smart_city.sql`，配置 `local.env`
 3. 后端：`cd platform-backend  .\mvnw.cmd spring-boot:run "-Dspring-boot.run.profiles=dev"`
 4. 前端：`cd platform-web && npm run dev`
-5. 登录 `http://localhost:3000`，`sys_admin` / `Test@12345`
+5. 登录 `http://localhost:4000`，`sys_admin` / `Test@12345`
 
 ## 开源组件联调（D04/D07/D13）
 

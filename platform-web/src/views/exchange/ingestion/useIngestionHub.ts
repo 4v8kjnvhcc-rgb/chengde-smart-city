@@ -142,6 +142,43 @@ export interface AssetTagBinding {
 }
 export interface HealthMetric { metricLabel: string; metricValue: string; alertLevel: string }
 
+export interface AssetCatalogReg {
+  id: number
+  assetName: string
+  assetDesc?: string
+  ownerName?: string
+  contactInfo?: string
+  dataTags?: string
+  orgId?: number
+  orgName?: string
+  projectId?: number
+  projectName?: string
+  sourceId?: number
+  systemName?: string
+  tableId?: number
+  tableName?: string
+  accessMode?: string
+  formatType?: string
+  transferMode?: string
+  formatLocked?: number
+  bizPurpose?: string
+  bizScenario?: string
+  accessScope?: string
+  controlReq?: string
+  qualityFilePath?: string
+  qualityFileName?: string
+  riskFilePath?: string
+  riskFileName?: string
+  otherInfo?: string
+  status: string
+  rejectReason?: string
+  reportedAt?: string
+  archivedAt?: string
+  createdBy?: string
+  createdAt?: string
+  updatedAt?: string
+}
+
 export function useIngestionLoading() {
   const loading = ref(false)
   const loadError = ref('')
@@ -152,7 +189,7 @@ export function useIngestionLoading() {
     try {
       return await fn()
     } catch (e: unknown) {
-      loadError.value = e instanceof Error ? e.message : '加载失败，请确认后端已启动（8080）且已登录'
+      loadError.value = e instanceof Error ? e.message : '加载失败，请确认后端已启动（9090）且已登录'
       ElMessage.error(loadError.value)
       return undefined
     } finally {
@@ -367,4 +404,38 @@ export const ingestionApi = {
   lifecycle: (id: number) => api.post<Record<string, unknown>>(`/exchange/ingestion/policies/${id}/lifecycle`),
   backupJobs: () => api.get<Record<string, unknown>[]>('/exchange/ingestion/collect/backup-jobs'),
   archiveJobs: () => api.get<Record<string, unknown>[]>('/exchange/ingestion/collect/archive-jobs'),
+  assetCatalogDefaults: () =>
+    api.get<{ ownerName?: string; contactInfo?: string; orgId?: number; orgName?: string }>(
+      '/exchange/ingestion/asset-catalog-regs/defaults',
+    ),
+  assetCatalogOrgOptions: () =>
+    api.get<Array<{ id: number; orgCode?: string; orgName: string; parentId?: number; label: string }>>(
+      '/exchange/ingestion/asset-catalog-regs/org-options',
+    ),
+  assetCatalogContacts: (orgId: number) =>
+    api.get<Array<{ phone: string; displayName: string; label: string }>>(
+      '/exchange/ingestion/asset-catalog-regs/contacts',
+      { params: { orgId } },
+    ),
+  assetCatalogList: (params?: {
+    assetName?: string
+    orgName?: string
+    projectName?: string
+    status?: string
+  }) => api.get<AssetCatalogReg[]>('/exchange/ingestion/asset-catalog-regs', { params }),
+  assetCatalogDetail: (id: number) => api.get<AssetCatalogReg>(`/exchange/ingestion/asset-catalog-regs/${id}`),
+  assetCatalogCreate: (body: Record<string, unknown>) =>
+    api.post<number>('/exchange/ingestion/asset-catalog-regs', body),
+  assetCatalogUpdate: (id: number, body: Record<string, unknown>) =>
+    api.put<void>(`/exchange/ingestion/asset-catalog-regs/${id}`, body),
+  assetCatalogDelete: (id: number) => api.delete<void>(`/exchange/ingestion/asset-catalog-regs/${id}`),
+  assetCatalogReport: (id: number) => api.post<void>(`/exchange/ingestion/asset-catalog-regs/${id}/report`),
+  assetCatalogReject: (id: number, body?: { reason?: string }) =>
+    api.post<void>(`/exchange/ingestion/asset-catalog-regs/${id}/reject`, body || {}),
+  assetCatalogArchive: (id: number) => api.post<void>(`/exchange/ingestion/asset-catalog-regs/${id}/archive`),
+  assetCatalogUpload: (form: FormData) =>
+    api.post<{ fileName: string; filePath: string; kind: string }>(
+      '/exchange/ingestion/asset-catalog-regs/upload',
+      form,
+    ),
 }

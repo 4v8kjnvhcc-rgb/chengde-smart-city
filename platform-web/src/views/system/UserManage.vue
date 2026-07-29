@@ -39,6 +39,7 @@ const form = reactive({
   username: '',
   password: 'Test@12345',
   displayName: '',
+  phone: '',
   orgId: undefined as number | undefined,
   roleIds: [] as number[],
 })
@@ -76,6 +77,7 @@ async function openCreate() {
   await loadMeta()
   form.username = ''
   form.displayName = ''
+  form.phone = ''
   form.password = 'Test@12345'
   form.orgId = orgs.value[0]?.id
   form.roleIds = []
@@ -97,8 +99,8 @@ async function openEdit(row: UserRow) {
 }
 
 async function submitCreate() {
-  if (!form.username || !form.password || !form.displayName || !form.orgId) {
-    ElMessage.warning('请填写完整信息')
+  if (!form.username || !form.password || !form.displayName || !form.phone?.trim() || !form.orgId) {
+    ElMessage.warning('请填写完整信息（含联系方式）')
     return
   }
   submitting.value = true
@@ -107,6 +109,7 @@ async function submitCreate() {
       username: form.username,
       password: form.password,
       displayName: form.displayName,
+      phone: form.phone.trim(),
       orgId: form.orgId,
       roleIds: form.roleIds,
     })
@@ -241,6 +244,9 @@ onMounted(load)
         </el-form-item>
         <el-form-item label="姓名" required>
           <el-input v-model="form.displayName" />
+        </el-form-item>
+        <el-form-item label="联系方式" required>
+          <el-input v-model="form.phone" placeholder="手机号或座机，必填" maxlength="32" />
         </el-form-item>
         <el-form-item label="密码" required>
           <el-input v-model="form.password" type="password" show-password />

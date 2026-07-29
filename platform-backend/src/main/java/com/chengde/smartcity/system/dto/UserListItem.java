@@ -9,6 +9,7 @@ public class UserListItem {
     private Long id;
     private String username;
     private String displayName;
+    private String phone;
     private Long orgId;
     private Integer status;
     private List<Long> roleIds = new ArrayList<>();
@@ -20,6 +21,8 @@ public class UserListItem {
     public void setUsername(String username) { this.username = username; }
     public String getDisplayName() { return displayName; }
     public void setDisplayName(String displayName) { this.displayName = displayName; }
+    public String getPhone() { return phone; }
+    public void setPhone(String phone) { this.phone = phone; }
     public Long getOrgId() { return orgId; }
     public void setOrgId(Long orgId) { this.orgId = orgId; }
     public Integer getStatus() { return status; }

@@ -89,6 +89,7 @@ public class UserService {
             item.setId(u.getId());
             item.setUsername(u.getUsername());
             item.setDisplayName(u.getDisplayName());
+            item.setPhone(u.getPhone());
             item.setOrgId(u.getOrgId());
             item.setStatus(u.getStatus());
             item.setRoleIds(roleIdsByUser.getOrDefault(u.getId(), List.of()));
@@ -106,10 +107,14 @@ public class UserService {
         if (userMapper.selectCount(new LambdaQueryWrapper<SysUser>().eq(SysUser::getUsername, req.username())) > 0) {
             throw new BusinessException(400, "用户名已存在");
         }
+        if (req.phone() == null || req.phone().isBlank()) {
+            throw new BusinessException(400, "联系方式不能为空");
+        }
         SysUser user = new SysUser();
         user.setUsername(req.username());
         user.setPasswordHash(passwordEncoder.encode(req.password()));
         user.setDisplayName(req.displayName());
+        user.setPhone(req.phone().trim());
         user.setOrgId(req.orgId());
         user.setStatus(1);
         user.setPasswordChangedAt(LocalDateTime.now());
