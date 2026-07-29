@@ -27,7 +27,7 @@ export const REGISTER_MODULES: IngestionModuleMeta[] = [
   { key: 'asset-catalog-mgmt', mCode: 'ACM', label: '资产目录管理', subLabel: '查看驳回归档', system: 'register', permission: 'hub:ingestion:register:asset-catalog-mgmt' },
   { key: 'm046', mCode: 'M046', label: '数据资产报告', subLabel: '资产大屏', system: 'register', permission: 'hub:ingestion:register:m046' },
   { key: 'm047', mCode: 'M047', label: '数据资产图谱分析', subLabel: '血缘图谱', system: 'register', permission: 'hub:ingestion:register:m047' },
-  { key: 'm048', mCode: 'M048', label: '访问控制管理', subLabel: '已迁至系统管理', system: 'register', permission: 'hub:ingestion:register:m048' },
+  { key: 'm048', mCode: 'M048', label: '访问控制管理', subLabel: '功能/资源/数据权限', system: 'register', permission: 'hub:ingestion:register:m048' },
   { key: 'm049', mCode: 'M049', label: '系统维护管理', subLabel: '跳转系统管理', system: 'register', permission: 'hub:ingestion:register:m049' },
   { key: 'm050', mCode: 'M050', label: '数据字典管理', subLabel: '字典管理', system: 'register', permission: 'hub:ingestion:register:m050' },
 ]

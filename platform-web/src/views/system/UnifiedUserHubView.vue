@@ -311,13 +311,13 @@ onMounted(async () => {
     <HubSideLayout v-model="tab" :items="navItems">
       <PageCard v-if="tab === 'users'" title="用户中心">
         <p class="hint">
-          账号、角色、组织与访问控制；菜单权限按角色配置（用户通过角色获得菜单）。短信/指纹为认证扩展位。
+          账号、角色、组织与菜单权限；菜单权限按角色配置（用户通过角色获得菜单）。短信/指纹为认证扩展位。
+          项目资源授权请到归集平台「访问控制管理」。
         </p>
         <el-space wrap>
           <el-button type="primary" @click="router.push('/system/orgs')">组织与账号</el-button>
           <el-button @click="router.push('/system/roles')">角色管理</el-button>
           <el-button @click="router.push('/system/menus')">菜单管理</el-button>
-          <el-button @click="router.push('/system/access')">访问控制（功能/资源/数据）</el-button>
         </el-space>
         <el-descriptions v-if="overview" :column="3" border style="margin-top:16px">
           <el-descriptions-item label="注册应用数">{{ (overview.apps as unknown[] || []).length }}</el-descriptions-item>

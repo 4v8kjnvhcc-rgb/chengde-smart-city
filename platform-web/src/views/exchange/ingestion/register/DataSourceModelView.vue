@@ -10,6 +10,7 @@ import {
 import {
   ingestionApi,
   useIngestionLoading,
+  type BizSystem,
   type DataColumn,
   type DataSource,
   type DataTable,
@@ -19,16 +20,20 @@ import {
 
 const { loading, loadError, withLoad } = useIngestionLoading()
 const projects = ref<Project[]>([])
+const bizSystems = ref<BizSystem[]>([])
 const dataSources = ref<DataSource[]>([])
 const tables = ref<DataTable[]>([])
 const columns = ref<DataColumn[]>([])
 
 const selectedProjectId = ref<number>()
+const selectedSystemId = ref<number>()
 const selectedSourceId = ref<number>()
 const selectedTableId = ref<number>()
 
 const selectedProject = computed(() => projects.value.find((p) => p.id === selectedProjectId.value) || null)
+const selectedSystem = computed(() => bizSystems.value.find((s) => s.id === selectedSystemId.value) || null)
 const selectedSource = computed(() => dataSources.value.find((s) => s.id === selectedSourceId.value) || null)
+const projectSources = ref<DataSource[]>([])
 
 /** —— 登记弹窗（原向导） —— */
 const registerVisible = ref(false)
@@ -37,6 +42,9 @@ const columnForm = reactive({ columnCode: '', columnName: '', dataType: 'VARCHAR
 const workflowStep = ref(0)
 const probing = ref(false)
 const registering = ref(false)
+const savingTable = ref(false)
+const savingColumn = ref(false)
+const finalizing = ref(false)
 const probeSchema = ref('')
 const probeTables = ref<ProbeTable[]>([])
 const selectedProbeTables = ref<string[]>([])
@@ -44,8 +52,13 @@ const regSourceId = ref<number>()
 const regTables = ref<DataTable[]>([])
 const regColumns = ref<DataColumn[]>([])
 const regTableId = ref<number>()
+const regTableName = ref('')
 
-const regSource = computed(() => dataSources.value.find((s) => s.id === regSourceId.value) || null)
+const regSource = computed(() => {
+  const fromLocal = dataSources.value.find((s) => s.id === regSourceId.value)
+  if (fromLocal) return fromLocal
+  return projectSources.value.find((s) => s.id === regSourceId.value) || null
+})
 const isForward = computed(() => tableForm.modelingMode === 'FORWARD')
 const isDbSource = computed(() => {
   const t = regSource.value?.sourceType
@@ -80,8 +93,10 @@ async function loadProjects() {
   })
 }
 
-async function loadDataSources() {
+async function loadBizSystems() {
   if (!selectedProjectId.value) {
+    bizSystems.value = []
+    selectedSystemId.value = undefined
     dataSources.value = []
     selectedSourceId.value = undefined
     tables.value = []
@@ -89,7 +104,26 @@ async function loadDataSources() {
     selectedTableId.value = undefined
     return
   }
-  dataSources.value = (await ingestionApi.dataSources(selectedProjectId.value)).data || []
+  bizSystems.value = (await ingestionApi.systems(selectedProjectId.value)).data || []
+  if (selectedSystemId.value && !bizSystems.value.some((s) => s.id === selectedSystemId.value)) {
+    selectedSystemId.value = undefined
+  }
+  if (!selectedSystemId.value && bizSystems.value.length) {
+    selectedSystemId.value = bizSystems.value[0].id
+  }
+  await loadDataSources()
+}
+
+async function loadDataSources() {
+  if (!selectedSystemId.value) {
+    dataSources.value = []
+    selectedSourceId.value = undefined
+    tables.value = []
+    columns.value = []
+    selectedTableId.value = undefined
+    return
+  }
+  dataSources.value = (await ingestionApi.dataSources(undefined, selectedSystemId.value)).data || []
   if (selectedSourceId.value && !dataSources.value.some((s) => s.id === selectedSourceId.value)) {
     selectedSourceId.value = undefined
   }
@@ -126,6 +160,14 @@ async function loadColumns() {
 function selectProject(row: Project) {
   selectedProjectId.value = row.id
   setActiveProjectId(row.id)
+  selectedSystemId.value = undefined
+  selectedSourceId.value = undefined
+  selectedTableId.value = undefined
+  void loadBizSystems()
+}
+
+function selectSystem(row: BizSystem) {
+  selectedSystemId.value = row.id
   selectedSourceId.value = undefined
   selectedTableId.value = undefined
   void loadDataSources()
@@ -151,21 +193,25 @@ function openRegister() {
     ElMessage.warning('请先选择项目')
     return
   }
-  if (!dataSources.value.length) {
-    ElMessage.warning('当前项目暂无数据源，请先到「项目/系统信息登记」创建并测试连接')
-    return
-  }
-  workflowStep.value = 0
-  tableForm.modelingMode = 'REVERSE'
-  tableForm.tableName = ''
-  probeTables.value = []
-  selectedProbeTables.value = []
-  probeSchema.value = ''
-  regSourceId.value = selectedSourceId.value || dataSources.value[0]?.id
-  regTableId.value = undefined
-  regTables.value = []
-  regColumns.value = []
-  registerVisible.value = true
+  void (async () => {
+    projectSources.value = (await ingestionApi.dataSources(selectedProjectId.value)).data || []
+    if (!projectSources.value.length) {
+      ElMessage.warning('当前项目暂无数据源，请先到「项目/系统信息登记」创建系统与数据源并测试连接')
+      return
+    }
+    workflowStep.value = 0
+    tableForm.modelingMode = 'REVERSE'
+    tableForm.tableName = ''
+    probeTables.value = []
+    selectedProbeTables.value = []
+    probeSchema.value = ''
+    regSourceId.value = selectedSourceId.value || projectSources.value[0]?.id
+    regTableId.value = undefined
+    regTableName.value = ''
+    regTables.value = []
+    regColumns.value = []
+    registerVisible.value = true
+  })()
 }
 
 function goNextFromSource() {
@@ -189,21 +235,40 @@ async function createTable() {
     ElMessage.warning('请填写表名并选择数据源')
     return
   }
+  savingTable.value = true
   try {
+    const name = tableForm.tableName.trim()
     const res = await ingestionApi.createTable({
       sourceId: regSourceId.value,
-      tableName: tableForm.tableName.trim(),
+      tableName: name,
       modelingMode: tableForm.modelingMode,
     })
-    const newId = res.data
+    const newId = Number(res.data)
+    if (!newId) {
+      ElMessage.error('表登记未返回有效 ID')
+      return
+    }
     tableForm.tableName = ''
-    regTables.value = (await ingestionApi.tables(regSourceId.value)).data || []
+    regTableName.value = name
     regTableId.value = newId
+    try {
+      regTables.value = (await ingestionApi.tables(regSourceId.value)).data || []
+    } catch {
+      regTables.value = [{ id: newId, tableName: name, modelingMode: 'FORWARD', columnCount: 0 } as DataTable]
+    }
+    if (!regTables.value.some((t) => t.id === newId)) {
+      regTables.value = [
+        ...regTables.value,
+        { id: newId, tableName: name, modelingMode: 'FORWARD', columnCount: 0 } as DataTable,
+      ]
+    }
     regColumns.value = (await ingestionApi.columns(newId)).data || []
     workflowStep.value = 2
-    ElMessage.success('表登记成功，请继续登记字段')
+    ElMessage.success('表已写入平台登记库，请继续登记字段')
   } catch (e: unknown) {
     ElMessage.error(e instanceof Error ? e.message : '表登记失败')
+  } finally {
+    savingTable.value = false
   }
 }
 
@@ -216,6 +281,7 @@ async function createColumn() {
     ElMessage.warning('请填写字段编码与字段名称')
     return
   }
+  savingColumn.value = true
   try {
     await ingestionApi.createColumn(regTableId.value, {
       columnCode: columnForm.columnCode.trim(),
@@ -226,9 +292,11 @@ async function createColumn() {
     columnForm.columnCode = ''
     columnForm.columnName = ''
     regColumns.value = (await ingestionApi.columns(regTableId.value)).data || []
-    ElMessage.success('字段已添加')
+    ElMessage.success('字段已写入登记库')
   } catch (e: unknown) {
     ElMessage.error(e instanceof Error ? e.message : '添加字段失败')
+  } finally {
+    savingColumn.value = false
   }
 }
 
@@ -274,6 +342,34 @@ async function registerProbed() {
 }
 
 async function finishRegister() {
+  if (isForward.value) {
+    if (!regTableId.value) {
+      ElMessage.warning('请先完成表登记')
+      return
+    }
+    if (!regColumns.value.length) {
+      ElMessage.warning('请至少登记一个字段后再完成建表')
+      return
+    }
+    finalizing.value = true
+    try {
+      const res = await ingestionApi.finalizeForwardTable(regTableId.value)
+      const msg = String(res.data?.message || '正向建模完成')
+      if (res.data?.physicalCreated === false) {
+        ElMessage.success(msg)
+      } else {
+        ElMessage.success(msg)
+      }
+      workflowStep.value = 3
+      selectedSourceId.value = regSourceId.value
+      await loadTables(regTableId.value)
+    } catch (e: unknown) {
+      ElMessage.error(e instanceof Error ? e.message : '完成建表失败')
+    } finally {
+      finalizing.value = false
+    }
+    return
+  }
   workflowStep.value = 3
   selectedSourceId.value = regSourceId.value
   await loadTables()
@@ -281,12 +377,12 @@ async function finishRegister() {
 
 async function closeRegister() {
   registerVisible.value = false
-  await loadDataSources()
+  await loadBizSystems()
 }
 
 onMounted(async () => {
   await loadProjects()
-  await loadDataSources()
+  await loadBizSystems()
 })
 </script>
 
@@ -307,9 +403,11 @@ onMounted(async () => {
 
       <div class="path-bar" v-if="selectedProject">
         <span class="path-chip">{{ selectedProject.projectName }}</span>
-        <template v-if="selectedSource">
+        <template v-if="selectedSystem">
           <span class="path-sep">/</span>
-          <span class="path-chip path-chip--muted">{{ selectedSource.systemName || selectedSource.sourceName || '未填系统' }}</span>
+          <span class="path-chip path-chip--muted">{{ selectedSystem.systemName }}</span>
+        </template>
+        <template v-if="selectedSource">
           <span class="path-sep">/</span>
           <span class="path-chip">{{ selectedSource.sourceName }}</span>
         </template>
@@ -336,7 +434,7 @@ onMounted(async () => {
                 @click="selectProject(p)"
               >
                 <span class="lane-item__name">{{ p.projectName }}</span>
-                <span class="lane-item__meta">{{ p.systemName || '—' }}</span>
+                <span class="lane-item__meta">{{ p.boundOrgName || '—' }}</span>
               </button>
               <div v-if="!projects.length" class="lane-empty">暂无项目</div>
             </div>
@@ -345,21 +443,21 @@ onMounted(async () => {
           <section class="lane">
             <header class="lane-head">
               <span>系统</span>
-              <em>{{ dataSources.length }}</em>
+              <em>{{ bizSystems.length }}</em>
             </header>
             <div class="lane-body">
               <button
-                v-for="s in dataSources"
+                v-for="s in bizSystems"
                 :key="'sys-' + s.id"
                 type="button"
                 class="lane-item"
-                :class="{ 'is-active': s.id === selectedSourceId }"
-                @click="selectSource(s)"
+                :class="{ 'is-active': s.id === selectedSystemId }"
+                @click="selectSystem(s)"
               >
-                <span class="lane-item__name">{{ s.systemName || s.sourceName || '未命名系统' }}</span>
-                <span class="lane-item__meta">{{ $statusLabel(s.sourceType) }}</span>
+                <span class="lane-item__name">{{ s.systemName }}</span>
+                <span class="lane-item__meta">数据源 {{ s.dataSourceCount ?? 0 }}</span>
               </button>
-              <div v-if="selectedProjectId && !dataSources.length" class="lane-empty">暂无系统，请在项目详情中新增</div>
+              <div v-if="selectedProjectId && !bizSystems.length" class="lane-empty">暂无系统，请在项目详情中新增</div>
               <div v-else-if="!selectedProjectId" class="lane-empty">请选择项目</div>
             </div>
           </section>
@@ -378,9 +476,8 @@ onMounted(async () => {
                 :class="{ 'is-active': s.id === selectedSourceId }"
                 @click="selectSource(s)"
               >
-                <span class="lane-item__name">{{ s.systemName || s.sourceName || '未命名' }}</span>
+                <span class="lane-item__name">{{ s.sourceName || '未命名' }}</span>
                 <span class="lane-item__meta">
-                  <el-tag size="small" effect="plain" type="info">{{ s.sourceName }}</el-tag>
                   <el-tag size="small" effect="plain" type="info">{{ $statusLabel(s.sourceType) }}</el-tag>
                   <el-tag
                     v-if="s.sourceType === 'MYSQL' || s.sourceType === 'ORACLE'"
@@ -392,8 +489,8 @@ onMounted(async () => {
                   </el-tag>
                 </span>
               </button>
-              <div v-if="selectedProjectId && !dataSources.length" class="lane-empty">暂无数据源</div>
-              <div v-else-if="!selectedProjectId" class="lane-empty">请选择项目</div>
+              <div v-if="selectedSystemId && !dataSources.length" class="lane-empty">暂无数据源</div>
+              <div v-else-if="!selectedSystemId" class="lane-empty">请选择系统</div>
             </div>
           </section>
 
@@ -476,7 +573,7 @@ onMounted(async () => {
         :closable="false"
         show-icon
         style="margin-bottom:12px"
-        :title="`当前项目：${selectedProject?.projectName || '—'} / ${selectedProject?.systemName || '—'}`"
+        :title="`当前项目：${selectedProject?.projectName || '—'} / ${selectedSystem?.systemName || '—'}`"
       />
       <el-form inline class="portal-inline-form portal-inline-form--block">
         <el-form-item label="建模方式">
@@ -495,9 +592,9 @@ onMounted(async () => {
           <el-form-item label="数据源" class="portal-field-xl">
             <el-select v-model="regSourceId" placeholder="请选择">
               <el-option
-                v-for="s in dataSources"
+                v-for="s in projectSources"
                 :key="s.id"
-                :label="`${s.sourceName || '未命名'}（${$statusLabel(s.sourceType)}${s.connStatus ? ' · ' + $statusLabel(s.connStatus) : ''}）`"
+                :label="`${s.systemName || '系统'} / ${s.sourceName || '未命名'}（${$statusLabel(s.sourceType)}${s.connStatus ? ' · ' + $statusLabel(s.connStatus) : ''}）`"
                 :value="s.id"
               />
             </el-select>
@@ -515,7 +612,9 @@ onMounted(async () => {
           </el-form-item>
           <el-form-item class="portal-form-actions">
             <el-button @click="workflowStep = 0">上一步</el-button>
-            <el-button type="primary" :disabled="!tableForm.tableName.trim()" @click="createTable">登记表并继续</el-button>
+            <el-button type="primary" :loading="savingTable" :disabled="!tableForm.tableName.trim()" @click="createTable">
+              登记表并继续
+            </el-button>
           </el-form-item>
         </el-form>
       </div>
@@ -562,13 +661,13 @@ onMounted(async () => {
       </div>
 
       <div v-show="workflowStep === 2 && isForward">
-        <p class="step-hint">当前表：{{ regTables.find((t) => t.id === regTableId)?.tableName || '未选择' }}</p>
+        <p class="step-hint">当前表：{{ regTableName || regTables.find((t) => t.id === regTableId)?.tableName || '未选择' }}（字段写入平台登记库后，完成登记将在源库创建物理表）</p>
         <el-form inline size="small" class="portal-inline-form portal-inline-form--sm portal-inline-form--block">
-          <el-form-item label="字段编码" class="portal-field-xs"><el-input v-model="columnForm.columnCode" /></el-form-item>
+          <el-form-item label="字段编码" class="portal-field-xs"><el-input v-model="columnForm.columnCode" placeholder="如 user_id" /></el-form-item>
           <el-form-item label="字段名称" class="portal-field-xs"><el-input v-model="columnForm.columnName" /></el-form-item>
           <el-form-item label="类型" class="portal-field-xs"><el-input v-model="columnForm.dataType" /></el-form-item>
           <el-form-item class="portal-form-actions">
-            <el-button type="primary" size="small" @click="createColumn">添加字段</el-button>
+            <el-button type="primary" size="small" :loading="savingColumn" @click="createColumn">添加字段</el-button>
           </el-form-item>
         </el-form>
         <el-table :data="regColumns" stripe size="small" max-height="200" style="margin:8px 0">
@@ -579,7 +678,9 @@ onMounted(async () => {
         <el-form inline class="portal-inline-form">
           <el-form-item class="portal-form-actions">
             <el-button @click="workflowStep = 1">上一步</el-button>
-            <el-button type="success" @click="finishRegister">完成登记</el-button>
+            <el-button type="success" :loading="finalizing" :disabled="!regColumns.length" @click="finishRegister">
+              完成登记并建物理表
+            </el-button>
           </el-form-item>
         </el-form>
       </div>

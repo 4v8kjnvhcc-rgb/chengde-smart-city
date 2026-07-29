@@ -555,7 +555,7 @@ async function save() {
                   <el-option
                     v-for="s in sources"
                     :key="s.id"
-                    :label="s.systemName || s.sourceName"
+                    :label="`${s.systemName || '系统'} / ${s.sourceName}`"
                     :value="s.id"
                   />
                 </el-select>

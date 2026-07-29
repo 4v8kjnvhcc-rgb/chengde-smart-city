@@ -656,6 +656,7 @@ onMounted(async () => {
         <el-button @click="router.push('/system/uum?tab=users')">去改角色菜单</el-button>
       </template>
     </el-dialog>
+
   </div>
 </template>
 
@@ -694,6 +695,7 @@ onMounted(async () => {
 .hint { color: var(--el-text-color-secondary); margin: 0 0 12px; line-height: 1.5; font-size: 13px; }
 .pager { margin-top: 16px; justify-content: flex-end; }
 .user-toolbar { margin-bottom: 8px; }
+
 @media (max-width: 960px) {
   .org-user-layout { grid-template-columns: 1fr; }
 }

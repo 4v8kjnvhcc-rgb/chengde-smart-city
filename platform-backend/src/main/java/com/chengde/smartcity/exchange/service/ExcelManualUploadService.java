@@ -3,12 +3,14 @@ package com.chengde.smartcity.exchange.service;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.chengde.smartcity.audit.AuditService;
 import com.chengde.smartcity.common.exception.BusinessException;
+import com.chengde.smartcity.exchange.entity.IngBizSystem;
 import com.chengde.smartcity.exchange.entity.IngDataColumn;
 import com.chengde.smartcity.exchange.entity.IngDataSource;
 import com.chengde.smartcity.exchange.entity.IngDataTable;
 import com.chengde.smartcity.exchange.entity.IngProject;
 import com.chengde.smartcity.exchange.entity.IngUploadRecord;
 import com.chengde.smartcity.exchange.entity.IngUploadTemplate;
+import com.chengde.smartcity.exchange.mapper.IngBizSystemMapper;
 import com.chengde.smartcity.exchange.mapper.IngDataColumnMapper;
 import com.chengde.smartcity.exchange.mapper.IngDataSourceMapper;
 import com.chengde.smartcity.exchange.mapper.IngDataTableMapper;
@@ -74,6 +76,7 @@ public class ExcelManualUploadService {
     private final IngDataTableMapper dataTableMapper;
     private final IngDataColumnMapper dataColumnMapper;
     private final IngDataSourceMapper dataSourceMapper;
+    private final IngBizSystemMapper bizSystemMapper;
     private final IngProjectMapper projectMapper;
     private final AuditService auditService;
     private final MetadataSubsystemService metadataSubsystemService;
@@ -87,6 +90,7 @@ public class ExcelManualUploadService {
                                     IngDataTableMapper dataTableMapper,
                                     IngDataColumnMapper dataColumnMapper,
                                     IngDataSourceMapper dataSourceMapper,
+                                    IngBizSystemMapper bizSystemMapper,
                                     IngProjectMapper projectMapper,
                                     AuditService auditService,
                                     MetadataSubsystemService metadataSubsystemService,
@@ -98,6 +102,7 @@ public class ExcelManualUploadService {
         this.dataTableMapper = dataTableMapper;
         this.dataColumnMapper = dataColumnMapper;
         this.dataSourceMapper = dataSourceMapper;
+        this.bizSystemMapper = bizSystemMapper;
         this.projectMapper = projectMapper;
         this.auditService = auditService;
         this.metadataSubsystemService = metadataSubsystemService;
@@ -921,13 +926,14 @@ public class ExcelManualUploadService {
         return "ods_" + sanitized;
     }
 
-    /** 手动上传专用 FILE 数据源：挂在本部门「其他」项目下（不存在则创建）。 */
+    /** 手动上传专用 FILE 数据源：挂在本部门「其他」项目/系统下（不存在则创建）。 */
     private IngDataSource ensureManualUploadSource(UserPrincipal operator) {
         if (operator == null || operator.getOrgId() == null) {
             throw new BusinessException(400, "当前账号未绑定部门，无法使用手动上传默认项目");
         }
         Long orgId = operator.getOrgId();
         IngProject other = ensureOtherProject(operator);
+        IngBizSystem system = ensureOtherSystem(operator, other);
         String sourceCode = "DS_MANUAL_UPLOAD_" + orgId;
         IngDataSource existing = dataSourceMapper.selectOne(new LambdaQueryWrapper<IngDataSource>()
                 .eq(IngDataSource::getSourceCode, sourceCode)
@@ -945,6 +951,9 @@ public class ExcelManualUploadService {
             if (!other.getId().equals(existing.getProjectId())) {
                 existing.setProjectId(other.getId());
             }
+            if (!system.getId().equals(existing.getSystemId())) {
+                existing.setSystemId(system.getId());
+            }
             if (existing.getSystemName() == null || existing.getSystemName().isBlank()) {
                 existing.setSystemName("其他");
             }
@@ -956,6 +965,7 @@ public class ExcelManualUploadService {
         }
         IngDataSource ds = new IngDataSource();
         ds.setProjectId(other.getId());
+        ds.setSystemId(system.getId());
         ds.setSourceCode(sourceCode);
         ds.setSourceName("手动上传");
         ds.setSystemName("其他");
@@ -966,6 +976,35 @@ public class ExcelManualUploadService {
         ds.setSourceSchema("smart_city_ods");
         dataSourceMapper.insert(ds);
         return ds;
+    }
+
+    private IngBizSystem ensureOtherSystem(UserPrincipal operator, IngProject project) {
+        Long orgId = operator.getOrgId();
+        String systemCode = "SYS_OTHER_" + orgId;
+        IngBizSystem system = bizSystemMapper.selectOne(new LambdaQueryWrapper<IngBizSystem>()
+                .eq(IngBizSystem::getSystemCode, systemCode)
+                .last("LIMIT 1"));
+        if (system == null) {
+            system = bizSystemMapper.selectOne(new LambdaQueryWrapper<IngBizSystem>()
+                    .eq(IngBizSystem::getProjectId, project.getId())
+                    .eq(IngBizSystem::getSystemName, "其他")
+                    .last("LIMIT 1"));
+        }
+        if (system != null) {
+            if (!project.getId().equals(system.getProjectId())) {
+                system.setProjectId(project.getId());
+                bizSystemMapper.updateById(system);
+            }
+            return system;
+        }
+        system = new IngBizSystem();
+        system.setProjectId(project.getId());
+        system.setSystemCode(systemCode);
+        system.setSystemName("其他");
+        system.setStatus("ACTIVE");
+        system.setCreatedBy(operator.getUsername() != null ? operator.getUsername() : "system");
+        bizSystemMapper.insert(system);
+        return system;
     }
 
     private IngProject ensureOtherProject(UserPrincipal operator) {

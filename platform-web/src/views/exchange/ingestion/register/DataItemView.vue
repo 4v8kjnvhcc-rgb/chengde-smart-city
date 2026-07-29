@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { onMounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import PageCard from '@/components/common/PageCard.vue'
 import {
   activeProjectId,
@@ -29,6 +29,7 @@ const selectedTableId = ref<number>()
 const selectedCols = ref<DataColumn[]>([])
 const dialogVisible = ref(false)
 const editingCol = ref<DataColumn | null>(null)
+const saving = ref(false)
 const batchDialogVisible = ref(false)
 const batchSaving = ref(false)
 const batchRows = ref<{ id: number; columnCode: string; columnName: string; semanticDesc: string }[]>([])
@@ -41,6 +42,7 @@ const colForm = reactive({
   semanticDesc: '',
   componentType: 'INPUT',
   requiredTip: '',
+  builtInFlag: 0 as 0 | 1,
 })
 
 const componentOptions = [
@@ -51,8 +53,19 @@ const componentOptions = [
   { value: 'TEXTAREA', label: '多行文本' },
 ]
 
+function isBuiltIn(row: DataColumn) {
+  return row.builtInFlag === 1
+}
+
 function componentLabel(code?: string) {
-  return componentOptions.find((c) => c.value === code)?.label || code || '-'
+  return componentOptions.find((c) => c.value === code)?.label || code || '—'
+}
+
+function typeLengthLabel(row: DataColumn) {
+  if (row.lengthVal != null && row.lengthVal > 0 && !/\(\d+\)/.test(row.dataType || '')) {
+    return `${row.dataType || '—'}(${row.lengthVal})`
+  }
+  return row.dataType || '—'
 }
 
 function parseRouteTableId(): number | undefined {
@@ -163,15 +176,13 @@ function openCreate() {
   colForm.semanticDesc = ''
   colForm.componentType = 'INPUT'
   colForm.requiredTip = ''
+  colForm.builtInFlag = 0
   dialogVisible.value = true
 }
 
 function openEdit(row: DataColumn) {
-  if (row.builtInFlag === 1) {
-    ElMessage.warning('系统内置属性不可编辑')
-    return
-  }
   editingCol.value = row
+  colForm.columnCode = row.columnCode
   colForm.columnName = row.columnName
   colForm.dataType = row.dataType
   colForm.lengthVal = row.lengthVal ?? 64
@@ -179,11 +190,15 @@ function openEdit(row: DataColumn) {
   colForm.semanticDesc = row.semanticDesc || ''
   colForm.componentType = row.componentType || 'INPUT'
   colForm.requiredTip = row.requiredTip || ''
+  colForm.builtInFlag = isBuiltIn(row) ? 1 : 0
   dialogVisible.value = true
+  if (isBuiltIn(row)) {
+    ElMessage.info('该字段已是内置属性，不可再编辑')
+  }
 }
 
 function openBatchEdit() {
-  const editable = selectedCols.value.filter((c) => c.builtInFlag !== 1)
+  const editable = selectedCols.value.filter((c) => !isBuiltIn(c))
   if (!editable.length) {
     ElMessage.warning('请先勾选可编辑的数据项（内置属性不可改）')
     return
@@ -197,24 +212,81 @@ function openBatchEdit() {
   batchDialogVisible.value = true
 }
 
+async function confirmIrreversible(count = 1) {
+  const tip = count > 1
+    ? `将覆盖 ${count} 个自定义数据项。保存后，元数据维护中对应属性信息不可恢复，是否继续？`
+    : '保存后，元数据维护中对应的属性信息不可恢复，是否继续？'
+  await ElMessageBox.confirm(tip, '编辑确认', {
+    type: 'warning',
+    confirmButtonText: '确认保存',
+    cancelButtonText: '取消',
+  })
+}
+
 async function saveColumn() {
-  if (editingCol.value) {
-    await ingestionApi.updateColumn(editingCol.value.id, {
-      columnName: colForm.columnName,
-      dataType: colForm.dataType,
-      lengthVal: colForm.lengthVal,
-      nullableFlag: colForm.nullableFlag,
-      semanticDesc: colForm.semanticDesc,
-      componentType: colForm.componentType,
-      requiredTip: colForm.requiredTip,
-    })
-    ElMessage.success('已保存（元数据维护中对应属性不可恢复）')
-  } else if (selectedTableId.value) {
-    await ingestionApi.createColumn(selectedTableId.value, { ...colForm })
-    ElMessage.success('数据项已新建')
+  if (!colForm.columnName?.trim()) {
+    ElMessage.warning('请填写字段名称')
+    return
   }
-  dialogVisible.value = false
-  if (selectedTableId.value) columns.value = (await ingestionApi.columns(selectedTableId.value)).data
+  if (editingCol.value && isBuiltIn(editingCol.value)) {
+    ElMessage.warning('系统内置属性不可编辑')
+    return
+  }
+  saving.value = true
+  try {
+    if (editingCol.value) {
+      if (colForm.builtInFlag !== 1) {
+        await confirmIrreversible(1)
+      } else {
+        await ElMessageBox.confirm(
+          '设为内置属性后将不可再编辑，列表将显示「内置=是」。是否继续？',
+          '设为内置',
+          { type: 'warning', confirmButtonText: '确认', cancelButtonText: '取消' },
+        )
+      }
+      await ingestionApi.updateColumn(editingCol.value.id, {
+        columnName: colForm.columnName.trim(),
+        dataType: colForm.dataType,
+        lengthVal: colForm.lengthVal,
+        nullableFlag: colForm.nullableFlag,
+        semanticDesc: colForm.semanticDesc,
+        componentType: colForm.componentType,
+        requiredTip: colForm.requiredTip,
+        builtInFlag: colForm.builtInFlag,
+      })
+      ElMessage.success(
+        colForm.builtInFlag === 1
+          ? '已设为内置属性，之后不可编辑'
+          : '已保存；元数据维护中对应属性已覆盖且不可恢复',
+      )
+    } else if (selectedTableId.value) {
+      if (!colForm.columnCode?.trim()) {
+        ElMessage.warning('请填写字段编码')
+        return
+      }
+      if (colForm.builtInFlag === 1) {
+        await ElMessageBox.confirm(
+          '设为内置属性后将不可再编辑，列表将显示「内置=是」。是否继续？',
+          '设为内置',
+          { type: 'warning', confirmButtonText: '确认', cancelButtonText: '取消' },
+        )
+      }
+      await ingestionApi.createColumn(selectedTableId.value, {
+        ...colForm,
+        columnCode: colForm.columnCode.trim(),
+        columnName: colForm.columnName.trim(),
+        builtInFlag: colForm.builtInFlag,
+      })
+      ElMessage.success(colForm.builtInFlag === 1 ? '已新建为内置属性' : '数据项已新建')
+    }
+    dialogVisible.value = false
+    if (selectedTableId.value) columns.value = (await ingestionApi.columns(selectedTableId.value)).data
+  } catch (e: unknown) {
+    if (e === 'cancel' || (e as { message?: string })?.message === 'cancel') return
+    ElMessage.error(e instanceof Error ? e.message : '保存失败')
+  } finally {
+    saving.value = false
+  }
 }
 
 async function saveBatchEdit() {
@@ -227,6 +299,7 @@ async function saveBatchEdit() {
   }
   batchSaving.value = true
   try {
+    await confirmIrreversible(batchRows.value.length)
     const chunk = 3
     for (let i = 0; i < batchRows.value.length; i += chunk) {
       const part = batchRows.value.slice(i, i + chunk)
@@ -239,11 +312,12 @@ async function saveBatchEdit() {
         ),
       )
     }
-    ElMessage.success(`已批量更新 ${batchRows.value.length} 个数据项`)
+    ElMessage.success(`已批量更新 ${batchRows.value.length} 个数据项；元数据对应属性已覆盖且不可恢复`)
     batchDialogVisible.value = false
     selectedCols.value = []
     if (selectedTableId.value) columns.value = (await ingestionApi.columns(selectedTableId.value)).data
   } catch (e: unknown) {
+    if (e === 'cancel' || (e as { message?: string })?.message === 'cancel') return
     ElMessage.error(e instanceof Error ? e.message : '批量保存失败')
   } finally {
     batchSaving.value = false
@@ -257,7 +331,10 @@ onMounted(reload)
   <div v-loading="loading">
     <el-alert v-if="loadError" type="error" :title="loadError" show-icon :closable="false" style="margin-bottom:12px" />
     <PageCard title="数据项管理">
-      <p class="hint">按当前项目过滤物理表。支持对数据项语义和结构进行定义，内置属性不可编辑。可勾选多行后批量修改字段名称与语义说明。</p>
+      <p class="hint">
+        按当前项目过滤物理表。系统内置属性不可编辑；自定义属性可编辑。
+        编辑保存后，元数据维护中对应属性信息将被覆盖且不可恢复。
+      </p>
       <el-form inline class="portal-inline-form portal-inline-form--block">
         <el-form-item label="当前项目" class="portal-field-xl">
           <el-select
@@ -291,53 +368,140 @@ onMounted(reload)
         </el-form-item>
       </el-form>
       <el-table :data="columns" stripe @selection-change="onSelectionChange">
-        <el-table-column type="selection" width="48" :selectable="(row: DataColumn) => row.builtInFlag !== 1" />
+        <el-table-column type="selection" width="48" :selectable="(row: DataColumn) => !isBuiltIn(row)" />
         <el-table-column prop="columnCode" label="字段编码" width="120" />
         <el-table-column prop="columnName" label="字段名称" min-width="120" />
-        <el-table-column prop="dataType" label="数据类型" width="110" />
-        <el-table-column prop="lengthVal" label="长度" width="70" />
-        <el-table-column label="组件类型" width="100">
+        <el-table-column label="数据类型 & 长度" min-width="140">
+          <template #default="{ row }">{{ typeLengthLabel(row) }}</template>
+        </el-table-column>
+        <el-table-column label="控件类型" width="100">
           <template #default="{ row }">{{ componentLabel(row.componentType) }}</template>
         </el-table-column>
         <el-table-column label="必填" width="60">
           <template #default="{ row }">{{ row.nullableFlag ? '否' : '是' }}</template>
         </el-table-column>
         <el-table-column prop="semanticDesc" label="语义说明" min-width="160" show-overflow-tooltip />
-        <el-table-column label="内置" width="60">
-          <template #default="{ row }">{{ row.builtInFlag ? '是' : '否' }}</template>
+        <el-table-column label="内置" width="80">
+          <template #default="{ row }">
+            <el-tag :type="isBuiltIn(row) ? 'info' : 'success'" size="small">
+              {{ isBuiltIn(row) ? '是' : '否' }}
+            </el-tag>
+          </template>
         </el-table-column>
         <el-table-column label="操作" width="80">
           <template #default="{ row }">
-            <el-button link type="primary" :disabled="row.builtInFlag === 1" @click="openEdit(row)">编辑</el-button>
+            <el-button link type="primary" @click="openEdit(row)">
+              {{ isBuiltIn(row) ? '查看' : '编辑' }}
+            </el-button>
           </template>
         </el-table-column>
       </el-table>
     </PageCard>
-    <el-dialog v-model="dialogVisible" :title="editingCol ? '编辑数据项' : '新建数据项'" width="520px">
+
+    <el-dialog
+      v-model="dialogVisible"
+      :title="editingCol ? (isBuiltIn(editingCol) ? '查看数据项（内置）' : '编辑数据项') : '新建数据项'"
+      width="520px"
+      destroy-on-close
+    >
+      <el-alert
+        v-if="editingCol && isBuiltIn(editingCol)"
+        type="info"
+        :closable="false"
+        show-icon
+        style="margin-bottom:12px"
+        title="该字段已是内置属性，不可再编辑。"
+      />
+      <el-alert
+        v-else-if="editingCol"
+        type="warning"
+        :closable="false"
+        show-icon
+        style="margin-bottom:12px"
+        title="编辑后元数据维护中对应属性不可恢复；若设为内置并保存，之后将不可再编辑。"
+      />
       <el-form label-width="100px">
-        <el-form-item v-if="!editingCol" label="字段编码"><el-input v-model="colForm.columnCode" /></el-form-item>
-        <el-form-item label="字段名称"><el-input v-model="colForm.columnName" /></el-form-item>
-        <el-form-item label="数据类型"><el-input v-model="colForm.dataType" /></el-form-item>
-        <el-form-item label="长度"><el-input-number v-model="colForm.lengthVal" :min="1" /></el-form-item>
-        <el-form-item label="组件类型">
-          <el-select v-model="colForm.componentType">
+        <el-form-item label="字段编码" required>
+          <el-input v-model="colForm.columnCode" :disabled="!!editingCol" placeholder="如 ENT_CODE" />
+        </el-form-item>
+        <el-form-item label="内置属性">
+          <el-radio-group
+            v-model="colForm.builtInFlag"
+            :disabled="editingCol != null && isBuiltIn(editingCol)"
+          >
+            <el-radio-button :value="1">是</el-radio-button>
+            <el-radio-button :value="0">否</el-radio-button>
+          </el-radio-group>
+          <div class="field-tip">
+            <template v-if="editingCol && isBuiltIn(editingCol)">已锁定为内置，不可修改</template>
+            <template v-else-if="colForm.builtInFlag === 1">保存后列表显示「内置=是」，且不可再编辑</template>
+            <template v-else>自定义属性可编辑；保存后元数据对应信息不可恢复</template>
+          </div>
+        </el-form-item>
+        <el-form-item label="字段名称" required>
+          <el-input v-model="colForm.columnName" :disabled="editingCol != null && isBuiltIn(editingCol)" />
+        </el-form-item>
+        <el-form-item label="数据类型">
+          <el-input v-model="colForm.dataType" :disabled="editingCol != null && isBuiltIn(editingCol)" />
+        </el-form-item>
+        <el-form-item label="长度">
+          <el-input-number
+            v-model="colForm.lengthVal"
+            :min="1"
+            style="width:100%"
+            :disabled="editingCol != null && isBuiltIn(editingCol)"
+          />
+        </el-form-item>
+        <el-form-item label="控件类型">
+          <el-select
+            v-model="colForm.componentType"
+            style="width:100%"
+            :disabled="editingCol != null && isBuiltIn(editingCol)"
+          >
             <el-option v-for="c in componentOptions" :key="c.value" :label="c.label" :value="c.value" />
           </el-select>
         </el-form-item>
         <el-form-item label="必填">
-          <el-switch :model-value="colForm.nullableFlag === 0" @change="(v: boolean) => colForm.nullableFlag = v ? 0 : 1" />
+          <el-switch
+            :model-value="colForm.nullableFlag === 0"
+            :disabled="editingCol != null && isBuiltIn(editingCol)"
+            @change="(v: boolean) => colForm.nullableFlag = v ? 0 : 1"
+          />
         </el-form-item>
-        <el-form-item label="必填提示"><el-input v-model="colForm.requiredTip" /></el-form-item>
-        <el-form-item label="语义说明"><el-input v-model="colForm.semanticDesc" type="textarea" :rows="2" /></el-form-item>
+        <el-form-item label="必填提示">
+          <el-input v-model="colForm.requiredTip" :disabled="editingCol != null && isBuiltIn(editingCol)" />
+        </el-form-item>
+        <el-form-item label="语义说明">
+          <el-input
+            v-model="colForm.semanticDesc"
+            type="textarea"
+            :rows="2"
+            :disabled="editingCol != null && isBuiltIn(editingCol)"
+          />
+        </el-form-item>
       </el-form>
       <template #footer>
-        <el-button @click="dialogVisible = false">取消</el-button>
-        <el-button type="primary" @click="saveColumn">保存</el-button>
+        <el-button @click="dialogVisible = false">{{ editingCol && isBuiltIn(editingCol) ? '关闭' : '取消' }}</el-button>
+        <el-button
+          v-if="!(editingCol && isBuiltIn(editingCol))"
+          type="primary"
+          :loading="saving"
+          @click="saveColumn"
+        >
+          保存
+        </el-button>
       </template>
     </el-dialog>
 
-    <el-dialog v-model="batchDialogVisible" title="批量编辑字段名称 / 注释" width="720px">
-      <p class="hint">仅修改字段名称与语义说明（注释）；字段编码与类型不变。</p>
+    <el-dialog v-model="batchDialogVisible" title="批量编辑字段名称 / 注释" width="720px" destroy-on-close>
+      <el-alert
+        type="warning"
+        :closable="false"
+        show-icon
+        style="margin-bottom:12px"
+        title="仅可编辑自定义属性；保存后元数据维护中对应属性信息不可恢复。"
+      />
+      <p class="hint">仅修改字段名称与语义说明；字段编码不变。内置属性不会出现在此列表。</p>
       <el-table :data="batchRows" stripe size="small" max-height="420">
         <el-table-column prop="columnCode" label="字段编码" width="140" />
         <el-table-column label="字段名称" min-width="160">
@@ -360,5 +524,11 @@ onMounted(reload)
 </template>
 
 <style scoped>
-.hint { margin: 0 0 12px; color: #606266; font-size: 13px; }
+.hint { margin: 0 0 12px; color: #606266; font-size: 13px; line-height: 1.5; }
+.field-tip {
+  margin-top: 6px;
+  font-size: 12px;
+  color: #909399;
+  line-height: 1.4;
+}
 </style>

@@ -2,9 +2,11 @@ package com.chengde.smartcity.system.service;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.chengde.smartcity.common.exception.BusinessException;
+import com.chengde.smartcity.exchange.entity.IngBizSystem;
 import com.chengde.smartcity.exchange.entity.IngDataSource;
 import com.chengde.smartcity.exchange.entity.IngDataTable;
 import com.chengde.smartcity.exchange.entity.IngProject;
+import com.chengde.smartcity.exchange.mapper.IngBizSystemMapper;
 import com.chengde.smartcity.exchange.mapper.IngDataSourceMapper;
 import com.chengde.smartcity.exchange.mapper.IngDataTableMapper;
 import com.chengde.smartcity.exchange.mapper.IngProjectMapper;
@@ -45,6 +47,7 @@ public class AccessControlService {
     private final SysDataGrantMapper dataGrantMapper;
     private final CrossDeptAccessRequestMapper crossDeptMapper;
     private final IngProjectMapper projectMapper;
+    private final IngBizSystemMapper bizSystemMapper;
     private final IngDataSourceMapper dataSourceMapper;
     private final IngDataTableMapper tableMapper;
     private final SysUserMapper userMapper;
@@ -55,6 +58,7 @@ public class AccessControlService {
                                 SysDataGrantMapper dataGrantMapper,
                                 CrossDeptAccessRequestMapper crossDeptMapper,
                                 IngProjectMapper projectMapper,
+                                IngBizSystemMapper bizSystemMapper,
                                 IngDataSourceMapper dataSourceMapper,
                                 IngDataTableMapper tableMapper,
                                 SysUserMapper userMapper,
@@ -64,6 +68,7 @@ public class AccessControlService {
         this.dataGrantMapper = dataGrantMapper;
         this.crossDeptMapper = crossDeptMapper;
         this.projectMapper = projectMapper;
+        this.bizSystemMapper = bizSystemMapper;
         this.dataSourceMapper = dataSourceMapper;
         this.tableMapper = tableMapper;
         this.userMapper = userMapper;
@@ -141,8 +146,8 @@ public class AccessControlService {
     }
 
     /**
-     * 为当前登录用户所属部门确保「其他」项目 +「手动上传」FILE 数据源。
-     * 编码：PRJ_OTHER_{orgId} / DS_MANUAL_UPLOAD_{orgId}，各部门隔离。
+     * 为当前登录用户所属部门确保「其他」项目 +「其他」业务系统 +「手动上传」FILE 数据源。
+     * 编码：PRJ_OTHER_{orgId} / SYS_OTHER_{orgId} / DS_MANUAL_UPLOAD_{orgId}，各部门隔离。
      */
     @Transactional
     public IngProject ensureOrgOtherProject(UserPrincipal user) {
@@ -166,6 +171,29 @@ public class AccessControlService {
             ensureCreatorProjectGrant(user, project.getId());
             log.info("Created per-org OTHER project code={} orgId={}", projectCode, orgId);
         }
+        String systemCode = "SYS_OTHER_" + orgId;
+        IngBizSystem system = bizSystemMapper.selectOne(new LambdaQueryWrapper<IngBizSystem>()
+                .eq(IngBizSystem::getSystemCode, systemCode)
+                .last("LIMIT 1"));
+        if (system == null) {
+            system = bizSystemMapper.selectOne(new LambdaQueryWrapper<IngBizSystem>()
+                    .eq(IngBizSystem::getProjectId, project.getId())
+                    .eq(IngBizSystem::getSystemName, "其他")
+                    .last("LIMIT 1"));
+        }
+        if (system == null) {
+            system = new IngBizSystem();
+            system.setProjectId(project.getId());
+            system.setSystemCode(systemCode);
+            system.setSystemName("其他");
+            system.setStatus("ACTIVE");
+            system.setCreatedBy(user.getUsername() != null ? user.getUsername() : "system");
+            bizSystemMapper.insert(system);
+            log.info("Created per-org OTHER system code={} orgId={}", systemCode, orgId);
+        } else if (!project.getId().equals(system.getProjectId())) {
+            system.setProjectId(project.getId());
+            bizSystemMapper.updateById(system);
+        }
         String sourceCode = "DS_MANUAL_UPLOAD_" + orgId;
         IngDataSource ds = dataSourceMapper.selectOne(new LambdaQueryWrapper<IngDataSource>()
                 .eq(IngDataSource::getSourceCode, sourceCode)
@@ -173,6 +201,7 @@ public class AccessControlService {
         if (ds == null) {
             ds = new IngDataSource();
             ds.setProjectId(project.getId());
+            ds.setSystemId(system.getId());
             ds.setSourceCode(sourceCode);
             ds.setSourceName("手动上传");
             ds.setSystemName("其他");
@@ -184,9 +213,23 @@ public class AccessControlService {
             ds.setSyncStatus("PENDING");
             dataSourceMapper.insert(ds);
             log.info("Created per-org manual upload source code={} orgId={}", sourceCode, orgId);
-        } else if (!project.getId().equals(ds.getProjectId())) {
-            ds.setProjectId(project.getId());
-            dataSourceMapper.updateById(ds);
+        } else {
+            boolean dirty = false;
+            if (!project.getId().equals(ds.getProjectId())) {
+                ds.setProjectId(project.getId());
+                dirty = true;
+            }
+            if (!system.getId().equals(ds.getSystemId())) {
+                ds.setSystemId(system.getId());
+                dirty = true;
+            }
+            if (ds.getSystemName() == null || ds.getSystemName().isBlank()) {
+                ds.setSystemName("其他");
+                dirty = true;
+            }
+            if (dirty) {
+                dataSourceMapper.updateById(ds);
+            }
         }
         return project;
     }
@@ -304,16 +347,75 @@ public class AccessControlService {
     }
 
     public List<Map<String, Object>> listProjectGrants(UserPrincipal operator, Long projectId) {
+        return listProjectGrants(operator, projectId, null);
+    }
+
+    public List<Map<String, Object>> listProjectGrants(UserPrincipal operator, Long projectId, Long granteeUserId) {
         LambdaQueryWrapper<SysProjectGrant> q = new LambdaQueryWrapper<SysProjectGrant>().orderByDesc(SysProjectGrant::getId);
         if (projectId != null) q.eq(SysProjectGrant::getProjectId, projectId);
+        if (granteeUserId != null) {
+            q.eq(SysProjectGrant::getGranteeType, "USER").eq(SysProjectGrant::getGranteeId, granteeUserId);
+        }
         if (!operator.isSystemAdmin()) q.eq(SysProjectGrant::getOrgId, operator.getOrgId());
         List<SysProjectGrant> list = projectGrantMapper.selectList(q);
         return list.stream().map(this::projectGrantView).collect(Collectors.toList());
     }
 
+    /**
+     * 可被项目授权的用户：启用账号，且角色具备「数据资产登记管理」相关菜单权限（含系统管理员）。
+     */
+    public List<Map<String, Object>> listUsersForProjectGrant(UserPrincipal operator) {
+        if (!operator.isSystemAdmin() && !operator.isDeptAdmin()
+                && !operator.getPermissions().contains("access:project-grant:manage")
+                && !operator.getPermissions().contains("system:user:edit")) {
+            throw new BusinessException(403, "无权查看可授权用户");
+        }
+        String sql = """
+                SELECT DISTINCT u.id, u.username, u.display_name AS displayName, u.org_id AS orgId,
+                       COALESCE(o.org_name, '未分配机构') AS orgName
+                FROM sys_user u
+                LEFT JOIN sys_org o ON o.id = u.org_id
+                WHERE u.status = 1
+                  AND (
+                    EXISTS (
+                      SELECT 1 FROM sys_user_role ur
+                      INNER JOIN sys_role r ON r.id = ur.role_id
+                      WHERE ur.user_id = u.id AND UPPER(r.role_code) = 'SYSTEM_ADMIN'
+                    )
+                    OR EXISTS (
+                      SELECT 1 FROM sys_user_role ur
+                      INNER JOIN sys_role_menu rm ON rm.role_id = ur.role_id
+                      INNER JOIN sys_menu m ON m.id = rm.menu_id
+                      WHERE ur.user_id = u.id
+                        AND (
+                          m.id = 7000
+                          OR m.parent_id = 7000
+                          OR (m.permission IS NOT NULL AND m.permission LIKE 'hub:ingestion:register%')
+                        )
+                    )
+                  )
+                ORDER BY orgName, displayName, username
+                """;
+        List<Map<String, Object>> rows = jdbcTemplate.queryForList(sql);
+        List<Map<String, Object>> out = new ArrayList<>();
+        for (Map<String, Object> row : rows) {
+            Map<String, Object> m = new LinkedHashMap<>();
+            m.put("id", row.get("id"));
+            m.put("username", row.get("username"));
+            m.put("displayName", row.get("displayName"));
+            m.put("orgId", row.get("orgId"));
+            m.put("orgName", row.get("orgName"));
+            out.add(m);
+        }
+        return out;
+    }
+
     @Transactional
     public Long createProjectGrant(UserPrincipal operator, Map<String, Object> body) {
-        assertCanGrantResourceOrData(operator);
+        boolean sysAdmin = operator.isSystemAdmin();
+        if (!sysAdmin) {
+            assertCanGrantResourceOrData(operator);
+        }
         Long projectId = longVal(body.get("projectId"));
         String granteeType = str(body.get("granteeType"), "USER").toUpperCase(Locale.ROOT);
         Long granteeId = longVal(body.get("granteeId"));
@@ -321,10 +423,22 @@ public class AccessControlService {
         if (projectId == null || granteeId == null) throw new BusinessException(400, "projectId/granteeId required");
         IngProject project = projectMapper.selectById(projectId);
         if (project == null) throw new BusinessException(404, "项目不存在");
-        if (!Objects.equals(project.getBoundOrgId(), operator.getOrgId())) {
-            throw new BusinessException(403, "只能授权本机构项目");
+        if (!sysAdmin) {
+            if (!Objects.equals(project.getBoundOrgId(), operator.getOrgId())) {
+                throw new BusinessException(403, "只能授权本机构项目");
+            }
+            validateGrantee(granteeType, granteeId, operator.getOrgId());
+        } else if ("USER".equals(granteeType)) {
+            SysUser u = userMapper.selectById(granteeId);
+            if (u == null) throw new BusinessException(404, "用户不存在");
+        } else if ("ROLE".equals(granteeType)) {
+            SysRole r = roleMapper.selectById(granteeId);
+            if (r == null) throw new BusinessException(404, "角色不存在");
+        } else {
+            throw new BusinessException(400, "granteeType 须为 USER 或 ROLE");
         }
-        validateGrantee(granteeType, granteeId, operator.getOrgId());
+
+        Long grantOrgId = project.getBoundOrgId() != null ? project.getBoundOrgId() : operator.getOrgId();
 
         SysProjectGrant exist = projectGrantMapper.selectOne(new LambdaQueryWrapper<SysProjectGrant>()
                 .eq(SysProjectGrant::getProjectId, projectId)
@@ -333,6 +447,9 @@ public class AccessControlService {
         if (exist != null) {
             exist.setPerm(perm);
             exist.setGrantedBy(operator.getUserId());
+            if (grantOrgId != null) {
+                exist.setOrgId(grantOrgId);
+            }
             projectGrantMapper.updateById(exist);
             return exist.getId();
         }
@@ -340,7 +457,7 @@ public class AccessControlService {
         g.setProjectId(projectId);
         g.setGranteeType(granteeType);
         g.setGranteeId(granteeId);
-        g.setOrgId(operator.getOrgId());
+        g.setOrgId(grantOrgId);
         g.setPerm(perm);
         g.setGrantedBy(operator.getUserId());
         g.setCreatedAt(LocalDateTime.now());
@@ -351,10 +468,13 @@ public class AccessControlService {
 
     @Transactional
     public void deleteProjectGrant(UserPrincipal operator, Long id) {
-        assertCanGrantResourceOrData(operator);
+        boolean sysAdmin = operator.isSystemAdmin();
+        if (!sysAdmin) {
+            assertCanGrantResourceOrData(operator);
+        }
         SysProjectGrant g = projectGrantMapper.selectById(id);
         if (g == null) throw new BusinessException(404, "授权不存在");
-        if (!Objects.equals(g.getOrgId(), operator.getOrgId())) {
+        if (!sysAdmin && !Objects.equals(g.getOrgId(), operator.getOrgId())) {
             throw new BusinessException(403, "只能删除本机构授权");
         }
         projectGrantMapper.deleteById(id);
@@ -601,6 +721,18 @@ public class AccessControlService {
         m.put("projectId", g.getProjectId());
         IngProject p = projectMapper.selectById(g.getProjectId());
         m.put("projectName", p == null ? null : p.getProjectName());
+        m.put("projectOrgId", p == null ? null : p.getBoundOrgId());
+        if (p != null && p.getBoundOrgId() != null) {
+            // 列表展示用：机构名（若已加载 boundOrgName 则复用查询）
+            try {
+                var org = jdbcTemplate.queryForMap("SELECT org_name FROM sys_org WHERE id = ? LIMIT 1", p.getBoundOrgId());
+                m.put("projectOrgName", org.get("org_name"));
+            } catch (Exception ignored) {
+                m.put("projectOrgName", null);
+            }
+        } else {
+            m.put("projectOrgName", null);
+        }
         m.put("granteeType", g.getGranteeType());
         m.put("granteeId", g.getGranteeId());
         m.put("granteeName", resolveGranteeName(g.getGranteeType(), g.getGranteeId()));

@@ -128,7 +128,6 @@ onMounted(() => {
             <el-button @click="goSystem('/system/users')">用户管理</el-button>
             <el-button @click="goSystem('/system/roles')">角色管理</el-button>
             <el-button @click="goSystem('/system/orgs')">组织管理</el-button>
-            <el-button @click="goSystem('/system/access')">访问控制</el-button>
           </el-form-item>
         </el-form>
       </PageCard>

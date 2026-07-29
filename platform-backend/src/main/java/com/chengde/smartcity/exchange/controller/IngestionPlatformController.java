@@ -3,6 +3,7 @@ package com.chengde.smartcity.exchange.controller;
 import com.chengde.smartcity.common.api.ApiResponse;
 import com.chengde.smartcity.exchange.entity.IngAssetTag;
 import com.chengde.smartcity.exchange.entity.IngAssetTagBinding;
+import com.chengde.smartcity.exchange.entity.IngBizSystem;
 import com.chengde.smartcity.exchange.entity.IngCategoryNode;
 import com.chengde.smartcity.exchange.entity.IngDataColumn;
 import com.chengde.smartcity.exchange.entity.IngDataDefinition;
@@ -136,10 +137,42 @@ public class IngestionPlatformController {
         return ApiResponse.ok(null);
     }
 
+    @GetMapping("/systems")
+    @PreAuthorize("isAuthenticated()")
+    public ApiResponse<List<IngBizSystem>> systems(@AuthenticationPrincipal UserPrincipal principal,
+                                                   @RequestParam Long projectId) {
+        return ApiResponse.ok(service.listBizSystems(principal, projectId));
+    }
+
+    @PostMapping("/systems")
+    @PreAuthorize("isAuthenticated()")
+    public ApiResponse<Long> createSystem(@AuthenticationPrincipal UserPrincipal principal,
+                                          @RequestBody Map<String, Object> body) {
+        return ApiResponse.ok(service.createBizSystem(principal, body));
+    }
+
+    @PutMapping("/systems/{id}")
+    @PreAuthorize("isAuthenticated()")
+    public ApiResponse<Void> updateSystem(@AuthenticationPrincipal UserPrincipal principal,
+                                          @PathVariable Long id,
+                                          @RequestBody Map<String, Object> body) {
+        service.updateBizSystem(principal, id, body);
+        return ApiResponse.ok(null);
+    }
+
+    @DeleteMapping("/systems/{id}")
+    @PreAuthorize("isAuthenticated()")
+    public ApiResponse<Void> deleteSystem(@AuthenticationPrincipal UserPrincipal principal,
+                                          @PathVariable Long id) {
+        service.deleteBizSystem(principal, id);
+        return ApiResponse.ok(null);
+    }
+
     @GetMapping("/data-sources")
     public ApiResponse<List<IngDataSource>> dataSources(@AuthenticationPrincipal UserPrincipal principal,
-                                                        @RequestParam(required = false) Long projectId) {
-        return ApiResponse.ok(service.listDataSources(principal, projectId));
+                                                        @RequestParam(required = false) Long projectId,
+                                                        @RequestParam(required = false) Long systemId) {
+        return ApiResponse.ok(service.listDataSources(principal, projectId, systemId));
     }
 
     @PostMapping("/data-sources")
@@ -361,15 +394,24 @@ public class IngestionPlatformController {
     }
 
     @GetMapping("/register/tables")
+    @PreAuthorize("isAuthenticated()")
     public ApiResponse<List<IngDataTable>> tables(@AuthenticationPrincipal UserPrincipal principal,
                                                   @RequestParam(required = false) Long sourceId) {
         return ApiResponse.ok(registerService.listTables(principal, sourceId));
     }
 
     @PostMapping("/register/tables")
+    @PreAuthorize("isAuthenticated()")
     public ApiResponse<Long> createTable(@AuthenticationPrincipal UserPrincipal principal,
                                          @RequestBody Map<String, Object> body) {
         return ApiResponse.ok(registerService.createTable(principal, body));
+    }
+
+    @PostMapping("/register/tables/{id}/finalize-forward")
+    @PreAuthorize("isAuthenticated()")
+    public ApiResponse<Map<String, Object>> finalizeForwardTable(@AuthenticationPrincipal UserPrincipal principal,
+                                                                 @PathVariable Long id) {
+        return ApiResponse.ok(registerService.finalizeForwardTable(principal, id));
     }
 
     @PostMapping("/register/tables/{id}/collect")
@@ -380,11 +422,13 @@ public class IngestionPlatformController {
     }
 
     @GetMapping("/register/tables/{id}/columns")
+    @PreAuthorize("isAuthenticated()")
     public ApiResponse<List<IngDataColumn>> columns(@PathVariable Long id) {
         return ApiResponse.ok(registerService.listColumns(id));
     }
 
     @PostMapping("/register/tables/{id}/columns")
+    @PreAuthorize("isAuthenticated()")
     public ApiResponse<Long> createColumn(@AuthenticationPrincipal UserPrincipal principal,
                                           @PathVariable Long id,
                                           @RequestBody Map<String, Object> body) {
@@ -392,6 +436,7 @@ public class IngestionPlatformController {
     }
 
     @PutMapping("/register/columns/{id}")
+    @PreAuthorize("isAuthenticated()")
     public ApiResponse<Void> updateColumn(@AuthenticationPrincipal UserPrincipal principal,
                                           @PathVariable Long id,
                                           @RequestBody Map<String, Object> body) {

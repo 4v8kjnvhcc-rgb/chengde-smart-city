@@ -869,6 +869,49 @@ public class MetadataSubsystemService {
         return changeNoticeMapper.selectList(q);
     }
 
+    /**
+     * 数据项管理编辑后：覆盖元数据维护中对应 COLUMN 属性，原信息不可恢复。
+     */
+    @Transactional
+    public void overwriteColumnMetadataFromIngest(Long tableId, String columnCode,
+                                                  String columnName, String dataType, String semanticDesc) {
+        if (tableId == null || columnCode == null || columnCode.isBlank()) {
+            return;
+        }
+        String code = columnCode.trim();
+        List<GovMetadataRegistry> candidates = registryMapper.selectList(new LambdaQueryWrapper<GovMetadataRegistry>()
+                .eq(GovMetadataRegistry::getEntryType, "COLUMN")
+                .eq(GovMetadataRegistry::getSourceTableId, tableId)
+                .ne(GovMetadataRegistry::getStatus, "OFFLINE"));
+        for (GovMetadataRegistry e : candidates) {
+            boolean match = code.equalsIgnoreCase(nvl(e.getEntryName()))
+                    || code.equalsIgnoreCase(nvl(e.getKeywords()))
+                    || (e.getEntryCode() != null && e.getEntryCode().toUpperCase(Locale.ROOT)
+                    .endsWith("_" + code.toUpperCase(Locale.ROOT)));
+            if (!match) {
+                continue;
+            }
+            String before = "名称=" + nvl(e.getEntryName()) + "；说明=" + nvl(e.getDescription());
+            String displayName = columnName != null && !columnName.isBlank() ? columnName.trim() : code;
+            String desc = (dataType == null || dataType.isBlank() ? "" : dataType.trim())
+                    + (semanticDesc != null && !semanticDesc.isBlank() ? (" | " + semanticDesc.trim()) : "");
+            e.setEntryName(displayName);
+            e.setDescription(desc);
+            e.setKeywords(code);
+            e.setChangeFlag("CHANGED");
+            registryMapper.updateById(e);
+
+            GovMetaChangeNotice notice = new GovMetaChangeNotice();
+            notice.setEntryId(e.getId());
+            notice.setEntryCode(e.getEntryCode());
+            notice.setTitle("数据项编辑覆盖属性（不可恢复）");
+            notice.setDetail("字段编码 " + code + " 的元数据属性已被覆盖，原信息不可恢复。变更前：" + before
+                    + "；变更后：名称=" + displayName + "；说明=" + desc);
+            notice.setStatus("UNREAD");
+            changeNoticeMapper.insert(notice);
+        }
+    }
+
     public List<Map<String, Object>> suggestStandards() {
         List<GovMetadataRegistry> columns = registryMapper.selectList(new LambdaQueryWrapper<GovMetadataRegistry>()
                 .eq(GovMetadataRegistry::getEntryType, "COLUMN"));

@@ -1,6 +1,6 @@
 <script setup lang="ts">
-import { onMounted, reactive, ref, watch } from 'vue'
-import { useRouter } from 'vue-router'
+import { computed, onMounted, reactive, ref, watch } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import api from '@/api/http'
 import { useAuthStore } from '@/stores/auth'
@@ -8,9 +8,26 @@ import PageCard from '@/components/common/PageCard.vue'
 import { statusLabel } from '@/utils/status-label'
 import { ingestionApi, useIngestionLoading, type Project } from '../useIngestionHub'
 
+/** 归集 Hub 内访问控制入口 */
+const HUB_ACCESS_ROUTE = { path: '/exchange/ingestion', query: { system: 'register', module: 'm048' } }
+
+const route = useRoute()
 const router = useRouter()
 const auth = useAuthStore()
 const { loading, loadError, withLoad } = useIngestionLoading()
+
+const canManageProjectGrant = computed(() =>
+  auth.isSystemAdmin || auth.hasPermission('access:project-grant:manage'),
+)
+const canManageDataGrant = computed(() =>
+  auth.isSystemAdmin || auth.hasPermission('access:data-grant:manage'),
+)
+const canApplyCross = computed(() =>
+  auth.isSystemAdmin || auth.hasPermission('access:cross-dept:apply'),
+)
+const canApproveCross = computed(() =>
+  auth.isSystemAdmin || auth.hasPermission('access:cross-dept:approve'),
+)
 
 const activeTab = ref('overview')
 const overview = ref<Record<string, unknown> | null>(null)
@@ -96,13 +113,39 @@ watch(activeTab, async (tab) => {
   if (tab === 'overview') await loadOverview()
   else if (tab === 'function') await loadRoles()
   else if (tab === 'resource') {
-    await Promise.all([loadProjects(), loadUsers(), loadRoles(), loadProjectGrants()])
+    await Promise.all([loadProjects(), loadUsers(), loadProjectGrants()])
+    await loadRoles()
   } else if (tab === 'data') {
     await Promise.all([loadTables(), loadUsers(), loadDataGrants()])
   } else if (tab === 'cross') {
     await Promise.all([loadOrgs(), loadCross()])
   }
 })
+
+const ACCESS_TABS = new Set(['overview', 'function', 'resource', 'data', 'cross'])
+
+function applyProjectFromQuery() {
+  const raw = route.query.projectId
+  const pid = Number(Array.isArray(raw) ? raw[0] : raw)
+  if (Number.isFinite(pid) && pid > 0) {
+    projectGrantForm.projectId = pid
+  }
+}
+
+function applyTabFromQuery(): string | null {
+  const raw = route.query.accessTab
+  const tab = String(Array.isArray(raw) ? raw[0] : raw || '')
+  return ACCESS_TABS.has(tab) ? tab : null
+}
+
+watch(
+  () => [route.query.accessTab, route.query.projectId] as const,
+  () => {
+    applyProjectFromQuery()
+    const tab = applyTabFromQuery()
+    if (tab && activeTab.value !== tab) activeTab.value = tab
+  },
+)
 
 async function createProjectGrant() {
   if (!projectGrantForm.projectId || !projectGrantForm.granteeId) {
@@ -164,6 +207,24 @@ async function approveCross(id: number, pass: boolean) {
 }
 
 onMounted(async () => {
+  // 系统管理旧入口 → 归集平台「访问控制管理」
+  if (route.name === 'system-access' || route.path.endsWith('/system/access')) {
+    await router.replace({
+      ...HUB_ACCESS_ROUTE,
+      query: {
+        ...HUB_ACCESS_ROUTE.query,
+        ...(route.query.accessTab ? { accessTab: String(route.query.accessTab) } : {}),
+        ...(route.query.projectId ? { projectId: String(route.query.projectId) } : {}),
+      },
+    })
+    return
+  }
+  applyProjectFromQuery()
+  const tab = applyTabFromQuery()
+  if (tab && tab !== 'overview') {
+    activeTab.value = tab
+    return
+  }
   await loadOverview()
 })
 </script>
@@ -173,8 +234,8 @@ onMounted(async () => {
     <el-alert v-if="loadError" type="error" :title="loadError" show-icon :closable="false" style="margin-bottom:12px" />
     <PageCard title="访问控制管理">
       <p class="hint">
-        机构即租户隔离边界。功能权限控制模块/按钮；资源权限控制项目可见范围；数据权限控制库表使用范围。
-        系统管理员不直接授予信息访问权，由部门管理员授权或跨部门审批。
+        机构即租户隔离边界。功能权限控制模块/按钮；项目授权控制项目可见范围；数据权限控制库表使用范围。
+        跨部门访问资源时需提交申请并由有权账号审批。
       </p>
 
       <el-tabs v-model="activeTab">
@@ -212,16 +273,9 @@ onMounted(async () => {
           </el-table>
         </el-tab-pane>
 
-        <el-tab-pane label="资源权限" name="resource">
-          <el-alert
-            v-if="auth.hasPermission('access:project-grant:manage') && overview?.isSystemAdmin && !overview?.isDeptAdmin"
-            type="warning"
-            :closable="false"
-            title="系统管理员不能直接写入项目授权，请使用部门管理员账号操作"
-            style="margin-bottom:12px"
-          />
+        <el-tab-pane label="项目授权" name="resource">
           <el-form
-            v-if="auth.hasPermission('access:project-grant:manage')"
+            v-if="canManageProjectGrant"
             inline
             class="portal-inline-form portal-inline-form--block"
           >
@@ -267,7 +321,7 @@ onMounted(async () => {
             <el-table-column label="操作" width="100">
               <template #default="{ row }">
                 <el-button
-                  v-if="auth.hasPermission('access:project-grant:manage')"
+                  v-if="canManageProjectGrant"
                   link
                   type="danger"
                   @click="removeProjectGrant(row.id as number)"
@@ -279,7 +333,7 @@ onMounted(async () => {
 
         <el-tab-pane label="数据权限" name="data">
           <el-form
-            v-if="auth.hasPermission('access:data-grant:manage')"
+            v-if="canManageDataGrant"
             inline
             class="portal-inline-form portal-inline-form--block"
           >
@@ -318,7 +372,7 @@ onMounted(async () => {
             <el-table-column label="操作" width="100">
               <template #default="{ row }">
                 <el-button
-                  v-if="auth.hasPermission('access:data-grant:manage')"
+                  v-if="canManageDataGrant"
                   link
                   type="danger"
                   @click="removeDataGrant(row.id as number)"
@@ -330,7 +384,7 @@ onMounted(async () => {
 
         <el-tab-pane label="跨部门审批" name="cross">
           <el-form
-            v-if="auth.hasPermission('access:cross-dept:apply')"
+            v-if="canApplyCross"
             inline
             class="portal-inline-form portal-inline-form--block"
           >
@@ -369,7 +423,7 @@ onMounted(async () => {
             </el-table-column>
             <el-table-column label="操作" width="160">
               <template #default="{ row }">
-                <template v-if="row.status === 0 && auth.hasPermission('access:cross-dept:approve')">
+                <template v-if="row.status === 0 && canApproveCross">
                   <el-button link type="primary" @click="approveCross(row.id as number, true)">通过</el-button>
                   <el-button link type="danger" @click="approveCross(row.id as number, false)">拒绝</el-button>
                 </template>

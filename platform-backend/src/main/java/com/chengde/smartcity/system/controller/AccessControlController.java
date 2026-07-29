@@ -39,21 +39,28 @@ public class AccessControlController {
     }
 
     @GetMapping("/project-grants")
-    @PreAuthorize("hasAuthority('access:project-grant:manage') or hasAuthority('system:org:list')")
+    @PreAuthorize("hasRole('SYSTEM_ADMIN') or hasAuthority('access:project-grant:manage') or hasAuthority('system:org:list') or hasAuthority('system:user:edit')")
     public ApiResponse<List<Map<String, Object>>> projectGrants(@AuthenticationPrincipal UserPrincipal principal,
-                                                                @RequestParam(required = false) Long projectId) {
-        return ApiResponse.ok(accessControlService.listProjectGrants(principal, projectId));
+                                                                @RequestParam(required = false) Long projectId,
+                                                                @RequestParam(required = false) Long granteeUserId) {
+        return ApiResponse.ok(accessControlService.listProjectGrants(principal, projectId, granteeUserId));
+    }
+
+    @GetMapping("/users-for-project-grant")
+    @PreAuthorize("hasRole('SYSTEM_ADMIN') or hasAuthority('access:project-grant:manage') or hasAuthority('system:org:list') or hasAuthority('system:user:edit')")
+    public ApiResponse<List<Map<String, Object>>> usersForProjectGrant(@AuthenticationPrincipal UserPrincipal principal) {
+        return ApiResponse.ok(accessControlService.listUsersForProjectGrant(principal));
     }
 
     @PostMapping("/project-grants")
-    @PreAuthorize("hasAuthority('access:project-grant:manage')")
+    @PreAuthorize("hasRole('SYSTEM_ADMIN') or hasAuthority('access:project-grant:manage') or hasAuthority('system:user:edit')")
     public ApiResponse<Long> createProjectGrant(@AuthenticationPrincipal UserPrincipal principal,
                                                 @RequestBody Map<String, Object> body) {
         return ApiResponse.ok(accessControlService.createProjectGrant(principal, body));
     }
 
     @DeleteMapping("/project-grants/{id}")
-    @PreAuthorize("hasAuthority('access:project-grant:manage')")
+    @PreAuthorize("hasRole('SYSTEM_ADMIN') or hasAuthority('access:project-grant:manage') or hasAuthority('system:user:edit')")
     public ApiResponse<Void> deleteProjectGrant(@AuthenticationPrincipal UserPrincipal principal,
                                                 @PathVariable Long id) {
         accessControlService.deleteProjectGrant(principal, id);

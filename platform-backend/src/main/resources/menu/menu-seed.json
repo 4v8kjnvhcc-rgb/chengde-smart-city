@@ -260,19 +260,6 @@
     "integration_type": "self"
   },
   {
-    "id": 6403,
-    "parent_id": 6400,
-    "menu_name": "访问控制",
-    "menu_type": 2,
-    "path": "/system/access",
-    "component": "exchange/ingestion/register/AccessControlView",
-    "permission": "system:access:view",
-    "icon": null,
-    "sort_order": 12,
-    "m_code": "M048",
-    "integration_type": "self"
-  },
-  {
     "id": 13,
     "parent_id": 12,
     "menu_name": "通用支撑",

@@ -190,9 +190,13 @@ async function submitAddSystem() {
   const sourceName = addSysForm.sourceName.trim() || '手动上传'
   addSysBusy.value = true
   try {
-    const id = (await ingestionApi.createDataSource({
+    const systemId = (await ingestionApi.createSystem({
       projectId: tplProjectId.value,
       systemName,
+    })).data
+    const id = (await ingestionApi.createDataSource({
+      projectId: tplProjectId.value,
+      systemId: Number(systemId),
       sourceName,
       sourceType: 'FILE',
     })).data
@@ -782,7 +786,7 @@ onMounted(() => {
       append-to-body
       destroy-on-close
     >
-      <p class="hint">将在当前归属项目下创建 FILE 数据源，并同步到「项目/系统信息登记」。</p>
+      <p class="hint">将在当前归属项目下创建业务系统与 FILE 数据源，并同步到「项目/系统信息登记」。</p>
       <el-form label-width="100px">
         <el-form-item label="系统名称" required>
           <el-input

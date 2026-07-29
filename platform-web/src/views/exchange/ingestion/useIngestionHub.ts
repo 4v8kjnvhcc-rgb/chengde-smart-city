@@ -9,13 +9,23 @@ export interface Project {
   projectName: string
   boundOrgId: number
   boundOrgName?: string
+  systemName?: string
+  status: string
+  createdBy?: string
+}
+export interface BizSystem {
+  id: number
+  projectId: number
+  systemCode: string
   systemName: string
   status: string
   createdBy?: string
+  dataSourceCount?: number
 }
 export interface DataSource {
   id: number
   projectId: number
+  systemId?: number
   sourceCode: string
   sourceName: string
   systemName?: string
@@ -257,7 +267,12 @@ export const ingestionApi = {
   createProject: (body: Record<string, unknown>) => api.post<number>('/exchange/ingestion/projects', body),
   updateProject: (id: number, body: Record<string, unknown>) => api.put<void>(`/exchange/ingestion/projects/${id}`, body),
   deleteProject: (id: number) => api.delete<void>(`/exchange/ingestion/projects/${id}`),
-  dataSources: (projectId?: number) => api.get<DataSource[]>('/exchange/ingestion/data-sources', { params: { projectId } }),
+  systems: (projectId: number) => api.get<BizSystem[]>('/exchange/ingestion/systems', { params: { projectId } }),
+  createSystem: (body: Record<string, unknown>) => api.post<number>('/exchange/ingestion/systems', body),
+  updateSystem: (id: number, body: Record<string, unknown>) => api.put<void>(`/exchange/ingestion/systems/${id}`, body),
+  deleteSystem: (id: number) => api.delete<void>(`/exchange/ingestion/systems/${id}`),
+  dataSources: (projectId?: number, systemId?: number) =>
+    api.get<DataSource[]>('/exchange/ingestion/data-sources', { params: { projectId, systemId } }),
   createDataSource: (body: Record<string, unknown>) => api.post<number>('/exchange/ingestion/data-sources', body),
   updateDataSource: (id: number, body: Record<string, unknown>) => api.put<void>(`/exchange/ingestion/data-sources/${id}`, body),
   deleteDataSource: (id: number) => api.delete<void>(`/exchange/ingestion/data-sources/${id}`),
@@ -266,6 +281,8 @@ export const ingestionApi = {
   registerTables: (id: number, body: Record<string, unknown>) => api.post<Record<string, unknown>>(`/exchange/ingestion/data-sources/${id}/register-tables`, body),
   tables: (sourceId?: number) => api.get<DataTable[]>('/exchange/ingestion/register/tables', { params: { sourceId } }),
   createTable: (body: Record<string, unknown>) => api.post<number>('/exchange/ingestion/register/tables', body),
+  finalizeForwardTable: (tableId: number) =>
+    api.post<Record<string, unknown>>(`/exchange/ingestion/register/tables/${tableId}/finalize-forward`),
   columns: (tableId: number) => api.get<DataColumn[]>(`/exchange/ingestion/register/tables/${tableId}/columns`),
   createColumn: (tableId: number, body: Record<string, unknown>) => api.post<number>(`/exchange/ingestion/register/tables/${tableId}/columns`, body),
   updateColumn: (columnId: number, body: Record<string, unknown>) => api.put<void>(`/exchange/ingestion/register/columns/${columnId}`, body),

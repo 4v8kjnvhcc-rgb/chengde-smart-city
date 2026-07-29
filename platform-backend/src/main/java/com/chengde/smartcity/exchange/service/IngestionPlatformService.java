@@ -4,6 +4,7 @@ import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.chengde.smartcity.audit.AuditService;
 import com.chengde.smartcity.common.exception.BusinessException;
 import com.chengde.smartcity.exchange.entity.BizDataAsset;
+import com.chengde.smartcity.exchange.entity.IngBizSystem;
 import com.chengde.smartcity.exchange.entity.IngDataColumn;
 import com.chengde.smartcity.exchange.entity.IngDataSource;
 import com.chengde.smartcity.exchange.entity.IngDataTable;
@@ -18,6 +19,7 @@ import com.chengde.smartcity.exchange.entity.IngResourceRegistry;
 import com.chengde.smartcity.exchange.entity.IngStatsMetric;
 import com.chengde.smartcity.exchange.entity.IngUploadRecord;
 import com.chengde.smartcity.exchange.mapper.BizDataAssetMapper;
+import com.chengde.smartcity.exchange.mapper.IngBizSystemMapper;
 import com.chengde.smartcity.exchange.mapper.IngDataColumnMapper;
 import com.chengde.smartcity.exchange.mapper.IngDataSourceMapper;
 import com.chengde.smartcity.exchange.mapper.IngDataTableMapper;
@@ -61,6 +63,7 @@ public class IngestionPlatformService {
     private final IngStatsMetricMapper statsMapper;
     private final IngGuideStepMapper guideMapper;
     private final IngProjectMapper projectMapper;
+    private final IngBizSystemMapper bizSystemMapper;
     private final IngDataSourceMapper dataSourceMapper;
     private final IngDataTableMapper dataTableMapper;
     private final IngDataColumnMapper dataColumnMapper;
@@ -82,7 +85,8 @@ public class IngestionPlatformService {
     private final ObjectMapper objectMapper = new ObjectMapper();
 
     public IngestionPlatformService(IngStatsMetricMapper statsMapper, IngGuideStepMapper guideMapper,
-                                    IngProjectMapper projectMapper, IngDataSourceMapper dataSourceMapper,
+                                    IngProjectMapper projectMapper, IngBizSystemMapper bizSystemMapper,
+                                    IngDataSourceMapper dataSourceMapper,
                                     IngDataTableMapper dataTableMapper, IngDataColumnMapper dataColumnMapper,
                                     IngDictMapper dictMapper, IngUploadRecordMapper uploadMapper,
                                     IngIngestChannelMapper channelMapper, IngPipelineJobMapper pipelineMapper,
@@ -95,6 +99,7 @@ public class IngestionPlatformService {
         this.statsMapper = statsMapper;
         this.guideMapper = guideMapper;
         this.projectMapper = projectMapper;
+        this.bizSystemMapper = bizSystemMapper;
         this.dataSourceMapper = dataSourceMapper;
         this.dataTableMapper = dataTableMapper;
         this.dataColumnMapper = dataColumnMapper;
@@ -195,13 +200,10 @@ public class IngestionPlatformService {
         p.setProjectCode(str(body.get("projectCode"), "PRJ_" + UUID.randomUUID().toString().substring(0, 8)));
         p.setProjectName(required(body.get("projectName"), "projectName").toString());
         Long boundOrgId = resolveBoundOrgIdForWrite(operator, body, true);
+        // 默认系统名可选；系统在项目下单独创建，不再强制首系统
         String systemName = str(body.get("systemName"), "").trim();
-        if (systemName.isEmpty()) {
-            throw new BusinessException(400, "请填写首个业务系统名称（同一项目后续还可继续添加系统/数据源）");
-        }
-        // 项目行保留「首个系统」展示名；同部门允许不同项目有相同系统名（系统以数据源为准）
         p.setBoundOrgId(boundOrgId);
-        p.setSystemName(systemName);
+        p.setSystemName(systemName.isEmpty() ? null : systemName);
         p.setStatus("ACTIVE");
         p.setCreatedBy(operator.getUsername());
         projectMapper.insert(p);
@@ -238,11 +240,10 @@ public class IngestionPlatformService {
                 p.setBoundOrgId(newOrgId);
             }
         }
-        String systemName = str(body.get("systemName"), "").trim();
-        if (systemName.isEmpty()) {
-            throw new BusinessException(400, "请填写系统名称");
+        if (body.containsKey("systemName")) {
+            String systemName = body.get("systemName") == null ? "" : String.valueOf(body.get("systemName")).trim();
+            p.setSystemName(systemName.isEmpty() ? null : systemName);
         }
-        p.setSystemName(systemName);
         projectMapper.updateById(p);
         auditService.log(operator.getUserId(), operator.getUsername(), operator.getOrgId(),
                 "ING_PROJECT_UPDATE", "ing_project", String.valueOf(id), p.getProjectName());
@@ -265,9 +266,122 @@ public class IngestionPlatformService {
         for (IngDataSource ds : sources) {
             deleteDataSourceCascade(ds.getId());
         }
+        bizSystemMapper.delete(new LambdaQueryWrapper<IngBizSystem>().eq(IngBizSystem::getProjectId, id));
         projectMapper.deleteById(id);
         auditService.log(operator.getUserId(), operator.getUsername(), operator.getOrgId(),
                 "ING_PROJECT_DELETE", "ing_project", String.valueOf(id), p.getProjectName());
+    }
+
+    public List<IngBizSystem> listBizSystems(UserPrincipal operator, Long projectId) {
+        if (projectId == null) {
+            throw new BusinessException(400, "projectId 必填");
+        }
+        accessControlService.assertProjectAccess(operator, projectId);
+        List<IngBizSystem> list = bizSystemMapper.selectList(new LambdaQueryWrapper<IngBizSystem>()
+                .eq(IngBizSystem::getProjectId, projectId)
+                .orderByDesc(IngBizSystem::getId));
+        for (IngBizSystem s : list) {
+            Long cnt = dataSourceMapper.selectCount(new LambdaQueryWrapper<IngDataSource>()
+                    .eq(IngDataSource::getSystemId, s.getId()));
+            s.setDataSourceCount(cnt == null ? 0 : cnt.intValue());
+        }
+        return list;
+    }
+
+    @Transactional
+    public Long createBizSystem(UserPrincipal operator, Map<String, Object> body) {
+        Long projectId = Long.valueOf(String.valueOf(required(body.get("projectId"), "projectId")));
+        accessControlService.assertProjectAccess(operator, projectId);
+        IngProject project = projectMapper.selectById(projectId);
+        if (project == null) {
+            throw new BusinessException(404, "项目不存在");
+        }
+        String systemName = String.valueOf(required(body.get("systemName"), "系统名称")).trim();
+        if (systemName.isBlank()) {
+            throw new BusinessException(400, "系统名称不能为空");
+        }
+        assertBizSystemNameUnique(projectId, systemName, null);
+        IngBizSystem s = new IngBizSystem();
+        s.setProjectId(projectId);
+        s.setSystemCode(str(body.get("systemCode"), "SYS_" + projectId + "_" + System.currentTimeMillis()));
+        s.setSystemName(systemName);
+        s.setStatus("ACTIVE");
+        s.setCreatedBy(operator.getUsername());
+        bizSystemMapper.insert(s);
+        if (project.getSystemName() == null || project.getSystemName().isBlank()) {
+            project.setSystemName(systemName);
+            projectMapper.updateById(project);
+        }
+        auditService.log(operator.getUserId(), operator.getUsername(), operator.getOrgId(),
+                "ING_SYSTEM_CREATE", "ing_biz_system", String.valueOf(s.getId()), systemName);
+        return s.getId();
+    }
+
+    @Transactional
+    public void updateBizSystem(UserPrincipal operator, Long id, Map<String, Object> body) {
+        IngBizSystem s = bizSystemMapper.selectById(id);
+        if (s == null) {
+            throw new BusinessException(404, "业务系统不存在");
+        }
+        accessControlService.assertProjectAccess(operator, s.getProjectId());
+        if (isBuiltinOtherSystem(s.getSystemCode())) {
+            throw new BusinessException(400, "平台默认「其他」系统名称不可修改");
+        }
+        String systemName = str(body.get("systemName"), "").trim();
+        if (systemName.isEmpty()) {
+            throw new BusinessException(400, "系统名称不能为空");
+        }
+        assertBizSystemNameUnique(s.getProjectId(), systemName, s.getId());
+        String oldName = s.getSystemName();
+        s.setSystemName(systemName);
+        bizSystemMapper.updateById(s);
+        List<IngDataSource> sources = dataSourceMapper.selectList(new LambdaQueryWrapper<IngDataSource>()
+                .eq(IngDataSource::getSystemId, s.getId()));
+        for (IngDataSource ds : sources) {
+            ds.setSystemName(systemName);
+            dataSourceMapper.updateById(ds);
+        }
+        IngProject project = projectMapper.selectById(s.getProjectId());
+        if (project != null && oldName != null && oldName.equals(project.getSystemName())) {
+            project.setSystemName(systemName);
+            projectMapper.updateById(project);
+        }
+        auditService.log(operator.getUserId(), operator.getUsername(), operator.getOrgId(),
+                "ING_SYSTEM_UPDATE", "ing_biz_system", String.valueOf(id), systemName);
+    }
+
+    @Transactional
+    public void deleteBizSystem(UserPrincipal operator, Long id) {
+        IngBizSystem s = bizSystemMapper.selectById(id);
+        if (s == null) {
+            throw new BusinessException(404, "业务系统不存在");
+        }
+        accessControlService.assertProjectAccess(operator, s.getProjectId());
+        if (isBuiltinOtherSystem(s.getSystemCode())) {
+            throw new BusinessException(400, "平台默认「其他」系统不可删除");
+        }
+        Long cnt = dataSourceMapper.selectCount(new LambdaQueryWrapper<IngDataSource>()
+                .eq(IngDataSource::getSystemId, s.getId()));
+        if (cnt != null && cnt > 0) {
+            throw new BusinessException(400, "请先删除该系统下的数据源后再删除系统");
+        }
+        String name = s.getSystemName();
+        bizSystemMapper.deleteById(id);
+        auditService.log(operator.getUserId(), operator.getUsername(), operator.getOrgId(),
+                "ING_SYSTEM_DELETE", "ing_biz_system", String.valueOf(id), name);
+    }
+
+    private void assertBizSystemNameUnique(Long projectId, String systemName, Long excludeId) {
+        LambdaQueryWrapper<IngBizSystem> q = new LambdaQueryWrapper<IngBizSystem>()
+                .eq(IngBizSystem::getProjectId, projectId)
+                .eq(IngBizSystem::getSystemName, systemName);
+        if (excludeId != null) {
+            q.ne(IngBizSystem::getId, excludeId);
+        }
+        Long dup = bizSystemMapper.selectCount(q);
+        if (dup != null && dup > 0) {
+            throw new BusinessException(409, "本项目下已存在系统「" + systemName + "」");
+        }
     }
 
     @Transactional
@@ -297,6 +411,10 @@ public class IngestionPlatformService {
     }
 
     public List<IngDataSource> listDataSources(UserPrincipal operator, Long projectId) {
+        return listDataSources(operator, projectId, null);
+    }
+
+    public List<IngDataSource> listDataSources(UserPrincipal operator, Long projectId, Long systemId) {
         Set<Long> allowedSources = accessControlService.effectiveSourceIds(operator);
         if (allowedSources.isEmpty()) {
             return List.of();
@@ -304,7 +422,14 @@ public class IngestionPlatformService {
         LambdaQueryWrapper<IngDataSource> q = new LambdaQueryWrapper<IngDataSource>()
                 .in(IngDataSource::getId, allowedSources)
                 .orderByDesc(IngDataSource::getId);
-        if (projectId != null) {
+        if (systemId != null) {
+            IngBizSystem system = bizSystemMapper.selectById(systemId);
+            if (system == null) {
+                throw new BusinessException(404, "业务系统不存在");
+            }
+            accessControlService.assertProjectAccess(operator, system.getProjectId());
+            q.eq(IngDataSource::getSystemId, systemId);
+        } else if (projectId != null) {
             accessControlService.assertProjectAccess(operator, projectId);
             q.eq(IngDataSource::getProjectId, projectId);
         }
@@ -467,26 +592,28 @@ public class IngestionPlatformService {
 
     @Transactional
     public Long createDataSource(UserPrincipal operator, Map<String, Object> body) {
-        Long projectId = Long.valueOf(String.valueOf(required(body.get("projectId"), "projectId")));
-        accessControlService.assertProjectAccess(operator, projectId);
-        IngProject project = projectMapper.selectById(projectId);
-        if (project == null) {
-            throw new BusinessException(404, "项目不存在");
+        Long systemId = Long.valueOf(String.valueOf(required(body.get("systemId"), "systemId")));
+        IngBizSystem system = bizSystemMapper.selectById(systemId);
+        if (system == null) {
+            throw new BusinessException(404, "业务系统不存在");
+        }
+        accessControlService.assertProjectAccess(operator, system.getProjectId());
+        if (body.get("projectId") != null && !String.valueOf(body.get("projectId")).isBlank()) {
+            Long projectId = Long.valueOf(String.valueOf(body.get("projectId")));
+            if (!system.getProjectId().equals(projectId)) {
+                throw new BusinessException(400, "数据源所属项目与业务系统不一致");
+            }
         }
         IngDataSource ds = new IngDataSource();
-        ds.setProjectId(projectId);
+        ds.setProjectId(system.getProjectId());
+        ds.setSystemId(system.getId());
         ds.setSourceCode(str(body.get("sourceCode"), "DS_" + System.currentTimeMillis()));
         String sourceName = String.valueOf(required(body.get("sourceName"), "数据源名称")).trim();
         if (sourceName.isBlank()) {
             throw new BusinessException(400, "数据源名称不能为空");
         }
         ds.setSourceName(sourceName);
-        String systemName = str(body.get("systemName"), "").trim();
-        if (systemName.isEmpty()) {
-            systemName = sourceName;
-        }
-        assertSystemNameUniqueInProject(projectId, systemName, null);
-        ds.setSystemName(systemName);
+        ds.setSystemName(system.getSystemName());
         ds.setSourceType(str(body.get("sourceType"), "MYSQL"));
         ds.setConnConfigJson(buildConnConfigJson(body, null));
         ds.setConnStatus("FILE".equalsIgnoreCase(ds.getSourceType()) || "API".equalsIgnoreCase(ds.getSourceType())
@@ -513,12 +640,18 @@ public class IngestionPlatformService {
                 ds.setSourceName(name);
             }
         }
-        if (body.containsKey("systemName")) {
-            String systemName = body.get("systemName") == null ? "" : String.valueOf(body.get("systemName")).trim();
-            if (!systemName.isBlank()) {
-                assertSystemNameUniqueInProject(ds.getProjectId(), systemName, ds.getId());
-                ds.setSystemName(systemName);
+        if (body.containsKey("systemId") && body.get("systemId") != null
+                && !String.valueOf(body.get("systemId")).isBlank()) {
+            Long systemId = Long.valueOf(String.valueOf(body.get("systemId")));
+            IngBizSystem system = bizSystemMapper.selectById(systemId);
+            if (system == null) {
+                throw new BusinessException(404, "业务系统不存在");
             }
+            if (!system.getProjectId().equals(ds.getProjectId())) {
+                throw new BusinessException(400, "不能将数据源移动到其他项目的系统下");
+            }
+            ds.setSystemId(system.getId());
+            ds.setSystemName(system.getSystemName());
         }
         if (body.containsKey("sourceType")) {
             Object st = body.get("sourceType");
@@ -531,20 +664,6 @@ public class IngestionPlatformService {
             ds.setConnStatus("UNTESTED");
         }
         dataSourceMapper.updateById(ds);
-    }
-
-    /** 同一项目下系统名称唯一（对应多个数据源）。 */
-    private void assertSystemNameUniqueInProject(Long projectId, String systemName, Long excludeSourceId) {
-        LambdaQueryWrapper<IngDataSource> q = new LambdaQueryWrapper<IngDataSource>()
-                .eq(IngDataSource::getProjectId, projectId)
-                .eq(IngDataSource::getSystemName, systemName);
-        if (excludeSourceId != null) {
-            q.ne(IngDataSource::getId, excludeSourceId);
-        }
-        Long dup = dataSourceMapper.selectCount(q);
-        if (dup != null && dup > 0) {
-            throw new BusinessException(409, "本项目下已存在系统「" + systemName + "」，请更换系统名称或使用已有数据源");
-        }
     }
 
     /**
@@ -1003,6 +1122,14 @@ public class IngestionPlatformService {
             return false;
         }
         return "PRJ_OTHER".equals(projectCode) || projectCode.startsWith("PRJ_OTHER_");
+    }
+
+    /** 各部门默认「其他」业务系统：SYS_OTHER 或 SYS_OTHER_{orgId} */
+    private static boolean isBuiltinOtherSystem(String systemCode) {
+        if (systemCode == null || systemCode.isBlank()) {
+            return false;
+        }
+        return "SYS_OTHER".equals(systemCode) || systemCode.startsWith("SYS_OTHER_");
     }
 
     /** 各部门默认手动上传源：DS_MANUAL_UPLOAD 或 DS_MANUAL_UPLOAD_{orgId} */

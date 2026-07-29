@@ -205,6 +205,50 @@ public class JdbcProbeService {
         }
     }
 
+    /**
+     * 在目标库执行 DDL（正向建模建物理表）。失败抛出真实原因，不做伪成功。
+     */
+    public void executeDdl(ConnConfig c, String ddl) {
+        if (ddl == null || ddl.isBlank()) {
+            throw new BusinessException(400, "DDL 不能为空");
+        }
+        try (Connection conn = open(c); Statement st = conn.createStatement()) {
+            st.execute(ddl);
+        } catch (BusinessException be) {
+            throw be;
+        } catch (Exception e) {
+            log.warn("DDL 执行失败 host={} db={}: {}", c.host, c.database, e.getMessage());
+            throw new BusinessException(502, "建表失败：" + rootMessage(e));
+        }
+    }
+
+    /** 表是否已存在于目标库。 */
+    public boolean tableExists(ConnConfig c, String tableName) {
+        String safe = sanitizeIdent(tableName);
+        try (Connection conn = open(c)) {
+            DatabaseMetaData md = conn.getMetaData();
+            try (ResultSet rs = md.getTables(c.database, null, safe, new String[]{"TABLE"})) {
+                return rs.next();
+            }
+        } catch (Exception e) {
+            throw new BusinessException(502, "检查源表失败：" + rootMessage(e));
+        }
+    }
+
+    public static String sanitizeIdent(String raw) {
+        if (raw == null || raw.isBlank()) {
+            throw new BusinessException(400, "标识符不能为空");
+        }
+        String s = raw.trim();
+        if (!s.matches("^[A-Za-z_][A-Za-z0-9_]*$")) {
+            throw new BusinessException(400, "名称仅允许字母、数字、下划线，且不能以数字开头：" + s);
+        }
+        if (s.length() > 64) {
+            throw new BusinessException(400, "名称长度不能超过 64：" + s);
+        }
+        return s;
+    }
+
     private String rootMessage(Throwable e) {
         Throwable cur = e;
         while (cur.getCause() != null && cur.getCause() != cur) {

@@ -34,7 +34,7 @@ const moduleComponents: Record<string, ReturnType<typeof defineAsyncComponent>> 
   m045: defineAsyncComponent(() => import('./register/TagManageView.vue')),
   m046: defineAsyncComponent(() => import('./register/AssetReportView.vue')),
   m047: defineAsyncComponent(() => import('./register/LineageView.vue')),
-  m048: defineAsyncComponent(() => import('./register/SystemLinkView.vue')),
+  m048: defineAsyncComponent(() => import('./register/AccessControlView.vue')),
   m049: defineAsyncComponent(() => import('./register/SystemLinkView.vue')),
   m050: defineAsyncComponent(() => import('./register/DictRegisterView.vue')),
   'asset-catalog-reg': defineAsyncComponent(() => import('./register/AssetCatalogRegView.vue')),

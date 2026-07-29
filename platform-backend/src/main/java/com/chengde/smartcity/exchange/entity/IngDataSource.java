@@ -10,6 +10,7 @@ public class IngDataSource {
     @TableId(type = IdType.AUTO)
     private Long id;
     private Long projectId;
+    private Long systemId;
     private String sourceCode;
     private String sourceName;
     private String systemName;
@@ -28,6 +29,8 @@ public class IngDataSource {
     public void setId(Long id) { this.id = id; }
     public Long getProjectId() { return projectId; }
     public void setProjectId(Long projectId) { this.projectId = projectId; }
+    public Long getSystemId() { return systemId; }
+    public void setSystemId(Long systemId) { this.systemId = systemId; }
     public String getSourceCode() { return sourceCode; }
     public void setSourceCode(String sourceCode) { this.sourceCode = sourceCode; }
     public String getSourceName() { return sourceName; }

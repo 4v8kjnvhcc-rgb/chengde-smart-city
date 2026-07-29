@@ -5,6 +5,7 @@ import com.chengde.smartcity.common.exception.BusinessException;
 import com.chengde.smartcity.exchange.entity.IngAssetTag;
 import com.chengde.smartcity.exchange.entity.IngAssetTagBinding;
 import com.chengde.smartcity.exchange.entity.IngDataColumn;
+import com.chengde.smartcity.exchange.entity.IngDataSource;
 import com.chengde.smartcity.exchange.entity.IngDataTable;
 import com.chengde.smartcity.exchange.entity.IngDict;
 import com.chengde.smartcity.exchange.entity.IngDictItem;
@@ -14,12 +15,15 @@ import com.chengde.smartcity.exchange.entity.IngResourceRegistry;
 import com.chengde.smartcity.exchange.mapper.IngAssetTagBindingMapper;
 import com.chengde.smartcity.exchange.mapper.IngAssetTagMapper;
 import com.chengde.smartcity.exchange.mapper.IngDataColumnMapper;
+import com.chengde.smartcity.exchange.mapper.IngDataSourceMapper;
 import com.chengde.smartcity.exchange.mapper.IngDataTableMapper;
 import com.chengde.smartcity.exchange.mapper.IngDictItemMapper;
 import com.chengde.smartcity.exchange.mapper.IngDictMapper;
 import com.chengde.smartcity.exchange.mapper.IngIngestTaskMapper;
 import com.chengde.smartcity.exchange.mapper.IngProjectMapper;
 import com.chengde.smartcity.exchange.mapper.IngResourceRegistryMapper;
+import com.chengde.smartcity.integration.jdbc.JdbcProbeService;
+import com.chengde.smartcity.masterdata.service.MetadataSubsystemService;
 import com.chengde.smartcity.security.UserPrincipal;
 import com.chengde.smartcity.system.service.AccessControlService;
 import java.time.LocalDateTime;
@@ -32,6 +36,7 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
+import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 import org.springframework.stereotype.Service;
@@ -42,6 +47,7 @@ public class RegisterService {
 
     private final IngDataTableMapper tableMapper;
     private final IngDataColumnMapper columnMapper;
+    private final IngDataSourceMapper dataSourceMapper;
     private final IngAssetTagMapper tagMapper;
     private final IngAssetTagBindingMapper tagBindingMapper;
     private final IngProjectMapper projectMapper;
@@ -51,16 +57,22 @@ public class RegisterService {
     private final IngDictItemMapper dictItemMapper;
     private final LineageService lineageService;
     private final AccessControlService accessControlService;
+    private final JdbcProbeService jdbcProbeService;
+    private final MetadataSubsystemService metadataSubsystemService;
 
     public RegisterService(IngDataTableMapper tableMapper, IngDataColumnMapper columnMapper,
+                           IngDataSourceMapper dataSourceMapper,
                            IngAssetTagMapper tagMapper, IngAssetTagBindingMapper tagBindingMapper,
                            IngProjectMapper projectMapper,
                            IngIngestTaskMapper taskMapper, IngResourceRegistryMapper registryMapper,
                            IngDictMapper dictMapper, IngDictItemMapper dictItemMapper,
                            LineageService lineageService,
-                           AccessControlService accessControlService) {
+                           AccessControlService accessControlService,
+                           JdbcProbeService jdbcProbeService,
+                           MetadataSubsystemService metadataSubsystemService) {
         this.tableMapper = tableMapper;
         this.columnMapper = columnMapper;
+        this.dataSourceMapper = dataSourceMapper;
         this.tagMapper = tagMapper;
         this.tagBindingMapper = tagBindingMapper;
         this.projectMapper = projectMapper;
@@ -70,6 +82,8 @@ public class RegisterService {
         this.dictItemMapper = dictItemMapper;
         this.lineageService = lineageService;
         this.accessControlService = accessControlService;
+        this.jdbcProbeService = jdbcProbeService;
+        this.metadataSubsystemService = metadataSubsystemService;
     }
 
     public List<IngDataTable> listTables(UserPrincipal operator, Long sourceId) {
@@ -95,18 +109,61 @@ public class RegisterService {
     @Transactional
     public Long createTable(UserPrincipal operator, Map<String, Object> body) {
         Long sourceId = Long.valueOf(String.valueOf(required(body.get("sourceId"), "sourceId")));
-        String tableName = required(body.get("tableName"), "tableName").toString();
+        accessControlService.assertSourceAccess(operator, sourceId);
+        IngDataSource ds = dataSourceMapper.selectById(sourceId);
+        if (ds == null) {
+            throw new BusinessException(404, "数据源不存在");
+        }
+        String modelingMode = str(body.get("modelingMode"), "FORWARD").toUpperCase(Locale.ROOT);
+        String tableNameRaw = required(body.get("tableName"), "tableName").toString().trim();
+        String tableName = "FORWARD".equals(modelingMode)
+                ? JdbcProbeService.sanitizeIdent(tableNameRaw)
+                : tableNameRaw;
+        if (tableName.isBlank()) {
+            throw new BusinessException(400, "表名不能为空");
+        }
+
+        IngDataTable dup = tableMapper.selectOne(new LambdaQueryWrapper<IngDataTable>()
+                .eq(IngDataTable::getSourceId, sourceId)
+                .and(w -> w.eq(IngDataTable::getTableName, tableName)
+                        .or().eq(IngDataTable::getPhysicalTableName, tableName)
+                        .or().eq(IngDataTable::getSourceTable, tableName))
+                .last("LIMIT 1"));
+        if (dup != null) {
+            throw new BusinessException(409, "该数据源下已登记同名表：" + tableName);
+        }
+
+        String tableCode = str(body.get("tableCode"), null);
+        if (tableCode == null || tableCode.isBlank()) {
+            tableCode = "TBL_" + tableName.toUpperCase(Locale.ROOT);
+            IngDataTable byCode = tableMapper.selectOne(new LambdaQueryWrapper<IngDataTable>()
+                    .eq(IngDataTable::getTableCode, tableCode).last("LIMIT 1"));
+            if (byCode != null) {
+                tableCode = "TBL_" + tableName.toUpperCase(Locale.ROOT) + "_" + System.currentTimeMillis();
+            }
+        }
+
         IngDataTable t = new IngDataTable();
         t.setSourceId(sourceId);
-        t.setTableCode("TBL_" + System.currentTimeMillis());
+        t.setTableCode(tableCode);
         t.setTableName(tableName);
-        t.setModelingMode(str(body.get("modelingMode"), "FORWARD"));
+        t.setPhysicalTableName(tableName);
+        t.setSourceTable(tableName);
+        t.setSourceSchema(ds.getSourceSchema());
+        t.setModelingMode(modelingMode);
         t.setColumnCount(0);
         t.setStatus("ACTIVE");
-        tableMapper.insert(t);
-        seedDemoColumns(t.getId(), tableName);
-        t.setColumnCount(3);
-        tableMapper.updateById(t);
+        t.setCollectStatus("PENDING");
+        t.setCreatedAt(LocalDateTime.now());
+        try {
+            tableMapper.insert(t);
+        } catch (Exception e) {
+            throw new BusinessException(500, "表登记写入失败：" + (e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage()));
+        }
+
+        Long cnt = tableMapper.selectCount(new LambdaQueryWrapper<IngDataTable>().eq(IngDataTable::getSourceId, sourceId));
+        ds.setTableCount(cnt == null ? 0 : cnt.intValue());
+        dataSourceMapper.updateById(ds);
         return t.getId();
     }
 
@@ -116,25 +173,170 @@ public class RegisterService {
         if (table == null) {
             throw new BusinessException(404, "表不存在");
         }
+        accessControlService.assertSourceAccess(operator, table.getSourceId());
+        String columnCode = JdbcProbeService.sanitizeIdent(required(body.get("columnCode"), "columnCode").toString());
+        IngDataColumn exist = columnMapper.selectOne(new LambdaQueryWrapper<IngDataColumn>()
+                .eq(IngDataColumn::getTableId, tableId)
+                .eq(IngDataColumn::getColumnCode, columnCode)
+                .last("LIMIT 1"));
+        if (exist != null) {
+            throw new BusinessException(409, "字段编码已存在：" + columnCode);
+        }
         IngDataColumn col = new IngDataColumn();
         col.setTableId(tableId);
-        col.setColumnCode(required(body.get("columnCode"), "columnCode").toString());
-        col.setColumnName(required(body.get("columnName"), "columnName").toString());
+        col.setColumnCode(columnCode);
+        col.setColumnName(required(body.get("columnName"), "columnName").toString().trim());
         col.setDataType(str(body.get("dataType"), "VARCHAR(64)"));
         col.setNullableFlag(intVal(body.get("nullableFlag"), 1));
         col.setSemanticDesc(str(body.get("semanticDesc"), null));
         col.setLengthVal(intVal(body.get("lengthVal"), null));
         col.setComponentType(str(body.get("componentType"), "INPUT"));
         col.setRequiredTip(str(body.get("requiredTip"), null));
-        col.setBuiltInFlag(0);
+        col.setBuiltInFlag(Integer.valueOf(1).equals(intVal(body.get("builtInFlag"), 0)) ? 1 : 0);
         int maxSort = columnMapper.selectList(new LambdaQueryWrapper<IngDataColumn>()
                 .eq(IngDataColumn::getTableId, tableId)).stream()
                 .mapToInt(c -> c.getSortOrder() == null ? 0 : c.getSortOrder()).max().orElse(0);
         col.setSortOrder(maxSort + 1);
-        columnMapper.insert(col);
-        table.setColumnCount(maxSort + 1);
+        try {
+            columnMapper.insert(col);
+        } catch (Exception e) {
+            throw new BusinessException(500, "字段登记写入失败：" + (e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage()));
+        }
+        long colCnt = columnMapper.selectCount(new LambdaQueryWrapper<IngDataColumn>().eq(IngDataColumn::getTableId, tableId));
+        table.setColumnCount((int) colCnt);
         tableMapper.updateById(table);
         return col.getId();
+    }
+
+    /**
+     * 正向建模完成：在源库创建物理表（JDBC 数据源），元数据已在 createTable/createColumn 落库。
+     */
+    @Transactional
+    public Map<String, Object> finalizeForwardTable(UserPrincipal operator, Long tableId) {
+        IngDataTable table = tableMapper.selectById(tableId);
+        if (table == null) {
+            throw new BusinessException(404, "表不存在");
+        }
+        accessControlService.assertSourceAccess(operator, table.getSourceId());
+        if (!"FORWARD".equalsIgnoreCase(table.getModelingMode())) {
+            throw new BusinessException(400, "仅正向建模表可执行物理建表");
+        }
+        List<IngDataColumn> columns = listColumns(tableId);
+        if (columns.isEmpty()) {
+            throw new BusinessException(400, "请至少登记一个字段后再完成建表");
+        }
+        IngDataSource ds = dataSourceMapper.selectById(table.getSourceId());
+        if (ds == null) {
+            throw new BusinessException(404, "数据源不存在");
+        }
+
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("tableId", tableId);
+        out.put("tableName", table.getTableName());
+        out.put("columnCount", columns.size());
+        out.put("sourceType", ds.getSourceType());
+
+        String type = ds.getSourceType() == null ? "" : ds.getSourceType().toUpperCase(Locale.ROOT);
+        if (!"MYSQL".equals(type) && !"ORACLE".equals(type)) {
+            out.put("physicalCreated", false);
+            out.put("message", "当前数据源类型仅完成平台元数据登记；物理建表目前支持 MySQL/Oracle");
+            table.setColumnCount(columns.size());
+            table.setCollectStatus("PENDING");
+            tableMapper.updateById(table);
+            return out;
+        }
+
+        JdbcProbeService.ConnConfig conn = jdbcProbeService.parse(ds.getSourceType(), ds.getConnConfigJson());
+        String physical = JdbcProbeService.sanitizeIdent(
+                table.getPhysicalTableName() != null ? table.getPhysicalTableName() : table.getTableName());
+        if (jdbcProbeService.tableExists(conn, physical)) {
+            throw new BusinessException(409, "源库已存在同名物理表：" + physical + "，请更换表名或改用逆向登记");
+        }
+        String ddl = buildForwardCreateDdl(type, physical, columns);
+        jdbcProbeService.executeDdl(conn, ddl);
+
+        table.setPhysicalTableName(physical);
+        table.setSourceTable(physical);
+        table.setSourceSchema(conn.database);
+        table.setDdlSql(ddl);
+        table.setColumnCount(columns.size());
+        table.setCollectStatus("PENDING");
+        tableMapper.updateById(table);
+
+        out.put("physicalCreated", true);
+        out.put("physicalTable", physical);
+        out.put("schema", conn.database);
+        out.put("ddlSql", ddl);
+        out.put("message", "已在源库创建物理表，并完成平台登记");
+        return out;
+    }
+
+    private String buildForwardCreateDdl(String sourceType, String table, List<IngDataColumn> columns) {
+        StringBuilder ddl = new StringBuilder();
+        if ("ORACLE".equals(sourceType)) {
+            ddl.append("CREATE TABLE ").append(table).append(" (\n");
+            for (int i = 0; i < columns.size(); i++) {
+                IngDataColumn c = columns.get(i);
+                String code = JdbcProbeService.sanitizeIdent(c.getColumnCode());
+                ddl.append("  ").append(code).append(' ').append(mapOracleType(c.getDataType()));
+                if (c.getNullableFlag() != null && c.getNullableFlag() == 0) {
+                    ddl.append(" NOT NULL");
+                }
+                if (i < columns.size() - 1) ddl.append(',');
+                ddl.append('\n');
+            }
+            ddl.append(')');
+            return ddl.toString();
+        }
+        // MySQL / Postgres 风格（平台主路径 MySQL）
+        String quote = "`";
+        ddl.append("CREATE TABLE ").append(quote).append(table).append(quote).append(" (\n");
+        for (int i = 0; i < columns.size(); i++) {
+            IngDataColumn c = columns.get(i);
+            String code = JdbcProbeService.sanitizeIdent(c.getColumnCode());
+            ddl.append("  ").append(quote).append(code).append(quote).append(' ')
+                    .append(mapMysqlType(c.getDataType(), c.getLengthVal()));
+            if (c.getNullableFlag() != null && c.getNullableFlag() == 0) {
+                ddl.append(" NOT NULL");
+            }
+            if (c.getColumnName() != null && !c.getColumnName().isBlank()) {
+                ddl.append(" COMMENT '").append(c.getColumnName().replace("'", "")).append('\'');
+            }
+            if (i < columns.size() - 1) ddl.append(',');
+            ddl.append('\n');
+        }
+        ddl.append(") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='正向建模登记表'");
+        return ddl.toString();
+    }
+
+    private String mapMysqlType(String dataType, Integer length) {
+        String t = dataType == null ? "" : dataType.toUpperCase(Locale.ROOT);
+        int len = length == null || length <= 0 ? 64 : Math.min(length, 4000);
+        if (t.contains("TEXT") || t.contains("BLOB") || t.contains("CLOB") || t.contains("JSON")) return "TEXT";
+        if (t.contains("CHAR")) {
+            Matcher m = Pattern.compile("\\((\\d+)\\)").matcher(t);
+            if (m.find()) return "VARCHAR(" + m.group(1) + ")";
+            return "VARCHAR(" + len + ")";
+        }
+        if (t.contains("BIGINT")) return "BIGINT";
+        if (t.contains("INT")) return "INT";
+        if (t.contains("DECIMAL") || t.contains("NUMERIC")) return "DECIMAL(18,2)";
+        if (t.contains("DOUBLE") || t.contains("FLOAT")) return "DOUBLE";
+        if (t.contains("DATETIME") || t.contains("TIMESTAMP")) return "DATETIME";
+        if (t.contains("DATE")) return "DATE";
+        if (t.contains("BOOL")) return "TINYINT(1)";
+        return t.isBlank() ? "VARCHAR(64)" : dataType;
+    }
+
+    private String mapOracleType(String dataType) {
+        String t = dataType == null ? "" : dataType.toUpperCase(Locale.ROOT);
+        if (t.contains("TEXT") || t.contains("CLOB")) return "CLOB";
+        if (t.contains("CHAR")) return t.contains("(") ? t.replace("VARCHAR", "VARCHAR2") : "VARCHAR2(64)";
+        if (t.contains("INT") || t.contains("BIGINT")) return "NUMBER(19)";
+        if (t.contains("DECIMAL") || t.contains("NUMERIC")) return "NUMBER(18,2)";
+        if (t.contains("DATETIME") || t.contains("TIMESTAMP")) return "TIMESTAMP";
+        if (t.contains("DATE")) return "DATE";
+        return "VARCHAR2(256)";
     }
 
     @Transactional
@@ -143,9 +345,17 @@ public class RegisterService {
         if (col == null) {
             throw new BusinessException(404, "数据项不存在");
         }
+        IngDataTable table = tableMapper.selectById(col.getTableId());
+        if (table != null) {
+            accessControlService.assertSourceAccess(operator, table.getSourceId());
+        }
         if (col.getBuiltInFlag() != null && col.getBuiltInFlag() == 1) {
             throw new BusinessException(400, "系统内置属性不可编辑");
         }
+        Integer newBuiltIn = body.containsKey("builtInFlag")
+                ? intVal(body.get("builtInFlag"), 0)
+                : (col.getBuiltInFlag() == null ? 0 : col.getBuiltInFlag());
+        boolean nowBuiltIn = newBuiltIn != null && newBuiltIn == 1;
         if (body.containsKey("columnName")) col.setColumnName(body.get("columnName").toString());
         if (body.containsKey("dataType")) col.setDataType(body.get("dataType").toString());
         if (body.containsKey("nullableFlag")) col.setNullableFlag(intVal(body.get("nullableFlag"), col.getNullableFlag()));
@@ -153,7 +363,15 @@ public class RegisterService {
         if (body.containsKey("lengthVal")) col.setLengthVal(intVal(body.get("lengthVal"), null));
         if (body.containsKey("componentType")) col.setComponentType(body.get("componentType").toString());
         if (body.containsKey("requiredTip")) col.setRequiredTip(str(body.get("requiredTip"), null));
+        col.setBuiltInFlag(nowBuiltIn ? 1 : 0);
         columnMapper.updateById(col);
+        // 覆盖元数据维护中对应属性，原信息不可恢复
+        metadataSubsystemService.overwriteColumnMetadataFromIngest(
+                col.getTableId(),
+                col.getColumnCode(),
+                col.getColumnName(),
+                col.getDataType(),
+                col.getSemanticDesc());
     }
 
     @Transactional
@@ -786,25 +1004,6 @@ public class RegisterService {
         if (d != null) {
             d.setItemCount((int) cnt);
             dictMapper.updateById(d);
-        }
-    }
-
-    private void seedDemoColumns(Long tableId, String tableName) {
-        String[][] cols = tableName.contains("人口")
-                ? new String[][]{{"ID_NO", "证件号码", "VARCHAR(32)"}, {"PERSON_NAME", "姓名", "VARCHAR(64)"}, {"BIRTH_DATE", "出生日期", "DATE"}}
-                : new String[][]{{"CODE", "编码", "VARCHAR(64)"}, {"NAME", "名称", "VARCHAR(256)"}, {"UPDATED_AT", "更新时间", "DATETIME"}};
-        int i = 1;
-        for (String[] c : cols) {
-            IngDataColumn col = new IngDataColumn();
-            col.setTableId(tableId);
-            col.setColumnCode(c[0]);
-            col.setColumnName(c[1]);
-            col.setDataType(c[2]);
-            col.setNullableFlag(c[0].equals("CODE") || c[0].equals("ID_NO") ? 0 : 1);
-            col.setSortOrder(i++);
-            col.setBuiltInFlag(c[0].equals("CODE") || c[0].equals("ID_NO") ? 1 : 0);
-            col.setComponentType("INPUT");
-            columnMapper.insert(col);
         }
     }
 

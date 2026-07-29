@@ -51,9 +51,12 @@ public class HubSidebarMenuBootstrap implements ApplicationRunner {
             log.info("Menu management entry restored (id=27)");
         }
         // 恢复系统管理员全量菜单授权（与 V83 一致，避免误勾导致门户只剩归集）
+        // 不含 6403：系统管理「访问控制」已迁至归集 Hub，侧栏不再展示
         jdbcTemplate.update(
                 "UPDATE sys_menu SET status = 1, visible = 1 WHERE id IN "
-                        + "(1,2,3,4,5,6,8,9,10,11,12,13,14,15,16,17,18,19,6400,6401,6402,6403,6500)");
+                        + "(1,2,3,4,5,6,8,9,10,11,12,13,14,15,16,17,18,19,6400,6401,6402,6500)");
+        jdbcTemplate.update(
+                "UPDATE sys_menu SET status = 0, visible = 0 WHERE id = 6403 OR path = '/system/access'");
         int granted = jdbcTemplate.update(
                 "INSERT INTO sys_role_menu (role_id, menu_id) "
                         + "SELECT 1, m.id FROM sys_menu m WHERE "
