@@ -1,9 +1,11 @@
 # Multi-stage: build jar then run on JRE 17
 FROM maven:3.9-eclipse-temurin-17 AS build
 WORKDIR /app
+COPY docker/maven-settings.xml /root/.m2/settings.xml
 COPY pom.xml .
 COPY src ./src
-RUN mvn -q -DskipTests package
+# 不用 -q：失败时要能看到编译/拉依赖错误
+RUN mvn -B -DskipTests package
 
 FROM eclipse-temurin:17-jre
 WORKDIR /app

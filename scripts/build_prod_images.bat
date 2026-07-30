@@ -28,8 +28,8 @@ if "%BRANCH%"=="" (
 )
 
 echo.
-echo ==> 远程分支: origin/%BRANCH%
-echo ==> 输出: %CD%\release
+echo ==^> 远程分支: origin/%BRANCH%
+echo ==^> 输出: %CD%\release
 echo.
 echo 注意: 以远程已 push 的提交为准；本地未 push 的改动不会进镜像。
 echo.
