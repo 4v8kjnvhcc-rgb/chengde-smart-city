@@ -1,0 +1,12 @@
+# 只打包本机已构建好的 jar（构建过程见 scripts/build_prod_images.ps1）
+# 用途：本机 Docker 容器内 DNS 常不可用，故在宿主机跑 mvn，再把产物打进镜像
+FROM eclipse-temurin:17-jre
+WORKDIR /app
+RUN useradd -r -u 10001 appuser \
+  && apt-get update && apt-get install -y --no-install-recommends curl \
+  && rm -rf /var/lib/apt/lists/*
+COPY target/platform-backend-*.jar /app/app.jar
+USER appuser
+EXPOSE 8080
+ENV JAVA_OPTS="-Xms512m -Xmx1536m"
+ENTRYPOINT ["sh", "-c", "java $JAVA_OPTS -jar /app/app.jar"]

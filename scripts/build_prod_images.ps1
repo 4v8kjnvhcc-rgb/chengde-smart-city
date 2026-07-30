@@ -59,20 +59,57 @@ $backendTagVer = "smart-city/platform-backend:$tagSuffix"
 $webTagVer = "smart-city/platform-web:$tagSuffix"
 
 try {
-  Write-Host "==> 构建后端镜像（较慢，含 Maven）..."
+  # 在宿主机构建产物：Docker Desktop 构建容器内 DNS 常不可用，
+  # 无法在镜像里跑 mvn / npm 拉依赖，故先本机 build 再打包产物。
+  $backendDir = Join-Path $work "platform-backend"
+  $webDir = Join-Path $work "platform-web"
+
+  Write-Host "==> 本机构建后端 jar（Maven，较慢）..."
+  Push-Location $backendDir
+  try {
+    & (Join-Path $backendDir "mvnw.cmd") -B -DskipTests package
+    if ($LASTEXITCODE -ne 0) { throw "mvn package 失败" }
+  } finally {
+    Pop-Location
+  }
+  if (-not (Get-ChildItem (Join-Path $backendDir "target") -Filter "platform-backend-*.jar" -ErrorAction SilentlyContinue)) {
+    throw "未找到 platform-backend-*.jar"
+  }
+
+  Write-Host "==> 本机构建前端 dist（npm）..."
+  Push-Location $webDir
+  try {
+    # 复用主仓库 node_modules，避免每次 npm ci 联网
+    $srcModules = Join-Path $Root "platform-web\node_modules"
+    if ((Test-Path $srcModules) -and (-not (Test-Path (Join-Path $webDir "node_modules")))) {
+      Write-Host "    复用本仓库 node_modules"
+      cmd /c mklink /J "$webDir\node_modules" "$srcModules" | Out-Null
+    }
+    if (-not (Test-Path (Join-Path $webDir "node_modules"))) {
+      npm ci
+      if ($LASTEXITCODE -ne 0) { throw "npm ci 失败" }
+    }
+    npm run build
+    if ($LASTEXITCODE -ne 0) { throw "npm run build 失败" }
+  } finally {
+    Pop-Location
+  }
+  if (-not (Test-Path (Join-Path $webDir "dist"))) { throw "未找到 platform-web/dist" }
+
+  Write-Host "==> 打包后端镜像..."
   docker build `
     -t $backendTagLocal `
     -t $backendTagVer `
-    -f (Join-Path $work "platform-backend\Dockerfile") `
-    (Join-Path $work "platform-backend")
+    -f (Join-Path $backendDir "Dockerfile.prebuilt") `
+    $backendDir
   if ($LASTEXITCODE -ne 0) { throw "backend docker build 失败" }
 
-  Write-Host "==> 构建前端镜像（含 npm build）..."
+  Write-Host "==> 打包前端镜像..."
   docker build `
     -t $webTagLocal `
     -t $webTagVer `
-    -f (Join-Path $work "platform-web\Dockerfile") `
-    (Join-Path $work "platform-web")
+    -f (Join-Path $webDir "Dockerfile.prebuilt") `
+    $webDir
   if ($LASTEXITCODE -ne 0) { throw "web docker build 失败" }
 
   if (-not (Test-Path $OutDir)) {
@@ -116,6 +153,11 @@ try {
 finally {
   Write-Host "==> 清理临时 worktree"
   Set-Location $Root
+  # 先摘掉 node_modules 联接，否则删除会顺着联接删主仓库依赖
+  $linkedModules = Join-Path $work "platform-web\node_modules"
+  if (Test-Path $linkedModules) {
+    cmd /c rmdir "$linkedModules" 2>$null | Out-Null
+  }
   git worktree remove --force $work 2>$null
   if (Test-Path $work) { Remove-Item -Recurse -Force $work -ErrorAction SilentlyContinue }
 }

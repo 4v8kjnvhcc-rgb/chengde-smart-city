@@ -1,0 +1,8 @@
+# 前端镜像构建上下文排除项（Dockerfile.prebuilt 专用）
+# 与 .dockerignore 不同：这里必须保留 dist/
+node_modules/
+.idea/
+.git/
+*.log
+src/
+public/

@@ -1,0 +1,12 @@
+# 后端镜像构建上下文排除项（Dockerfile.prebuilt 专用）
+# 与 .dockerignore 不同：这里必须保留 target/ 里的 jar
+.idea/
+*.iml
+.git/
+src/
+target/classes/
+target/generated-sources/
+target/maven-status/
+target/maven-archiver/
+target/test-classes/
+target/*.jar.original
