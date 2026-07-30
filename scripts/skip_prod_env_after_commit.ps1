@@ -1,7 +1,4 @@
-# 首次把 compose/prod-*.env、prod-secrets.local.txt 提交进仓库之后执行本脚本。
-# 作用：对这些文件设置 skip-worktree，本地再改密码不会出现在 git status，也不会被误提交。
-# 若以后必须把仓库里的 env 更新一版：先 unskip，再改、再 commit，再 skip。
-#
+# After first commit of compose/prod-*.env, run this so local password edits stay out of git status.
 #   .\scripts\skip_prod_env_after_commit.ps1
 #   .\scripts\skip_prod_env_after_commit.ps1 -Unskip
 
@@ -24,7 +21,7 @@ foreach ($f in $files) {
   }
   git ls-files --error-unmatch $f 2>$null | Out-Null
   if ($LASTEXITCODE -ne 0) {
-    Write-Host "not in git yet: $f  （请先 git add 并完成首次 commit）"
+    Write-Host "not in git yet: $f (git add + commit first)"
     continue
   }
   if ($Unskip) {
@@ -38,7 +35,7 @@ foreach ($f in $files) {
 
 Write-Host ""
 if ($Unskip) {
-  Write-Host "已取消跳过。改完并 commit 后请再执行本脚本（不加 -Unskip）。"
+  Write-Host "Done. After editing and committing, run this script again without -Unskip."
 } else {
-  Write-Host "完成。之后本地改这些 env 不会进提交；队友新 clone 后也请跑一次本脚本。"
+  Write-Host "Done. Local env edits will not appear in git status. Teammates should run this after clone."
 }
