@@ -103,6 +103,15 @@ public class LineageService {
             addSourceNodeIfAbsent(nodes, e.getToNode(), e.getToLabel(), e.getToSourceId(), sourceById);
         }
 
+        long linkedTableCount = nodes.stream()
+                .filter(n -> "TABLE".equals(n.get("type")) && !Boolean.TRUE.equals(n.get("isolated")))
+                .count();
+        long isolatedTableCount = nodes.stream()
+                .filter(n -> "TABLE".equals(n.get("type")) && Boolean.TRUE.equals(n.get("isolated")))
+                .count();
+        List<Map<String, Object>> edgeViewsAll = edges.stream().map(e -> edgeView(e, sourceById)).collect(Collectors.toList());
+        long crossDbEdgeCount = edgeViewsAll.stream().filter(e -> Boolean.TRUE.equals(e.get("crossDb"))).count();
+
         String kw = keyword == null ? "" : keyword.trim().toLowerCase(Locale.ROOT);
         if (!kw.isEmpty() || categoryTagId != null) {
             Set<String> keep = new HashSet<>();
@@ -129,15 +138,18 @@ public class LineageService {
         }
 
         List<Map<String, Object>> categories = buildCategoryOptions(tables, tagNamesByTable);
+        List<Map<String, Object>> edgeViews = edges.stream().map(e -> edgeView(e, sourceById)).collect(Collectors.toList());
 
         Map<String, Object> out = new LinkedHashMap<>();
         out.put("projectId", project.getId());
         out.put("projectName", project.getProjectName());
         out.put("nodes", nodes);
-        out.put("edges", edges.stream().map(e -> edgeView(e, sourceById)).collect(Collectors.toList()));
+        out.put("edges", edgeViews);
         out.put("categories", categories);
         out.put("tableCount", tables.size());
-        out.put("isolatedCount", nodes.stream().filter(n -> Boolean.TRUE.equals(n.get("isolated"))).count());
+        out.put("isolatedCount", isolatedTableCount);
+        out.put("linkedTableCount", linkedTableCount);
+        out.put("crossDbEdgeCount", crossDbEdgeCount);
         return out;
     }
 
@@ -156,9 +168,37 @@ public class LineageService {
                 .collect(Collectors.toMap(IngDataSource::getId, s -> s, (a, b) -> a));
         Map<String, Object> focusMeta = tableMetaInternal(nodeId);
 
-        List<Map<String, Object>> nodes = new ArrayList<>();
+        Map<String, Map<String, Object>> nodeById = new LinkedHashMap<>();
         for (String id : related) {
-            nodes.add(resolveNode(id, all, sourceById));
+            nodeById.put(id, resolveNode(id, all, sourceById));
+        }
+        Map<String, Object> focusNodeView = nodeById.get(nodeId);
+
+        List<Map<String, Object>> upstreamEdges = upstream.stream().map(e -> edgeView(e, sourceById)).collect(Collectors.toList());
+        List<Map<String, Object>> downstreamEdges = downstream.stream().map(e -> edgeView(e, sourceById)).collect(Collectors.toList());
+
+        // 一阶邻居节点列表，供前端三栏直渲染（附带边属性）
+        List<Map<String, Object>> upstreamNodes = new ArrayList<>();
+        for (Map<String, Object> e : upstreamEdges) {
+            String from = String.valueOf(e.get("fromNode"));
+            Map<String, Object> n = new LinkedHashMap<>(nodeById.getOrDefault(from, Map.of("id", from, "label", from)));
+            n.put("edgeType", e.get("edgeType"));
+            n.put("crossDb", e.get("crossDb"));
+            n.put("fieldMapping", e.get("fieldMapping"));
+            n.put("fromSourceName", e.get("fromSourceName"));
+            n.put("toSourceName", e.get("toSourceName"));
+            upstreamNodes.add(n);
+        }
+        List<Map<String, Object>> downstreamNodes = new ArrayList<>();
+        for (Map<String, Object> e : downstreamEdges) {
+            String to = String.valueOf(e.get("toNode"));
+            Map<String, Object> n = new LinkedHashMap<>(nodeById.getOrDefault(to, Map.of("id", to, "label", to)));
+            n.put("edgeType", e.get("edgeType"));
+            n.put("crossDb", e.get("crossDb"));
+            n.put("fieldMapping", e.get("fieldMapping"));
+            n.put("fromSourceName", e.get("fromSourceName"));
+            n.put("toSourceName", e.get("toSourceName"));
+            downstreamNodes.add(n);
         }
 
         List<IngLineageEdge> local = new ArrayList<>();
@@ -168,9 +208,12 @@ public class LineageService {
         Map<String, Object> out = new LinkedHashMap<>();
         out.put("focusNode", nodeId);
         out.put("focusMeta", focusMeta);
-        out.put("upstream", upstream.stream().map(e -> edgeView(e, sourceById)).collect(Collectors.toList()));
-        out.put("downstream", downstream.stream().map(e -> edgeView(e, sourceById)).collect(Collectors.toList()));
-        out.put("nodes", nodes);
+        out.put("focus", focusNodeView);
+        out.put("upstream", upstreamEdges);
+        out.put("downstream", downstreamEdges);
+        out.put("upstreamNodes", upstreamNodes);
+        out.put("downstreamNodes", downstreamNodes);
+        out.put("nodes", new ArrayList<>(nodeById.values()));
         out.put("edges", local.stream().map(e -> edgeView(e, sourceById)).collect(Collectors.toList()));
         out.put("hasMore", !upstream.isEmpty() || !downstream.isEmpty());
         return out;

@@ -72,7 +72,35 @@ export interface DictItem {
   sortOrder: number
   status: string
 }
-export interface LineageEdge { id: number; fromNode: string; toNode: string; fromLabel: string; toLabel: string; edgeType: string; fieldMapping?: string }
+export interface LineageEdge {
+  id?: number
+  fromNode: string
+  toNode: string
+  fromLabel?: string
+  toLabel?: string
+  edgeType?: string
+  fieldMapping?: string
+  crossDb?: boolean
+  fromSourceName?: string
+  toSourceName?: string
+}
+export interface LineageGraphNode {
+  id: string
+  label: string
+  type?: string
+  isolated?: boolean
+  matched?: boolean
+  dimmed?: boolean
+  sourceName?: string
+  tableCode?: string
+  usageDesc?: string
+  categories?: string[]
+  edgeType?: string
+  crossDb?: boolean
+  fieldMapping?: string
+  fromSourceName?: string
+  toSourceName?: string
+}
 export interface ColumnLineage { id: number; tableNode: string; columnCode: string; columnName: string; upstreamTable?: string; upstreamColumn?: string; downstreamTable?: string; downstreamColumn?: string }
 export interface UploadTemplate { id: number; templateCode: string; templateName: string; columnMappingJson: string; status: string }
 export interface Upload {
@@ -238,20 +266,25 @@ export const ingestionApi = {
     api.get<{
       projectId: number
       projectName: string
-      nodes: Array<Record<string, unknown>>
-      edges: Array<Record<string, unknown>>
+      nodes: LineageGraphNode[]
+      edges: LineageEdge[]
       categories: Array<{ tagId: number; tagName: string }>
       tableCount: number
       isolatedCount: number
+      linkedTableCount: number
+      crossDbEdgeCount: number
     }>('/exchange/ingestion/register/lineage', { params }),
   lineageDrill: (nodeId: string) =>
     api.get<{
       focusNode: string
       focusMeta: Record<string, unknown>
-      nodes: Array<Record<string, unknown>>
-      edges: Array<Record<string, unknown>>
-      upstream: Array<Record<string, unknown>>
-      downstream: Array<Record<string, unknown>>
+      focus?: LineageGraphNode
+      nodes: LineageGraphNode[]
+      edges: LineageEdge[]
+      upstream: LineageEdge[]
+      downstream: LineageEdge[]
+      upstreamNodes: LineageGraphNode[]
+      downstreamNodes: LineageGraphNode[]
       hasMore: boolean
     }>('/exchange/ingestion/register/lineage/drill', { params: { nodeId } }),
   fieldLineage: (tableNode: string) =>
