@@ -1,4 +1,4 @@
-# After first commit of compose/prod-*.env, run this so local password edits stay out of git status.
+﻿# After first commit of compose/prod-*.env, run this so local password edits stay out of git status.
 #   .\scripts\skip_prod_env_after_commit.ps1
 #   .\scripts\skip_prod_env_after_commit.ps1 -Unskip
 

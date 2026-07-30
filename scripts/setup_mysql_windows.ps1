@@ -1,4 +1,4 @@
-# Install / repair MySQL 8.4 Windows service (run PowerShell as Administrator)
+﻿# Install / repair MySQL 8.4 Windows service (run PowerShell as Administrator)
 param(
     [switch]$ForceReinit
 )

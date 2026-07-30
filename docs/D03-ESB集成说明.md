@@ -36,7 +36,7 @@
 |----|------|
 | SMC 控制台 | `http://10.10.10.61:7000/SMC/index?Login` |
 | API 服务根 | `http://10.10.10.61:7000/SMC/services` |
-| 账号配置 | 复制 [`esb.env.example`](esb.env.example) → `esb.env.local`（**勿提交 Git**） |
+| 账号配置 | 现场 SMC 账号；本地可写 `esb.env.local`（**勿提交 Git**，已在 `.gitignore`） |
 
 | 分组 | 服务名 | 协议 | 主要用途 |
 |------|--------|------|----------|

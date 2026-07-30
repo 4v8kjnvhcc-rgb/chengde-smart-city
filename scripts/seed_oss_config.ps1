@@ -1,4 +1,4 @@
-# 开源组件配置级样例导入（不改源码，在各组件 UI/API 内配置）
+﻿# 开源组件配置级样例导入（不改源码，在各组件 UI/API 内配置）
 $ErrorActionPreference = 'Continue'
 $root = Split-Path -Parent $PSScriptRoot
 Set-Location $root

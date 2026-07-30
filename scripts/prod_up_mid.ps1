@@ -1,4 +1,4 @@
-# 在 10.10.10.51 上执行：启动库 + 中间件（需已安装 Docker，见 D23 §二）
+﻿# 在 10.10.10.51 上执行：启动库 + 中间件（需已安装 Docker，见 D23 §二）
 #   .\scripts\prod_up_mid.ps1
 #   .\scripts\prod_up_mid.ps1 -All
 param([switch]$All)

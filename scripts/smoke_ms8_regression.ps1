@@ -1,4 +1,4 @@
-# MS8 regression: run all milestone + L1 PoC smoke scripts sequentially
+﻿# MS8 regression: run all milestone + L1 PoC smoke scripts sequentially
 # OSS integration (smoke_oss_integration.ps1) is optional — requires Docker + INTEGRATION_ENABLED=true
 param(
     [switch]$IncludeOss

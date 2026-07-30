@@ -1,4 +1,4 @@
-# MS1 login + RBAC smoke test (API)
+﻿# MS1 login + RBAC smoke test (API)
 $ErrorActionPreference = 'Continue'
 $Pass = 'Test@12345'
 $results = @()

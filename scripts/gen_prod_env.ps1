@@ -1,4 +1,4 @@
-# 生成本地生产 env（gitignored）：compose/prod-mid.env + compose/prod-app.env
+﻿# 生成本地生产 env（gitignored）：compose/prod-mid.env + compose/prod-app.env
 # 两机密码一致；已有文件默认复用，-Force 才重新随机
 param(
   [switch]$Force,

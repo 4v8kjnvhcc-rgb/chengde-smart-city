@@ -1,4 +1,4 @@
-# MS8 backup drill POC: mysqldump + SHA256 marker (local demo, not production RTO<=4h)
+﻿# MS8 backup drill POC: mysqldump + SHA256 marker (local demo, not production RTO<=4h)
 $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $PSScriptRoot
 Set-Location $root

@@ -1,4 +1,4 @@
-# 独立业务源库管理：启动 / 重置 / 数据基线校验
+﻿# 独立业务源库管理：启动 / 重置 / 数据基线校验
 # 用法:
 #   powershell -File scripts\source_db.ps1 up      # 启动 source-mysql
 #   powershell -File scripts\source_db.ps1 reset   # 销毁并重建（重新导入基线数据）

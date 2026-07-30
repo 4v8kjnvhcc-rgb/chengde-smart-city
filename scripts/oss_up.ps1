@@ -1,4 +1,4 @@
-# 按 profile 分波启动开源联调栈（某 profile 失败不阻断其余）
+﻿# 按 profile 分波启动开源联调栈（某 profile 失败不阻断其余）
 param(
     [string[]]$Profile = @('storage', 'governance', 'bi', 'sched', 'etl', 'cdc'),
     [switch]$All

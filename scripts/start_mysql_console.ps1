@@ -1,4 +1,4 @@
-# 不依赖 Windows 服务启动 MySQL（无需管理员；数据须已初始化）
+﻿# 不依赖 Windows 服务启动 MySQL（无需管理员；数据须已初始化）
 # 用法：在一个终端运行本脚本并保持窗口打开；另开终端启动后端。
 
 $MysqlHome = 'C:\Program Files\MySQL\MySQL Server 8.4'

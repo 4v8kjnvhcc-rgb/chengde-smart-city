@@ -1,4 +1,4 @@
-# 在 10.10.10.55 上执行：启动门户（需已安装 Docker，且 .51 库已就绪，见 D23）
+﻿# 在 10.10.10.55 上执行：启动门户（需已安装 Docker，且 .51 库已就绪，见 D23）
 $ErrorActionPreference = "Stop"
 $Root = Split-Path -Parent $PSScriptRoot
 Set-Location $Root

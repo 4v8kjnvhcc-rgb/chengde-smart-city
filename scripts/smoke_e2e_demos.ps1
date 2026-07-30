@@ -1,4 +1,4 @@
-# End-to-end demo smoke (D02 five scenarios, capability-equivalent POC)
+﻿# End-to-end demo smoke (D02 five scenarios, capability-equivalent POC)
 $ErrorActionPreference = 'Continue'
 $Pass = 'Test@12345'
 $results = @()

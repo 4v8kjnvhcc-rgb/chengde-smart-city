@@ -1,4 +1,4 @@
-# M123~M138 unstructured + resource smoke
+﻿# M123~M138 unstructured + resource smoke
 $ErrorActionPreference = 'Continue'
 $Pass = 'Test@12345'
 $base = 'http://localhost:8080/api/v1'

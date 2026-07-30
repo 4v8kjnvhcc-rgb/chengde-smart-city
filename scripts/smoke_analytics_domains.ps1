@@ -1,4 +1,4 @@
-# M152~M209 domain analytics smoke
+﻿# M152~M209 domain analytics smoke
 $ErrorActionPreference = 'Continue'
 $Pass = 'Test@12345'
 $base = 'http://localhost:8080/api/v1'

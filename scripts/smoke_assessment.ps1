@@ -1,4 +1,4 @@
-# M027~M030 assessment smoke
+﻿# M027~M030 assessment smoke
 $ErrorActionPreference = 'Continue'
 $Pass = 'Test@12345'
 $base = 'http://localhost:8080/api/v1'

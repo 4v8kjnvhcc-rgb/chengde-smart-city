@@ -1,4 +1,4 @@
-# Asset 360 aggregation smoke test (ASCII for Windows PowerShell 5)
+﻿# Asset 360 aggregation smoke test (ASCII for Windows PowerShell 5)
 $ErrorActionPreference = 'Stop'
 $base = 'http://localhost:8080/api/v1'
 $Pass = 'Test@12345'

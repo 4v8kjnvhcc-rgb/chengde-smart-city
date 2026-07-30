@@ -1,4 +1,4 @@
-# M139~M151 analytics support + BI embed smoke
+﻿# M139~M151 analytics support + BI embed smoke
 $ErrorActionPreference = 'Continue'
 $Pass = 'Test@12345'
 $base = 'http://localhost:8080/api/v1'

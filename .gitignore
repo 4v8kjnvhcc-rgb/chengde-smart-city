@@ -2,6 +2,10 @@
 local.env
 local.env.local
 *.env.local
+# 本机生产打包产出（代码包 tar.gz + 应用镜像 tar + 拷贝的 env）
+# 保留 README，便于在 IDE 里看到该目录；产物本身不进 git
+/release/*
+!/release/README.md
 # prod-mid.env / prod-app.env / prod-secrets.local.txt：
 #   首次入库要提交；提交成功后执行 scripts/skip_prod_env_after_commit.ps1
 #   （skip-worktree，后续本地改密不会再进 git status / 提交）

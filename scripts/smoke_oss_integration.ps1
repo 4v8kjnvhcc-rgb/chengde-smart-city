@@ -1,4 +1,4 @@
-# OSS integration smoke: component health + portal proxy APIs (no ESB)
+﻿# OSS integration smoke: component health + portal proxy APIs (no ESB)
 $ErrorActionPreference = 'Continue'
 $Pass = 'Test@12345'
 $results = @()

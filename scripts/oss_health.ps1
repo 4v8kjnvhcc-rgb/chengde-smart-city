@@ -1,4 +1,4 @@
-# 开源组件健康探活（不含 AEAI ESB）
+﻿# 开源组件健康探活（不含 AEAI ESB）
 $ErrorActionPreference = 'Continue'
 $checks = @(
     @{ Name = 'Elasticsearch'; Url = 'http://localhost:9200/_cluster/health' },

@@ -1,4 +1,4 @@
-# MS3~MS5 smoke: governance / unstructured / resource-center
+﻿# MS3~MS5 smoke: governance / unstructured / resource-center
 $ErrorActionPreference = 'Continue'
 $Pass = 'Test@12345'
 $results = @()

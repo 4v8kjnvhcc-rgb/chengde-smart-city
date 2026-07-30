@@ -1,4 +1,4 @@
-# M031~M036 portal smoke
+﻿# M031~M036 portal smoke
 $ErrorActionPreference = 'Continue'
 $Pass = 'Test@12345'
 $base = 'http://localhost:8080/api/v1'

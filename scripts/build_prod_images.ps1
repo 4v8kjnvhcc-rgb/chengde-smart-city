@@ -1,43 +1,43 @@
-# 按分支构建生产前后端镜像并 docker save
-# 由 build_prod_images.bat 调用，也可: .\scripts\build_prod_images.ps1 -Branch feature_yxj
+﻿# 按远程分支构建生产前后端镜像并 docker save
+# 用法: .\scripts\build_prod_images.ps1 -Branch feature_yxj
+# 默认 git fetch 后按 origin/<分支> 构建（不以本机工作区为准）
+# 默认输出到仓库根目录 release/
+# 紧急无网可用 -LocalOnly
 param(
   [Parameter(Mandatory = $true)]
   [string]$Branch,
-  [string]$OutDir = $(Join-Path $env:USERPROFILE "Desktop"),
-  [switch]$Fetch
+  [string]$OutDir = "",
+  [switch]$LocalOnly
 )
 
 $ErrorActionPreference = "Stop"
 $Root = Split-Path -Parent $PSScriptRoot
 Set-Location $Root
+if ([string]::IsNullOrWhiteSpace($OutDir)) {
+  $OutDir = Join-Path $Root "release"
+}
 
 if (-not (Test-Path (Join-Path $Root ".git"))) {
   throw "当前目录不是 Git 仓库: $Root"
 }
 
 Write-Host "==> 仓库: $Root"
-Write-Host "==> 分支: $Branch"
+Write-Host "==> 远程分支: origin/$Branch"
 
-if ($Fetch) {
+if (-not $LocalOnly) {
   Write-Host "==> git fetch origin $Branch"
-  git fetch origin $Branch 2>$null
+  git fetch origin $Branch
   if ($LASTEXITCODE -ne 0) {
-    Write-Host "警告: fetch 失败，使用本地已有提交继续。"
+    throw "git fetch origin $Branch 失败。请检查网络/权限，或确认远程已有该分支。紧急无网可加 -LocalOnly。"
   }
+} else {
+  Write-Host "警告: -LocalOnly，不 fetch，使用本地已缓存的 origin/$Branch"
 }
 
-$ref = $null
-git rev-parse --verify $Branch 2>$null | Out-Null
-if ($LASTEXITCODE -eq 0) {
-  $ref = $Branch
-} else {
-  git rev-parse --verify "origin/$Branch" 2>$null | Out-Null
-  if ($LASTEXITCODE -eq 0) {
-    $ref = "origin/$Branch"
-  }
-}
-if (-not $ref) {
-  throw "找不到分支 '$Branch'（本地与 origin 均无）。请先 git fetch 或检查分支名。"
+$ref = "origin/$Branch"
+git rev-parse --verify $ref 2>$null | Out-Null
+if ($LASTEXITCODE -ne 0) {
+  throw "找不到远程分支 '$ref'。请先把代码 push 到 origin，或检查分支名。"
 }
 
 $sha = (git rev-parse --short $ref).Trim()

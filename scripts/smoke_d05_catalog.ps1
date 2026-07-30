@@ -1,4 +1,4 @@
-# D05 catalog smoke: 215 modules API + menu seeds
+﻿# D05 catalog smoke: 215 modules API + menu seeds
 $ErrorActionPreference = 'Continue'
 $Pass = 'Test@12345'
 $results = @()

@@ -1,4 +1,4 @@
-# MS6~MS7 smoke: analytics models / DataEase embed / DolphinScheduler
+﻿# MS6~MS7 smoke: analytics models / DataEase embed / DolphinScheduler
 $ErrorActionPreference = 'Continue'
 $Pass = 'Test@12345'
 $results = @()

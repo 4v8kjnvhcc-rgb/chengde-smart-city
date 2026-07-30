@@ -1,4 +1,4 @@
-# 采集测试/本机故障诊断包，供发给 Cursor / 开发排障。
+﻿# 采集测试/本机故障诊断包，供发给 Cursor / 开发排障。
 # 用法：
 #   powershell -ExecutionPolicy Bypass -File scripts\collect_diag.ps1 -Message "问题简述" [-WindowMinutes 30] [-OutDir .]
 #   $env:BACKEND_LOG = "E:\logs\backend.log"

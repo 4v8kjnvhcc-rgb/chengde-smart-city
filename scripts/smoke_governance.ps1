@@ -1,4 +1,4 @@
-# M078~M122 governance smoke
+﻿# M078~M122 governance smoke
 $ErrorActionPreference = 'Continue'
 $Pass = 'Test@12345'
 $base = 'http://localhost:8080/api/v1'

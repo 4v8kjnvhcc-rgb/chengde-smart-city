@@ -12,7 +12,6 @@
 | `docs/` | 工程文档与需求素材（见 [`docs/README.md`](docs/README.md)） |
 | `mysql/` | 本机 MySQL 相关辅助 |
 | `local.env.example` | 本机数据库/Redis/开源组件 URL 模板 |
-| `docker-compose.yml` | 可选：仅本机 MySQL/Redis |
 
 ## 本机快速启动（推荐）
 
@@ -67,11 +66,6 @@ powershell -ExecutionPolicy Bypass -File scripts\smoke_ms8_regression.ps1 -Inclu
 
 终验交付包：[`D15-终验交付包.md`](docs/D15-终验交付包.md)。  
 甲方基线/外部依赖签字：[`D16-基线与外部依赖确认单.md`](docs/D16-基线与外部依赖确认单.md)。
-
-
-## 可选：Docker 仅作 MySQL/Redis
-
-若不想本机装 Redis，可用 `docker compose -p smartcity up -d`（见 `docker-compose.yml`），后端仍在本机运行。
 
 ## 文档
 

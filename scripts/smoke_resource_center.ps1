@@ -1,4 +1,4 @@
-# C resource center smoke: manage -> pretest -> backup -> verify -> monitor
+﻿# C resource center smoke: manage -> pretest -> backup -> verify -> monitor
 $ErrorActionPreference = 'Stop'
 $base = 'http://localhost:8080/api/v1'
 $Pass = 'Test@12345'

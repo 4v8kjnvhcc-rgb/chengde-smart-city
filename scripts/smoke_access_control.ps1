@@ -1,4 +1,4 @@
-# M048 access control smoke (ASCII for Windows PowerShell 5)
+﻿# M048 access control smoke (ASCII for Windows PowerShell 5)
 $ErrorActionPreference = 'Stop'
 $base = 'http://localhost:8080/api/v1'
 $Pass = 'Test@12345'
