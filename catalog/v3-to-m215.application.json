@@ -1,7 +1,7 @@
 {
   "scope": "application",
-  "description": "应用平台 M020～M030、M037～M038；语义基线 D05 §1.2 + 功能清单.xlsx 第44～62行",
-  "guideDoc": "D17-系统优化流程及方式.md",
+  "description": "应用平台 M020～M030、M037～M038；语义基线 D05 §1.2 + docs/requirements/功能清单.xlsx 第44～62行",
+  "guideDoc": "docs/D17-系统优化流程及方式.md",
   "xlsxRowRange": [44, 62],
   "modules": [
     {

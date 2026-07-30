@@ -14,7 +14,7 @@ except ImportError as exc:
     raise SystemExit("openpyxl required: pip install openpyxl") from exc
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-XLSX = os.path.join(ROOT, "功能清单.xlsx")
+XLSX = os.path.join(ROOT, "docs", "requirements", "功能清单.xlsx")
 CATALOG_DIR = os.path.join(ROOT, "catalog")
 
 COL_PLATFORM = 2
@@ -112,7 +112,7 @@ def main() -> None:
 
     os.makedirs(os.path.dirname(out_path), exist_ok=True)
     payload = {
-        "source": "功能清单.xlsx",
+        "source": "docs/requirements/功能清单.xlsx",
         "scope": args.scope,
         "rowCount": len(rows),
         "rows": rows,

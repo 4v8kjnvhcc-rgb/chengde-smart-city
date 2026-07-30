@@ -1,0 +1,274 @@
+# 中间件机 10.10.10.51：MySQL（新建库）+ Redis + 开源中间件
+# 用法（在 .51 上）:
+#   cp compose/prod-mid.env.example compose/prod-mid.env   # 改密码
+#   docker compose -f compose/prod-mid.yml --env-file compose/prod-mid.env \
+#     --profile storage --profile governance --profile bi --profile sched --profile etl --profile cdc \
+#     up -d
+#
+# 仅库+缓存（应用先联通）:
+#   docker compose -f compose/prod-mid.yml --env-file compose/prod-mid.env up -d
+
+name: smart-city-mid
+
+services:
+  mysql:
+    image: mysql:8.0
+    container_name: sc_mid_mysql
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-smart_city}
+      MYSQL_USER: ${MYSQL_USER:-smart_city}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD}
+    ports:
+      # 现场其它系统常用 13306，默认映射避免与本机已有 3306 冲突
+      - "${MYSQL_PUBLISH_PORT:-13306}:3306"
+    command: >
+      --character-set-server=utf8mb4
+      --collation-server=utf8mb4_unicode_ci
+      --default-authentication-plugin=mysql_native_password
+      --server-id=1
+      --log-bin=mysql-bin
+      --binlog-format=ROW
+      --binlog_row_image=FULL
+      --bind-address=0.0.0.0
+    volumes:
+      - sc_mid_mysql_data:/var/lib/mysql
+      - ./init-prod-mysql.sql:/docker-entrypoint-initdb.d/01-layers.sql:ro
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-p${MYSQL_ROOT_PASSWORD}"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+      start_period: 40s
+
+  redis:
+    image: redis:7-alpine
+    container_name: sc_mid_redis
+    command: ["redis-server", "--requirepass", "${REDIS_PASSWORD}", "--bind", "0.0.0.0"]
+    ports:
+      - "${REDIS_PUBLISH_PORT:-6379}:6379"
+    volumes:
+      - sc_mid_redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "-a", "${REDIS_PASSWORD}", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 10
+
+  oss-elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.11.0
+    container_name: sc_mid_elasticsearch
+    profiles: [storage, governance]
+    environment:
+      discovery.type: single-node
+      xpack.security.enabled: "false"
+      ES_JAVA_OPTS: ${ES_JAVA_OPTS:--Xms1g -Xmx1g}
+      network.host: 0.0.0.0
+    ports:
+      - "9200:9200"
+    volumes:
+      - sc_mid_es_data:/usr/share/elasticsearch/data
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:9200/_cluster/health || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+
+  seaweedfs:
+    image: chrislusf/seaweedfs:3.68
+    container_name: sc_mid_seaweedfs
+    profiles: [storage]
+    command: server -dir=/data -s3 -s3.port=8333 -ip=seaweedfs
+    ports:
+      - "9333:9333"
+      - "8333:8333"
+    volumes:
+      - sc_mid_seaweed_data:/data
+
+  mongodb:
+    image: mongo:7
+    container_name: sc_mid_mongodb
+    profiles: [storage, cdc]
+    ports:
+      - "27017:27017"
+    volumes:
+      - sc_mid_mongo_data:/data/db
+    healthcheck:
+      test: ["CMD", "mongosh", "--eval", "db.adminCommand('ping')"]
+      interval: 15s
+      timeout: 5s
+      retries: 8
+
+  oss-mysql:
+    image: mysql:8.0
+    container_name: sc_mid_oss_mysql
+    profiles: [governance, bi, sched]
+    environment:
+      MYSQL_ROOT_PASSWORD: ${OSS_MYSQL_ROOT_PASSWORD:-oss_root}
+      MYSQL_DATABASE: openmetadata_db
+    ports:
+      - "3307:3306"
+    command: --character-set-server=utf8mb4 --collation-server=utf8mb4_unicode_ci --default-authentication-plugin=mysql_native_password
+    volumes:
+      - sc_mid_oss_mysql_data:/var/lib/mysql
+      - ./init-oss-mysql.sql:/docker-entrypoint-initdb.d/01-init.sql:ro
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-p${OSS_MYSQL_ROOT_PASSWORD:-oss_root}"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+
+  om-migrate:
+    image: docker.getcollate.io/openmetadata/server:1.5.0
+    container_name: sc_mid_om_migrate
+    profiles: [governance]
+    command: ./bootstrap/openmetadata-ops.sh migrate
+    environment:
+      DB_DRIVER_CLASS: com.mysql.cj.jdbc.Driver
+      DB_SCHEME: mysql
+      OM_DATABASE: openmetadata_db
+      DB_USE_SSL: "false"
+      DB_USER: root
+      DB_USER_PASSWORD: ${OSS_MYSQL_ROOT_PASSWORD:-oss_root}
+      DB_HOST: oss-mysql
+      DB_PORT: 3306
+      ELASTICSEARCH_HOST: oss-elasticsearch
+      ELASTICSEARCH_PORT: 9200
+      ELASTICSEARCH_SCHEME: http
+      SEARCH_TYPE: elasticsearch
+    depends_on:
+      oss-mysql:
+        condition: service_healthy
+      oss-elasticsearch:
+        condition: service_healthy
+
+  openmetadata:
+    image: docker.getcollate.io/openmetadata/server:1.5.0
+    container_name: sc_mid_openmetadata
+    profiles: [governance]
+    ports:
+      - "8585:8585"
+    environment:
+      DB_DRIVER_CLASS: com.mysql.cj.jdbc.Driver
+      DB_SCHEME: mysql
+      OM_DATABASE: openmetadata_db
+      DB_USE_SSL: "false"
+      DB_USER: root
+      DB_USER_PASSWORD: ${OSS_MYSQL_ROOT_PASSWORD:-oss_root}
+      DB_HOST: oss-mysql
+      DB_PORT: 3306
+      ELASTICSEARCH_HOST: oss-elasticsearch
+      ELASTICSEARCH_PORT: 9200
+      ELASTICSEARCH_SCHEME: http
+      SEARCH_TYPE: elasticsearch
+      AUTHORIZER_CLASS_NAME: org.openmetadata.service.security.DefaultAuthorizer
+      AUTHORIZER_REQUEST_FILTER: org.openmetadata.service.security.JwtFilter
+      AUTHENTICATION_PROVIDER: basic
+      AUTHENTICATION_PUBLIC_KEYS: "[http://openmetadata:8585/api/v1/system/config/jwks]"
+      AUTHENTICATION_ENABLE_SELF_SIGNUP: "true"
+    depends_on:
+      om-migrate:
+        condition: service_completed_successfully
+
+  dataease:
+    image: wojiushixiaobai/dataease:v2.10.10
+    container_name: sc_mid_dataease
+    profiles: [bi]
+    ports:
+      - "8100:8100"
+    environment:
+      TZ: Asia/Shanghai
+      DB_HOST: oss-mysql
+      DB_PORT: 3306
+      DB_NAME: dataease
+      DB_USER: root
+      DB_PASSWORD: ${OSS_MYSQL_ROOT_PASSWORD:-oss_root}
+    depends_on:
+      oss-mysql:
+        condition: service_healthy
+
+  ds-schema-init:
+    image: mysql:8.0
+    container_name: sc_mid_ds_schema_init
+    profiles: [sched]
+    volumes:
+      - ./libs/ds/dolphinscheduler_mysql.sql:/schema.sql:ro
+    entrypoint:
+      - sh
+      - -c
+      - |
+        mysql -h oss-mysql -uroot -poss_root -e "CREATE DATABASE IF NOT EXISTS dolphinscheduler" &&
+        if mysql -h oss-mysql -uroot -poss_root dolphinscheduler -e "SHOW TABLES LIKE 't_ds_user'" | grep -q t_ds_user; then
+          echo "dolphinscheduler schema already present"
+        else
+          mysql -h oss-mysql -uroot -poss_root dolphinscheduler < /schema.sql
+        fi
+    depends_on:
+      oss-mysql:
+        condition: service_healthy
+    restart: "no"
+
+  dolphinscheduler:
+    image: apache/dolphinscheduler-standalone-server:3.2.2
+    container_name: sc_mid_dolphinscheduler
+    profiles: [sched]
+    ports:
+      - "12345:12345"
+      - "25333:25333"
+    environment:
+      DATABASE: mysql
+      SPRING_PROFILES_ACTIVE: mysql
+      SPRING_DATASOURCE_DRIVER_CLASS_NAME: com.mysql.cj.jdbc.Driver
+      SPRING_DATASOURCE_URL: jdbc:mysql://oss-mysql:3306/dolphinscheduler?useUnicode=true&characterEncoding=UTF-8&useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=Asia/Shanghai
+      SPRING_DATASOURCE_USERNAME: root
+      SPRING_DATASOURCE_PASSWORD: ${OSS_MYSQL_ROOT_PASSWORD:-oss_root}
+      MASTER_SERVER_LOAD_PROTECTION_ENABLED: "false"
+      WORKER_SERVER_LOAD_PROTECTION_ENABLED: "false"
+    volumes:
+      - ./libs/ds/mysql-connector-j-8.0.33.jar:/opt/dolphinscheduler/libs/standalone-server/mysql-connector-j-8.0.33.jar:ro
+    depends_on:
+      ds-schema-init:
+        condition: service_completed_successfully
+
+  kettle-carte:
+    image: ghcr.io/it-at-m/pentaho-carte:0.0.2
+    container_name: sc_mid_kettle
+    profiles: [etl]
+    ports:
+      - "${KETTLE_PUBLISH_PORT:-18081}:8080"
+    environment:
+      PENTAHO_USER: ${KETTLE_USER:-cluster}
+      PENTAHO_PASSWORD: ${KETTLE_PASSWORD:-cluster}
+    volumes:
+      - ./kettle-repository:/opt/pentaho/repository
+      - ./libs/ds/mysql-connector-j-8.0.33.jar:/home/default/pentaho/data-integration/lib/mysql-connector-j-8.0.33.jar:ro
+    depends_on:
+      mysql:
+        condition: service_healthy
+
+  canal:
+    image: canal/canal-server:v1.1.7
+    container_name: sc_mid_canal
+    profiles: [cdc]
+    ports:
+      - "19090:11111"
+    environment:
+      canal.instance.master.address: mysql:3306
+      canal.instance.dbUsername: root
+      canal.instance.dbPassword: ${MYSQL_ROOT_PASSWORD}
+      canal.instance.connectionCharset: UTF-8
+      canal.instance.tsdb.enable: "false"
+      canal.instance.gtidon: "false"
+    depends_on:
+      mysql:
+        condition: service_healthy
+      mongodb:
+        condition: service_healthy
+
+volumes:
+  sc_mid_mysql_data:
+  sc_mid_redis_data:
+  sc_mid_es_data:
+  sc_mid_seaweed_data:
+  sc_mid_mongo_data:
+  sc_mid_oss_mysql_data:

@@ -7,9 +7,9 @@ from openpyxl import Workbook
 from openpyxl.styles import Alignment, Font, PatternFill
 from openpyxl.utils import get_column_letter
 
-ROOT = Path(__file__).resolve().parent
-MD_PATH = ROOT / "D05-系统功能清单.md"
-OUT_PATH = ROOT / "系统功能清单_V2.4终版.xlsx"
+ROOT = Path(__file__).resolve().parent.parent
+MD_PATH = ROOT / "docs" / "D05-系统功能清单.md"
+OUT_PATH = ROOT / "docs" / "requirements" / "系统功能清单_V2.4终版.xlsx"
 
 MODULE_COLS = [
     "编号",

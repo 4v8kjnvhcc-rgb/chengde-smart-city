@@ -10,8 +10,8 @@ from datetime import date
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-CHECKLIST_PATH = ROOT / "D05-系统功能清单.md"
-OUT_PATH = ROOT / "D06-Mxxx实现映射表.md"
+CHECKLIST_PATH = ROOT / "docs" / "D05-系统功能清单.md"
+OUT_PATH = ROOT / "docs" / "D06-Mxxx实现映射表.md"
 
 # 需求基线附录 B：V3 板块（块级）
 V3_BLOCKS: list[tuple[str, str, int, int]] = [
@@ -389,7 +389,7 @@ def render_markdown(rows: list[dict]) -> str:
         "| **框架选型** | [`D04-开源框架选型评估.md`](D04-开源框架选型评估.md) V1.0 |",
         "| **ESB** | [`D03-ESB集成说明.md`](D03-ESB集成说明.md)；SMC `http://10.10.10.61:7000` |",
         "| **凭证** | 复制 `esb.env.example` → `esb.env.local`（**勿提交 Git**） |",
-        "| **Excel** | [`Mxxx实现映射表_V1.0.xlsx`](Mxxx实现映射表_V1.0.xlsx) |",
+        "| **Excel** | [`Mxxx实现映射表_V1.0.xlsx`](mapping/Mxxx实现映射表_V1.0.xlsx) |",
         "| **模块总数** | 215 |",
         "",
         "---",

@@ -9,7 +9,7 @@
 | **框架选型** | [`D04-开源框架选型评估.md`](D04-开源框架选型评估.md) V1.0 |
 | **ESB** | [`D03-ESB集成说明.md`](D03-ESB集成说明.md)；SMC `http://10.10.10.61:7000` |
 | **凭证** | 复制 `esb.env.example` → `esb.env.local`（**勿提交 Git**） |
-| **Excel** | [`Mxxx实现映射表_V1.0.xlsx`](Mxxx实现映射表_V1.0.xlsx) |
+| **Excel** | [`Mxxx实现映射表_V1.0.xlsx`](mapping/Mxxx实现映射表_V1.0.xlsx) |
 | **模块总数** | 215 |
 
 ---

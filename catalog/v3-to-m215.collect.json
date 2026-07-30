@@ -1,7 +1,7 @@
 {
   "scope": "collect",
-  "description": "数据资源采集汇聚 Tab M051～M077；语义基线 D05 §2.2 + 功能清单.xlsx",
-  "guideDoc": "D17-系统优化流程及方式.md",
+  "description": "数据资源采集汇聚 Tab M051～M077；语义基线 D05 §2.2 + docs/requirements/功能清单.xlsx",
+  "guideDoc": "docs/D17-系统优化流程及方式.md",
   "modules": [
     {
       "mCode": "M051",

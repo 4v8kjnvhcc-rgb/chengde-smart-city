@@ -11,8 +11,8 @@ from openpyxl.styles import Alignment, Font, PatternFill
 from openpyxl.utils import get_column_letter
 
 ROOT = Path(__file__).resolve().parent.parent
-MD_PATH = ROOT / "D10-OM菜单名映射表.md"
-OUT_PATH = ROOT / "D10-OM菜单名映射表_V1.0.xlsx"
+MD_PATH = ROOT / "docs" / "D10-OM菜单名映射表.md"
+OUT_PATH = ROOT / "docs" / "mapping" / "D10-OM菜单名映射表_V1.0.xlsx"
 
 HEADERS = [
     "M",

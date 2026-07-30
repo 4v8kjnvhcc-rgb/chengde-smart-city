@@ -6,9 +6,13 @@
 |------|------|
 | `platform-backend/` | Spring Boot 3.2 后端 |
 | `platform-web/` | Vue3 统一门户 |
-| `scripts/setup_smart_city.sql` | 本机 MySQL 建库 |
+| `compose/` | Docker Compose（开源栈 / 生产 mid·app） |
+| `catalog/` | V3.0 ↔ M215 能力映射 JSON |
+| `scripts/` | 启停、冒烟、打包、导出脚本 |
+| `docs/` | 工程文档与需求素材（见 [`docs/README.md`](docs/README.md)） |
+| `mysql/` | 本机 MySQL 相关辅助 |
 | `local.env.example` | 本机数据库/Redis/开源组件 URL 模板 |
-| `compose/oss-stack.yml` | 开源组件 Docker Compose（profile 分波） |
+| `docker-compose.yml` | 可选：仅本机 MySQL/Redis |
 
 ## 本机快速启动（推荐）
 
@@ -28,7 +32,7 @@
 4. 样例配置：`powershell -File scripts\seed_oss_config.ps1`
 5. 集成冒烟：`powershell -File scripts\smoke_oss_integration.ps1`
 
-部署手册：[`D13-框架部署手册.md`](D13-框架部署手册.md)。**AEAI ESB 不在本机联调范围**，现场环境再验收。
+部署手册：[`D13-框架部署手册.md`](docs/D13-框架部署手册.md)。**AEAI ESB 不在本机联调范围**，现场环境再验收。
 
 ### 冒烟与端到端演示（D02 §6.2）
 
@@ -61,8 +65,8 @@ powershell -ExecutionPolicy Bypass -File scripts\smoke_ms8_regression.ps1 -Inclu
 
 门户内手工路径：登录 → Hub → 系统管理；数据共享交换平台 → 归集 / 应用平台 / 共享门户 / ESB；**主数据平台 → 数据融合治理 / 非结构化治理 / 资源中心**；**挖掘分析平台 → 智能 BI / 人口 / 法人 / 宏观 / 重点领域**；系统管理 → ETL 治理 / 调度管理。
 
-终验交付包：[`D15-终验交付包.md`](D15-终验交付包.md)。  
-甲方基线/外部依赖签字：[`D16-基线与外部依赖确认单.md`](D16-基线与外部依赖确认单.md)。
+终验交付包：[`D15-终验交付包.md`](docs/D15-终验交付包.md)。  
+甲方基线/外部依赖签字：[`D16-基线与外部依赖确认单.md`](docs/D16-基线与外部依赖确认单.md)。
 
 
 ## 可选：Docker 仅作 MySQL/Redis
@@ -71,9 +75,9 @@ powershell -ExecutionPolicy Bypass -File scripts\smoke_ms8_regression.ps1 -Inclu
 
 ## 文档
 
-- D11：[`D11-统一门户技术方案.md`](D11-统一门户技术方案.md)
-- D12：[`D12-数据库设计.md`](D12-数据库设计.md)
-- D17：[`D17-系统优化流程及方式.md`](D17-系统优化流程及方式.md)（分块优化活文档；**R8** 元数据定时采集 `summary` 溢出修复见该文档 §四）
+- D11：[`D11-统一门户技术方案.md`](docs/D11-统一门户技术方案.md)
+- D12：[`D12-数据库设计.md`](docs/D12-数据库设计.md)
+- D17：[`D17-系统优化流程及方式.md`](docs/D17-系统优化流程及方式.md)（分块优化活文档；**R8** 元数据定时采集 `summary` 溢出修复见该文档 §四）
 
 ### 采集汇聚域 CI（R1）
 

@@ -1,0 +1,75 @@
+# 应用机 10.10.10.55：仅 web + backend（连 10.10.10.51 上的库与中间件）
+# 用法（在 .55 上）:
+#   cp compose/prod-app.env.example compose/prod-app.env   # 指向 .51
+#   docker compose -f compose/prod-app.yml --env-file compose/prod-app.env up -d --build
+
+name: smart-city-app
+
+services:
+  backend:
+    build:
+      context: ../platform-backend
+      dockerfile: Dockerfile
+    image: smart-city/platform-backend:local
+    container_name: sc_app_backend
+    restart: unless-stopped
+    environment:
+      SPRING_PROFILES_ACTIVE: prod
+      SERVER_PORT: "8080"
+      MYSQL_HOST: ${MYSQL_HOST:-10.10.10.51}
+      MYSQL_PORT: ${MYSQL_PORT:-13306}
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-smart_city}
+      MYSQL_USER: ${MYSQL_USER:-smart_city}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD}
+      REDIS_HOST: ${REDIS_HOST:-10.10.10.51}
+      REDIS_PORT: ${REDIS_PORT:-6379}
+      REDIS_PASSWORD: ${REDIS_PASSWORD}
+      APP_JWT_SECRET: ${APP_JWT_SECRET}
+      CREDENTIAL_KEY: ${CREDENTIAL_KEY:-chengde-smartcity-credential-key}
+      INTEGRATION_ENABLED: ${INTEGRATION_ENABLED:-true}
+      INTEGRATION_DEMO_FALLBACK: "false"
+      OM_URL: ${OM_URL:-http://10.10.10.51:8585/api/v1}
+      OM_USER: ${OM_USER:-admin@open-metadata.org}
+      OM_PASSWORD: ${OM_PASSWORD:-admin}
+      DE_URL: ${DE_URL:-http://10.10.10.51:8100}
+      DE_EMBED_BASE: ${DE_EMBED_BASE:-http://10.10.10.55}
+      DS_URL: ${DS_URL:-http://10.10.10.51:12345/dolphinscheduler}
+      DS_USER: ${DS_USER:-admin}
+      DS_PASSWORD: ${DS_PASSWORD:-dolphinscheduler123}
+      KETTLE_URL: ${KETTLE_URL:-http://10.10.10.51:18081}
+      KETTLE_USER: ${KETTLE_USER:-cluster}
+      KETTLE_PASSWORD: ${KETTLE_PASSWORD:-cluster}
+      KETTLE_TARGET_HOST: ${KETTLE_TARGET_HOST:-10.10.10.51}
+      KETTLE_TARGET_PORT: ${KETTLE_TARGET_PORT:-13306}
+      KETTLE_TARGET_DB: ${KETTLE_TARGET_DB:-smart_city_ods}
+      KETTLE_TARGET_USER: ${MYSQL_USER:-smart_city}
+      KETTLE_TARGET_PASSWORD: ${MYSQL_PASSWORD}
+      KETTLE_CARTE_HOST: ${KETTLE_CARTE_HOST:-10.10.10.51}
+      KETTLE_CARTE_PORT: ${KETTLE_CARTE_PORT:-18081}
+      ES_URL: ${ES_URL:-http://10.10.10.51:9200}
+      SEAWEED_S3_ENDPOINT: ${SEAWEED_S3_ENDPOINT:-http://10.10.10.51:8333}
+      SEAWEED_S3_BUCKET: ${SEAWEED_S3_BUCKET:-smartcity-docs}
+      MONGO_URL: ${MONGO_URL:-mongodb://10.10.10.51:27017}
+      CANAL_URL: ${CANAL_URL:-http://10.10.10.51:19090}
+      JAVA_OPTS: ${BACKEND_JAVA_OPTS:--Xms1g -Xmx3g}
+    ports:
+      - "${BACKEND_PUBLISH_PORT:-8080}:8080"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://127.0.0.1:8080/actuator/health || exit 1"]
+      interval: 20s
+      timeout: 5s
+      retries: 30
+      start_period: 180s
+
+  web:
+    build:
+      context: ../platform-web
+      dockerfile: Dockerfile
+    image: smart-city/platform-web:local
+    container_name: sc_app_web
+    restart: unless-stopped
+    depends_on:
+      backend:
+        condition: service_healthy
+    ports:
+      - "${WEB_PUBLISH_PORT:-80}:80"

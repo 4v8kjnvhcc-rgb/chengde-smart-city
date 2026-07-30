@@ -9,9 +9,9 @@ from datetime import date
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-CHECKLIST_PATH = ROOT / "D05-系统功能清单.md"
-D06_PATH = ROOT / "D06-Mxxx实现映射表.md"
-OUT_PATH = ROOT / "D10-OM菜单名映射表.md"
+CHECKLIST_PATH = ROOT / "docs" / "D05-系统功能清单.md"
+D06_PATH = ROOT / "docs" / "D06-Mxxx实现映射表.md"
+OUT_PATH = ROOT / "docs" / "D10-OM菜单名映射表.md"
 
 # 28 个 OpenMetadata 模块 + M098（DS+OM）
 OM_M_IDS = [
@@ -688,7 +688,7 @@ def generate_md(rows: list[dict], today: str) -> str:
             "",
             "---",
             "",
-            f"*文档结束 — D10 与 D06 OpenMetadata 索引（28+1）配套；全表 Excel 见 `D10-OM菜单名映射表_V1.0.xlsx`。*",
+            f"*文档结束 — D10 与 D06 OpenMetadata 索引（28+1）配套；全表 Excel 见 `mapping/D10-OM菜单名映射表_V1.0.xlsx`。*",
             "",
         ]
     )

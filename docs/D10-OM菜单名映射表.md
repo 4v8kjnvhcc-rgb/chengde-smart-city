@@ -176,4 +176,4 @@ integration:
 
 ---
 
-*文档结束 — D10 与 D06 OpenMetadata 索引（28+1）配套；全表 Excel 见 `D10-OM菜单名映射表_V1.0.xlsx`。*
+*文档结束 — D10 与 D06 OpenMetadata 索引（28+1）配套；全表 Excel 见 `mapping/D10-OM菜单名映射表_V1.0.xlsx`。*

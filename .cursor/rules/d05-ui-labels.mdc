@@ -8,10 +8,10 @@ alwaysApply: false
 
 面向用户的标题、Tab、侧栏、按钮、描述中**禁止**出现 `M039`、`M0XX`、`M051～M077` 等模块编号。
 
-- **侧栏/Tab 文案**：使用 [`D05-系统功能清单.md`](D05-系统功能清单.md)「功能模块」列原文（如「填报指引」「上传模板管理」「规范设计」）。
+- **侧栏/Tab 文案**：使用 [`D05-系统功能清单.md`](docs/D05-系统功能清单.md)「功能模块」列原文（如「填报指引」「上传模板管理」「规范设计」）。
 - **M 编号**：仅用于路由 query 深链（`module=m041`）、catalog JSON、`implRoute` 与验收文档，不出现在页面 UI。
 - **采集汇聚**：侧栏仅 5 项，对应 D05 §2.2；组内能力用页内分区或子 Tab 组织，不拆成 27 个侧栏项。
-- **修改前必读**：[`catalog/v3-to-m215.collect.json`](catalog/v3-to-m215.collect.json)（或对应 scope mapping）及 [`D17-系统优化流程及方式.md`](D17-系统优化流程及方式.md)。
+- **修改前必读**：[`catalog/v3-to-m215.collect.json`](catalog/v3-to-m215.collect.json)（或对应 scope mapping）及 [`D17-系统优化流程及方式.md`](docs/D17-系统优化流程及方式.md)。
 - **禁止双处手写**：同一 `moduleName` 不得同时在 `generate_d05_catalog.py` 与 D05 §2 手写维护；以 mapping 为桥。
 - **实现方式**：`implMode` 以 mapping 为准；`集成+自研` 项须填 `customLayer` + 双探针，见 D17 §3.3。
 
