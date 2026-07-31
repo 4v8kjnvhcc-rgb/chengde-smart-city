@@ -46,8 +46,20 @@ export const useAuthStore = defineStore('auth', {
     isSystemAdmin: (s) => s.user?.username === 'sys_admin',
   },
   actions: {
-    async login(username: string, password: string, totpCode?: string) {
-      const res = await api.post('/auth/login', { username, password, totpCode })
+    async login(
+      username: string,
+      password: string,
+      totpCode?: string,
+      captchaId?: string,
+      captchaCode?: string,
+    ) {
+      const res = await api.post('/auth/login', {
+        username,
+        password,
+        totpCode,
+        captchaId,
+        captchaCode,
+      })
       this.accessToken = res.data.accessToken
       this.refreshToken = res.data.refreshToken
       this.user = res.data.user
@@ -58,6 +70,10 @@ export const useAuthStore = defineStore('auth', {
         if (res.data.user.username) {
           localStorage.setItem('username', res.data.user.username)
         }
+      }
+      if (res.data.passwordWarn && res.data.passwordWarnMessage) {
+        const { ElMessage } = await import('element-plus')
+        ElMessage.warning(res.data.passwordWarnMessage)
       }
       await this.fetchProfile()
     },

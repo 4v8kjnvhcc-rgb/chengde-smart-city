@@ -149,6 +149,11 @@ onMounted(() => {
       </PageCard>
 
       <PageCard v-else-if="tab === 'config'" title="系统管理">
+        <el-space wrap style="margin-bottom:12px">
+          <el-button type="primary" @click="goSystem('/system/maintenance?pane=appearance')">外观</el-button>
+          <el-button type="primary" @click="goSystem('/system/maintenance?pane=mail')">系统邮箱</el-button>
+          <el-button @click="goSystem('/system/maintenance?pane=security')">等保安全配置</el-button>
+        </el-space>
         <el-table :data="configs" stripe size="small">
           <el-table-column prop="configKey" label="配置项" width="200" />
           <el-table-column prop="description" label="说明" />
@@ -163,7 +168,6 @@ onMounted(() => {
             </template>
           </el-table-column>
         </el-table>
-        <el-button style="margin-top:12px" @click="goSystem('/system/security')">等保安全配置</el-button>
       </PageCard>
 
       <PageCard v-else-if="tab === 'audit'" title="日志审计">

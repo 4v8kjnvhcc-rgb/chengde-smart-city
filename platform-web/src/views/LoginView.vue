@@ -1,22 +1,82 @@
 <script setup lang="ts">
-import { reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import { useAuthStore } from '@/stores/auth'
+import api from '@/api/http'
+import {
+  applyBrowserChrome,
+  applyThemeFromAppearance,
+  type AppearancePublic,
+} from '@/utils/appearance'
 
 const auth = useAuthStore()
 const router = useRouter()
 const loading = ref(false)
+const appearance = ref<AppearancePublic | null>(null)
+const captchaImg = ref('')
 const form = reactive({
   username: '',
   password: '',
   totpCode: '',
+  captchaId: '',
+  captchaCode: '',
 })
+
+const titleStyle = computed(() => ({
+  color: appearance.value?.loginTitleColor || '#ffffff',
+  fontSize: `${appearance.value?.loginTitleFontSize || 28}px`,
+}))
+
+const pageStyle = computed(() => {
+  const a = appearance.value
+  if (a?.loginBgMode === 'CUSTOM' && a.loginMediaUrl && a.loginMediaType !== 'VIDEO') {
+    return {
+      backgroundImage: `url(${a.loginMediaUrl})`,
+      backgroundSize: 'cover',
+      backgroundPosition: 'center',
+    }
+  }
+  return {}
+})
+
+async function loadAppearance() {
+  try {
+    const data = (await api.get('/system/appearance/public')).data as AppearancePublic
+    appearance.value = data
+    applyThemeFromAppearance(data)
+    applyBrowserChrome(data)
+    if (data.loginCaptchaEnabled) {
+      await refreshCaptcha()
+    }
+  } catch {
+    appearance.value = null
+  }
+}
+
+async function refreshCaptcha() {
+  try {
+    const data = (await api.get('/auth/captcha')).data as { captchaId: string; imageBase64: string }
+    form.captchaId = data.captchaId
+    captchaImg.value = data.imageBase64
+    form.captchaCode = ''
+  } catch (e: unknown) {
+    ElMessage.error(e instanceof Error ? e.message : '验证码加载失败')
+  }
+}
+
+onMounted(loadAppearance)
 
 async function submit() {
   loading.value = true
   try {
-    await auth.login(form.username, form.password, form.totpCode || undefined)
+    await auth.login(
+      form.username,
+      form.password,
+      form.totpCode || undefined,
+      appearance.value?.loginCaptchaEnabled ? form.captchaId : undefined,
+      appearance.value?.loginCaptchaEnabled ? form.captchaCode : undefined,
+    )
     router.push('/dashboard')
   } catch (e: unknown) {
     const err = e as Error & { code?: number }
@@ -25,6 +85,9 @@ async function submit() {
     } else {
       ElMessage.error(err instanceof Error ? err.message : '登录失败')
     }
+    if (appearance.value?.loginCaptchaEnabled) {
+      await refreshCaptcha()
+    }
   } finally {
     loading.value = false
   }
@@ -32,10 +95,19 @@ async function submit() {
 </script>
 
 <template>
-  <div class="login-page">
+  <div class="login-page" :style="pageStyle">
+    <video
+      v-if="appearance?.loginBgMode === 'CUSTOM' && appearance.loginMediaType === 'VIDEO' && appearance.loginMediaUrl"
+      class="login-page__video"
+      :src="appearance.loginMediaUrl"
+      autoplay
+      muted
+      loop
+      playsinline
+    />
     <div class="login-page__brand">
       <div class="login-page__brand-inner">
-        <h1>承德高新区智慧城市基础平台</h1>
+        <h1 :style="titleStyle">{{ appearance?.loginTitle || '承德高新区智慧城市基础平台' }}</h1>
         <p>统一门户 · 数据共享 · 融合治理 · 挖掘分析</p>
       </div>
     </div>
@@ -49,6 +121,12 @@ async function submit() {
           </el-form-item>
           <el-form-item label="密码">
             <el-input v-model="form.password" type="password" show-password placeholder="请输入密码" size="large" />
+          </el-form-item>
+          <el-form-item v-if="appearance?.loginCaptchaEnabled" label="验证码">
+            <div class="captcha-row">
+              <el-input v-model="form.captchaCode" placeholder="请输入验证码" size="large" />
+              <img v-if="captchaImg" :src="captchaImg" class="captcha-img" alt="captcha" @click="refreshCaptcha" />
+            </div>
           </el-form-item>
           <el-form-item label="双因素验证码">
             <el-input v-model="form.totpCode" placeholder="未开启可留空" size="large" />
@@ -66,6 +144,7 @@ async function submit() {
 .login-page {
   min-height: 100vh;
   display: flex;
+  position: relative;
   background: linear-gradient(
     105deg,
     #001529 0%,
@@ -77,6 +156,19 @@ async function submit() {
     #e8f0f8 95%,
     #f5f8fc 100%
   );
+}
+.login-page__video {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  z-index: 0;
+}
+.login-page__brand,
+.login-page__form-wrap {
+  position: relative;
+  z-index: 1;
 }
 .login-page__brand {
   flex: 1;
@@ -126,24 +218,16 @@ async function submit() {
   width: 100%;
   margin-top: 8px;
 }
-@media (max-width: 900px) {
-  .login-page {
-    flex-direction: column;
-    background: linear-gradient(
-      180deg,
-      #001529 0%,
-      #0d3d7a 30%,
-      #1a5fb4 50%,
-      #5a9fd8 85%,
-      #e8f0f8 95%,
-      #f5f8fc 100%
-    );
-  }
-  .login-page__brand {
-    padding: 32px 24px;
-  }
-  .login-page__form-wrap {
-    width: 100%;
-  }
+.captcha-row {
+  display: flex;
+  gap: 12px;
+  width: 100%;
+  align-items: center;
+}
+.captcha-img {
+  height: 40px;
+  border-radius: 4px;
+  cursor: pointer;
+  flex-shrink: 0;
 }
 </style>

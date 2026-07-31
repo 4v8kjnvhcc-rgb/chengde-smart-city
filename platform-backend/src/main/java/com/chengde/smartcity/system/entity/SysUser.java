@@ -22,6 +22,8 @@ public class SysUser {
     private Integer failedLoginCount;
     private LocalDateTime lockedUntil;
     private LocalDateTime passwordChangedAt;
+    private Integer pwdChangeFailCount;
+    private LocalDateTime pwdChangeLockedUntil;
     private LocalDateTime lastLoginAt;
     private LocalDateTime createdAt;
     private LocalDateTime updatedAt;
@@ -52,6 +54,10 @@ public class SysUser {
     public void setLockedUntil(LocalDateTime lockedUntil) { this.lockedUntil = lockedUntil; }
     public LocalDateTime getPasswordChangedAt() { return passwordChangedAt; }
     public void setPasswordChangedAt(LocalDateTime passwordChangedAt) { this.passwordChangedAt = passwordChangedAt; }
+    public Integer getPwdChangeFailCount() { return pwdChangeFailCount; }
+    public void setPwdChangeFailCount(Integer pwdChangeFailCount) { this.pwdChangeFailCount = pwdChangeFailCount; }
+    public LocalDateTime getPwdChangeLockedUntil() { return pwdChangeLockedUntil; }
+    public void setPwdChangeLockedUntil(LocalDateTime pwdChangeLockedUntil) { this.pwdChangeLockedUntil = pwdChangeLockedUntil; }
     public LocalDateTime getLastLoginAt() { return lastLoginAt; }
     public void setLastLoginAt(LocalDateTime lastLoginAt) { this.lastLoginAt = lastLoginAt; }
     public LocalDateTime getCreatedAt() { return createdAt; }

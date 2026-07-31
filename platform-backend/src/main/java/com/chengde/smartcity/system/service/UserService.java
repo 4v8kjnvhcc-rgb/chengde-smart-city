@@ -169,6 +169,8 @@ public class UserService {
         user.setPasswordChangedAt(LocalDateTime.now());
         user.setFailedLoginCount(0);
         user.setLockedUntil(null);
+        user.setPwdChangeFailCount(0);
+        user.setPwdChangeLockedUntil(null);
         userMapper.updateById(user);
         auditService.log(operator.getUserId(), operator.getUsername(), operator.getOrgId(),
                 "USER_RESET_PASSWORD", "sys_user", String.valueOf(id), user.getUsername());
@@ -200,7 +202,7 @@ public class UserService {
         }
     }
 
-    private void validatePassword(String password) {
+    public void validatePassword(String password) {
         if (password == null || password.length() < 8) {
             throw new BusinessException(400, "密码至少 8 位");
         }

@@ -1,9 +1,12 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, onMounted, reactive, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
+import { ElMessage } from 'element-plus'
 import { useAuthStore } from '@/stores/auth'
+import api from '@/api/http'
 import { ArrowDown, DataBoard, HomeFilled } from '@element-plus/icons-vue'
 import { isSystemRoute, findSubsystemRoot, findPlatformNode } from '@/utils/menu'
+import type { AppearancePublic } from '@/utils/appearance'
 
 const props = defineProps<{
   showBackHub?: boolean
@@ -13,6 +16,49 @@ const props = defineProps<{
 const auth = useAuthStore()
 const route = useRoute()
 const router = useRouter()
+const appearance = ref<AppearancePublic | null>(null)
+const pwdVisible = ref(false)
+const pwdForm = reactive({ oldPassword: '', newPassword: '', confirm: '' })
+
+onMounted(async () => {
+  try {
+    appearance.value = (await api.get('/system/appearance/public')).data
+  } catch {
+    appearance.value = null
+  }
+})
+
+async function onUserCommand(cmd: string) {
+  if (cmd === 'logout') {
+    await logout()
+  } else if (cmd === 'password') {
+    pwdVisible.value = true
+  }
+}
+
+async function submitPwd() {
+  if (!pwdForm.oldPassword || !pwdForm.newPassword) {
+    ElMessage.warning('请填写旧密码与新密码')
+    return
+  }
+  if (pwdForm.newPassword !== pwdForm.confirm) {
+    ElMessage.warning('两次新密码不一致')
+    return
+  }
+  try {
+    await api.put('/auth/password', {
+      oldPassword: pwdForm.oldPassword,
+      newPassword: pwdForm.newPassword,
+    })
+    ElMessage.success('密码已修改')
+    pwdVisible.value = false
+    pwdForm.oldPassword = ''
+    pwdForm.newPassword = ''
+    pwdForm.confirm = ''
+  } catch (e: unknown) {
+    ElMessage.error(e instanceof Error ? e.message : '修改失败')
+  }
+}
 
 const breadcrumbs = computed(() => {
   const items: { title: string }[] = []
@@ -45,7 +91,14 @@ async function logout() {
   <header class="app-header" :class="{ 'app-header--hub': props.hubTheme }">
     <div class="app-header__left">
       <div class="app-header__logo" @click="goHub">
-        <span class="app-header__logo-mark">
+        <span v-if="appearance?.logoMode === 'BLANK'" class="app-header__logo-mark app-header__logo-mark--blank" />
+        <img
+          v-else-if="appearance?.logoUrl"
+          :src="appearance.logoUrl"
+          class="app-header__logo-img"
+          alt="logo"
+        />
+        <span v-else class="app-header__logo-mark">
           <el-icon :size="20"><DataBoard /></el-icon>
         </span>
         <span class="app-header__logo-text">
@@ -67,18 +120,36 @@ async function logout() {
       </el-breadcrumb>
     </div>
     <div class="app-header__right">
-      <el-dropdown trigger="click" @command="logout">
+      <el-dropdown trigger="click" @command="onUserCommand">
         <span class="app-header__user">
           {{ auth.user?.displayName || auth.user?.username }}
           <el-icon><ArrowDown /></el-icon>
         </span>
         <template #dropdown>
           <el-dropdown-menu>
-            <el-dropdown-item command="logout">退出登录</el-dropdown-item>
+            <el-dropdown-item command="password">修改密码</el-dropdown-item>
+            <el-dropdown-item command="logout" divided>退出登录</el-dropdown-item>
           </el-dropdown-menu>
         </template>
       </el-dropdown>
     </div>
+    <el-dialog v-model="pwdVisible" title="修改密码" width="420px" destroy-on-close>
+      <el-form label-width="100px">
+        <el-form-item label="旧密码">
+          <el-input v-model="pwdForm.oldPassword" type="password" show-password />
+        </el-form-item>
+        <el-form-item label="新密码">
+          <el-input v-model="pwdForm.newPassword" type="password" show-password />
+        </el-form-item>
+        <el-form-item label="确认新密码">
+          <el-input v-model="pwdForm.confirm" type="password" show-password />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="pwdVisible = false">取消</el-button>
+        <el-button type="primary" @click="submitPwd">确定</el-button>
+      </template>
+    </el-dialog>
   </header>
 </template>
 
@@ -119,6 +190,17 @@ async function logout() {
   flex-shrink: 0;
   color: #fff;
   background: linear-gradient(135deg, var(--portal-primary), var(--portal-primary-dark));
+}
+.app-header__logo-mark--blank {
+  background: transparent;
+  border: 1px dashed var(--portal-border);
+}
+.app-header__logo-img {
+  width: 32px;
+  height: 32px;
+  object-fit: contain;
+  border-radius: 6px;
+  flex-shrink: 0;
 }
 .app-header--hub .app-header__logo-mark {
   color: #e8f6ff;

@@ -3,6 +3,7 @@ package com.chengde.smartcity.system.service;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.chengde.smartcity.system.entity.SysSecurityConfig;
 import com.chengde.smartcity.system.mapper.SysSecurityConfigMapper;
+import java.time.LocalDateTime;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
@@ -28,21 +29,69 @@ public class SecurityConfigService {
 
     public void update(Map<String, String> configs) {
         for (Map.Entry<String, String> e : configs.entrySet()) {
+            if (e.getKey() == null || e.getKey().isBlank()) {
+                continue;
+            }
             SysSecurityConfig row = configMapper.selectById(e.getKey());
             if (row != null) {
                 row.setConfigValue(e.getValue());
+                row.setUpdatedAt(LocalDateTime.now());
                 configMapper.updateById(row);
+            } else {
+                SysSecurityConfig neu = new SysSecurityConfig();
+                neu.setConfigKey(e.getKey());
+                neu.setConfigValue(e.getValue());
+                neu.setUpdatedAt(LocalDateTime.now());
+                configMapper.insert(neu);
             }
         }
     }
 
+    public String get(String key, String defaultValue) {
+        SysSecurityConfig c = configMapper.selectById(key);
+        if (c == null || c.getConfigValue() == null || c.getConfigValue().isBlank()) {
+            return defaultValue;
+        }
+        return c.getConfigValue();
+    }
+
+    public int getInt(String key, int defaultValue) {
+        try {
+            return Integer.parseInt(get(key, String.valueOf(defaultValue)).trim());
+        } catch (NumberFormatException e) {
+            return defaultValue;
+        }
+    }
+
     public boolean isTwoFactorEnabled() {
-        SysSecurityConfig c = configMapper.selectById("two_factor_enabled");
-        return c != null && "true".equalsIgnoreCase(c.getConfigValue());
+        return "true".equalsIgnoreCase(get("two_factor_enabled", "false"));
     }
 
     public boolean isAuditEnabled() {
-        SysSecurityConfig c = configMapper.selectById("audit_enabled");
-        return c == null || "true".equalsIgnoreCase(c.getConfigValue());
+        return !"false".equalsIgnoreCase(get("audit_enabled", "true"));
+    }
+
+    public int loginMaxFailures(int ymlFallback) {
+        return getInt("login_max_failures", ymlFallback);
+    }
+
+    public int loginLockMinutes(int ymlFallback) {
+        return getInt("login_lock_minutes", ymlFallback);
+    }
+
+    public int pwdChangeMaxFailures() {
+        return getInt("pwd_change_max_failures", 5);
+    }
+
+    public int pwdChangeLockMinutes() {
+        return getInt("pwd_change_lock_minutes", 60);
+    }
+
+    public int pwdExpireWarnDays() {
+        return getInt("pwd_expire_warn_days", 5);
+    }
+
+    public int pwdExpireLockDays() {
+        return getInt("pwd_expire_lock_days", 10);
     }
 }

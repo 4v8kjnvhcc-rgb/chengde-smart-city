@@ -5,6 +5,8 @@ import { ElMessage } from 'element-plus'
 import PageHeader from '@/components/common/PageHeader.vue'
 import PageCard from '@/components/common/PageCard.vue'
 
+const props = defineProps<{ embed?: boolean }>()
+
 const form = reactive<Record<string, string>>({})
 
 onMounted(async () => {
@@ -20,8 +22,8 @@ async function save() {
 
 <template>
   <div>
-    <PageHeader title="等保开关" description="安全策略与等保相关配置（M049）" />
-    <PageCard>
+    <PageHeader v-if="!props.embed" title="等保开关" description="安全策略与等保相关配置（M049）" />
+    <component :is="props.embed ? 'div' : PageCard">
       <el-form label-width="180px" class="security-form">
         <el-divider content-position="left">认证与会话</el-divider>
         <el-form-item label="双因素登录">
@@ -44,6 +46,18 @@ async function save() {
         <el-form-item label="锁定时长(分钟)">
           <el-input v-model="form.login_lock_minutes" />
         </el-form-item>
+        <el-form-item label="改密失败上限">
+          <el-input v-model="form.pwd_change_max_failures" />
+        </el-form-item>
+        <el-form-item label="改密锁定(分钟)">
+          <el-input v-model="form.pwd_change_lock_minutes" />
+        </el-form-item>
+        <el-form-item label="密码警告天数">
+          <el-input v-model="form.pwd_expire_warn_days" />
+        </el-form-item>
+        <el-form-item label="密码锁定天数">
+          <el-input v-model="form.pwd_expire_lock_days" />
+        </el-form-item>
         <el-divider content-position="left">审计</el-divider>
         <el-form-item label="审计开关">
           <el-switch v-model="form.audit_enabled" active-value="true" inactive-value="false" />
@@ -52,7 +66,7 @@ async function save() {
           <el-button type="primary" @click="save">保存配置</el-button>
         </el-form-item>
       </el-form>
-    </PageCard>
+    </component>
   </div>
 </template>
 

@@ -78,6 +78,12 @@ const router = createRouter({
           meta: { title: '审计日志' },
         },
         {
+          path: 'system/maintenance',
+          name: 'system-maintenance',
+          component: () => import('@/views/system/maintenance/SystemMaintenanceHubView.vue'),
+          meta: { title: '系统维护管理' },
+        },
+        {
           path: 'system/security',
           name: 'system-security',
           component: () => import('@/views/system/SecurityConfig.vue'),

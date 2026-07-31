@@ -13,7 +13,6 @@ const navItems = [
   { key: 'apps', label: '应用中心' },
   { key: 'auth', label: '认证中心' },
   { key: 'services', label: '服务中心' },
-  { key: 'config', label: '系统管理' },
   { key: 'audit', label: '日志审计' },
   { key: 'integration', label: '系统对接' },
 ]
@@ -27,7 +26,6 @@ const overview = ref<Record<string, unknown> | null>(null)
 const apps = ref<Record<string, unknown>[]>([])
 const appGrants = ref<Record<string, unknown>[]>([])
 const authConfigs = ref<Record<string, unknown>[]>([])
-const systemConfigs = ref<Record<string, unknown>[]>([])
 const services = ref<Record<string, unknown>[]>([])
 const serviceStats = ref<Record<string, unknown>[]>([])
 const approvals = ref<Record<string, unknown>[]>([])
@@ -119,6 +117,10 @@ const applyForm = reactive({ serviceId: undefined as number | undefined, reason:
 
 function resolveTab() {
   const t = String(route.query.tab || 'users').toLowerCase()
+  if (t === 'config') {
+    router.replace('/system/maintenance')
+    return
+  }
   tab.value = navItems.some((n) => n.key === t) ? t : 'users'
 }
 
@@ -208,10 +210,6 @@ async function loadServicesTab() {
   approvals.value = ap.data || []
 }
 
-async function loadConfigTab() {
-  systemConfigs.value = (await api.get('/system/uum/system-configs')).data || []
-}
-
 async function loadIntegrationTab() {
   integrations.value = (await api.get('/system/uum/integrations')).data || []
 }
@@ -223,7 +221,6 @@ async function loadTabData() {
     else if (tab.value === 'apps') await loadAppsTab()
     else if (tab.value === 'auth') await loadAuthTab()
     else if (tab.value === 'services') await loadServicesTab()
-    else if (tab.value === 'config') await loadConfigTab()
     else if (tab.value === 'integration') await loadIntegrationTab()
   } finally {
     loading.value = false
@@ -466,7 +463,7 @@ onMounted(async () => {
             </template>
           </el-table-column>
         </el-table>
-        <el-button style="margin-top:12px" @click="router.push('/system/security')">等保 / 双因素开关</el-button>
+        <el-button style="margin-top:12px" @click="router.push('/system/maintenance?pane=security')">等保 / 双因素开关</el-button>
       </PageCard>
 
       <PageCard v-if="tab === 'services'" title="服务中心">
@@ -522,28 +519,6 @@ onMounted(async () => {
           </el-table-column>
         </el-table>
         <p class="hint" style="margin-top:8px">API 版本/文档/在线测试：登记服务路径后由开发侧对接 OpenAPI；本页提供注册、监控与审批。</p>
-      </PageCard>
-
-      <PageCard v-if="tab === 'config'" title="系统管理（参数）">
-        <el-table :data="systemConfigs" stripe size="small">
-          <el-table-column prop="configKey" label="参数键" width="220" />
-          <el-table-column prop="description" label="说明" />
-          <el-table-column label="值" min-width="160">
-            <template #default="{ row }">
-              <el-input v-model="row.configValue" size="small" />
-            </template>
-          </el-table-column>
-          <el-table-column label="操作" width="80">
-            <template #default="{ row }">
-              <el-button link type="primary" @click="saveConfig(row)">保存</el-button>
-            </template>
-          </el-table-column>
-        </el-table>
-        <el-space style="margin-top:12px" wrap>
-          <el-button @click="router.push('/system/security')">等保安全配置</el-button>
-          <el-button @click="tab = 'users'">用户中心 · 菜单权限</el-button>
-          <el-button @click="router.push('/system/tags')">标签库</el-button>
-        </el-space>
       </PageCard>
 
       <PageCard v-if="tab === 'audit'" title="日志审计">

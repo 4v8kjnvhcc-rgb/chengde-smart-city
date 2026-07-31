@@ -69,4 +69,17 @@ public class SessionRedisService {
         }
         return v == null ? 0 : v;
     }
+
+    /** 临时键（验证码等），TTL 秒 */
+    public void putTemp(String key, String value, long seconds) {
+        redis.opsForValue().set("temp:" + key, value, Duration.ofSeconds(seconds));
+    }
+
+    public String getTemp(String key) {
+        return redis.opsForValue().get("temp:" + key);
+    }
+
+    public void deleteTemp(String key) {
+        redis.delete("temp:" + key);
+    }
 }
