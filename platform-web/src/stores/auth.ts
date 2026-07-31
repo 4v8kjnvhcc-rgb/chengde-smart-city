@@ -12,6 +12,7 @@ export interface MenuNode {
   icon: string
   mCode: string
   integrationType: string
+  visible?: number
   children: MenuNode[]
 }
 

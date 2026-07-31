@@ -2,8 +2,42 @@ import type { HubNavGroup, HubNavItem } from '@/components/common/HubSideLayout.
 
 export type IngestionSystem = 'register' | 'collect'
 
-/** 采集汇聚 3 个一级模块（数据上传并入汇聚接入；数据资产管理移出采集验收范围） */
-export type CollectModuleKey = 'ingest' | 'pipeline' | 'catalog'
+/** 采集汇聚一级模块（质量管控、数据资产管理含子页） */
+export type CollectModuleKey = 'ingest' | 'pipeline' | 'catalog' | 'quality' | 'asset'
+
+/** 汇聚数据质量管控侧栏叶子 key（与治理质量页同组件，双入口） */
+export const QUALITY_SUB_KEYS = ['quality.rule-config', 'quality.monitor', 'quality.assess'] as const
+export type QualitySubKey = (typeof QUALITY_SUB_KEYS)[number]
+
+export const QUALITY_SUB_LABELS: Record<QualitySubKey, string> = {
+  'quality.rule-config': '质量规则配置',
+  'quality.monitor': '数据质量监控',
+  'quality.assess': '数据质量评估',
+}
+
+/** 数据资产管理侧栏叶子 */
+export const ASSET_SUB_KEYS = [
+  'asset.classify',
+  'asset.mask',
+  'asset.tag',
+  'asset.search',
+  'asset.global',
+  'asset.backup',
+  'asset.archive',
+  'asset.destroy',
+] as const
+export type AssetSubKey = (typeof ASSET_SUB_KEYS)[number]
+
+export const ASSET_SUB_LABELS: Record<AssetSubKey, string> = {
+  'asset.classify': '数据分级分类',
+  'asset.mask': '数据脱敏策略',
+  'asset.tag': '数据标签管理',
+  'asset.search': '数据搜索',
+  'asset.global': '全局数据资产视图',
+  'asset.backup': '数据备份',
+  'asset.archive': '数据归档',
+  'asset.destroy': '数据销毁',
+}
 
 export interface IngestionModuleMeta {
   key: string
@@ -36,6 +70,22 @@ export const COLLECT_MODULES: IngestionModuleMeta[] = [
   { key: 'ingest', mCode: 'M054', label: '数据汇聚接入', subLabel: '结构化·文件·其他接入', system: 'collect', permission: 'hub:ingestion:collect:ingest' },
   { key: 'pipeline', mCode: 'M061', label: '规范设计', subLabel: '分类·探查·定义·对账', system: 'collect', permission: 'hub:ingestion:collect:pipeline' },
   { key: 'catalog', mCode: 'M065', label: '指标与目录体系构建', subLabel: '关联登记·编目·审批', system: 'collect', permission: 'hub:ingestion:collect:catalog' },
+  {
+    key: 'quality',
+    mCode: 'QCTL',
+    label: '汇聚数据质量管控',
+    subLabel: '规则·监控·评估（复用质量管理系统）',
+    system: 'collect',
+    permission: 'hub:ingestion:collect:quality',
+  },
+  {
+    key: 'asset',
+    mCode: 'M069',
+    label: '数据资产管理',
+    subLabel: '分级分类·脱敏·标签·搜索·备份归档销毁·全局视图',
+    system: 'collect',
+    permission: 'hub:ingestion:collect:asset',
+  },
 ]
 
 const REGISTER_BY_KEY = Object.fromEntries(REGISTER_MODULES.map((m) => [m.key, m])) as Record<string, IngestionModuleMeta>
@@ -44,7 +94,8 @@ const COLLECT_BY_KEY = Object.fromEntries(COLLECT_MODULES.map((m) => [m.key, m])
 export const MCODE_TO_COLLECT: Record<number, CollectModuleKey> = {}
 for (let i = 51; i <= 60; i++) MCODE_TO_COLLECT[i] = 'ingest'
 for (let i = 61; i <= 64; i++) MCODE_TO_COLLECT[i] = 'pipeline'
-for (let i = 65; i <= 77; i++) MCODE_TO_COLLECT[i] = 'catalog'
+for (let i = 65; i <= 68; i++) MCODE_TO_COLLECT[i] = 'catalog'
+for (let i = 69; i <= 76; i++) MCODE_TO_COLLECT[i] = 'asset'
 
 export const DEFAULT_MODULE: Record<IngestionSystem, string> = {
   register: 'm039',
@@ -60,7 +111,27 @@ export const LEGACY_TAB_MAP: Record<string, { system: IngestionSystem; module: s
   pipeline: { system: 'collect', module: 'pipeline' },
   resource: { system: 'collect', module: 'catalog' },
   govern: { system: 'collect', module: 'catalog' },
-  asset: { system: 'collect', module: 'catalog' },
+  asset: { system: 'collect', module: 'asset.classify' },
+  'asset.classify': { system: 'collect', module: 'asset.classify' },
+  'asset.mask': { system: 'collect', module: 'asset.mask' },
+  'asset.tag': { system: 'collect', module: 'asset.tag' },
+  'asset.search': { system: 'collect', module: 'asset.search' },
+  'asset.global': { system: 'collect', module: 'asset.global' },
+  'asset.backup': { system: 'collect', module: 'asset.backup' },
+  'asset.archive': { system: 'collect', module: 'asset.archive' },
+  'asset.destroy': { system: 'collect', module: 'asset.destroy' },
+  m069: { system: 'collect', module: 'asset.classify' },
+  m070: { system: 'collect', module: 'asset.mask' },
+  m071: { system: 'collect', module: 'asset.tag' },
+  m072: { system: 'collect', module: 'asset.search' },
+  m073: { system: 'collect', module: 'asset.backup' },
+  m074: { system: 'collect', module: 'asset.archive' },
+  m075: { system: 'collect', module: 'asset.destroy' },
+  m076: { system: 'collect', module: 'asset.global' },
+  quality: { system: 'collect', module: 'quality.rule-config' },
+  'quality.rule-config': { system: 'collect', module: 'quality.rule-config' },
+  'quality.monitor': { system: 'collect', module: 'quality.monitor' },
+  'quality.assess': { system: 'collect', module: 'quality.assess' },
 }
 for (let i = 39; i <= 50; i++) LEGACY_TAB_MAP[`m0${i}`] = { system: 'register', module: `m0${i}` }
 for (let i = 51; i <= 77; i++) {
@@ -76,14 +147,14 @@ export function registerNavGroups(): HubNavGroup[] {
   return [{ title: '数据资产登记管理', items: REGISTER_MODULES.map(toNavItem) }]
 }
 
-/** 采集侧栏：无分组标题，平铺 3 项 */
+/** 采集侧栏：平铺模块；质量管控带三级子项 */
 export function collectNavItems(): HubNavItem[] {
-  return COLLECT_MODULES.map(toNavItem)
+  return COLLECT_MODULES.map(toCollectNavItem)
 }
 
 /** @deprecated 使用 collectNavItems */
 export function collectNavGroups(): HubNavGroup[] {
-  return [{ title: '', items: COLLECT_MODULES.map(toNavItem) }]
+  return [{ title: '', items: COLLECT_MODULES.map(toCollectNavItem) }]
 }
 
 /** 按角色权限严格过滤侧栏；无对应 hub 权限则不展示（禁止「无权限时回退全量」） */
@@ -101,18 +172,78 @@ export function filterRegisterNavItems(opts: { isSystemAdmin: boolean; permissio
 }
 
 export function filterCollectNavItems(opts: { isSystemAdmin: boolean; permissions: string[] }): HubNavItem[] {
-  return filterIngestionModules(COLLECT_MODULES, opts).map(toNavItem)
+  return filterIngestionModules(COLLECT_MODULES, opts).map(toCollectNavItem)
+}
+
+/** 侧栏选中的 key 是否在已授权采集模块内（含质量/资产子页） */
+export function isCollectModuleAllowed(moduleKey: string, allowed: IngestionModuleMeta[]): boolean {
+  if (allowed.some((m) => m.key === moduleKey)) return true
+  if (isQualitySubKey(moduleKey) || moduleKey === 'quality') {
+    return allowed.some((m) => m.key === 'quality')
+  }
+  if (isAssetSubKey(moduleKey) || moduleKey === 'asset') {
+    return allowed.some((m) => m.key === 'asset')
+  }
+  return false
+}
+
+export function isQualitySubKey(key: string): key is QualitySubKey {
+  return (QUALITY_SUB_KEYS as readonly string[]).includes(key)
+}
+
+export function isAssetSubKey(key: string): key is AssetSubKey {
+  return (ASSET_SUB_KEYS as readonly string[]).includes(key)
+}
+
+/** 父级点选时落到默认子页 */
+export function normalizeCollectModuleKey(key: string): string {
+  if (key === 'quality') return 'quality.rule-config'
+  if (key === 'asset') return 'asset.classify'
+  return key
 }
 
 function toNavItem(m: IngestionModuleMeta): HubNavItem {
   return { key: m.key, label: m.label, subLabel: m.subLabel }
 }
 
+function toCollectNavItem(m: IngestionModuleMeta): HubNavItem {
+  if (m.key === 'quality') {
+    return {
+      key: m.key,
+      label: m.label,
+      subLabel: m.subLabel,
+      children: QUALITY_SUB_KEYS.map((k) => ({ key: k, label: QUALITY_SUB_LABELS[k] })),
+    }
+  }
+  if (m.key === 'asset') {
+    return {
+      key: m.key,
+      label: m.label,
+      subLabel: m.subLabel,
+      children: ASSET_SUB_KEYS.map((k) => ({ key: k, label: ASSET_SUB_LABELS[k] })),
+    }
+  }
+  return toNavItem(m)
+}
+
 function resolveCollectModule(mod: string): string | undefined {
+  if (isQualitySubKey(mod)) return mod
+  if (mod === 'quality') return 'quality.rule-config'
+  if (isAssetSubKey(mod)) return mod
+  if (mod === 'asset') return 'asset.classify'
   if (COLLECT_BY_KEY[mod]) return mod
   const m = /^m0?(\d+)$/i.exec(mod)
   if (m) {
-    const ck = MCODE_TO_COLLECT[Number(m[1])]
+    const num = Number(m[1])
+    if (num === 69) return 'asset.classify'
+    if (num === 70) return 'asset.mask'
+    if (num === 71) return 'asset.tag'
+    if (num === 72) return 'asset.search'
+    if (num === 73) return 'asset.backup'
+    if (num === 74) return 'asset.archive'
+    if (num === 75) return 'asset.destroy'
+    if (num === 76) return 'asset.global'
+    const ck = MCODE_TO_COLLECT[num]
     if (ck) return ck
   }
   return undefined
@@ -135,6 +266,12 @@ export function resolveIngestionNav(query: Record<string, unknown>): { system: I
 }
 
 export function moduleTitle(moduleKey: string): string {
+  if (isQualitySubKey(moduleKey)) {
+    return `${COLLECT_BY_KEY.quality?.label || '汇聚数据质量管控'} · ${QUALITY_SUB_LABELS[moduleKey]}`
+  }
+  if (isAssetSubKey(moduleKey)) {
+    return `${COLLECT_BY_KEY.asset?.label || '数据资产管理'} · ${ASSET_SUB_LABELS[moduleKey]}`
+  }
   const m = REGISTER_BY_KEY[moduleKey] || COLLECT_BY_KEY[moduleKey]
   return m?.label || moduleKey
 }
@@ -172,6 +309,8 @@ export function collectSectionFromQuery(query: Record<string, unknown>, module: 
     ingest: 'structured-table',
     pipeline: 'step-probe',
     catalog: 'm065',
+    quality: 'rule-config',
+    asset: 'classify',
   }
   return defaults[module]
 }

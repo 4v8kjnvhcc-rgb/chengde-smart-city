@@ -149,7 +149,7 @@ export interface DataDefinition { id: number; defCode: string; defName: string; 
 export interface ReconcileLog { id: number; batchNo: string; matchedPct: number; diffRows: number; alertLevel: string; status: string }
 export interface Registry { id: number; registryCode: string; title: string; categoryPath: string; secretLevel: string; publishStatus: string; approvalStatus: string }
 export interface CategoryNode { id: number; nodeCode: string; nodeName: string; parentId: number; secretLevel: string; sortOrder: number }
-export interface Policy { id: number; policyCode: string; policyName: string; policyType: string; ruleExpr?: string; lifecycleStage?: string }
+export interface Policy { id: number; policyCode: string; policyName: string; policyType: string; ruleExpr?: string; lifecycleStage?: string; status?: string }
 export interface AssetTag {
   id: number
   tagCode: string

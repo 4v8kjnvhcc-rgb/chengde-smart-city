@@ -10,6 +10,11 @@ import {
   resolveApplicationNav,
 } from './application-nav'
 
+const props = withDefaults(
+  defineProps<{ lockedDomain?: 'base' | 'domain' }>(),
+  { lockedDomain: undefined },
+)
+
 interface StatMetric {
   id: number
   metricCode: string
@@ -62,6 +67,16 @@ const topicDescription = computed(() => {
 })
 
 function syncRoute() {
+  if (props.lockedDomain) {
+    domainTab.value = props.lockedDomain
+    const sec = String(route.query.section || '')
+    if (props.lockedDomain === 'domain') {
+      topicKey.value = DOMAIN_STAT_TOPICS.some((t) => t.key === sec) ? sec : 'insurance'
+    } else {
+      topicKey.value = BASE_STAT_TOPICS.some((t) => t.key === sec) ? sec : 'pop-structure'
+    }
+    return
+  }
   const r = resolveApplicationNav(route.query as Record<string, unknown>)
   const sec = r.section
   if (sec === 'domain' || DOMAIN_STAT_TOPICS.some((t) => t.key === sec)) {
@@ -77,6 +92,7 @@ function syncRoute() {
 }
 
 function setDomainTab(tab: 'base' | 'domain') {
+  if (props.lockedDomain) return
   domainTab.value = tab
   topicKey.value = tab === 'domain' ? 'insurance' : 'pop-structure'
   router.replace({ query: { ...route.query, system: 'stats', module: 'stats', section: tab } })
@@ -85,7 +101,14 @@ function setDomainTab(tab: 'base' | 'domain') {
 
 function setTopic(key: string) {
   topicKey.value = key
-  router.replace({ query: { ...route.query, system: 'stats', module: 'stats', section: key } })
+  const q = { ...route.query, section: key } as Record<string, string>
+  if (props.lockedDomain === 'base') q.app = 'stats-base'
+  else if (props.lockedDomain === 'domain') q.app = 'stats-domain'
+  else {
+    q.system = 'stats'
+    q.module = 'stats'
+  }
+  router.replace({ query: q })
 }
 
 async function loadModule(force = false) {
@@ -105,7 +128,7 @@ async function loadModule(force = false) {
   }
 }
 
-watch(() => [route.query.system, route.query.section, route.query.tab], () => {
+watch(() => [route.query.system, route.query.section, route.query.tab, route.query.app, props.lockedDomain], () => {
   const prev = domainTab.value
   syncRoute()
   if (domainTab.value !== prev || !loadedDomains.has(domainTab.value)) loadModule()
@@ -115,7 +138,12 @@ onMounted(() => { syncRoute(); loadModule() })
 
 <template>
   <div v-loading="loading">
-    <el-radio-group :model-value="domainTab" style="margin-bottom:12px" @change="(v: string) => setDomainTab(v as 'base' | 'domain')">
+    <el-radio-group
+      v-if="!lockedDomain"
+      :model-value="domainTab"
+      style="margin-bottom:12px"
+      @change="(v: string) => setDomainTab(v as 'base' | 'domain')"
+    >
       <el-radio-button value="base">基础库统计分析</el-radio-button>
       <el-radio-button value="domain">重点领域统计分析</el-radio-button>
     </el-radio-group>

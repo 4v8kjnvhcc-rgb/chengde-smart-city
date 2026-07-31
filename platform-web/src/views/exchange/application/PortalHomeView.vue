@@ -5,8 +5,7 @@ import api from '@/api/http'
 import { ElMessage } from 'element-plus'
 import PageCard from '@/components/common/PageCard.vue'
 import { useAuthStore } from '@/stores/auth'
-import AssessmentView from './AssessmentView.vue'
-import SupplyDemandView from './SupplyDemandView.vue'
+import { DEPT_PORTAL_BRAND } from './application-nav'
 
 interface CatalogRow {
   id: number | string
@@ -70,8 +69,6 @@ const catalogRows = ref<CatalogRow[]>([])
 const subscriptions = ref<Subscription[]>([])
 const objections = ref<Record<string, unknown>[]>([])
 const catalogOptions = ref<CatalogRow[]>([])
-const highlightSupply = ref(false)
-const supplyDialogVisible = ref(false)
 const preview = reactive<{ visible: boolean; row: CatalogRow | null }>({ visible: false, row: null })
 
 const subForm = reactive({
@@ -99,20 +96,15 @@ void statusTag
 
 function syncTab() {
   const s = String(route.query.section || 'home')
-  portalTab.value = ['home', 'catalog', 'subscribe', 'assessment', 'myspace'].includes(s) ? s : 'home'
-  highlightSupply.value = String(route.query.supplyHint || '') === '1'
-  if (portalTab.value === 'subscribe' && highlightSupply.value) {
-    supplyDialogVisible.value = true
-  }
+  portalTab.value = ['home', 'catalog', 'subscribe', 'myspace'].includes(s) ? s : 'home'
 }
 
-function setTab(key: string, opts?: { openSupply?: boolean }) {
+function setTab(key: string) {
   portalTab.value = key
-  const q: Record<string, string> = { system: 'portal', module: 'portal-home', section: key }
+  const q: Record<string, string> = { section: key }
   if (searchQ.value) q.q = searchQ.value
   if (filterTheme.value) q.themeCode = filterTheme.value
-  if (opts?.openSupply) q.supplyHint = '1'
-  router.replace({ query: q })
+  router.replace({ path: '/exchange/analysis-portal/dept', query: q })
   loadTab()
 }
 
@@ -133,9 +125,6 @@ async function loadCatalog() {
     },
   })
   catalogRows.value = res.data
-  if (!res.data?.length && searchQ.value) {
-    highlightSupply.value = true
-  }
 }
 
 async function loadSubscriptions() {
@@ -180,8 +169,6 @@ async function loadTab() {
       ])
     } else if (portalTab.value === 'myspace') {
       await Promise.all([loadSubscriptions(), loadObjections()])
-    } else if (portalTab.value === 'assessment') {
-      // AssessmentView self-loads
     }
   } catch (e: unknown) {
     ElMessage.error((e as Error)?.message || '加载失败')
@@ -231,16 +218,6 @@ function applyFromCatalog(row: CatalogRow) {
   setTab('subscribe')
 }
 
-function goSubmitDemand() {
-  highlightSupply.value = true
-  setTab('subscribe', { openSupply: true })
-  supplyDialogVisible.value = true
-}
-
-function openSupplyDialog() {
-  supplyDialogVisible.value = true
-}
-
 async function submitSubscription() {
   if (!auth.hasPermission('portal:subscription:create') && auth.permissions.length) {
     // 无细权限时：已登录仍允许（兼容未跑 V28 的环境）
@@ -285,7 +262,7 @@ onMounted(() => {
       <section class="hero">
         <div class="hero__inner">
           <div class="hero__copy">
-            <div class="hero__brand">承德市数据共享门户</div>
+            <div class="hero__brand">{{ DEPT_PORTAL_BRAND }}</div>
             <h1 class="hero__title">构建完善的数据资产管理体系，数据汇聚全覆盖</h1>
             <div class="hero__search">
               <input
@@ -483,7 +460,7 @@ onMounted(() => {
       </section>
 
       <footer class="portal-foot">
-        <div>承德市大数据归集平台 · 数据共享门户</div>
+        <div>承德市大数据归集平台 · {{ DEPT_PORTAL_BRAND }}</div>
         <div>建议使用 Chrome / Edge 浏览器访问 · V1.0</div>
       </footer>
     </template>
@@ -534,9 +511,7 @@ onMounted(() => {
                 <el-radio-button value="card">卡片</el-radio-button>
               </el-radio-group>
             </div>
-            <el-empty v-if="!catalogRows.length" description="没有找到您需要的资源">
-              <el-button type="primary" @click="goSubmitDemand">去数据供需对接提需求</el-button>
-            </el-empty>
+            <el-empty v-if="!catalogRows.length" description="没有找到您需要的资源" />
             <el-table v-else-if="catalogView === 'table'" :data="catalogRows" stripe size="small">
               <el-table-column prop="title" label="资源名称" min-width="140" />
               <el-table-column prop="providerOrg" label="提供方" width="110" />
@@ -566,11 +541,10 @@ onMounted(() => {
       </PageCard>
 
       <template v-else-if="portalTab === 'subscribe'">
-        <PageCard :class="{ 'supply-hint': highlightSupply }">
+        <PageCard>
           <template #header>
             <div class="subscribe-head">
               <span class="subscribe-head__title">资源订阅申请</span>
-              <el-button type="primary" @click="openSupplyDialog">数据供需对接</el-button>
             </div>
           </template>
           <el-form inline class="portal-inline-form portal-inline-form--block">
@@ -626,10 +600,6 @@ onMounted(() => {
           </el-table>
         </PageCard>
       </template>
-
-      <PageCard v-else-if="portalTab === 'assessment'" title="考核评估">
-        <AssessmentView mode="front" />
-      </PageCard>
 
       <PageCard v-else-if="portalTab === 'myspace'" title="我的空间">
         <el-tabs>
@@ -690,27 +660,6 @@ onMounted(() => {
         <el-button type="primary" style="margin-top:12px" @click="applyFromCatalog(preview.row!)">申请该资源</el-button>
       </template>
     </el-drawer>
-
-    <el-dialog
-      v-model="supplyDialogVisible"
-      title="数据供需对接"
-      width="96%"
-      top="3vh"
-      destroy-on-close
-      append-to-body
-      class="supply-flow-dialog"
-    >
-      <el-alert
-        type="info"
-        :closable="false"
-        show-icon
-        style="margin-bottom:12px"
-        title="需求管理 → 分析 → 确认 → 供给 → 清单中心"
-      />
-      <div class="supply-dialog-body">
-        <SupplyDemandView v-if="supplyDialogVisible" mode="front" embedded />
-      </div>
-    </el-dialog>
   </div>
 </template>
 

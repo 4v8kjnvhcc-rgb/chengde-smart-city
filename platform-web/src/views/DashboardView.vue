@@ -16,6 +16,8 @@ import {
 } from '@/utils/menu'
 import type { MenuNode } from '@/stores/auth'
 import api from '@/api/http'
+import { ElMessage } from 'element-plus'
+import { openAssessmentExternal } from '@/views/exchange/application/application-nav'
 
 interface PortalLink {
   id: number
@@ -28,7 +30,7 @@ interface PortalLink {
 }
 
 type CardItem =
-  | { kind: 'menu'; key: string; title: string; node: MenuNode }
+  | { kind: 'menu'; key: string; title: string; node: MenuNode; children?: CardItem[] }
   | { kind: 'link'; key: string; title: string; link: PortalLink }
 
 const auth = useAuthStore()
@@ -115,6 +117,8 @@ const portalLinks = ref<PortalLink[]>([])
 const platforms = computed(() => getAuthorizedPlatforms(auth.menus))
 
 const activeIndex = ref<number | null>(null)
+/** 抽屉内悬浮展开的分组 key（应用分析门户 / 应用平台） */
+const hoverGroupKey = ref<string | null>(null)
 
 function getTheme(path: string) {
   return platformThemes[path] || platformThemes['/exchange']
@@ -124,32 +128,38 @@ function linksOf(platformPath: string): PortalLink[] {
   return portalLinks.value.filter((l) => l.platformPath === platformPath)
 }
 
-/** 应用平台统一入口：供需/考核等子能力在 Hub 内 4 Tab 切换，门户抽屉不再平铺 */
-const APPLICATION_ENTRY_PATHS = new Set(['/exchange/application', '/exchange/assessment'])
-
-function isApplicationEntry(path: string | undefined | null): boolean {
-  if (!path) return false
-  return APPLICATION_ENTRY_PATHS.has(path) || path.startsWith('/exchange/application/')
+function isExchangeGroup(node: MenuNode, child: MenuNode): boolean {
+  if (node.path !== '/exchange') return false
+  const path = child.path || ''
+  return (
+    path === '/exchange/analysis-portal' ||
+    path === '/exchange/application' ||
+    child.menuName === '应用分析门户' ||
+    child.menuName === '应用平台'
+  )
 }
 
+/**
+ * 目标 IA：一级显示 归集 / ESB / 应用分析门户 / 应用平台；
+ * 后两者挂 children，悬浮展开，点叶子进各自独立系统。
+ */
 function getCardItems(node: MenuNode): CardItem[] {
   const menus: CardItem[] = []
-  let applicationPushed = false
 
   for (const child of visibleMenuChildren(node)) {
-    if (node.path === '/exchange' && isApplicationEntry(child.path)) {
-      if (applicationPushed) continue
-      applicationPushed = true
+    const grandchildren = visibleMenuChildren(child)
+    if (isExchangeGroup(node, child) && grandchildren.length > 0) {
       menus.push({
         kind: 'menu',
-        key: 'm-application',
-        title: '应用平台',
-        node: {
-          ...child,
-          menuName: '应用平台',
-          path: '/exchange/application',
-          children: [],
-        },
+        key: `m-${child.id}`,
+        title: child.menuName,
+        node: child,
+        children: grandchildren.map((leaf) => ({
+          kind: 'menu' as const,
+          key: `m-${leaf.id}`,
+          title: leaf.menuName,
+          node: leaf,
+        })),
       })
       continue
     }
@@ -161,15 +171,17 @@ function getCardItems(node: MenuNode): CardItem[] {
     })
   }
 
-  const links: CardItem[] = linksOf(node.path)
-    .filter((link) => !(node.path === '/exchange' && isApplicationEntry(link.url)))
-    .map((link) => ({
-      kind: 'link',
-      key: `l-${link.id}`,
-      title: link.title,
-      link,
-    }))
+  const links: CardItem[] = linksOf(node.path).map((link) => ({
+    kind: 'link' as const,
+    key: `l-${link.id}`,
+    title: link.title,
+    link,
+  }))
   return [...menus, ...links]
+}
+
+function itemHasChildren(item: CardItem): item is CardItem & { kind: 'menu'; children: CardItem[] } {
+  return item.kind === 'menu' && !!item.children?.length
 }
 
 function toggleDrawer(index: number) {
@@ -178,6 +190,7 @@ function toggleDrawer(index: number) {
   } else {
     activeIndex.value = index
   }
+  hoverGroupKey.value = null
 }
 
 function isSystemPlatform(node: MenuNode) {
@@ -193,7 +206,25 @@ function onCardHeaderClick(node: MenuNode, index: number) {
   toggleDrawer(index)
 }
 
+function isAssessmentMenu(node: MenuNode): boolean {
+  const p = node.path || ''
+  return p.includes('/application/assessment') || node.menuName === '考核评估系统'
+}
+
 function enterSubsystem(node: MenuNode) {
+  if (isAssessmentMenu(node)) {
+    const r = openAssessmentExternal()
+    if (r.ok) {
+      ElMessage.success('已在新窗口打开考核评估系统')
+      return
+    }
+    router.push('/exchange/application/assessment')
+    return
+  }
+  if (node.path && node.menuType !== 1) {
+    router.push(node.path)
+    return
+  }
   const target = firstNavPath(node)
   if (target) router.push(target)
 }
@@ -232,11 +263,21 @@ function openExternalLink(link: PortalLink) {
 }
 
 function onCardItemClick(item: CardItem) {
+  if (itemHasChildren(item)) {
+    // 分组：悬浮展开；点击也可切换（触控友好）
+    hoverGroupKey.value = hoverGroupKey.value === item.key ? null : item.key
+    return
+  }
   if (item.kind === 'menu') {
     enterSubsystem(item.node)
   } else {
     openExternalLink(item.link)
   }
+}
+
+function onFlyoutChildClick(item: CardItem) {
+  hoverGroupKey.value = null
+  onCardItemClick(item)
 }
 
 onMounted(async () => {
@@ -292,18 +333,40 @@ onMounted(async () => {
 
         <div v-if="!isSystemPlatform(node)" class="drawer-body">
           <div class="drawer-body-inner">
-            <button
+            <div
               v-for="item in getCardItems(node)"
               :key="item.key"
-              type="button"
-              class="sub-item"
-              @click="onCardItemClick(item)"
+              class="sub-item-wrap"
+              :class="{ 'has-flyout': itemHasChildren(item), 'is-flyout-open': hoverGroupKey === item.key }"
+              @mouseenter="itemHasChildren(item) && (hoverGroupKey = item.key)"
+              @mouseleave="hoverGroupKey = null"
             >
-              <span class="sub-dot" />
-              <span class="sub-name">{{ item.title }}</span>
-              <span v-if="item.kind === 'link'" class="sub-badge">外链</span>
-              <span class="sub-arrow">→</span>
-            </button>
+              <button
+                type="button"
+                class="sub-item"
+                :class="{ 'is-group': itemHasChildren(item) }"
+                @click="onCardItemClick(item)"
+              >
+                <span class="sub-dot" />
+                <span class="sub-name">{{ item.title }}</span>
+                <span v-if="item.kind === 'link'" class="sub-badge">外链</span>
+                <span v-if="itemHasChildren(item)" class="sub-chevron">›</span>
+                <span v-else class="sub-arrow">→</span>
+              </button>
+              <div v-if="itemHasChildren(item) && hoverGroupKey === item.key" class="sub-flyout">
+                <button
+                  v-for="child in item.children"
+                  :key="child.key"
+                  type="button"
+                  class="sub-flyout__item"
+                  @click.stop="onFlyoutChildClick(child)"
+                >
+                  <span class="sub-dot" />
+                  <span class="sub-name">{{ child.title }}</span>
+                  <span class="sub-arrow">→</span>
+                </button>
+              </div>
+            </div>
             <div v-if="!getCardItems(node).length" class="drawer-empty">
               暂无入口，请在「系统管理 → 门户外链管理」中配置
             </div>
@@ -355,6 +418,7 @@ onMounted(async () => {
   justify-content: center;
   min-height: 0;
   margin-top: 40px;
+  overflow: visible;
 }
 
 /* 原宽 289px，缩小 10% → 260px */
@@ -370,6 +434,8 @@ onMounted(async () => {
   border: 1px solid var(--card-border);
   box-sizing: border-box;
   transition: opacity 200ms ease;
+  position: relative;
+  z-index: 1;
 }
 .drawer-card:not(.is-open) {
   height: 202px;
@@ -379,6 +445,8 @@ onMounted(async () => {
   width: 260px;
   flex: 0 0 auto;
   height: auto;
+  overflow: visible;
+  z-index: 5;
 }
 .drawer-card.is-dim {
   opacity: 0.45;
@@ -465,6 +533,13 @@ onMounted(async () => {
   padding: 6px 0;
 }
 
+.sub-item-wrap {
+  position: relative;
+}
+.sub-item-wrap.has-flyout.is-flyout-open {
+  z-index: 20;
+}
+
 .sub-item {
   width: 100%;
   display: flex;
@@ -480,9 +555,13 @@ onMounted(async () => {
   text-align: left;
 }
 .sub-item:hover,
-.sub-item:focus-visible {
+.sub-item:focus-visible,
+.sub-item-wrap.is-flyout-open > .sub-item {
   background: #f0f4fa;
   border-left-color: var(--card-accent);
+}
+.sub-item.is-group {
+  cursor: default;
 }
 .sub-item:focus-visible {
   outline: 2px solid var(--card-accent);
@@ -503,7 +582,8 @@ onMounted(async () => {
   color: #3a4a5c;
   line-height: 1.4;
 }
-.sub-item:hover .sub-name {
+.sub-item:hover .sub-name,
+.sub-flyout__item:hover .sub-name {
   color: #1e3a5f;
 }
 
@@ -517,14 +597,58 @@ onMounted(async () => {
   background: color-mix(in srgb, var(--card-accent) 14%, white);
 }
 
-.sub-arrow {
+.sub-arrow,
+.sub-chevron {
   margin-left: auto;
   font-size: 18px;
   color: #bbc4ce;
   opacity: 0;
   transition: opacity 150ms ease;
+  flex-shrink: 0;
 }
-.sub-item:hover .sub-arrow {
+.sub-chevron {
+  opacity: 0.55;
+  font-size: 22px;
+  line-height: 1;
+}
+.sub-item:hover .sub-arrow,
+.sub-item-wrap.is-flyout-open .sub-chevron,
+.sub-flyout__item:hover .sub-arrow {
+  opacity: 1;
+}
+
+.sub-flyout {
+  position: absolute;
+  left: calc(100% - 4px);
+  top: 0;
+  min-width: 240px;
+  padding: 6px 0;
+  background: #fff;
+  border: 1px solid var(--card-border);
+  border-radius: 10px;
+  box-shadow: 0 10px 28px rgba(20, 40, 70, 0.16);
+  z-index: 30;
+}
+.sub-flyout__item {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px 18px;
+  cursor: pointer;
+  border: none;
+  border-left: 3px solid transparent;
+  background: transparent;
+  text-align: left;
+}
+.sub-flyout__item:hover {
+  background: #f0f4fa;
+  border-left-color: var(--card-accent);
+}
+.sub-flyout__item .sub-arrow {
+  opacity: 0;
+}
+.sub-flyout__item:hover .sub-arrow {
   opacity: 1;
 }
 

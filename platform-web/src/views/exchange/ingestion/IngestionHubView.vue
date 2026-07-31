@@ -10,7 +10,9 @@ import {
   filterCollectNavItems,
   filterIngestionModules,
   filterRegisterNavItems,
+  isCollectModuleAllowed,
   moduleTitle,
+  normalizeCollectModuleKey,
   REGISTER_MODULES,
   resolveIngestionNav,
   systemTitle,
@@ -43,6 +45,19 @@ const moduleComponents: Record<string, ReturnType<typeof defineAsyncComponent>> 
   ingest: defineAsyncComponent(() => import('./collect/CollectIngestView.vue')),
   pipeline: defineAsyncComponent(() => import('./collect/CollectPipelineView.vue')),
   catalog: defineAsyncComponent(() => import('./collect/CollectCatalogView.vue')),
+  // 与数据融合治理 · 数据质量管理系统同组件，双入口保留
+  'quality.rule-config': defineAsyncComponent(() => import('@/views/governance/quality/QualityRuleConfigView.vue')),
+  'quality.monitor': defineAsyncComponent(() => import('@/views/governance/quality/QualityMonitorView.vue')),
+  'quality.assess': defineAsyncComponent(() => import('@/views/governance/quality/QualityAssessView.vue')),
+  // 数据资产管理
+  'asset.classify': defineAsyncComponent(() => import('./collect/AssetClassifyView.vue')),
+  'asset.mask': defineAsyncComponent(() => import('./collect/AssetMaskView.vue')),
+  'asset.tag': defineAsyncComponent(() => import('./collect/AssetTagManageView.vue')),
+  'asset.search': defineAsyncComponent(() => import('./collect/AssetSearchView.vue')),
+  'asset.global': defineAsyncComponent(() => import('./collect/AssetGlobalView.vue')),
+  'asset.backup': defineAsyncComponent(() => import('./collect/AssetBackupView.vue')),
+  'asset.archive': defineAsyncComponent(() => import('./collect/AssetArchiveView.vue')),
+  'asset.destroy': defineAsyncComponent(() => import('./collect/AssetDestroyView.vue')),
 }
 
 const permOpts = computed(() => ({
@@ -64,7 +79,8 @@ const pageTitle = computed(() => `大数据归集平台 · ${systemTitle(system.
 
 function firstAllowedModule(sys: IngestionSystem): string {
   const list = sys === 'register' ? allowedRegister.value : allowedCollect.value
-  return list[0]?.key || DEFAULT_MODULE[sys]
+  const key = list[0]?.key || DEFAULT_MODULE[sys]
+  return sys === 'collect' ? normalizeCollectModuleKey(key) : key
 }
 
 function ensureAllowedModule() {
@@ -81,8 +97,12 @@ function ensureAllowedModule() {
     }
     return
   }
-  if (!allowed.some((m) => m.key === module.value)) {
-    module.value = allowed[0].key
+  const ok =
+    system.value === 'collect'
+      ? isCollectModuleAllowed(module.value, allowed)
+      : allowed.some((m) => m.key === module.value)
+  if (!ok) {
+    module.value = firstAllowedModule(system.value)
     pushQuery()
   }
 }
@@ -96,7 +116,7 @@ function syncFromRoute() {
   }
   const resolved = resolveIngestionNav(route.query as Record<string, unknown>)
   system.value = resolved.system
-  module.value = resolved.module
+  module.value = system.value === 'collect' ? normalizeCollectModuleKey(resolved.module) : resolved.module
   ensureAllowedModule()
 }
 
@@ -115,8 +135,13 @@ function onSystemChange(next: IngestionSystem) {
 
 function onModuleChange(key: string) {
   const allowed = system.value === 'register' ? allowedRegister.value : allowedCollect.value
-  if (!allowed.some((m) => m.key === key)) return
-  module.value = key
+  const next = system.value === 'collect' ? normalizeCollectModuleKey(key) : key
+  if (system.value === 'collect') {
+    if (!isCollectModuleAllowed(next, allowed)) return
+  } else if (!allowed.some((m) => m.key === next)) {
+    return
+  }
+  module.value = next
   pushQuery()
 }
 
@@ -145,7 +170,6 @@ onMounted(async () => {
         <el-radio-button v-if="canRegister" value="register">数据资产登记管理</el-radio-button>
         <el-radio-button v-if="canCollect" value="collect">数据资源采集汇聚</el-radio-button>
       </el-radio-group>
-      <el-button link type="primary" @click="router.push('/governance?tab=quality')">数据质量中心</el-button>
     </div>
     <HubSideLayout :model-value="module" :items="navItems" @update:model-value="onModuleChange">
       <el-empty v-if="!navItems.length" description="当前角色未授权任何归集子模块" />
@@ -189,7 +213,6 @@ onMounted(async () => {
 .ingestion-system-bar {
   display: flex;
   align-items: center;
-  justify-content: space-between;
   margin-bottom: 12px;
   flex-wrap: wrap;
   gap: 8px;

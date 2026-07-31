@@ -516,6 +516,12 @@ public class RegisterService {
         tag.setHitCount(0);
         tag.setStatus("ACTIVE");
         tag.setTagSource("CUSTOM");
+        tag.setDimType(str(body.get("dimType"), "BUSINESS"));
+        tag.setValueType(str(body.get("valueType"), "ENUM"));
+        tag.setSynonyms(str(body.get("synonyms"), ""));
+        tag.setMultiSelect(1);
+        tag.setRequiredFlag(0);
+        tag.setSortNo(0);
         tag.setLevel(null);
         tag.setParentId(null);
         tag.setStdCode(null);
@@ -797,6 +803,9 @@ public class RegisterService {
         b.setTagId(tagId);
         b.setAssetType(assetType);
         b.setAssetId(assetId);
+        b.setSource("MANUAL");
+        b.setConfirmStatus("CONFIRMED");
+        b.setTaggedBy(operator == null ? null : (operator.getDisplayName() != null ? operator.getDisplayName() : operator.getUsername()));
         b.setCreatedAt(LocalDateTime.now());
         tagBindingMapper.insert(b);
         return b.getId();

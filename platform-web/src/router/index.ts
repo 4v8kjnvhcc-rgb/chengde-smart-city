@@ -112,8 +112,34 @@ const router = createRouter({
           meta: { title: '应用平台', hubLayout: true, hideAppHeader: true, flushMain: true },
         },
         {
+          path: 'exchange/application/supply',
+          name: 'exchange-application-supply',
+          component: () => import('@/views/exchange/application/SupplyAppView.vue'),
+          meta: { title: '数据供需对接系统', hubLayout: true, hideAppHeader: true, flushMain: true },
+        },
+        {
+          path: 'exchange/application/assessment',
+          name: 'exchange-application-assessment',
+          component: () => import('@/views/exchange/application/AssessmentAppView.vue'),
+          meta: { title: '考核评估系统', hubLayout: true, hideAppHeader: true, flushMain: true },
+        },
+        {
+          path: 'exchange/application/stats-base',
+          name: 'exchange-application-stats-base',
+          component: () => import('@/views/exchange/application/StatsAppView.vue'),
+          props: { domain: 'base' },
+          meta: { title: '基础库统计分析应用', hubLayout: true, hideAppHeader: true, flushMain: true },
+        },
+        {
+          path: 'exchange/application/stats-domain',
+          name: 'exchange-application-stats-domain',
+          component: () => import('@/views/exchange/application/StatsAppView.vue'),
+          props: { domain: 'domain' },
+          meta: { title: '重点领域统计分析应用', hubLayout: true, hideAppHeader: true, flushMain: true },
+        },
+        {
           path: 'exchange/assessment',
-          redirect: { name: 'exchange-application', query: { system: 'assessment', module: 'execution' } },
+          redirect: { name: 'exchange-application-assessment' },
         },
         {
           path: 'exchange/application/supply-config',
@@ -136,14 +162,28 @@ const router = createRouter({
           redirect: { name: 'exchange-assessment-config' },
         },
         {
+          path: 'exchange/analysis-portal',
+          name: 'exchange-analysis-portal',
+          component: () => import('@/views/exchange/application/AnalysisPortalHubView.vue'),
+          meta: { title: '应用分析门户', hubLayout: true, hideAppHeader: true, flushMain: true },
+        },
+        {
+          path: 'exchange/analysis-portal/dept',
+          name: 'exchange-analysis-dept',
+          component: () => import('@/views/exchange/application/DeptPortalHubView.vue'),
+          meta: { title: '部门数据共享门户', hubLayout: true, hideAppHeader: true, flushMain: true },
+        },
+        {
+          path: 'exchange/analysis-portal/leader',
+          name: 'exchange-analysis-leader',
+          component: () => import('@/views/exchange/application/LeaderPortalHubView.vue'),
+          meta: { title: '领导决策门户', hubLayout: true, hideAppHeader: true, flushMain: true },
+        },
+        {
           path: 'exchange/portal',
           name: 'exchange-portal',
           component: () => import('@/views/exchange/PortalHubView.vue'),
           meta: { title: '应用分析门户', hubLayout: true },
-        },
-        {
-          path: 'exchange/analysis-portal',
-          redirect: { name: 'exchange-portal', query: { tab: 'home' } },
         },
         {
           path: 'integration/kettle',

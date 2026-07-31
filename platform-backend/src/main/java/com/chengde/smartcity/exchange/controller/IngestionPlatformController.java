@@ -308,6 +308,19 @@ public class IngestionPlatformController {
         return ApiResponse.ok(service.listPolicies(policyType));
     }
 
+    @PostMapping("/policies")
+    @PreAuthorize("hasRole('SYSTEM_ADMIN') or hasAuthority('hub:ingestion:collect:asset')")
+    public ApiResponse<Long> savePolicy(@RequestBody Map<String, Object> body) {
+        return ApiResponse.ok(service.savePolicy(body));
+    }
+
+    @DeleteMapping("/policies/{id}")
+    @PreAuthorize("hasRole('SYSTEM_ADMIN') or hasAuthority('hub:ingestion:collect:asset')")
+    public ApiResponse<Void> deletePolicy(@PathVariable Long id) {
+        service.deletePolicy(id);
+        return ApiResponse.ok(null);
+    }
+
     @GetMapping("/global-view")
     public ApiResponse<Map<String, Object>> globalView() {
         return ApiResponse.ok(service.globalAssetView());

@@ -22,7 +22,11 @@ export const PLATFORM_LABELS: Record<string, string> = {
 }
 
 export function visibleMenuChildren(node: MenuNode): MenuNode[] {
-  return (node.children || []).filter((c) => c.menuType !== 3 && !isD05MenuExcluded(c))
+  return (node.children || []).filter((c) => {
+    if (c.menuType === 3) return false
+    if (c.visible === 0) return false
+    return !isD05MenuExcluded(c)
+  })
 }
 
 /** D05 功能清单/模块导航不属交付界面，菜单侧一律隐藏 */
@@ -80,8 +84,15 @@ export function isHubLayoutRoute(path: string, meta?: { hubLayout?: boolean }): 
 const HUB_LAYOUT_PATHS = new Set([
   '/exchange/ingestion',
   '/exchange/application',
+  '/exchange/application/supply',
+  '/exchange/application/assessment',
+  '/exchange/application/stats-base',
+  '/exchange/application/stats-domain',
   '/exchange/assessment',
   '/exchange/portal',
+  '/exchange/analysis-portal',
+  '/exchange/analysis-portal/dept',
+  '/exchange/analysis-portal/leader',
   '/governance',
   '/unstructured',
   '/resource-center',

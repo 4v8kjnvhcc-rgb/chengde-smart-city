@@ -992,6 +992,46 @@ public class IngestionPlatformService {
         return policyMapper.selectList(q);
     }
 
+    @Transactional
+    public Long savePolicy(Map<String, Object> body) {
+        String code = str(body == null ? null : body.get("policyCode"), "");
+        String name = str(body == null ? null : body.get("policyName"), "");
+        String type = str(body == null ? null : body.get("policyType"), "MASK");
+        if (code.isBlank() || name.isBlank()) {
+            throw new BusinessException(400, "策略编码与名称不能为空");
+        }
+        Long id = body.get("id") == null || String.valueOf(body.get("id")).isBlank()
+                ? null : Long.valueOf(String.valueOf(body.get("id")));
+        IngGovernPolicy row = id == null ? new IngGovernPolicy() : policyMapper.selectById(id);
+        if (row == null) {
+            throw new BusinessException(404, "策略不存在");
+        }
+        if (id == null) {
+            Long exists = policyMapper.selectCount(new LambdaQueryWrapper<IngGovernPolicy>()
+                    .eq(IngGovernPolicy::getPolicyCode, code));
+            if (exists != null && exists > 0) {
+                throw new BusinessException(400, "策略编码已存在");
+            }
+            row.setPolicyCode(code);
+        }
+        row.setPolicyName(name);
+        row.setPolicyType(type);
+        row.setRuleExpr(str(body.get("ruleExpr"), row.getRuleExpr()));
+        row.setStatus(str(body.get("status"), row.getStatus() == null ? "ACTIVE" : row.getStatus()));
+        row.setLifecycleStage(str(body.get("lifecycleStage"), row.getLifecycleStage()));
+        if (id == null) {
+            policyMapper.insert(row);
+        } else {
+            policyMapper.updateById(row);
+        }
+        return row.getId();
+    }
+
+    @Transactional
+    public void deletePolicy(Long id) {
+        policyMapper.deleteById(id);
+    }
+
     public Map<String, Object> globalAssetView() {
         long assets = assetMapper.selectCount(null);
         long channels = channelMapper.selectCount(null);

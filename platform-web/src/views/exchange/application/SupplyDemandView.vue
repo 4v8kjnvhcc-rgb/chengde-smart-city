@@ -192,11 +192,10 @@ function setSection(key: string) {
   router.replace({
     query: {
       ...route.query,
-      system: 'portal',
-      module: 'portal-home',
-      section: 'subscribe',
+      section: key,
       sdSection: key,
     },
+    path: '/exchange/application/supply',
   })
   loadSection()
 }

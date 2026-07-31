@@ -1,39 +1,64 @@
 import type { HubNavItem } from '@/components/common/HubSideLayout.vue'
 
-/** 应用平台顶栏：数据共享门户 / 统计分析 / 决策驾驶舱（规格书 V2.0） */
-export type ApplicationSystem = 'portal' | 'stats' | 'cockpit'
+/** 应用平台应用入口（不再承载门户 Tab） */
+export type ApplicationApp = 'home' | 'supply' | 'assessment' | 'stats-base' | 'stats-domain'
 
-/** @deprecated 旧四分系统，resolve 时映射到新 system */
-export type LegacyApplicationSystem = 'supply' | 'assessment' | 'base-stats' | 'domain-stats' | ApplicationSystem
+/** @deprecated 旧三壳 / 四分系统，resolve 时映射到新 app 或分析门户路由 */
+export type LegacyApplicationSystem =
+  | 'portal'
+  | 'stats'
+  | 'cockpit'
+  | 'supply'
+  | 'assessment'
+  | 'base-stats'
+  | 'domain-stats'
 
 export interface ApplicationModuleMeta {
   key: string
   mCode: string
   label: string
   subLabel?: string
-  system: ApplicationSystem | LegacyApplicationSystem
+  system: ApplicationApp | LegacyApplicationSystem
   permission?: string
 }
 
-export const APPLICATION_SYSTEMS: { key: ApplicationSystem; label: string; permission?: string }[] = [
-  { key: 'portal', label: '数据共享门户' },
+/** 应用平台顶栏/落地页四个入口 */
+export const APPLICATION_APPS: {
+  key: Exclude<ApplicationApp, 'home'>
+  label: string
+  external?: boolean
+}[] = [
+  { key: 'supply', label: '数据供需对接系统' },
+  { key: 'assessment', label: '考核评估系统', external: true },
+  { key: 'stats-base', label: '基础库统计分析应用' },
+  { key: 'stats-domain', label: '重点领域统计分析应用' },
+]
+
+/** 部门数据共享门户 Tab（不含考核/供需） */
+export const DEPT_PORTAL_TABS = [
+  { key: 'home', label: '首页' },
+  { key: 'catalog', label: '共享资源' },
+  { key: 'subscribe', label: '资源订阅申请' },
+  { key: 'myspace', label: '我的空间' },
+] as const
+
+export const DEPT_PORTAL_BRAND = '部门数据共享门户'
+export const LEADER_PORTAL_BRAND = '领导决策门户'
+
+/** @deprecated 兼容旧引用；部门门户已去掉 assessment */
+export const PORTAL_TABS = DEPT_PORTAL_TABS
+
+/** @deprecated 兼容旧三壳文案 */
+export const APPLICATION_SYSTEMS: { key: string; label: string; permission?: string }[] = [
+  { key: 'portal', label: '部门数据共享门户' },
   { key: 'stats', label: '统计分析', permission: 'analytics:stats:view' },
   { key: 'cockpit', label: '决策驾驶舱', permission: 'analytics:cockpit:view' },
 ]
 
-export const PORTAL_TABS = [
-  { key: 'home', label: '首页' },
-  { key: 'catalog', label: '共享资源' },
-  { key: 'subscribe', label: '资源订阅申请' },
-  { key: 'assessment', label: '考核评估', permission: 'portal:assessment:view' },
-  { key: 'myspace', label: '我的空间' },
-] as const
-
 export const SUPPLY_MODULES: ApplicationModuleMeta[] = [
-  { key: 'supply-flow', mCode: 'M020', label: '供需对接', subLabel: '需求·分析·确认·供给·清单', system: 'portal' },
+  { key: 'supply-flow', mCode: 'M020', label: '供需对接', subLabel: '需求·分析·确认·供给·清单', system: 'supply' },
 ]
 
-/** 供需对接页内并列 Tab（门户订阅 Tab 兜底可深链） */
 export const SUPPLY_MAIN_SECTIONS = [
   { key: 'demand', label: '数据需求管理', mCode: 'M020' },
   { key: 'analysis', label: '数据需求分析', mCode: 'M021' },
@@ -58,14 +83,14 @@ export const MANIFEST_SECTIONS = [
 ] as const
 
 export const ASSESSMENT_MODULES: ApplicationModuleMeta[] = [
-  { key: 'execution', mCode: 'M030', label: '考核结果', subLabel: '分数·应报数据', system: 'portal' },
+  { key: 'execution', mCode: 'M030', label: '考核结果', subLabel: '分数·应报数据', system: 'assessment' },
 ]
 
 export const ASSESSMENT_CONFIG_MODULES: ApplicationModuleMeta[] = [
-  { key: 'data-source', mCode: 'M027', label: '评价数据来源', system: 'assessment' as LegacyApplicationSystem },
-  { key: 'period', mCode: 'M028', label: '评价周期管理', system: 'assessment' as LegacyApplicationSystem },
-  { key: 'indicator', mCode: 'M029', label: '评价指标管理', system: 'assessment' as LegacyApplicationSystem },
-  { key: 'execution', mCode: 'M030', label: '评价执行与发布', system: 'assessment' as LegacyApplicationSystem },
+  { key: 'data-source', mCode: 'M027', label: '评价数据来源', system: 'assessment' },
+  { key: 'period', mCode: 'M028', label: '评价周期管理', system: 'assessment' },
+  { key: 'indicator', mCode: 'M029', label: '评价指标管理', system: 'assessment' },
+  { key: 'execution', mCode: 'M030', label: '评价执行与发布', system: 'assessment' },
 ]
 
 export const BASE_STAT_TOPICS = [
@@ -85,12 +110,6 @@ export const DOMAIN_STAT_TOPICS = [
   { key: 'permit', label: '行政许可与处罚统计分析', rowIndex: 62, metricCodes: ['PERMIT_DOMAIN'] },
 ] as const
 
-export const DEFAULT_MODULE: Record<ApplicationSystem, string> = {
-  portal: 'portal-home',
-  stats: 'stats',
-  cockpit: 'cockpit',
-}
-
 export type FulfillPath = 'AUTHORIZE_EXISTING' | 'NEED_COLLECT'
 
 export const FULFILL_PATH_OPTIONS: { value: FulfillPath; label: string }[] = [
@@ -98,22 +117,37 @@ export const FULFILL_PATH_OPTIONS: { value: FulfillPath; label: string }[] = [
   { value: 'NEED_COLLECT', label: '未在中台 · 需归集补数' },
 ]
 
-const LEGACY_TAB_MAP: Record<string, { system: ApplicationSystem; module: string; section?: string }> = {
-  demand: { system: 'portal', module: 'portal-home', section: 'subscribe' },
-  analysis: { system: 'portal', module: 'portal-home', section: 'subscribe' },
-  confirm: { system: 'portal', module: 'portal-home', section: 'subscribe' },
-  supply: { system: 'portal', module: 'portal-home', section: 'subscribe' },
-  catalog: { system: 'portal', module: 'portal-home', section: 'catalog' },
-  search: { system: 'portal', module: 'portal-home', section: 'catalog' },
-  home: { system: 'portal', module: 'portal-home', section: 'home' },
-  subscribe: { system: 'portal', module: 'portal-home', section: 'subscribe' },
-  objection: { system: 'portal', module: 'portal-home', section: 'myspace' },
-  manifest: { system: 'portal', module: 'portal-home', section: 'myspace' },
-  'manifest-center': { system: 'portal', module: 'portal-home', section: 'myspace' },
-  situation: { system: 'cockpit', module: 'cockpit' },
-  stats: { system: 'stats', module: 'stats' },
-  'stats-base': { system: 'stats', module: 'stats', section: 'base' },
-  'stats-domain': { system: 'stats', module: 'stats', section: 'domain' },
+/** 考核评估外系统 URL（未配置时前端提示） */
+export function assessmentExternalUrl(): string {
+  const raw = String(import.meta.env.VITE_ASSESSMENT_EXTERNAL_URL || '').trim()
+  return raw
+}
+
+export function openAssessmentExternal(): { ok: boolean; url: string } {
+  const url = assessmentExternalUrl()
+  if (!url) return { ok: false, url: '' }
+  window.open(url, '_blank', 'noopener,noreferrer')
+  return { ok: true, url }
+}
+
+const LEGACY_TAB_MAP: Record<string, { app?: ApplicationApp; portal?: 'dept' | 'leader'; section?: string }> = {
+  demand: { app: 'supply', section: 'demand' },
+  analysis: { app: 'supply', section: 'analysis' },
+  confirm: { app: 'supply', section: 'confirm' },
+  supply: { app: 'supply', section: 'supply' },
+  catalog: { portal: 'dept', section: 'catalog' },
+  search: { portal: 'dept', section: 'catalog' },
+  home: { portal: 'dept', section: 'home' },
+  subscribe: { portal: 'dept', section: 'subscribe' },
+  myspace: { portal: 'dept', section: 'myspace' },
+  assessment: { app: 'assessment' },
+  objection: { portal: 'dept', section: 'myspace' },
+  manifest: { portal: 'dept', section: 'myspace' },
+  'manifest-center': { portal: 'dept', section: 'myspace' },
+  situation: { portal: 'leader' },
+  stats: { app: 'stats-base', section: 'base' },
+  'stats-base': { app: 'stats-base', section: 'base' },
+  'stats-domain': { app: 'stats-domain', section: 'domain' },
 }
 
 for (let i = 20; i <= 26; i++) {
@@ -122,96 +156,103 @@ for (let i = 20; i <= 26; i++) {
   if (legacy) LEGACY_TAB_MAP[`m0${i}`] = legacy
 }
 for (let i = 27; i <= 30; i++) {
-  LEGACY_TAB_MAP[`m0${i}`] = { system: 'portal', module: 'portal-home', section: 'assessment' }
+  LEGACY_TAB_MAP[`m0${i}`] = { app: 'assessment' }
 }
-LEGACY_TAB_MAP.m031 = { system: 'portal', module: 'portal-home', section: 'catalog' }
-LEGACY_TAB_MAP.m032 = { system: 'portal', module: 'portal-home', section: 'catalog' }
-LEGACY_TAB_MAP.m033 = { system: 'portal', module: 'portal-home', section: 'catalog' }
-LEGACY_TAB_MAP.m034 = { system: 'portal', module: 'portal-home', section: 'catalog' }
-LEGACY_TAB_MAP.m035 = { system: 'portal', module: 'portal-home', section: 'subscribe' }
-LEGACY_TAB_MAP.m036 = { system: 'cockpit', module: 'cockpit' }
-LEGACY_TAB_MAP.m037 = { system: 'stats', module: 'stats', section: 'base' }
-LEGACY_TAB_MAP.m038 = { system: 'stats', module: 'stats', section: 'domain' }
+LEGACY_TAB_MAP.m031 = { portal: 'dept', section: 'catalog' }
+LEGACY_TAB_MAP.m032 = { portal: 'dept', section: 'home' }
+LEGACY_TAB_MAP.m033 = { portal: 'dept', section: 'catalog' }
+LEGACY_TAB_MAP.m034 = { portal: 'dept', section: 'catalog' }
+LEGACY_TAB_MAP.m035 = { portal: 'dept', section: 'subscribe' }
+LEGACY_TAB_MAP.m036 = { portal: 'leader' }
+LEGACY_TAB_MAP.m037 = { app: 'stats-base', section: 'base' }
+LEGACY_TAB_MAP.m038 = { app: 'stats-domain', section: 'domain' }
 
 export function isStatsSystem(system: string): boolean {
-  return system === 'stats' || system === 'base-stats' || system === 'domain-stats'
+  return system === 'stats' || system === 'base-stats' || system === 'domain-stats' || system === 'stats-base' || system === 'stats-domain'
 }
 
 export function systemTitle(system: string): string {
-  if (system === 'base-stats' || system === 'domain-stats') return '统计分析'
-  return APPLICATION_SYSTEMS.find((s) => s.key === system)?.label || system
+  if (system === 'stats-base' || system === 'base-stats') return '基础库统计分析应用'
+  if (system === 'stats-domain' || system === 'domain-stats') return '重点领域统计分析应用'
+  if (system === 'supply') return '数据供需对接系统'
+  if (system === 'assessment') return '考核评估系统'
+  return APPLICATION_APPS.find((s) => s.key === system)?.label || system
 }
 
 export function moduleTitle(_module: string, system: string): string {
-  if (isStatsSystem(system)) return '统计分析'
-  if (system === 'cockpit') return '决策驾驶舱'
-  return '数据共享门户'
+  return systemTitle(system)
 }
 
-export function navItems(_system: ApplicationSystem): HubNavItem[] {
+export function navItems(_system: string): HubNavItem[] {
   return []
 }
 
-export function resolveApplicationNav(query: Record<string, unknown>): {
-  system: ApplicationSystem
-  module: string
+export function resolveApplicationApp(query: Record<string, unknown>): {
+  app: ApplicationApp
   section: string
+  /** 若应跳转到分析门户而非应用平台 */
+  redirectPortal?: 'dept' | 'leader'
 } {
-  let rawSystem = String(query.system || '').toLowerCase()
-  let module = String(query.module || '')
+  let appRaw = String(query.app || query.system || '').toLowerCase()
   let section = String(query.section || '')
 
   const legacyTab = String(query.tab || '').toLowerCase()
   if (legacyTab && LEGACY_TAB_MAP[legacyTab]) {
     const leg = LEGACY_TAB_MAP[legacyTab]
-    rawSystem = leg.system
-    module = leg.module
-    if (leg.section) section = leg.section
-  }
-
-  // 旧四分系统 → 新三壳（供需子页落到门户「订阅」兜底区，子 Tab 用 query.sdSection）
-  if (rawSystem === 'supply') {
-    rawSystem = 'portal'
-    module = 'portal-home'
-    section = 'subscribe'
-  }
-  if (rawSystem === 'assessment') {
-    rawSystem = 'portal'
-    module = 'portal-home'
-    section = ['home', 'catalog', 'subscribe', 'assessment', 'myspace'].includes(section) ? section : 'assessment'
-  }
-  if (rawSystem === 'base-stats') {
-    rawSystem = 'stats'
-    module = 'stats'
-    section = section || 'base'
-  }
-  if (rawSystem === 'domain-stats') {
-    rawSystem = 'stats'
-    module = 'stats'
-    section = section || 'domain'
-  }
-
-  let system = rawSystem as ApplicationSystem
-  const valid: ApplicationSystem[] = ['portal', 'stats', 'cockpit']
-  if (!valid.includes(system)) system = 'portal'
-  if (!module) module = DEFAULT_MODULE[system]
-
-  if (system === 'portal') {
-    module = 'portal-home'
-    if (!section || !['home', 'catalog', 'subscribe', 'assessment', 'myspace'].includes(section)) {
-      section = 'home'
+    if (leg.portal) return { app: 'home', section: leg.section || 'home', redirectPortal: leg.portal }
+    if (leg.app) {
+      appRaw = leg.app
+      if (leg.section) section = leg.section
     }
   }
-  if (system === 'stats') {
-    module = 'stats'
-    if (!section || !['base', 'domain', ...BASE_STAT_TOPICS.map((t) => t.key), ...DOMAIN_STAT_TOPICS.map((t) => t.key)].includes(section)) {
-      section = 'base'
+
+  if (appRaw === 'portal' || appRaw === 'cockpit') {
+    return {
+      app: 'home',
+      section: section || 'home',
+      redirectPortal: appRaw === 'cockpit' ? 'leader' : 'dept',
     }
   }
-  if (system === 'cockpit') {
-    module = 'cockpit'
-    section = section || 'situation'
+  if (appRaw === 'stats' || appRaw === 'base-stats') appRaw = 'stats-base'
+  if (appRaw === 'domain-stats') appRaw = 'stats-domain'
+  if (appRaw === 'assessment' || section === 'assessment') {
+    return { app: 'assessment', section: '' }
   }
 
-  return { system, module, section }
+  const valid: ApplicationApp[] = ['home', 'supply', 'assessment', 'stats-base', 'stats-domain']
+  let app = (valid.includes(appRaw as ApplicationApp) ? appRaw : 'home') as ApplicationApp
+
+  if (app === 'stats-base') {
+    if (!section || section === 'domain' || DOMAIN_STAT_TOPICS.some((t) => t.key === section)) {
+      section = BASE_STAT_TOPICS.some((t) => t.key === section) ? section : 'base'
+    }
+  }
+  if (app === 'stats-domain') {
+    if (!section || section === 'base' || BASE_STAT_TOPICS.some((t) => t.key === section)) {
+      section = DOMAIN_STAT_TOPICS.some((t) => t.key === section) ? section : 'domain'
+    }
+  }
+  if (app === 'supply' && !section) section = 'demand'
+
+  return { app, section }
+}
+
+/** @deprecated 兼容 StatsAnalysisView 等旧调用 */
+export function resolveApplicationNav(query: Record<string, unknown>): {
+  system: string
+  module: string
+  section: string
+} {
+  const r = resolveApplicationApp(query)
+  if (r.redirectPortal === 'leader') {
+    return { system: 'cockpit', module: 'cockpit', section: 'situation' }
+  }
+  if (r.redirectPortal === 'dept') {
+    return { system: 'portal', module: 'portal-home', section: r.section || 'home' }
+  }
+  if (r.app === 'stats-base') return { system: 'stats', module: 'stats', section: r.section || 'base' }
+  if (r.app === 'stats-domain') return { system: 'stats', module: 'stats', section: r.section || 'domain' }
+  if (r.app === 'supply') return { system: 'supply', module: 'supply-flow', section: r.section || 'demand' }
+  if (r.app === 'assessment') return { system: 'assessment', module: 'execution', section: '' }
+  return { system: 'portal', module: 'portal-home', section: 'home' }
 }

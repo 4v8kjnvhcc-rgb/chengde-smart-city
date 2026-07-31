@@ -7,15 +7,21 @@ import PageCard from '@/components/common/PageCard.vue'
 import HubSideLayout, { type HubNavItem } from '@/components/common/HubSideLayout.vue'
 import { statusLabel, statusTagType } from '@/utils/status-label'
 
-/** 侧栏对齐 V3：数据资产区为单入口；其余为资源中心管理六模块 */
+/** 侧栏对齐 V3：数据资产区单入口；资源中心管理为可展开父级，下挂六模块 */
 const navItems: HubNavItem[] = [
   { key: 'asset', label: '数据资产区' },
-  { key: 'partition', label: '分区设计管理' },
-  { key: 'storage', label: '数据库存储管理' },
-  { key: 'catalog', label: '资产目录管理' },
-  { key: 'search', label: '数据库检索查询' },
-  { key: 'stats', label: '数据库统计分析' },
-  { key: 'monitor', label: '资源监控管理' },
+  {
+    key: 'mgmt',
+    label: '资源中心管理',
+    children: [
+      { key: 'partition', label: '分区设计管理' },
+      { key: 'storage', label: '数据库存储管理' },
+      { key: 'catalog', label: '资产目录管理' },
+      { key: 'search', label: '数据库检索查询' },
+      { key: 'stats', label: '数据库统计分析' },
+      { key: 'monitor', label: '资源监控管理' },
+    ],
+  },
 ]
 
 interface Library {
@@ -139,7 +145,7 @@ const searchTabMap: Record<string, string> = {
 const DEFAULT_NAV = 'asset'
 const activeNav = ref(DEFAULT_NAV)
 const assetTab = ref('libraries')
-const storageTab = ref('backup')
+const storageTab = ref('policy')
 const searchTab = ref('meta')
 let applyingRoute = false
 
@@ -237,6 +243,12 @@ function resolveFromRoute() {
   if (at && assetTabMap[at]) assetTab.value = assetTabMap[at]
   else if (q.startsWith('asset.') && assetTabMap[q]) assetTab.value = assetTabMap[q]
   const st = String(route.query.storageTab || '').toLowerCase()
+  if (st === 'backup' || st === 'archive' || st === 'destroy') {
+    const mod = st === 'backup' ? 'asset.backup' : st === 'archive' ? 'asset.archive' : 'asset.destroy'
+    router.replace({ path: '/exchange/ingestion', query: { system: 'collect', module: mod } })
+    applyingRoute = false
+    return
+  }
   if (st && storageTabMap[st]) storageTab.value = storageTabMap[st]
   const qt = String(route.query.searchTab || '').toLowerCase()
   if (qt && searchTabMap[qt]) searchTab.value = searchTabMap[qt]
@@ -534,10 +546,6 @@ function downloadQueryCsv() {
 
 function onStorageTabChange() {
   if (!applyingRoute) syncQuery()
-  if (storageTab.value === 'backup' || storageTab.value === 'archive' || storageTab.value === 'destroy') {
-    policyForm.actionType = storageTab.value === 'backup' ? 'BACKUP'
-      : storageTab.value === 'archive' ? 'ARCHIVE' : 'DESTROY'
-  }
 }
 
 watch(activeNav, () => {
@@ -817,132 +825,16 @@ onMounted(() => {
         </el-alert>
       </PageCard>
 
-      <!-- 数据库存储管理：五子能力 Tab -->
+      <!-- 数据库存储管理：备份/归档/销毁已迁至归集「数据资产管理」；此处保留执行策略管理与监控 -->
       <PageCard v-else-if="activeNav === 'storage'" title="数据库存储管理">
+        <el-alert
+          type="info"
+          :closable="false"
+          show-icon
+          style="margin-bottom:12px"
+          title="数据备份 / 归档 / 销毁已迁移至「大数据归集平台 · 数据资源采集汇聚 · 数据资产管理」。本页保留执行策略管理与监控。"
+        />
         <el-tabs v-model="storageTab" @tab-change="onStorageTabChange">
-          <el-tab-pane label="数据备份" name="backup">
-            <el-form inline class="portal-inline-form portal-inline-form--block">
-              <el-form-item label="策略名" class="portal-field-md">
-                <el-input v-model="policyForm.policyName" placeholder="备份策略名称" />
-              </el-form-item>
-              <el-form-item label="纳管表" class="portal-field-lg">
-                <el-select v-model="policyForm.managedTableId" placeholder="选择备份目标表" filterable>
-                  <el-option
-                    v-for="t in managedTables"
-                    :key="t.id"
-                    :label="t.physicalTable"
-                    :value="t.id"
-                  />
-                </el-select>
-              </el-form-item>
-              <el-form-item label="保留天" class="portal-field-xs">
-                <el-input-number v-model="policyForm.retentionDays" :min="1" :max="3650" controls-position="right" />
-              </el-form-item>
-              <el-form-item class="portal-form-actions">
-                <el-button type="primary" @click="policyForm.actionType = 'BACKUP'; createPolicy()">创建备份策略</el-button>
-              </el-form-item>
-            </el-form>
-            <el-divider content-position="left">备份策略</el-divider>
-            <el-table :data="filteredPolicies" stripe size="small">
-              <el-table-column prop="policyName" label="策略" />
-              <el-table-column prop="retentionDays" label="保留天" width="80" />
-              <el-table-column label="操作" width="160">
-                <template #default="{ row }">
-                  <el-button link type="primary" @click="runPolicy(row.id)">执行备份</el-button>
-                  <el-button
-                    v-if="row.managedTableId"
-                    link
-                    type="primary"
-                    @click="runBackup(row.managedTableId)"
-                  >立即备份</el-button>
-                </template>
-              </el-table-column>
-            </el-table>
-            <el-divider content-position="left">备份产物</el-divider>
-            <el-table :data="artifacts" stripe size="small">
-              <el-table-column prop="physicalTable" label="表" width="180" />
-              <el-table-column prop="fileName" label="文件" min-width="160" show-overflow-tooltip />
-              <el-table-column prop="rowCount" label="行数" width="80" />
-              <el-table-column label="状态" width="90">
-                <template #default="{ row }">
-                  <el-tag :type="statusTagType(row.status)" size="small">{{ statusLabel(row.status) }}</el-tag>
-                </template>
-              </el-table-column>
-              <el-table-column label="操作" width="80">
-                <template #default="{ row }">
-                  <el-button link type="primary" @click="verifyArtifact(row.id)">校验</el-button>
-                </template>
-              </el-table-column>
-            </el-table>
-          </el-tab-pane>
-
-          <el-tab-pane label="数据归档" name="archive">
-            <el-alert
-              type="info"
-              :closable="false"
-              title="归档执行仅记台账，不移动物理数据；状态为「台账」而非假成功。"
-              style="margin-bottom:12px"
-            />
-            <el-form inline class="portal-inline-form portal-inline-form--block">
-              <el-form-item label="策略名" class="portal-field-md">
-                <el-input v-model="policyForm.policyName" placeholder="归档策略名称" />
-              </el-form-item>
-              <el-form-item label="纳管表" class="portal-field-lg">
-                <el-select v-model="policyForm.managedTableId" filterable>
-                  <el-option v-for="t in managedTables" :key="t.id" :label="t.physicalTable" :value="t.id" />
-                </el-select>
-              </el-form-item>
-              <el-form-item label="保留天" class="portal-field-xs">
-                <el-input-number v-model="policyForm.retentionDays" :min="1" :max="3650" controls-position="right" />
-              </el-form-item>
-              <el-form-item class="portal-form-actions">
-                <el-button type="primary" @click="policyForm.actionType = 'ARCHIVE'; createPolicy()">创建归档策略</el-button>
-              </el-form-item>
-            </el-form>
-            <el-table :data="filteredPolicies" stripe size="small">
-              <el-table-column prop="policyName" label="策略" />
-              <el-table-column prop="retentionDays" label="保留天" width="80" />
-              <el-table-column label="操作" width="100">
-                <template #default="{ row }">
-                  <el-button link type="primary" @click="runPolicy(row.id)">执行归档</el-button>
-                </template>
-              </el-table-column>
-            </el-table>
-          </el-tab-pane>
-
-          <el-tab-pane label="数据销毁" name="destroy">
-            <el-alert
-              type="warning"
-              :closable="false"
-              title="销毁策略可配置，但禁止自动物理删除；执行将被拒绝。"
-              style="margin-bottom:12px"
-            />
-            <el-form inline class="portal-inline-form portal-inline-form--block">
-              <el-form-item label="策略名" class="portal-field-md">
-                <el-input v-model="policyForm.policyName" placeholder="销毁策略名称" />
-              </el-form-item>
-              <el-form-item label="纳管表" class="portal-field-lg">
-                <el-select v-model="policyForm.managedTableId" filterable>
-                  <el-option v-for="t in managedTables" :key="t.id" :label="t.physicalTable" :value="t.id" />
-                </el-select>
-              </el-form-item>
-              <el-form-item class="portal-form-actions">
-                <el-button type="danger" @click="policyForm.actionType = 'DESTROY'; createPolicy()">创建销毁策略</el-button>
-              </el-form-item>
-            </el-form>
-            <el-table :data="filteredPolicies" stripe size="small">
-              <el-table-column prop="policyName" label="策略" />
-              <el-table-column label="动作" width="100">
-                <template #default="{ row }">{{ statusLabel(row.actionType) }}</template>
-              </el-table-column>
-              <el-table-column label="操作" width="100">
-                <template #default="{ row }">
-                  <el-button link type="danger" @click="runPolicy(row.id)">尝试执行</el-button>
-                </template>
-              </el-table-column>
-            </el-table>
-          </el-tab-pane>
-
           <el-tab-pane label="执行策略管理" name="policy">
             <el-form inline class="portal-inline-form portal-inline-form--block">
               <el-form-item label="策略名" class="portal-field-md">
