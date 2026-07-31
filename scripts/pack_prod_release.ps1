@@ -83,7 +83,25 @@ try {
   & git @archiveArgs
   if ($LASTEXITCODE -ne 0) { throw "git archive 失败（请确认分支已包含 compose/ 与 prod_up_*）" }
 
-  # 不解包整包：直接追加本机 env，避免 Windows tar + 中文路径问题
+  # 解包 → 把 .sh 转成 Unix 换行（LF），避免 Linux 上 env: bash\r 报错
+  Write-Host "==> 规范化 shell 脚本换行（LF）"
+  Push-Location $stage
+  try {
+    tar -xf src.tar
+    if ($LASTEXITCODE -ne 0) { throw "tar 解包失败" }
+    $utf8NoBom = New-Object System.Text.UTF8Encoding $false
+    Get-ChildItem -Path (Join-Path $stage "chengde-smart-city\scripts") -Filter "*.sh" -File -ErrorAction SilentlyContinue | ForEach-Object {
+      $text = [System.IO.File]::ReadAllText($_.FullName) -replace "`r`n", "`n" -replace "`r", "`n"
+      [System.IO.File]::WriteAllText($_.FullName, $text, $utf8NoBom)
+    }
+    Remove-Item $tarPlain -Force
+    tar -cf src.tar chengde-smart-city
+    if ($LASTEXITCODE -ne 0) { throw "tar 重打包失败" }
+  } finally {
+    Pop-Location
+  }
+
+  # 打入本机 env
   Write-Host "==> 打入本机 compose/prod-*.env"
   $composeDir = Join-Path $stage "chengde-smart-city\compose"
   New-Item -ItemType Directory -Force -Path $composeDir | Out-Null
