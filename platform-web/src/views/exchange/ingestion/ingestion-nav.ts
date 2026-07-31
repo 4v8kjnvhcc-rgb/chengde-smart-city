@@ -34,7 +34,7 @@ export const REGISTER_MODULES: IngestionModuleMeta[] = [
 
 export const COLLECT_MODULES: IngestionModuleMeta[] = [
   { key: 'ingest', mCode: 'M054', label: '数据汇聚接入', subLabel: '结构化·文件·其他接入', system: 'collect', permission: 'hub:ingestion:collect:ingest' },
-  { key: 'pipeline', mCode: 'M061', label: '规范设计', subLabel: '探查·定义·任务·对账', system: 'collect', permission: 'hub:ingestion:collect:pipeline' },
+  { key: 'pipeline', mCode: 'M061', label: '规范设计', subLabel: '分类·探查·定义·对账', system: 'collect', permission: 'hub:ingestion:collect:pipeline' },
   { key: 'catalog', mCode: 'M065', label: '指标与目录体系构建', subLabel: '关联登记·编目·审批', system: 'collect', permission: 'hub:ingestion:collect:catalog' },
 ]
 

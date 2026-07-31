@@ -83,13 +83,12 @@ onMounted(reload)
       </template>
 
       <template v-if="module === 'm063'">
-        <el-button @click="runPipeline('READ')">生成账单</el-button>
+        <el-button type="primary" @click="runPipeline('READ')">运行数据读取</el-button>
         <el-table :data="jobs.filter(j => j.jobType === 'READ')" stripe style="margin-top:12px">
           <el-table-column prop="jobName" label="读取任务" />
           <el-table-column label="状态" width="90">
-          <template #default="{ row }">{{ $statusLabel(row.status) }}</template>
-        </el-table-column>
-          <el-table-column prop="billAmount" label="账单(元)" width="100" />
+            <template #default="{ row }">{{ $statusLabel(row.status) }}</template>
+          </el-table-column>
         </el-table>
       </template>
 

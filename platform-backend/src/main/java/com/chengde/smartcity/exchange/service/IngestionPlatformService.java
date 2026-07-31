@@ -41,8 +41,6 @@ import com.chengde.smartcity.security.UserPrincipal;
 import com.chengde.smartcity.system.entity.SysOrg;
 import com.chengde.smartcity.system.mapper.SysOrgMapper;
 import com.chengde.smartcity.system.service.AccessControlService;
-import java.math.BigDecimal;
-import java.math.RoundingMode;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -933,10 +931,8 @@ public class IngestionPlatformService {
             job.setRefChannelId(Long.valueOf(String.valueOf(chId)));
         }
         job.setStatus("SUCCESS");
-        job.setResultJson(buildPipelineResult(jobType));
-        if ("READ".equals(jobType)) {
-            job.setBillAmount(BigDecimal.valueOf(128.50).setScale(2, RoundingMode.HALF_UP));
-        }
+        job.setResultJson(buildPipelineResult(jobType, body));
+        // 规范设计不再生成「账单(元)」演示金额
         pipelineMapper.insert(job);
         auditService.log(operator.getUserId(), operator.getUsername(), operator.getOrgId(),
                 "ING_PIPELINE_RUN", "ing_pipeline_job", String.valueOf(job.getId()), jobType);
@@ -1055,13 +1051,19 @@ public class IngestionPlatformService {
         return Map.of("nodes", nodes, "edges", edges);
     }
 
-    private String buildPipelineResult(String jobType) {
+    private String buildPipelineResult(String jobType, Map<String, Object> body) {
+        String category = str(body == null ? null : body.get("dataCategory"), "");
+        String categoryLabel = str(body == null ? null : body.get("dataCategoryLabel"), "");
+        String categoryJson = category.isBlank()
+                ? ""
+                : ",\"dataCategory\":\"" + category.replace("\"", "") + "\",\"dataCategoryLabel\":\""
+                + categoryLabel.replace("\"", "") + "\"";
         return switch (jobType) {
-            case "PROBE" -> "{\"nullRate\":0.02,\"domain\":\"ok\",\"entity\":\"person\"}";
-            case "DEFINE" -> "{\"metadata\":8,\"lineage\":\"linked\",\"quality\":\"L2\"}";
-            case "READ" -> "{\"channels\":3,\"bytes\":1048576,\"bill\":\"generated\"}";
-            case "RECONCILE" -> "{\"matched\":98.6,\"diff\":12,\"alert\":false}";
-            default -> "{}";
+            case "PROBE" -> "{\"nullRate\":0.02,\"domain\":\"ok\",\"entity\":\"person\"" + categoryJson + "}";
+            case "DEFINE" -> "{\"metadata\":8,\"lineage\":\"linked\",\"quality\":\"L2\"" + categoryJson + "}";
+            case "READ" -> "{\"channels\":3,\"bytes\":1048576" + categoryJson + "}";
+            case "RECONCILE" -> "{\"matched\":98.6,\"diff\":12,\"alert\":false" + categoryJson + "}";
+            default -> category.isBlank() ? "{}" : "{\"dataCategory\":\"" + category.replace("\"", "") + "\"}";
         };
     }
 

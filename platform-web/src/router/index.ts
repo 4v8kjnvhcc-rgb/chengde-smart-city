@@ -78,6 +78,10 @@ const router = createRouter({
           meta: { title: '审计日志' },
         },
         {
+          path: 'data-category',
+          redirect: { path: '/exchange/ingestion', query: { system: 'collect', module: 'pipeline', section: 'step-classify' } },
+        },
+        {
           path: 'system/maintenance',
           name: 'system-maintenance',
           component: () => import('@/views/system/maintenance/SystemMaintenanceHubView.vue'),
