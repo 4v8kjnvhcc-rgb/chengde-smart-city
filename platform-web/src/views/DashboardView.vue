@@ -12,6 +12,7 @@ import {
 import {
   firstNavPath,
   getAuthorizedPlatforms,
+  PLATFORM_LABELS,
   visibleMenuChildren,
 } from '@/utils/menu'
 import type { MenuNode } from '@/stores/auth'
@@ -19,19 +20,28 @@ import api from '@/api/http'
 import { ElMessage } from 'element-plus'
 import { openAssessmentExternal } from '@/views/exchange/application/application-nav'
 
-interface PortalLink {
+interface PortalNavNode {
   id: number
-  platformPath: string
-  title: string
-  url: string
-  openMode: string
-  ssoMode: string
-  ssoParam: string
+  parentId: number
+  name: string
+  nodeType: string
+  sortOrder?: number
+  url?: string
+  menuPath?: string
+  openMode?: string
+  themeKey?: string
+  remark?: string
+  status?: number
+  children?: PortalNavNode[]
 }
 
+type DisplayCard =
+  | { source: 'nav'; key: string; title: string; themePath: string; direct: boolean; nav: PortalNavNode }
+  | { source: 'menu'; key: string; title: string; themePath: string; direct: boolean; menu: MenuNode }
+
 type CardItem =
+  | { kind: 'nav'; key: string; title: string; node: PortalNavNode; children?: CardItem[] }
   | { kind: 'menu'; key: string; title: string; node: MenuNode; children?: CardItem[] }
-  | { kind: 'link'; key: string; title: string; link: PortalLink }
 
 const auth = useAuthStore()
 const router = useRouter()
@@ -113,44 +123,84 @@ const platformThemes: Record<
   },
 }
 
-const portalLinks = ref<PortalLink[]>([])
-const platforms = computed(() => getAuthorizedPlatforms(auth.menus))
+const navPlatforms = ref<PortalNavNode[]>([])
+const navLoadError = ref(false)
+
+/** 一级「平台管理」（原系统管理）；集成运维已迁入通用支撑，不再作为门户卡片 */
+const menuExtraPlatforms = computed(() =>
+  getAuthorizedPlatforms(auth.menus).filter((n) => n.path === '/system'),
+)
+
+const displayCards = computed<DisplayCard[]>(() => {
+  const fromNav: DisplayCard[] = navPlatforms.value.map((n) => ({
+    source: 'nav' as const,
+    key: `nav-${n.id}`,
+    title: n.name,
+    themePath: n.themeKey || '/exchange',
+    direct: false,
+    nav: n,
+  }))
+  const fromMenu: DisplayCard[] = menuExtraPlatforms.value.map((n) => ({
+    source: 'menu' as const,
+    key: `menu-${n.id}`,
+    title: PLATFORM_LABELS[n.path] || n.menuName,
+    themePath: n.path,
+    // 平台管理：无子入口时展开空抽屉（能力已在通用支撑）
+    direct: false,
+    menu: n,
+  }))
+  return [...fromNav, ...fromMenu]
+})
 
 const activeIndex = ref<number | null>(null)
-/** 抽屉内悬浮展开的分组 key（应用分析门户 / 应用平台） */
 const hoverGroupKey = ref<string | null>(null)
 
 function getTheme(path: string) {
   return platformThemes[path] || platformThemes['/exchange']
 }
 
-function linksOf(platformPath: string): PortalLink[] {
-  return portalLinks.value.filter((l) => l.platformPath === platformPath)
+function navigableTarget(node: PortalNavNode): string | null {
+  const t = (node.url || node.menuPath || '').trim()
+  return t || null
 }
 
-function isExchangeGroup(node: MenuNode, child: MenuNode): boolean {
-  if (node.path !== '/exchange') return false
-  const path = child.path || ''
-  return (
-    path === '/exchange/analysis-portal' ||
-    path === '/exchange/application' ||
-    child.menuName === '应用分析门户' ||
-    child.menuName === '应用平台'
-  )
+function getNavCardItems(platform: PortalNavNode): CardItem[] {
+  const items: CardItem[] = []
+  for (const sub of platform.children || []) {
+    const systems = (sub.children || []).filter((c) => !!navigableTarget(c))
+    if (systems.length > 0) {
+      items.push({
+        kind: 'nav',
+        key: `n-${sub.id}`,
+        title: sub.name,
+        node: sub,
+        children: systems.map((leaf) => ({
+          kind: 'nav' as const,
+          key: `n-${leaf.id}`,
+          title: leaf.name,
+          node: leaf,
+        })),
+      })
+      continue
+    }
+    if (navigableTarget(sub)) {
+      items.push({
+        kind: 'nav',
+        key: `n-${sub.id}`,
+        title: sub.name,
+        node: sub,
+      })
+    }
+  }
+  return items
 }
 
-/**
- * 目标 IA：一级显示 归集 / ESB / 应用分析门户 / 应用平台；
- * 后两者挂 children，悬浮展开，点叶子进各自独立系统。
- */
-function getCardItems(node: MenuNode): CardItem[] {
-  const menus: CardItem[] = []
-
-  for (const child of visibleMenuChildren(node)) {
+function getMenuCardItems(node: MenuNode): CardItem[] {
+  return visibleMenuChildren(node).map((child) => {
     const grandchildren = visibleMenuChildren(child)
-    if (isExchangeGroup(node, child) && grandchildren.length > 0) {
-      menus.push({
-        kind: 'menu',
+    if (grandchildren.length > 0) {
+      return {
+        kind: 'menu' as const,
         key: `m-${child.id}`,
         title: child.menuName,
         node: child,
@@ -160,28 +210,23 @@ function getCardItems(node: MenuNode): CardItem[] {
           title: leaf.menuName,
           node: leaf,
         })),
-      })
-      continue
+      }
     }
-    menus.push({
-      kind: 'menu',
+    return {
+      kind: 'menu' as const,
       key: `m-${child.id}`,
       title: child.menuName,
       node: child,
-    })
-  }
-
-  const links: CardItem[] = linksOf(node.path).map((link) => ({
-    kind: 'link' as const,
-    key: `l-${link.id}`,
-    title: link.title,
-    link,
-  }))
-  return [...menus, ...links]
+    }
+  })
 }
 
-function itemHasChildren(item: CardItem): item is CardItem & { kind: 'menu'; children: CardItem[] } {
-  return item.kind === 'menu' && !!item.children?.length
+function getCardItems(card: DisplayCard): CardItem[] {
+  return card.source === 'nav' ? getNavCardItems(card.nav) : getMenuCardItems(card.menu)
+}
+
+function itemHasChildren(item: CardItem): item is CardItem & { children: CardItem[] } {
+  return !!item.children?.length
 }
 
 function toggleDrawer(index: number) {
@@ -193,14 +238,10 @@ function toggleDrawer(index: number) {
   hoverGroupKey.value = null
 }
 
-function isSystemPlatform(node: MenuNode) {
-  return node.path === '/system'
-}
-
-function onCardHeaderClick(node: MenuNode, index: number) {
-  if (isSystemPlatform(node)) {
+function onCardHeaderClick(card: DisplayCard, index: number) {
+  if (card.direct && card.source === 'menu') {
     activeIndex.value = null
-    enterSubsystem(node)
+    enterMenuNode(card.menu)
     return
   }
   toggleDrawer(index)
@@ -211,7 +252,12 @@ function isAssessmentMenu(node: MenuNode): boolean {
   return p.includes('/application/assessment') || node.menuName === '考核评估系统'
 }
 
-function enterSubsystem(node: MenuNode) {
+function isAssessmentNav(node: PortalNavNode): boolean {
+  const t = navigableTarget(node) || ''
+  return t.includes('/application/assessment') || node.name === '考核评估系统'
+}
+
+function enterMenuNode(node: MenuNode) {
   if (isAssessmentMenu(node)) {
     const r = openAssessmentExternal()
     if (r.ok) {
@@ -229,49 +275,37 @@ function enterSubsystem(node: MenuNode) {
   if (target) router.push(target)
 }
 
-function buildSsoUrl(link: PortalLink): string {
-  const token = auth.accessToken || localStorage.getItem('accessToken') || ''
-  if (link.ssoMode !== 'token_query' || !token) {
-    return link.url
-  }
-  try {
-    if (link.url.startsWith('/')) {
-      const u = new URL(link.url, window.location.origin)
-      u.searchParams.set(link.ssoParam || 'access_token', token)
-      return u.pathname + u.search + u.hash
+function enterNavNode(node: PortalNavNode) {
+  if (isAssessmentNav(node)) {
+    const r = openAssessmentExternal()
+    if (r.ok) {
+      ElMessage.success('已在新窗口打开考核评估系统')
+      return
     }
-    const u = new URL(link.url)
-    u.searchParams.set(link.ssoParam || 'access_token', token)
-    return u.toString()
-  } catch {
-    const sep = link.url.includes('?') ? '&' : '?'
-    return `${link.url}${sep}${encodeURIComponent(link.ssoParam || 'access_token')}=${encodeURIComponent(token)}`
   }
-}
-
-function openExternalLink(link: PortalLink) {
-  const target = buildSsoUrl(link)
-  if (link.openMode === 'same_tab') {
+  const target = navigableTarget(node)
+  if (!target) return
+  const mode = node.openMode || 'route'
+  if (mode === 'new_tab' || target.startsWith('http://') || target.startsWith('https://')) {
     if (target.startsWith('/')) {
-      router.push(target)
+      window.open(target, '_blank', 'noopener,noreferrer')
     } else {
-      window.location.href = target
+      window.open(target, '_blank', 'noopener,noreferrer')
     }
     return
   }
-  window.open(target, '_blank', 'noopener,noreferrer')
+  router.push(target)
 }
 
 function onCardItemClick(item: CardItem) {
   if (itemHasChildren(item)) {
-    // 分组：悬浮展开；点击也可切换（触控友好）
     hoverGroupKey.value = hoverGroupKey.value === item.key ? null : item.key
     return
   }
   if (item.kind === 'menu') {
-    enterSubsystem(item.node)
+    enterMenuNode(item.node)
   } else {
-    openExternalLink(item.link)
+    enterNavNode(item.node)
   }
 }
 
@@ -282,10 +316,12 @@ function onFlyoutChildClick(item: CardItem) {
 
 onMounted(async () => {
   try {
-    const res = await api.get('/system/portal-links/enabled')
-    portalLinks.value = res.data || []
+    const res = await api.get<PortalNavNode[]>('/system/portal-nav/enabled-tree')
+    navPlatforms.value = res.data || []
+    navLoadError.value = false
   } catch {
-    portalLinks.value = []
+    navPlatforms.value = []
+    navLoadError.value = true
   }
 })
 </script>
@@ -296,45 +332,45 @@ onMounted(async () => {
       <h1 class="portal-drawer__title">承德高新区智慧城市数据中台</h1>
     </div>
 
-    <div v-if="platforms.length" class="cards-row">
+    <div v-if="displayCards.length" class="cards-row">
       <div
-        v-for="(node, index) in platforms"
-        :key="node.id"
+        v-for="(card, index) in displayCards"
+        :key="card.key"
         class="drawer-card"
         :class="{
           'is-open': activeIndex === index,
           'is-dim': activeIndex !== null && activeIndex !== index,
-          'is-direct': isSystemPlatform(node),
+          'is-direct': card.direct,
         }"
         :style="{
-          '--card-border': getTheme(node.path).border,
-          '--card-header-bg': getTheme(node.path).headerBg,
-          '--card-icon-bg': getTheme(node.path).iconBg,
-          '--card-icon-color': getTheme(node.path).iconColor,
-          '--card-title-color': getTheme(node.path).titleColor,
-          '--card-accent': getTheme(node.path).accent,
-          '--card-dot-color': getTheme(node.path).dotColor,
+          '--card-border': getTheme(card.themePath).border,
+          '--card-header-bg': getTheme(card.themePath).headerBg,
+          '--card-icon-bg': getTheme(card.themePath).iconBg,
+          '--card-icon-color': getTheme(card.themePath).iconColor,
+          '--card-title-color': getTheme(card.themePath).titleColor,
+          '--card-accent': getTheme(card.themePath).accent,
+          '--card-dot-color': getTheme(card.themePath).dotColor,
         }"
       >
         <button
           type="button"
           class="card-header"
-          :aria-expanded="isSystemPlatform(node) ? undefined : activeIndex === index"
-          @click="onCardHeaderClick(node, index)"
+          :aria-expanded="card.direct ? undefined : activeIndex === index"
+          @click="onCardHeaderClick(card, index)"
         >
           <div class="card-icon-wrap">
             <el-icon :size="44">
-              <component :is="platformIcons[node.path] || Connection" />
+              <component :is="platformIcons[card.themePath] || Connection" />
             </el-icon>
           </div>
-          <div class="card-title">{{ node.menuName }}</div>
-          <div v-if="!isSystemPlatform(node)" class="card-arrow" />
+          <div class="card-title">{{ card.title }}</div>
+          <div v-if="!card.direct" class="card-arrow" />
         </button>
 
-        <div v-if="!isSystemPlatform(node)" class="drawer-body">
+        <div v-if="!card.direct" class="drawer-body">
           <div class="drawer-body-inner">
             <div
-              v-for="item in getCardItems(node)"
+              v-for="item in getCardItems(card)"
               :key="item.key"
               class="sub-item-wrap"
               :class="{ 'has-flyout': itemHasChildren(item), 'is-flyout-open': hoverGroupKey === item.key }"
@@ -349,7 +385,6 @@ onMounted(async () => {
               >
                 <span class="sub-dot" />
                 <span class="sub-name">{{ item.title }}</span>
-                <span v-if="item.kind === 'link'" class="sub-badge">外链</span>
                 <span v-if="itemHasChildren(item)" class="sub-chevron">›</span>
                 <span v-else class="sub-arrow">→</span>
               </button>
@@ -367,10 +402,18 @@ onMounted(async () => {
                 </button>
               </div>
             </div>
-            <div v-if="!getCardItems(node).length" class="drawer-empty">
-              暂无入口，请在「系统管理 → 门户外链管理」中配置
+            <div v-if="!getCardItems(card).length" class="drawer-empty">
+              {{
+                card.source === 'nav'
+                  ? navLoadError
+                    ? '门户配置加载失败，请稍后重试或联系管理员'
+                    : '暂无入口，请在「通用支撑平台 → 门户配置」中维护'
+                  : card.themePath === '/system'
+                    ? '平台管理能力已并入「大数据挖掘分析平台 → 通用支撑平台」'
+                    : '暂无入口'
+              }}
             </div>
-            <div class="drawer-footer">{{ getCardItems(node).length }} 个入口</div>
+            <div class="drawer-footer">{{ getCardItems(card).length }} 个入口</div>
           </div>
         </div>
       </div>

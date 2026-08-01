@@ -911,12 +911,7 @@ public class KettleTransConverterService {
             sb.append("      <condition>\n");
             sb.append("        <negated>N</negated>\n");
             sb.append("        <conditions>\n");
-            sb.append("          <condition>\n");
-            sb.append("            <negated>N</negated>\n");
-            sb.append("            <leftvalue>").append(escapeXml(expr)).append("</leftvalue>\n");
-            sb.append("            <function>=</function>\n");
-            sb.append("            <rightvalue>Y</rightvalue>\n");
-            sb.append("          </condition>\n");
+            appendFilterAtomicCondition(sb, expr, "=", "Y", false);
             sb.append("        </conditions>\n");
             sb.append("      </condition>\n");
         } else {
@@ -931,29 +926,65 @@ public class KettleTransConverterService {
                     String field = cfgText(c, "field", "id");
                     String op = mapFilterOp(cfgText(c, "op", "EQ"));
                     String value = cfgText(c, "value", "");
-                    sb.append("          <condition>\n");
-                    sb.append("            <negated>N</negated>\n");
-                    sb.append("            <leftvalue>").append(escapeXml(field)).append("</leftvalue>\n");
-                    sb.append("            <function>").append(escapeXml(op)).append("</function>\n");
-                    sb.append("            <rightvalue>").append(escapeXml(value)).append("</rightvalue>\n");
-                    sb.append("          </condition>\n");
+                    // 字段对字段：config.compareMode=FIELD 时 value 视为右字段名
+                    boolean valueIsField = "FIELD".equalsIgnoreCase(cfgText(c, "compareMode", ""));
+                    appendFilterAtomicCondition(sb, field, op, value, valueIsField);
                 }
             } else {
                 String field = cfgText(cfg, "field", "id");
                 String op = mapFilterOp(cfgText(cfg, "op", "EQ"));
                 String value = cfgText(cfg, "value", "");
-                sb.append("          <condition>\n");
-                sb.append("            <negated>N</negated>\n");
-                sb.append("            <leftvalue>").append(escapeXml(field)).append("</leftvalue>\n");
-                sb.append("            <function>").append(escapeXml(op)).append("</function>\n");
-                sb.append("            <rightvalue>").append(escapeXml(value)).append("</rightvalue>\n");
-                sb.append("          </condition>\n");
+                boolean valueIsField = "FIELD".equalsIgnoreCase(cfgText(cfg, "compareMode", ""));
+                appendFilterAtomicCondition(sb, field, op, value, valueIsField);
             }
             sb.append("        </conditions>\n");
             sb.append("      </condition>\n");
         }
         sb.append("    </compare>\n");
         return sb.toString();
+    }
+
+    /**
+     * Kettle FilterRows：rightvalue 只能是字段名；常量必须写在 &lt;value&gt; 节点，
+     * 否则会把字面量（如「A单位」）误当成流字段导致初始化失败。
+     */
+    private void appendFilterAtomicCondition(StringBuilder sb, String leftField, String op,
+                                             String value, boolean valueIsField) {
+        sb.append("          <condition>\n");
+        sb.append("            <negated>N</negated>\n");
+        sb.append("            <leftvalue>").append(escapeXml(leftField)).append("</leftvalue>\n");
+        sb.append("            <function>").append(escapeXml(op)).append("</function>\n");
+        boolean nullCheck = "IS NULL".equalsIgnoreCase(op) || "IS NOT NULL".equalsIgnoreCase(op);
+        if (nullCheck) {
+            sb.append("            <rightvalue/>\n");
+        } else if (valueIsField) {
+            sb.append("            <rightvalue>").append(escapeXml(value)).append("</rightvalue>\n");
+        } else {
+            // 常量比较
+            String text = value == null ? "" : value;
+            if ("LIKE".equals(op) && !text.contains("%") && !text.contains("_")) {
+                text = "%" + text + "%";
+            }
+            String type = guessFilterValueType(text);
+            sb.append("            <rightvalue/>\n");
+            sb.append("            <value>\n");
+            sb.append("              <name>constant</name>\n");
+            sb.append("              <type>").append(type).append("</type>\n");
+            sb.append("              <text>").append(escapeXml(text)).append("</text>\n");
+            sb.append("              <length>-1</length>\n");
+            sb.append("              <precision>-1</precision>\n");
+            sb.append("              <isnull>N</isnull>\n");
+            sb.append("              <mask/>\n");
+            sb.append("            </value>\n");
+        }
+        sb.append("          </condition>\n");
+    }
+
+    private static String guessFilterValueType(String text) {
+        if (text == null || text.isBlank()) return "String";
+        if (text.matches("^-?\\d+$")) return "Integer";
+        if (text.matches("^-?\\d+(\\.\\d+)?$")) return "Number";
+        return "String";
     }
 
     private String cfgFieldProcess(JsonNode cfg) {

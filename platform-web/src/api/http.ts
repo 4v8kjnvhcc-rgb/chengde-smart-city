@@ -71,7 +71,7 @@ api.interceptors.response.use(
   async (err: AxiosError) => {
     const original = err.config as InternalAxiosRequestConfig & { _retry?: boolean }
     const url = original?.url || ''
-    const isAuthApi = url.includes('/auth/login') || url.includes('/auth/refresh')
+    const isAuthApi = url.includes('/auth/login') || url.includes('/auth/refresh') || url.includes('/auth/logout')
 
     if (err.response?.status === 401 && original && !original._retry && !isAuthApi) {
       original._retry = true

@@ -64,6 +64,7 @@ export const REGISTER_MODULES: IngestionModuleMeta[] = [
   { key: 'm048', mCode: 'M048', label: '访问控制管理', subLabel: '功能/资源/数据权限', system: 'register', permission: 'hub:ingestion:register:m048' },
   { key: 'm049', mCode: 'M049', label: '系统维护管理', subLabel: '外观/邮箱/账号安全', system: 'register', permission: 'hub:ingestion:register:m049' },
   { key: 'm050', mCode: 'M050', label: '数据字典管理', subLabel: '字典管理', system: 'register', permission: 'hub:ingestion:register:m050' },
+  { key: 'menu-mgmt', mCode: 'MMENU', label: '菜单管理', subLabel: '登记侧栏菜单', system: 'register', permission: 'hub:ingestion:register:menu-mgmt' },
 ]
 
 export const COLLECT_MODULES: IngestionModuleMeta[] = [
@@ -171,6 +172,93 @@ export function filterRegisterNavItems(opts: { isSystemAdmin: boolean; permissio
   return filterIngestionModules(REGISTER_MODULES, opts).map(toNavItem)
 }
 
+/** 登记侧栏元数据（来自 register-scope） */
+export interface RegisterMenuMeta {
+  id: number
+  parentId: number
+  menuName: string
+  routeName?: string
+  menuType?: number
+  path?: string
+  permission?: string
+  sortOrder?: number
+  visible?: number
+}
+
+/** 登记侧栏：静态模块始终保留入口（与权限过滤后）；库表仅覆盖标题/排序；自定义菜单追加在最下方 */
+export function buildRegisterNavItems(
+  opts: { isSystemAdmin: boolean; permissions: string[] },
+  dbMenus?: RegisterMenuMeta[] | null,
+): HubNavItem[] {
+  const base = filterIngestionModules(REGISTER_MODULES, opts)
+  if (!dbMenus?.length) {
+    // 保证菜单管理在同级最底部
+    return [...base]
+      .sort((a, b) => {
+        if (a.key === 'menu-mgmt') return 1
+        if (b.key === 'menu-mgmt') return -1
+        return 0
+      })
+      .map(toNavItem)
+  }
+
+  const byPerm = new Map(
+    dbMenus.filter((m) => m.permission).map((m) => [m.permission as string, m]),
+  )
+  const staticPerms = new Set(REGISTER_MODULES.map((m) => m.permission))
+  const staticIndex = new Map(REGISTER_MODULES.map((m, i) => [m.key, i]))
+
+  const merged = base
+    .map((m) => {
+      const db = byPerm.get(m.permission)
+      // 内置模块不因库表 visible=0 而丢掉 Hub 入口（避免「只剩菜单管理」）
+      const sort =
+        m.key === 'menu-mgmt'
+          ? 100_000
+          : (db?.sortOrder ?? staticIndex.get(m.key) ?? 0)
+      const label = db?.menuName || m.label
+      return { ...m, label, _sort: sort }
+    })
+    .sort((a, b) => a._sort - b._sort || a.key.localeCompare(b.key))
+
+  const items: HubNavItem[] = merged.map((m) => toNavItem(m))
+
+  const customs = dbMenus
+    .filter(
+      (m) =>
+        m.parentId === 7000
+        && m.menuType !== 1
+        && m.menuType !== 3
+        && Number(m.visible) !== 0
+        && m.permission
+        && !staticPerms.has(m.permission),
+    )
+    .sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0) || a.id - b.id)
+
+  for (const c of customs) {
+    if (!opts.isSystemAdmin && !opts.permissions.includes(c.permission!)) continue
+    items.push({
+      key: `custom-${c.id}`,
+      label: c.menuName,
+      subLabel: c.routeName || '自定义',
+    })
+  }
+  return items
+}
+
+/** 从登记菜单 path 解析 module query */
+export function moduleKeyFromRegisterPath(path?: string): string | null {
+  if (!path) return null
+  try {
+    const q = path.includes('?') ? path.slice(path.indexOf('?') + 1) : ''
+    const params = new URLSearchParams(q)
+    const mod = params.get('module')
+    return mod || null
+  } catch {
+    return null
+  }
+}
+
 export function filterCollectNavItems(opts: { isSystemAdmin: boolean; permissions: string[] }): HubNavItem[] {
   return filterIngestionModules(COLLECT_MODULES, opts).map(toCollectNavItem)
 }
@@ -258,6 +346,7 @@ export function resolveIngestionNav(query: Record<string, unknown>): { system: I
   const system = (String(query.system || 'register').toLowerCase() === 'collect' ? 'collect' : 'register') as IngestionSystem
   const mod = String(query.module || '').toLowerCase()
   if (system === 'register' && mod && REGISTER_BY_KEY[mod]) return { system, module: mod }
+  if (system === 'register' && mod.startsWith('custom-')) return { system, module: mod }
   if (system === 'collect') {
     const ck = resolveCollectModule(mod)
     if (ck) return { system, module: ck }
@@ -266,6 +355,7 @@ export function resolveIngestionNav(query: Record<string, unknown>): { system: I
 }
 
 export function moduleTitle(moduleKey: string): string {
+  if (moduleKey.startsWith('custom-')) return '自定义菜单'
   if (isQualitySubKey(moduleKey)) {
     return `${COLLECT_BY_KEY.quality?.label || '汇聚数据质量管控'} · ${QUALITY_SUB_LABELS[moduleKey]}`
   }

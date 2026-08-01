@@ -10,6 +10,12 @@ public class AnaIndicator {
     @TableId(type = IdType.AUTO)
     private Long id;
     private String domainCode;
+    private Long queryId;
+    private String resultField;
+    private String fieldType;
+    private Integer fieldLength;
+    private Integer fieldPrecision;
+    private String fieldName;
     private String indicatorCode;
     private String indicatorName;
     private String sourceTable;
@@ -23,10 +29,26 @@ public class AnaIndicator {
     private LocalDateTime createdAt;
     private LocalDateTime updatedAt;
 
+    /** 列表展示：关联查询编号（非表字段） */
+    @com.baomidou.mybatisplus.annotation.TableField(exist = false)
+    private String queryNo;
+
     public Long getId() { return id; }
     public void setId(Long id) { this.id = id; }
     public String getDomainCode() { return domainCode; }
     public void setDomainCode(String domainCode) { this.domainCode = domainCode; }
+    public Long getQueryId() { return queryId; }
+    public void setQueryId(Long queryId) { this.queryId = queryId; }
+    public String getResultField() { return resultField; }
+    public void setResultField(String resultField) { this.resultField = resultField; }
+    public String getFieldType() { return fieldType; }
+    public void setFieldType(String fieldType) { this.fieldType = fieldType; }
+    public Integer getFieldLength() { return fieldLength; }
+    public void setFieldLength(Integer fieldLength) { this.fieldLength = fieldLength; }
+    public Integer getFieldPrecision() { return fieldPrecision; }
+    public void setFieldPrecision(Integer fieldPrecision) { this.fieldPrecision = fieldPrecision; }
+    public String getFieldName() { return fieldName; }
+    public void setFieldName(String fieldName) { this.fieldName = fieldName; }
     public String getIndicatorCode() { return indicatorCode; }
     public void setIndicatorCode(String indicatorCode) { this.indicatorCode = indicatorCode; }
     public String getIndicatorName() { return indicatorName; }
@@ -51,4 +73,6 @@ public class AnaIndicator {
     public void setCreatedAt(LocalDateTime createdAt) { this.createdAt = createdAt; }
     public LocalDateTime getUpdatedAt() { return updatedAt; }
     public void setUpdatedAt(LocalDateTime updatedAt) { this.updatedAt = updatedAt; }
+    public String getQueryNo() { return queryNo; }
+    public void setQueryNo(String queryNo) { this.queryNo = queryNo; }
 }

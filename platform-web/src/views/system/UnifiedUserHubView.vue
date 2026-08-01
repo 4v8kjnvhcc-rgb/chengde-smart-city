@@ -7,6 +7,7 @@ import PageCard from '@/components/common/PageCard.vue'
 import HubSideLayout from '@/components/common/HubSideLayout.vue'
 import { statusLabel } from '@/utils/status-label'
 import { leafKeysForTreeCheck } from '@/utils/menu-tree-check'
+import PortalNavConfigPanel from '@/views/system/PortalNavConfigPanel.vue'
 
 const navItems = [
   { key: 'users', label: '用户中心' },
@@ -15,6 +16,7 @@ const navItems = [
   { key: 'services', label: '服务中心' },
   { key: 'audit', label: '日志审计' },
   { key: 'integration', label: '系统对接' },
+  { key: 'portal', label: '门户配置' },
 ]
 
 const route = useRoute()
@@ -524,6 +526,10 @@ onMounted(async () => {
       <PageCard v-if="tab === 'audit'" title="日志审计">
         <p class="hint">登录与操作审计为 INSERT-ONLY，不可篡改删除。</p>
         <el-button type="primary" @click="router.push('/system/audit')">打开审计日志（支持筛选）</el-button>
+      </PageCard>
+
+      <PageCard v-if="tab === 'portal'" title="门户配置">
+        <PortalNavConfigPanel />
       </PageCard>
 
       <PageCard v-if="tab === 'integration'" title="系统对接">

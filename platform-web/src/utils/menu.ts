@@ -17,8 +17,10 @@ export const PLATFORM_LABELS: Record<string, string> = {
   '/master-data': '主数据平台',
   '/analytics': '大数据挖掘分析平台',
   '/business': '业务功能平台',
+  /** 已迁入通用支撑，保留 key 供旧外链/匹配 */
   '/integration': '集成运维',
-  '/system': '系统管理',
+  /** 门户一级卡片展示名：平台管理（原系统管理） */
+  '/system': '平台管理',
 }
 
 export function visibleMenuChildren(node: MenuNode): MenuNode[] {
@@ -61,12 +63,14 @@ export function matchPlatformPath(path: string): string | null {
   return null
 }
 
-/** 用户有权限的一级平台（业务功能平台允许无菜单子项，靠外链填充） */
+/** 用户有权限的一级平台（业务功能/平台管理允许无可见子项） */
 export function getAuthorizedPlatforms(menus: MenuNode[]): MenuNode[] {
   const set = new Set(PLATFORM_PATHS)
   return getMenuRoots(menus).filter((n) => {
     if (!set.has(n.path)) return false
-    if (n.path === '/business') return true
+    // 业务功能、平台管理：门户卡片可空下拉；集成运维已迁出一级
+    if (n.path === '/business' || n.path === '/system') return true
+    if (n.path === '/integration') return false
     return visibleMenuChildren(n).length > 0
   })
 }
@@ -131,9 +135,18 @@ export function findSubsystemRoot(menus: MenuNode[], path: string): MenuNode | u
   const platformNode = findPlatformNode(menus, platformPath)
   if (!platformNode) return undefined
 
+  const pathBase = path.split('?')[0]
   for (const child of visibleMenuChildren(platformNode)) {
     if (!child.path) continue
-    if (path === child.path || path.startsWith(`${child.path}/`)) return child
+    const childBase = child.path.split('?')[0]
+    if (
+      path === child.path ||
+      path.startsWith(`${child.path}/`) ||
+      pathBase === childBase ||
+      pathBase.startsWith(`${childBase}/`)
+    ) {
+      return child
+    }
   }
   return undefined
 }

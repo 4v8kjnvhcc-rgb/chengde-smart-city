@@ -60,6 +60,25 @@ const usersLoading = ref(false)
 const userTotal = ref(0)
 const userPage = ref(1)
 const userKeyword = ref('')
+const orgFilterKeyword = ref('')
+const orgTreeRef = ref<InstanceType<typeof ElTree>>()
+
+const orgNameById = computed(() => {
+  const m = new Map<number, string>()
+  for (const o of orgs.value) m.set(o.id, o.orgName)
+  return m
+})
+
+/** 根组织（parentId=0）；进入页默认选中根，右侧展示全部账号 */
+const rootOrg = computed(() => orgs.value.find((o) => !o.parentId || o.parentId === 0) || null)
+const isRootSelected = computed(() => {
+  if (!selectedOrgId.value || !rootOrg.value) return false
+  return selectedOrgId.value === rootOrg.value.id
+})
+/** 右侧是否展示跨单位账号（根节点，或关键字搜全部） */
+const showingAllAccounts = computed(
+  () => isRootSelected.value || !!userKeyword.value.trim(),
+)
 
 const orgDialogVisible = ref(false)
 const orgEditVisible = ref(false)
@@ -136,11 +155,15 @@ function buildCheckTree(rows: MenuRow[]): CheckNode[] {
 async function loadOrgs() {
   const res = await api.get('/system/orgs')
   orgs.value = res.data || []
-  if (!selectedOrgId.value && orgs.value.length) {
-    const fromQuery = Number(route.query.orgId)
-    selectedOrgId.value = Number.isFinite(fromQuery) && fromQuery > 0
-      ? fromQuery
-      : (orgs.value.find((o) => o.parentId === 0)?.id || orgs.value[0].id)
+  if (!orgs.value.length) return
+  const rootId = orgs.value.find((o) => !o.parentId || o.parentId === 0)?.id || orgs.value[0].id
+  const fromQuery = Number(route.query.orgId)
+  // 无合法 query 时默认根组织
+  if (!selectedOrgId.value) {
+    selectedOrgId.value =
+      Number.isFinite(fromQuery) && fromQuery > 0 && orgs.value.some((o) => o.id === fromQuery)
+        ? fromQuery
+        : rootId
   }
 }
 
@@ -150,19 +173,23 @@ async function loadRoles() {
 }
 
 async function loadUsers() {
-  if (!selectedOrgId.value) {
+  if (!selectedOrgId.value && !userKeyword.value.trim()) {
     users.value = []
     userTotal.value = 0
     return
   }
+  const kw = userKeyword.value.trim()
+  // 根组织或关键字搜索：不传 orgId → 全部账号；非根：仅该组织
+  const orgIdParam =
+    kw || isRootSelected.value ? undefined : selectedOrgId.value || undefined
   usersLoading.value = true
   try {
     const res = await api.get('/system/users', {
       params: {
         page: userPage.value,
         size: 20,
-        orgId: selectedOrgId.value,
-        keyword: userKeyword.value || undefined,
+        orgId: orgIdParam,
+        keyword: kw || undefined,
       },
     })
     users.value = res.data?.records || []
@@ -175,11 +202,30 @@ async function loadUsers() {
 function selectOrg(id: number) {
   selectedOrgId.value = id
   userPage.value = 1
+  userKeyword.value = ''
   router.replace({ query: { ...route.query, orgId: String(id) } })
 }
 
+function filterOrgNode(value: string, data: Org) {
+  if (!value) return true
+  const kw = value.trim().toLowerCase()
+  return (
+    (data.orgName || '').toLowerCase().includes(kw) ||
+    (data.orgCode || '').toLowerCase().includes(kw)
+  )
+}
+
+watch(orgFilterKeyword, (val) => {
+  orgTreeRef.value?.filter(val)
+})
+
+function runUserSearch() {
+  userPage.value = 1
+  void loadUsers()
+}
+
 watch(selectedOrgId, () => {
-  loadUsers()
+  void loadUsers()
 })
 
 /** 在组织树选中节点下新增下级机构 */
@@ -393,12 +439,21 @@ onMounted(async () => {
         :disabled="!selectedOrgId"
         @click="openCreateUser"
       >
-        为本单位新建账号
+        新建账号
       </el-button>
     </PageHeader>
 
     <div class="org-user-layout">
       <PageCard class="org-pane" title="组织机构">
+        <div class="org-search">
+          <el-input
+            v-model="orgFilterKeyword"
+            clearable
+            size="small"
+            placeholder="搜索组织（名称/编码，含各级）"
+            @clear="orgTreeRef?.filter('')"
+          />
+        </div>
         <div class="org-toolbar">
           <el-button
             v-if="auth.hasPermission('system:org:add')"
@@ -429,11 +484,13 @@ onMounted(async () => {
           </el-button>
         </div>
         <el-tree
+          ref="orgTreeRef"
           :data="orgTree"
           node-key="id"
           default-expand-all
           highlight-current
           :current-node-key="selectedOrgId ?? undefined"
+          :filter-node-method="filterOrgNode"
           :props="{ label: 'orgName', children: 'children' }"
           @node-click="(data: Org) => selectOrg(data.id)"
         >
@@ -446,27 +503,44 @@ onMounted(async () => {
         </el-tree>
       </PageCard>
 
-      <PageCard class="user-pane" :title="selectedOrg ? `${selectedOrg.orgName} · 账号` : '请选择组织'">
-        <template v-if="selectedOrg">
-          <div class="user-toolbar">
-            <el-form inline class="portal-inline-form">
-              <el-form-item label="搜索" class="portal-field-md">
-                <el-input
-                  v-model="userKeyword"
-                  clearable
-                  placeholder="用户名/姓名"
-                  @keyup.enter="userPage = 1; loadUsers()"
-                />
-              </el-form-item>
-              <el-form-item class="portal-form-actions">
-                <el-button type="primary" @click="userPage = 1; loadUsers()">查询</el-button>
-              </el-form-item>
-            </el-form>
+      <PageCard class="user-pane">
+        <template #header>
+          <div class="user-pane-header">
+            <span class="user-pane-title">
+              {{
+                userKeyword.trim()
+                  ? '全部账号（搜索）'
+                  : isRootSelected && selectedOrg
+                    ? `${selectedOrg.orgName} · 全部账号`
+                    : selectedOrg
+                      ? `${selectedOrg.orgName} · 账号`
+                      : '请选择组织'
+              }}
+            </span>
+            <div class="user-pane-search">
+              <el-input
+                v-model="userKeyword"
+                clearable
+                size="small"
+                placeholder="搜索全部账号（用户名/姓名）"
+                style="width: 220px"
+                @clear="runUserSearch"
+                @keyup.enter="runUserSearch"
+              />
+              <el-button type="primary" size="small" @click="runUserSearch">查询</el-button>
+            </div>
           </div>
+        </template>
 
+        <template v-if="selectedOrg">
           <el-table class="portal-table" :data="users" v-loading="usersLoading" stripe>
             <el-table-column prop="username" label="用户名" min-width="110" />
             <el-table-column prop="displayName" label="姓名" min-width="100" />
+            <el-table-column v-if="showingAllAccounts" label="所属组织" min-width="160">
+              <template #default="{ row }">
+                {{ orgNameById.get(row.orgId) || row.orgId || '—' }}
+              </template>
+            </el-table-column>
             <el-table-column label="角色" min-width="160">
               <template #default="{ row }">
                 <template v-if="row.roleNames?.length">
@@ -527,7 +601,7 @@ onMounted(async () => {
             @current-change="(p: number) => { userPage = p; loadUsers() }"
           />
         </template>
-        <el-empty v-else description="请从左侧选择一个组织单位" />
+        <el-empty v-else description="请从左侧选择一个组织单位，或在右上角搜索全部账号" />
       </PageCard>
     </div>
 
@@ -671,6 +745,9 @@ onMounted(async () => {
   max-height: calc(100vh - 180px);
   overflow: auto;
 }
+.org-search {
+  margin-bottom: 10px;
+}
 .org-toolbar {
   display: flex;
   flex-wrap: wrap;
@@ -679,6 +756,23 @@ onMounted(async () => {
 }
 .user-pane {
   min-width: 0;
+}
+.user-pane-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  width: 100%;
+}
+.user-pane-title {
+  font-weight: 600;
+  flex-shrink: 0;
+}
+.user-pane-search {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
 }
 .org-node {
   display: flex;
@@ -694,9 +788,11 @@ onMounted(async () => {
 .muted { color: var(--el-text-color-secondary); }
 .hint { color: var(--el-text-color-secondary); margin: 0 0 12px; line-height: 1.5; font-size: 13px; }
 .pager { margin-top: 16px; justify-content: flex-end; }
-.user-toolbar { margin-bottom: 8px; }
 
 @media (max-width: 960px) {
   .org-user-layout { grid-template-columns: 1fr; }
+  .user-pane-header { flex-direction: column; align-items: stretch; }
+  .user-pane-search { margin-left: 0; }
+  .user-pane-search .el-input { width: 100% !important; }
 }
 </style>

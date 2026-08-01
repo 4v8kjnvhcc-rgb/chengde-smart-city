@@ -88,18 +88,20 @@ export const useAuthStore = defineStore('auth', {
     },
     async logout() {
       try {
+        // Token 已失效时后端会 401，属正常清场，勿向上抛出以免登录页误报
         await api.post('/auth/logout')
-      } finally {
-        this.accessToken = ''
-        this.refreshToken = ''
-        this.user = null
-        this.menus = []
-        this.permissions = []
-        localStorage.removeItem('accessToken')
-        localStorage.removeItem('refreshToken')
-        localStorage.removeItem('username')
-        localStorage.removeItem('user')
+      } catch {
+        // ignore
       }
+      this.accessToken = ''
+      this.refreshToken = ''
+      this.user = null
+      this.menus = []
+      this.permissions = []
+      localStorage.removeItem('accessToken')
+      localStorage.removeItem('refreshToken')
+      localStorage.removeItem('username')
+      localStorage.removeItem('user')
     },
     hasPermission(code: string) {
       return Array.isArray(this.permissions) && this.permissions.includes(code)

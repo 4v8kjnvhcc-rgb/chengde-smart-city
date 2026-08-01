@@ -7,6 +7,8 @@ import com.chengde.smartcity.system.dto.MenuTreeNode;
 import com.chengde.smartcity.system.dto.OrgCreateRequest;
 import com.chengde.smartcity.system.dto.OrgUpdateRequest;
 import com.chengde.smartcity.system.dto.PortalCardLinkRequest;
+import com.chengde.smartcity.system.dto.RegisterMenuDeleteRequest;
+import com.chengde.smartcity.system.dto.RegisterMenuUpsertRequest;
 import com.chengde.smartcity.system.dto.RoleCreateRequest;
 import com.chengde.smartcity.system.dto.RoleMenuAssignRequest;
 import com.chengde.smartcity.system.dto.RoleUpdateRequest;
@@ -72,8 +74,64 @@ public class SystemController {
 
     @GetMapping("/menus")
     @PreAuthorize("hasRole('SYSTEM_ADMIN') or hasAuthority('system:menu:list') or hasAuthority('system:role:list') or hasAuthority('system:org:list') or hasAuthority('system:role:edit')")
-    public ApiResponse<List<SysMenu>> allMenus() {
-        return ApiResponse.ok(menuService.listAll());
+    public ApiResponse<List<SysMenu>> allMenus(
+            @RequestParam(required = false, defaultValue = "false") boolean manage) {
+        return ApiResponse.ok(manage ? menuService.listForManage() : menuService.listAll());
+    }
+
+    @PostMapping("/menus")
+    @PreAuthorize("hasRole('SYSTEM_ADMIN') or hasAuthority('system:menu:list')")
+    public ApiResponse<Long> createMenu(@Valid @RequestBody RegisterMenuUpsertRequest request) {
+        return ApiResponse.ok(menuService.createMenu(request));
+    }
+
+    @PutMapping("/menus/{id}")
+    @PreAuthorize("hasRole('SYSTEM_ADMIN') or hasAuthority('system:menu:list')")
+    public ApiResponse<Void> updateMenu(@PathVariable Long id,
+                                        @Valid @RequestBody RegisterMenuUpsertRequest request) {
+        menuService.updateMenu(id, request);
+        return ApiResponse.ok(null);
+    }
+
+    @DeleteMapping("/menus")
+    @PreAuthorize("hasRole('SYSTEM_ADMIN') or hasAuthority('system:menu:list')")
+    public ApiResponse<Void> deleteMenus(@Valid @RequestBody RegisterMenuDeleteRequest request) {
+        menuService.deleteMenus(request.getIds());
+        return ApiResponse.ok(null);
+    }
+
+    @PutMapping("/menus/{id}/move")
+    @PreAuthorize("hasRole('SYSTEM_ADMIN') or hasAuthority('system:menu:list')")
+    public ApiResponse<Void> moveMenu(@PathVariable Long id, @RequestParam int direction) {
+        menuService.moveSort(id, direction);
+        return ApiResponse.ok(null);
+    }
+
+    @GetMapping("/menus/register-scope")
+    @PreAuthorize("isAuthenticated()")
+    public ApiResponse<List<SysMenu>> registerScopeMenus() {
+        return ApiResponse.ok(menuService.listRegisterScope());
+    }
+
+    @PostMapping("/menus/register-scope")
+    @PreAuthorize("hasRole('SYSTEM_ADMIN')")
+    public ApiResponse<Long> createRegisterMenu(@Valid @RequestBody RegisterMenuUpsertRequest request) {
+        return ApiResponse.ok(menuService.createRegisterMenu(request));
+    }
+
+    @PutMapping("/menus/register-scope/{id}")
+    @PreAuthorize("hasRole('SYSTEM_ADMIN')")
+    public ApiResponse<Void> updateRegisterMenu(@PathVariable Long id,
+                                                @Valid @RequestBody RegisterMenuUpsertRequest request) {
+        menuService.updateRegisterMenu(id, request);
+        return ApiResponse.ok(null);
+    }
+
+    @DeleteMapping("/menus/register-scope")
+    @PreAuthorize("hasRole('SYSTEM_ADMIN')")
+    public ApiResponse<Void> deleteRegisterMenus(@Valid @RequestBody RegisterMenuDeleteRequest request) {
+        menuService.deleteRegisterMenus(request.getIds());
+        return ApiResponse.ok(null);
     }
 
     @GetMapping("/users")

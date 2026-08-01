@@ -22,16 +22,22 @@ import com.chengde.smartcity.masterdata.entity.RcManagedTable;
 import com.chengde.smartcity.masterdata.mapper.GovCatalogResourceMapper;
 import com.chengde.smartcity.masterdata.mapper.GovMetadataRegistryMapper;
 import com.chengde.smartcity.masterdata.mapper.RcManagedTableMapper;
+import com.chengde.smartcity.analysis.entity.AnaIndicatorQuery;
+import com.chengde.smartcity.analysis.mapper.AnaIndicatorQueryMapper;
 import com.chengde.smartcity.security.UserPrincipal;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
 import java.util.stream.Collectors;
+import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -45,6 +51,7 @@ public class AnalyticsDomainService {
     private final AnaAnalysisModelMapper modelMapper;
     private final AnaZoneBindingMapper zoneBindingMapper;
     private final AnaIndicatorMapper indicatorMapper;
+    private final AnaIndicatorQueryMapper indicatorQueryMapper;
     private final AnaModelIndicatorMapper modelIndicatorMapper;
     private final GovMetadataRegistryMapper registryMapper;
     private final RcManagedTableMapper managedTableMapper;
@@ -53,11 +60,13 @@ public class AnalyticsDomainService {
     private final AuditService auditService;
     private final IntegrationProperties integrationProperties;
     private final DataEaseClient dataEaseClient;
+    private final JdbcTemplate jdbcTemplate;
 
     public AnalyticsDomainService(AnaDomainModuleMapper moduleMapper,
                                   AnaAnalysisModelMapper modelMapper,
                                   AnaZoneBindingMapper zoneBindingMapper,
                                   AnaIndicatorMapper indicatorMapper,
+                                  AnaIndicatorQueryMapper indicatorQueryMapper,
                                   AnaModelIndicatorMapper modelIndicatorMapper,
                                   GovMetadataRegistryMapper registryMapper,
                                   RcManagedTableMapper managedTableMapper,
@@ -65,11 +74,13 @@ public class AnalyticsDomainService {
                                   AnalysisDemoService analysisDemoService,
                                   AuditService auditService,
                                   IntegrationProperties integrationProperties,
-                                  DataEaseClient dataEaseClient) {
+                                  DataEaseClient dataEaseClient,
+                                  JdbcTemplate jdbcTemplate) {
         this.moduleMapper = moduleMapper;
         this.modelMapper = modelMapper;
         this.zoneBindingMapper = zoneBindingMapper;
         this.indicatorMapper = indicatorMapper;
+        this.indicatorQueryMapper = indicatorQueryMapper;
         this.modelIndicatorMapper = modelIndicatorMapper;
         this.registryMapper = registryMapper;
         this.managedTableMapper = managedTableMapper;
@@ -78,6 +89,7 @@ public class AnalyticsDomainService {
         this.auditService = auditService;
         this.integrationProperties = integrationProperties;
         this.dataEaseClient = dataEaseClient;
+        this.jdbcTemplate = jdbcTemplate;
     }
 
     public Map<String, Object> domainOverview(String domain) {
@@ -287,14 +299,195 @@ public class AnalyticsDomainService {
     // ---------- indicators ----------
 
     public List<AnaIndicator> listIndicators(String domain) {
-        return indicatorMapper.selectList(new LambdaQueryWrapper<AnaIndicator>()
-                .eq(AnaIndicator::getDomainCode, normalizeDomain(domain))
+        String d = normalizeDomain(domain);
+        List<AnaIndicator> list = indicatorMapper.selectList(new LambdaQueryWrapper<AnaIndicator>()
+                .eq(AnaIndicator::getDomainCode, d)
                 .eq(AnaIndicator::getStatus, "ACTIVE")
                 .orderByDesc(AnaIndicator::getId));
+        Set<Long> qids = list.stream().map(AnaIndicator::getQueryId).filter(id -> id != null && id > 0)
+                .collect(Collectors.toSet());
+        Map<Long, String> qmap = new HashMap<>();
+        if (!qids.isEmpty()) {
+            for (AnaIndicatorQuery q : indicatorQueryMapper.selectBatchIds(qids)) {
+                qmap.put(q.getId(), q.getQueryNo());
+            }
+        }
+        for (AnaIndicator ind : list) {
+            if (ind.getQueryId() != null && qmap.containsKey(ind.getQueryId())) {
+                ind.setQueryNo(qmap.get(ind.getQueryId()));
+            } else {
+                ind.setQueryNo(ind.getIndicatorCode());
+            }
+            if (ind.getResultField() == null || ind.getResultField().isBlank()) {
+                ind.setResultField(str(ind.getSourceColumn(), ind.getIndicatorCode()));
+            }
+            if (ind.getFieldName() == null || ind.getFieldName().isBlank()) {
+                ind.setFieldName(ind.getIndicatorCode());
+            }
+            if (ind.getFieldType() == null || ind.getFieldType().isBlank()) {
+                ind.setFieldType("字符串");
+            }
+        }
+        return list;
+    }
+
+    public List<Map<String, String>> listIndicatorDatasources(String domain) {
+        normalizeDomain(domain);
+        List<Map<String, String>> out = new ArrayList<>();
+        out.add(Map.of("key", "platform", "name", "平台库"));
+        out.add(Map.of("key", "population_demo", "name", "人口主题库"));
+        out.add(Map.of("key", "legal_demo", "name", "法人主题库"));
+        return out;
+    }
+
+    /** 解析 SELECT 结果字段（优先 AS 别名） */
+    public List<Map<String, Object>> parseIndicatorSql(Map<String, Object> body) {
+        String sql = required(body.get("sqlText"), "sqlText").toString().trim();
+        if (!sql.toLowerCase(Locale.ROOT).startsWith("select")) {
+            throw new BusinessException(400, "仅支持 SELECT 查询语句");
+        }
+        List<Map<String, Object>> fields = extractSelectAliases(sql);
+        if (fields.isEmpty()) {
+            throw new BusinessException(400, "未能解析出结果字段，请为列指定 AS 别名");
+        }
+        return fields;
+    }
+
+    public Map<String, Object> previewIndicatorSql(Map<String, Object> body) {
+        String sql = required(body.get("sqlText"), "sqlText").toString().trim();
+        if (!sql.toLowerCase(Locale.ROOT).startsWith("select")) {
+            throw new BusinessException(400, "仅支持 SELECT 查询语句");
+        }
+        int timeout = 60;
+        try {
+            if (body.get("timeoutSec") != null) timeout = Math.max(5, Integer.parseInt(String.valueOf(body.get("timeoutSec"))));
+        } catch (Exception ignored) { /* keep default */ }
+        String wrapped = "SELECT * FROM (" + sql.replaceAll(";\\s*$", "") + ") _ana_ind_preview LIMIT 20";
+        List<String> columns = new ArrayList<>();
+        List<Map<String, Object>> rows = new ArrayList<>();
+        try {
+            Integer old = null;
+            try {
+                old = jdbcTemplate.getQueryTimeout();
+                jdbcTemplate.setQueryTimeout(timeout);
+            } catch (Exception ignored) { /* optional */ }
+            try {
+                List<Map<String, Object>> raw = jdbcTemplate.queryForList(wrapped);
+                if (!raw.isEmpty()) {
+                    columns.addAll(raw.get(0).keySet());
+                } else {
+                    columns.addAll(extractSelectAliases(sql).stream()
+                            .map(f -> String.valueOf(f.get("resultField"))).toList());
+                }
+                rows.addAll(raw);
+            } finally {
+                if (old != null) {
+                    try { jdbcTemplate.setQueryTimeout(old); } catch (Exception ignored) { /* ignore */ }
+                }
+            }
+        } catch (Exception e) {
+            // 预览失败仍返回解析字段，便于先保存语句
+            List<Map<String, Object>> parsed = extractSelectAliases(sql);
+            Map<String, Object> out = new LinkedHashMap<>();
+            out.put("columns", parsed.stream().map(f -> String.valueOf(f.get("resultField"))).toList());
+            out.put("rows", List.of());
+            out.put("message", "预览执行失败：" + e.getMessage());
+            out.put("fields", parsed);
+            return out;
+        }
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("columns", columns);
+        out.put("rows", rows);
+        out.put("fields", enrichFieldsFromMeta(columns, sql));
+        return out;
+    }
+
+    @Transactional
+    public Long createIndicatorSql(UserPrincipal operator, String domain, Map<String, Object> body) {
+        String d = normalizeDomain(domain);
+        String sql = required(body.get("sqlText"), "sqlText").toString().trim();
+        String dsKey = str(body.get("datasourceKey"), "platform");
+        String dsName = str(body.get("datasourceName"), datasourceLabel(dsKey));
+        int timeout = 60;
+        try {
+            if (body.get("timeoutSec") != null) timeout = Math.max(5, Integer.parseInt(String.valueOf(body.get("timeoutSec"))));
+        } catch (Exception ignored) { /* default */ }
+
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> fields;
+        Object rawFields = body.get("fields");
+        if (rawFields instanceof List<?> list && !list.isEmpty()) {
+            fields = new ArrayList<>();
+            for (Object o : list) {
+                if (o instanceof Map<?, ?> m) {
+                    Map<String, Object> row = new LinkedHashMap<>();
+                    m.forEach((k, v) -> row.put(String.valueOf(k), v));
+                    fields.add(row);
+                }
+            }
+        } else {
+            fields = parseIndicatorSql(Map.of("sqlText", sql));
+        }
+        if (fields.isEmpty()) throw new BusinessException(400, "请先解析结果字段");
+
+        String slug = str(body.get("querySlug"), fields.get(0).get("fieldName") != null
+                ? String.valueOf(fields.get(0).get("fieldName"))
+                : "query");
+        slug = slug.replaceAll("[^a-zA-Z0-9_]", "_").toLowerCase(Locale.ROOT);
+        if (slug.isBlank()) slug = "query";
+        long seq = indicatorQueryMapper.selectCount(new LambdaQueryWrapper<AnaIndicatorQuery>()
+                .eq(AnaIndicatorQuery::getDomainCode, d));
+        String queryNo = d + ".ind_" + slug + "_sql" + seq;
+
+        AnaIndicatorQuery q = new AnaIndicatorQuery();
+        q.setDomainCode(d);
+        q.setQueryNo(queryNo);
+        q.setDatasourceKey(dsKey);
+        q.setDatasourceName(dsName);
+        q.setTimeoutSec(timeout);
+        q.setSqlText(sql);
+        q.setStatus("ACTIVE");
+        q.setCreatedBy(operator.getUsername());
+        q.setCreatedAt(LocalDateTime.now());
+        q.setUpdatedAt(LocalDateTime.now());
+        indicatorQueryMapper.insert(q);
+
+        int i = 0;
+        for (Map<String, Object> f : fields) {
+            String resultField = required(f.get("resultField"), "resultField").toString();
+            String fieldName = str(f.get("fieldName"), "ind_" + resultField);
+            String indName = str(f.get("indicatorName"), resultField);
+            AnaIndicator ind = new AnaIndicator();
+            ind.setDomainCode(d);
+            ind.setQueryId(q.getId());
+            ind.setResultField(resultField);
+            ind.setFieldType(str(f.get("fieldType"), "字符串"));
+            ind.setFieldLength(intVal(f.get("fieldLength")));
+            ind.setFieldPrecision(intVal(f.get("fieldPrecision")));
+            ind.setFieldName(fieldName);
+            ind.setIndicatorCode(queryNo + "_" + (++i));
+            ind.setIndicatorName(indName);
+            ind.setSourceTable(null);
+            ind.setSourceColumn(resultField);
+            ind.setAggFunc("EXPR");
+            ind.setExprText(sql);
+            ind.setStatus("ACTIVE");
+            ind.setCreatedBy(operator.getUsername());
+            ind.setCreatedAt(LocalDateTime.now());
+            ind.setUpdatedAt(LocalDateTime.now());
+            indicatorMapper.insert(ind);
+        }
+        auditService.log(operator.getUserId(), operator.getUsername(), operator.getOrgId(),
+                "ANA_IND_SQL_CREATE", d, queryNo, "fields=" + fields.size());
+        return q.getId();
     }
 
     @Transactional
     public Long createIndicator(UserPrincipal operator, String domain, Map<String, Object> body) {
+        // 兼容旧接口；若带 sqlText 则走语句模式
+        if (body.get("sqlText") != null && !String.valueOf(body.get("sqlText")).isBlank()) {
+            return createIndicatorSql(operator, domain, body);
+        }
         String d = normalizeDomain(domain);
         String agg = str(body.get("aggFunc"), "COUNT").toUpperCase(Locale.ROOT);
         if (!AGGS.contains(agg)) throw new BusinessException(400, "aggFunc 不支持: " + agg);
@@ -305,6 +498,9 @@ public class AnalyticsDomainService {
         ind.setIndicatorName(required(body.get("indicatorName"), "indicatorName").toString());
         ind.setSourceTable(table);
         ind.setSourceColumn(str(body.get("sourceColumn"), null));
+        ind.setResultField(str(body.get("sourceColumn"), ind.getIndicatorCode()));
+        ind.setFieldName(ind.getIndicatorCode());
+        ind.setFieldType("数值");
         ind.setAggFunc(agg);
         ind.setExprText(str(body.get("exprText"), null));
         ind.setUnitLabel(str(body.get("unitLabel"), null));
@@ -326,6 +522,7 @@ public class AnalyticsDomainService {
             throw new BusinessException(404, "指标不存在");
         }
         if (body.get("indicatorName") != null) ind.setIndicatorName(String.valueOf(body.get("indicatorName")));
+        if (body.get("fieldName") != null) ind.setFieldName(String.valueOf(body.get("fieldName")));
         if (body.get("sourceTable") != null) ind.setSourceTable(String.valueOf(body.get("sourceTable")));
         if (body.containsKey("sourceColumn")) ind.setSourceColumn(str(body.get("sourceColumn"), null));
         if (body.get("aggFunc") != null) {
@@ -336,6 +533,7 @@ public class AnalyticsDomainService {
         if (body.containsKey("exprText")) ind.setExprText(str(body.get("exprText"), null));
         if (body.containsKey("unitLabel")) ind.setUnitLabel(str(body.get("unitLabel"), null));
         if (body.containsKey("description")) ind.setDescription(str(body.get("description"), null));
+        if (body.containsKey("fieldType")) ind.setFieldType(str(body.get("fieldType"), null));
         ind.setUpdatedAt(LocalDateTime.now());
         indicatorMapper.updateById(ind);
         auditService.log(operator.getUserId(), operator.getUsername(), operator.getOrgId(),
@@ -351,6 +549,100 @@ public class AnalyticsDomainService {
         indicatorMapper.updateById(ind);
         auditService.log(operator.getUserId(), operator.getUsername(), operator.getOrgId(),
                 "ANA_IND_DELETE", ind.getDomainCode(), ind.getIndicatorCode(), "INACTIVE");
+    }
+
+    private static String datasourceLabel(String key) {
+        return switch (key) {
+            case "population_demo" -> "人口主题库";
+            case "legal_demo" -> "法人主题库";
+            default -> "平台库";
+        };
+    }
+
+    private static List<Map<String, Object>> extractSelectAliases(String sql) {
+        String cleaned = sql.replaceAll("(?is)/\\*.*?\\*/", " ").replaceAll("--.*?(\\r?\\n|$)", "\n");
+        Matcher m = Pattern.compile("(?is)^\\s*select\\s+(.*?)\\s+from\\s").matcher(cleaned);
+        if (!m.find()) return List.of();
+        String selectList = m.group(1).trim();
+        if ("*".equals(selectList)) return List.of();
+        List<String> parts = splitSelectItems(selectList);
+        LinkedHashSet<String> names = new LinkedHashSet<>();
+        List<Map<String, Object>> out = new ArrayList<>();
+        for (String part : parts) {
+            String p = part.trim();
+            if (p.isEmpty()) continue;
+            String alias = null;
+            Matcher as = Pattern.compile("(?i)\\bas\\s+([`\"]?)([a-zA-Z_][\\w]*)\\1\\s*$").matcher(p);
+            if (as.find()) {
+                alias = as.group(2);
+            } else {
+                Matcher bare = Pattern.compile("([`\"]?)([a-zA-Z_][\\w]*)\\1\\s*$").matcher(p);
+                if (bare.find()) alias = bare.group(2);
+            }
+            if (alias == null || !names.add(alias)) continue;
+            Map<String, Object> row = new LinkedHashMap<>();
+            row.put("resultField", alias);
+            row.put("fieldType", guessType(p));
+            row.put("fieldLength", guessType(p).contains("浮") ? 40 : (guessType(p).contains("整") ? 20 : 64));
+            row.put("fieldPrecision", guessType(p).contains("浮") ? 2 : 0);
+            row.put("indicatorName", alias);
+            row.put("fieldName", "ind_" + alias);
+            out.add(row);
+        }
+        return out;
+    }
+
+    private static List<String> splitSelectItems(String selectList) {
+        List<String> parts = new ArrayList<>();
+        StringBuilder cur = new StringBuilder();
+        int depth = 0;
+        for (int i = 0; i < selectList.length(); i++) {
+            char c = selectList.charAt(i);
+            if (c == '(') depth++;
+            else if (c == ')') depth = Math.max(0, depth - 1);
+            if (c == ',' && depth == 0) {
+                parts.add(cur.toString());
+                cur.setLength(0);
+            } else {
+                cur.append(c);
+            }
+        }
+        if (!cur.isEmpty()) parts.add(cur.toString());
+        return parts;
+    }
+
+    private static String guessType(String expr) {
+        String e = expr.toLowerCase(Locale.ROOT);
+        if (e.contains("count(") || e.contains("sum(") || e.contains("avg(") || e.contains("/") || e.contains("rate")) {
+            return e.contains("/") || e.contains("avg(") || e.contains("rate") ? "浮点数" : "整数";
+        }
+        if (e.contains("date_format") || e.contains("concat") || e.contains("'")) return "字符串";
+        return "字符串";
+    }
+
+    private List<Map<String, Object>> enrichFieldsFromMeta(List<String> columns, String sql) {
+        List<Map<String, Object>> parsed = extractSelectAliases(sql);
+        Map<String, Map<String, Object>> byName = new HashMap<>();
+        for (Map<String, Object> p : parsed) byName.put(String.valueOf(p.get("resultField")), p);
+        List<Map<String, Object>> out = new ArrayList<>();
+        for (String col : columns) {
+            Map<String, Object> base = byName.getOrDefault(col, new LinkedHashMap<>());
+            Map<String, Object> row = new LinkedHashMap<>();
+            row.put("resultField", col);
+            row.put("fieldType", base.getOrDefault("fieldType", "字符串"));
+            row.put("fieldLength", base.getOrDefault("fieldLength", 64));
+            row.put("fieldPrecision", base.getOrDefault("fieldPrecision", 0));
+            row.put("indicatorName", base.getOrDefault("indicatorName", col));
+            row.put("fieldName", base.getOrDefault("fieldName", "ind_" + col));
+            out.add(row);
+        }
+        return out;
+    }
+
+    private static Integer intVal(Object v) {
+        if (v == null || String.valueOf(v).isBlank()) return null;
+        if (v instanceof Number n) return n.intValue();
+        try { return Integer.valueOf(String.valueOf(v)); } catch (Exception e) { return null; }
     }
 
     // ---------- models ----------

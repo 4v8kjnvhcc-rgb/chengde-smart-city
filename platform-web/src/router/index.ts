@@ -26,56 +26,52 @@ const router = createRouter({
         {
           path: 'system/uum',
           name: 'system-uum',
-          component: () => import('@/views/system/UnifiedUserHubView.vue'),
-          meta: { title: '统一用户管理' },
+          redirect: (to) => {
+            const t = String(to.query.tab || 'users').toLowerCase()
+            const map: Record<string, string> = {
+              users: 'users.org',
+              apps: 'apps.manage',
+              auth: 'auth',
+              services: 'services',
+              integration: 'apps.integration',
+              portal: 'apps.portal',
+              audit: 'audit.log',
+              config: 'sys.cfg.appearance',
+            }
+            return { path: '/analytics/support', query: { tab: map[t] || 'users.org' } }
+          },
         },
         {
           path: 'system/access',
-          name: 'system-access',
-          component: () => import('@/views/exchange/ingestion/register/AccessControlView.vue'),
-          meta: { title: '访问控制' },
+          redirect: { path: '/analytics/support', query: { tab: 'audit.access' } },
         },
         {
           path: 'system/users',
-          name: 'system-users',
-          component: () => import('@/views/system/UserManage.vue'),
-          meta: { title: '用户管理' },
+          redirect: { path: '/analytics/support', query: { tab: 'users.user' } },
         },
         {
           path: 'system/roles',
-          name: 'system-roles',
-          component: () => import('@/views/system/RoleManage.vue'),
-          meta: { title: '角色管理' },
+          redirect: { path: '/analytics/support', query: { tab: 'users.role' } },
         },
         {
           path: 'system/orgs',
-          name: 'system-orgs',
-          component: () => import('@/views/system/OrgManage.vue'),
-          meta: { title: '组织与账号' },
+          redirect: { path: '/analytics/support', query: { tab: 'users.org' } },
         },
         {
           path: 'system/menus',
-          name: 'system-menus',
-          component: () => import('@/views/system/MenuManage.vue'),
-          meta: { title: '菜单管理' },
+          redirect: { path: '/analytics/support', query: { tab: 'sys.menus' } },
         },
         {
           path: 'system/portal-links',
-          name: 'system-portal-links',
-          component: () => import('@/views/system/PortalLinkManage.vue'),
-          meta: { title: '门户外链管理' },
+          redirect: { path: '/analytics/support', query: { tab: 'apps.links' } },
         },
         {
           path: 'system/tags',
-          name: 'system-tags',
-          component: () => import('@/views/system/TagLibraryManage.vue'),
-          meta: { title: '标签库' },
+          redirect: { path: '/analytics/support', query: { tab: 'sys.tags' } },
         },
         {
           path: 'system/audit',
-          name: 'system-audit',
-          component: () => import('@/views/system/AuditLog.vue'),
-          meta: { title: '审计日志' },
+          redirect: { path: '/analytics/support', query: { tab: 'audit.log' } },
         },
         {
           path: 'data-category',
@@ -83,15 +79,19 @@ const router = createRouter({
         },
         {
           path: 'system/maintenance',
-          name: 'system-maintenance',
-          component: () => import('@/views/system/maintenance/SystemMaintenanceHubView.vue'),
-          meta: { title: '系统维护管理' },
+          redirect: (to) => {
+            const p = String(to.query.pane || 'appearance').toLowerCase()
+            const map: Record<string, string> = {
+              appearance: 'sys.cfg.appearance',
+              mail: 'sys.cfg.mail',
+              security: 'audit.security',
+            }
+            return { path: '/analytics/support', query: { tab: map[p] || 'sys.cfg.appearance' } }
+          },
         },
         {
           path: 'system/security',
-          name: 'system-security',
-          component: () => import('@/views/system/SecurityConfig.vue'),
-          meta: { title: '等保开关' },
+          redirect: { path: '/analytics/support', query: { tab: 'audit.security' } },
         },
         {
           path: 'exchange/ingestion',
@@ -186,10 +186,13 @@ const router = createRouter({
           meta: { title: '应用分析门户', hubLayout: true },
         },
         {
+          path: 'integration',
+          redirect: { path: '/analytics/support', query: { tab: 'ops.kettle' } },
+        },
+        {
           path: 'integration/kettle',
           name: 'integration-kettle',
-          component: () => import('@/views/integration/KettleView.vue'),
-          meta: { title: 'ETL治理' },
+          redirect: { path: '/analytics/support', query: { tab: 'ops.kettle' } },
         },
         {
           path: 'governance',
@@ -213,7 +216,7 @@ const router = createRouter({
           path: 'analytics/support',
           name: 'analytics-support',
           component: () => import('@/views/analytics/AnalyticsSupportHubView.vue'),
-          meta: { title: '通用支撑', hubLayout: true },
+          meta: { title: '通用支撑平台', hubLayout: true },
         },
         {
           path: 'analytics/bi',
@@ -254,8 +257,7 @@ const router = createRouter({
         {
           path: 'integration/ds',
           name: 'integration-ds',
-          component: () => import('@/views/integration/SchedulerView.vue'),
-          meta: { title: '调度管理' },
+          redirect: { path: '/analytics/support', query: { tab: 'tasks' } },
         },
         {
           path: 'catalog',

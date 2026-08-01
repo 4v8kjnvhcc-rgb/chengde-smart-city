@@ -31,9 +31,17 @@ const total = ref(0)
 const page = ref(1)
 const dialogVisible = ref(false)
 const editVisible = ref(false)
+const roleDialogVisible = ref(false)
 const orgs = ref<Org[]>([])
 const roles = ref<Role[]>([])
 const submitting = ref(false)
+
+const roleForm = reactive({
+  id: 0,
+  username: '',
+  displayName: '',
+  roleIds: [] as number[],
+})
 
 const form = reactive({
   username: '',
@@ -174,13 +182,43 @@ async function resetPassword(row: UserRow) {
   }
 }
 
+async function openRoleConfig(row: UserRow) {
+  await loadMeta()
+  roleForm.id = row.id
+  roleForm.username = row.username
+  roleForm.displayName = row.displayName
+  try {
+    const roleRes = await api.get(`/system/users/${row.id}/roles`)
+    roleForm.roleIds = Array.isArray(roleRes.data) ? [...roleRes.data] : []
+  } catch {
+    roleForm.roleIds = []
+  }
+  roleDialogVisible.value = true
+}
+
+async function submitRoleConfig() {
+  submitting.value = true
+  try {
+    await api.put(`/system/users/${roleForm.id}`, { roleIds: roleForm.roleIds })
+    ElMessage.success('角色已更新')
+    roleDialogVisible.value = false
+    load()
+  } catch (e: unknown) {
+    ElMessage.error(e instanceof Error ? e.message : '配置角色失败')
+  } finally {
+    submitting.value = false
+  }
+}
+
 onMounted(load)
 </script>
 
 <template>
   <div>
     <PageHeader title="用户管理（全局列表）" description="建议优先在「组织与账号」按单位管理用户；本页为全局检索入口。">
-      <el-button @click="$router.push('/system/orgs')">打开组织与账号</el-button>
+      <el-button @click="$router.push({ path: '/analytics/support', query: { tab: 'users.org' } })">
+        打开组织管理
+      </el-button>
       <el-button
         v-if="auth.hasPermission('system:user:add')"
         type="primary"
@@ -199,7 +237,7 @@ onMounted(load)
             <el-tag :type="row.status === 1 ? 'success' : 'info'" size="small">{{ $statusLabel(row.status) }}</el-tag>
           </template>
         </el-table-column>
-        <el-table-column label="操作" width="240" fixed="right">
+        <el-table-column label="操作" width="300" fixed="right">
           <template #default="{ row }">
             <el-button
               v-if="auth.hasPermission('system:user:edit')"
@@ -208,6 +246,14 @@ onMounted(load)
               @click="openEdit(row)"
             >
               编辑
+            </el-button>
+            <el-button
+              v-if="auth.hasPermission('system:user:edit')"
+              link
+              type="primary"
+              @click="openRoleConfig(row)"
+            >
+              配置角色
             </el-button>
             <el-button
               v-if="auth.hasPermission('system:user:edit')"
@@ -293,6 +339,40 @@ onMounted(load)
       <template #footer>
         <el-button @click="editVisible = false">取消</el-button>
         <el-button type="primary" :loading="submitting" @click="submitEdit">保存</el-button>
+      </template>
+    </el-dialog>
+
+    <el-dialog
+      v-model="roleDialogVisible"
+      :title="`配置角色 — ${roleForm.displayName || roleForm.username}`"
+      width="480px"
+      destroy-on-close
+    >
+      <el-form label-position="top">
+        <el-form-item label="用户">
+          <el-input :model-value="`${roleForm.displayName || '-'}（${roleForm.username}）`" disabled />
+        </el-form-item>
+        <el-form-item label="角色" required>
+          <el-select
+            v-model="roleForm.roleIds"
+            multiple
+            filterable
+            clearable
+            placeholder="选择一个或多个角色"
+            style="width: 100%"
+          >
+            <el-option
+              v-for="r in roles"
+              :key="r.id"
+              :label="r.roleName"
+              :value="r.id"
+            />
+          </el-select>
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="roleDialogVisible = false">取消</el-button>
+        <el-button type="primary" :loading="submitting" @click="submitRoleConfig">保存</el-button>
       </template>
     </el-dialog>
   </div>

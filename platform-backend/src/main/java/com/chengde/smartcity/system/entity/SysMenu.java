@@ -12,6 +12,8 @@ public class SysMenu {
     private Long id;
     private Long parentId;
     private String menuName;
+    /** 英文名称/路由名（表单「名称」） */
+    private String routeName;
     private Integer menuType;
     private String path;
     private String component;
@@ -31,6 +33,8 @@ public class SysMenu {
     public void setParentId(Long parentId) { this.parentId = parentId; }
     public String getMenuName() { return menuName; }
     public void setMenuName(String menuName) { this.menuName = menuName; }
+    public String getRouteName() { return routeName; }
+    public void setRouteName(String routeName) { this.routeName = routeName; }
     public Integer getMenuType() { return menuType; }
     public void setMenuType(Integer menuType) { this.menuType = menuType; }
     public String getPath() { return path; }

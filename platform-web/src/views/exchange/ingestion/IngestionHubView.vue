@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, defineAsyncComponent, onMounted, ref, watch } from 'vue'
+import { computed, defineAsyncComponent, onMounted, onUnmounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import PageHeader from '@/components/common/PageHeader.vue'
 import HubSideLayout from '@/components/common/HubSideLayout.vue'
@@ -7,9 +7,9 @@ import { useAuthStore } from '@/stores/auth'
 import {
   COLLECT_MODULES,
   DEFAULT_MODULE,
+  buildRegisterNavItems,
   filterCollectNavItems,
   filterIngestionModules,
-  filterRegisterNavItems,
   isCollectModuleAllowed,
   moduleTitle,
   normalizeCollectModuleKey,
@@ -17,7 +17,9 @@ import {
   resolveIngestionNav,
   systemTitle,
   type IngestionSystem,
+  type RegisterMenuMeta,
 } from './ingestion-nav'
+import api from '@/api/http'
 
 const route = useRoute()
 const router = useRouter()
@@ -39,6 +41,7 @@ const moduleComponents: Record<string, ReturnType<typeof defineAsyncComponent>> 
   m048: defineAsyncComponent(() => import('./register/AccessControlView.vue')),
   m049: defineAsyncComponent(() => import('./register/SystemLinkView.vue')),
   m050: defineAsyncComponent(() => import('./register/DictRegisterView.vue')),
+  'menu-mgmt': defineAsyncComponent(() => import('./register/RegisterMenuManageView.vue')),
   'asset-catalog-reg': defineAsyncComponent(() => import('./register/AssetCatalogRegView.vue')),
   'asset-catalog-mgmt': defineAsyncComponent(() => import('./register/AssetCatalogMgmtView.vue')),
   upload: defineAsyncComponent(() => import('./collect/CollectIngestView.vue')),
@@ -60,6 +63,10 @@ const moduleComponents: Record<string, ReturnType<typeof defineAsyncComponent>> 
   'asset.destroy': defineAsyncComponent(() => import('./collect/AssetDestroyView.vue')),
 }
 
+const CustomRegisterMenuView = defineAsyncComponent(() => import('./register/CustomRegisterMenuView.vue'))
+
+const registerMenuMeta = ref<RegisterMenuMeta[] | null>(null)
+
 const permOpts = computed(() => ({
   isSystemAdmin: auth.isSystemAdmin,
   permissions: auth.permissions,
@@ -71,11 +78,25 @@ const canRegister = computed(() => allowedRegister.value.length > 0)
 const canCollect = computed(() => allowedCollect.value.length > 0)
 
 const navItems = computed(() => {
-  if (system.value === 'register') return filterRegisterNavItems(permOpts.value)
+  if (system.value === 'register') return buildRegisterNavItems(permOpts.value, registerMenuMeta.value)
   return filterCollectNavItems(permOpts.value)
 })
-const activeComponent = computed(() => moduleComponents[module.value])
+const activeComponent = computed(() => {
+  if (module.value.startsWith('custom-')) return CustomRegisterMenuView
+  return moduleComponents[module.value]
+})
 const pageTitle = computed(() => `大数据归集平台 · ${systemTitle(system.value)} · ${moduleTitle(module.value)}`)
+
+function isRegisterModuleAllowed(moduleKey: string, allowed: typeof allowedRegister.value): boolean {
+  if (allowed.some((m) => m.key === moduleKey)) return true
+  if (moduleKey.startsWith('custom-')) {
+    const id = Number(moduleKey.slice('custom-'.length))
+    const row = registerMenuMeta.value?.find((r) => r.id === id)
+    if (!row?.permission) return false
+    return permOpts.value.isSystemAdmin || permOpts.value.permissions.includes(row.permission)
+  }
+  return false
+}
 
 function firstAllowedModule(sys: IngestionSystem): string {
   const list = sys === 'register' ? allowedRegister.value : allowedCollect.value
@@ -100,7 +121,7 @@ function ensureAllowedModule() {
   const ok =
     system.value === 'collect'
       ? isCollectModuleAllowed(module.value, allowed)
-      : allowed.some((m) => m.key === module.value)
+      : isRegisterModuleAllowed(module.value, allowed)
   if (!ok) {
     module.value = firstAllowedModule(system.value)
     pushQuery()
@@ -138,11 +159,20 @@ function onModuleChange(key: string) {
   const next = system.value === 'collect' ? normalizeCollectModuleKey(key) : key
   if (system.value === 'collect') {
     if (!isCollectModuleAllowed(next, allowed)) return
-  } else if (!allowed.some((m) => m.key === next)) {
+  } else if (!isRegisterModuleAllowed(next, allowed)) {
     return
   }
   module.value = next
   pushQuery()
+  if (system.value === 'register') void refreshRegisterMenuMeta()
+}
+
+async function refreshRegisterMenuMeta() {
+  try {
+    registerMenuMeta.value = (await api.get('/system/menus/register-scope')).data || []
+  } catch {
+    /* 保持上次元数据 */
+  }
 }
 
 watch(() => [route.query.system, route.query.module, route.query.tab], syncFromRoute)
@@ -154,7 +184,13 @@ onMounted(async () => {
   } catch {
     /* 保持现有会话权限 */
   }
+  await refreshRegisterMenuMeta()
+  window.addEventListener('register-menus-changed', refreshRegisterMenuMeta)
   syncFromRoute()
+})
+
+onUnmounted(() => {
+  window.removeEventListener('register-menus-changed', refreshRegisterMenuMeta)
 })
 </script>
 

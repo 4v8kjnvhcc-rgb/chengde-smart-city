@@ -132,10 +132,14 @@ public class KettleKtrCompiler {
     private String[] translate(String host, int port) {
         String key = host + ":" + port;
         String mapped = props.getKettle().getHostMap().get(key);
-        if (mapped == null && port == 3308
-                && ("localhost".equalsIgnoreCase(host) || "127.0.0.1".equals(host))) {
+        boolean loopback = "localhost".equalsIgnoreCase(host) || "127.0.0.1".equals(host);
+        if (mapped == null && port == 3308 && loopback) {
             // compose source-mysql 默认映射；避免 host-map YAML 未绑定时 Carte 连 localhost:3308 失败
             mapped = "source-mysql:3306";
+        }
+        if (mapped == null && port == 3306 && loopback) {
+            // 宿主机 MySQL：容器内 localhost 指向 Carte 自身，须走 host-gateway
+            mapped = "host.docker.internal:3306";
         }
         if (mapped == null) {
             return new String[]{host, String.valueOf(port)};

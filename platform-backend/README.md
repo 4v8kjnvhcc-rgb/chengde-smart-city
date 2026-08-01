@@ -70,7 +70,7 @@ net start Redis
 ## 5. 启动后端
 
 ```powershell
-cd platform-backend
+cd .\chengde-smart-city\platform-backend\
 .\mvnw.cmd spring-boot:run "-Dspring-boot.run.profiles=dev"
 ```
 
@@ -79,7 +79,7 @@ Flyway 自动执行 V1～V3（建表 + 菜单/测试账号）。
 ## 6. 启动前端
 
 ```powershell
-cd platform-web
+cd .\chengde-smart-city\platform-web\
 npm install
 npm run dev
 ```

@@ -5,6 +5,7 @@ import api from '@/api/http'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import PageCard from '@/components/common/PageCard.vue'
 import HubSideLayout, { type HubNavGroup } from '@/components/common/HubSideLayout.vue'
+import DomainIndicatorSqlLibrary from '@/views/analytics/DomainIndicatorSqlLibrary.vue'
 import { statusLabel, statusTagType } from '@/utils/status-label'
 
 interface ZoneDef {
@@ -42,9 +43,13 @@ interface Indicator {
   id: number
   indicatorCode: string
   indicatorName: string
-  sourceTable: string
+  queryNo?: string
+  resultField?: string
+  fieldType?: string
+  fieldName?: string
+  sourceTable?: string
   sourceColumn?: string
-  aggFunc: string
+  aggFunc?: string
   exprText?: string
   unitLabel?: string
   description?: string
@@ -63,17 +68,10 @@ interface AnalysisModel {
   indicators?: Indicator[]
 }
 
-const AGG_ZH: Record<string, string> = {
-  COUNT: '计数', SUM: '求和', AVG: '平均', MAX: '最大', MIN: '最小', EXPR: '表达式',
-}
 const ASSET_TYPE_ZH: Record<string, string> = {
   METADATA: '元数据表', MANAGED: '纳管表', CATALOG: '目录资源', OTHER: '其他',
 }
 
-function aggLabel(v?: string) {
-  if (!v) return '—'
-  return AGG_ZH[v] || statusLabel(v)
-}
 function assetTypeLabel(v?: string) {
   if (!v) return '—'
   return ASSET_TYPE_ZH[v] || statusLabel(v)
@@ -138,17 +136,6 @@ const models = ref<AnalysisModel[]>([])
 
 const bindDialog = ref(false)
 const selectedCandidate = ref<Candidate | null>(null)
-const indDialog = ref(false)
-const indForm = ref({
-  indicatorName: '',
-  indicatorCode: '',
-  sourceTable: '',
-  sourceColumn: '',
-  aggFunc: 'COUNT',
-  exprText: '',
-  unitLabel: '',
-  description: '',
-})
 const modelDrawer = ref(false)
 const editingModel = ref<AnalysisModel | null>(null)
 const modelForm = ref({
@@ -330,36 +317,8 @@ async function unbind(row: Binding) {
   await loadBindings(true)
 }
 
-function openIndCreate() {
-  indForm.value = {
-    indicatorName: '',
-    indicatorCode: '',
-    sourceTable: bindings.value.find((b) => b.physicalTable)?.physicalTable || '',
-    sourceColumn: '',
-    aggFunc: 'COUNT',
-    exprText: '',
-    unitLabel: '',
-    description: '',
-  }
-  indDialog.value = true
-}
-
-async function saveIndicator() {
-  if (!indForm.value.indicatorName || !indForm.value.sourceTable) {
-    ElMessage.warning('请填写指标名称与来源表')
-    return
-  }
-  await api.post(`/analytics/domain/${meta.value.domain}/indicators`, { ...indForm.value })
-  ElMessage.success('指标已创建')
-  indDialog.value = false
-  await loadDesigner(true)
-}
-
-async function removeIndicator(row: Indicator) {
-  await ElMessageBox.confirm(`确认停用指标「${row.indicatorName}」？`, '停用指标', { type: 'warning' })
-  await api.delete(`/analytics/domain/indicators/${row.id}`)
-  ElMessage.success('已停用')
-  await loadDesigner(true)
+function onIndicatorsRefreshed() {
+  void loadDesigner(true)
 }
 
 function openPortalPreview() {
@@ -545,27 +504,10 @@ onMounted(async () => {
             <el-button @click="$router.push('/exchange/application')">打开应用平台</el-button>
           </el-tab-pane>
           <el-tab-pane label="指标库" name="indicators">
-            <el-form inline class="portal-inline-form">
-              <el-form-item class="portal-form-actions">
-                <el-button type="primary" @click="openIndCreate">新建指标</el-button>
-                <el-button @click="loadDesigner(true)">刷新</el-button>
-              </el-form-item>
-            </el-form>
-            <el-table :data="indicators" stripe size="small" empty-text="尚无指标，请基于挂载表字段定义">
-              <el-table-column prop="indicatorName" label="指标名称" min-width="140" />
-              <el-table-column prop="indicatorCode" label="编码" width="140" />
-              <el-table-column prop="sourceTable" label="来源表" min-width="140" show-overflow-tooltip />
-              <el-table-column prop="sourceColumn" label="字段" width="100" />
-              <el-table-column label="聚合" width="90">
-                <template #default="{ row }">{{ aggLabel(row.aggFunc) }}</template>
-              </el-table-column>
-              <el-table-column prop="unitLabel" label="单位" width="80" />
-              <el-table-column label="操作" width="90">
-                <template #default="{ row }">
-                  <el-button link type="danger" @click="removeIndicator(row)">停用</el-button>
-                </template>
-              </el-table-column>
-            </el-table>
+            <DomainIndicatorSqlLibrary
+              :domain="meta.domain"
+              @refreshed="onIndicatorsRefreshed"
+            />
           </el-tab-pane>
           <el-tab-pane label="分析模型" name="models">
             <p class="hint">分析模型 = 场景包（多指标 + 维度 + 看板）。指标 ≠ 模型。</p>
@@ -602,24 +544,10 @@ onMounted(async () => {
       <PageCard v-else-if="isDesignerOnly" :title="pageTitle">
         <el-tabs v-model="shareTab">
           <el-tab-pane label="指标库" name="indicators">
-            <el-form inline class="portal-inline-form">
-              <el-form-item class="portal-form-actions">
-                <el-button type="primary" @click="openIndCreate">新建指标</el-button>
-                <el-button @click="loadDesigner(true)">刷新</el-button>
-              </el-form-item>
-            </el-form>
-            <el-table :data="indicators" stripe size="small">
-              <el-table-column prop="indicatorName" label="指标名称" min-width="140" />
-              <el-table-column prop="sourceTable" label="来源表" min-width="140" />
-              <el-table-column label="聚合" width="90">
-                <template #default="{ row }">{{ aggLabel(row.aggFunc) }}</template>
-              </el-table-column>
-              <el-table-column label="操作" width="90">
-                <template #default="{ row }">
-                  <el-button link type="danger" @click="removeIndicator(row)">停用</el-button>
-                </template>
-              </el-table-column>
-            </el-table>
+            <DomainIndicatorSqlLibrary
+              :domain="meta.domain"
+              @refreshed="onIndicatorsRefreshed"
+            />
           </el-tab-pane>
           <el-tab-pane label="分析模型" name="models">
             <el-table :data="models" stripe size="small">
@@ -667,46 +595,6 @@ onMounted(async () => {
       </template>
     </el-dialog>
 
-    <el-dialog v-model="indDialog" title="新建指标" width="520px" destroy-on-close>
-      <el-form label-width="100px">
-        <el-form-item label="指标名称" required>
-          <el-input v-model="indForm.indicatorName" />
-        </el-form-item>
-        <el-form-item label="编码">
-          <el-input v-model="indForm.indicatorCode" placeholder="可空，自动生成" />
-        </el-form-item>
-        <el-form-item label="来源表" required>
-          <el-input v-model="indForm.sourceTable" placeholder="物理表名" />
-        </el-form-item>
-        <el-form-item label="字段">
-          <el-input v-model="indForm.sourceColumn" />
-        </el-form-item>
-        <el-form-item label="聚合函数">
-          <el-select v-model="indForm.aggFunc" style="width:100%">
-            <el-option label="计数" value="COUNT" />
-            <el-option label="求和" value="SUM" />
-            <el-option label="平均" value="AVG" />
-            <el-option label="最大" value="MAX" />
-            <el-option label="最小" value="MIN" />
-            <el-option label="表达式" value="EXPR" />
-          </el-select>
-        </el-form-item>
-        <el-form-item v-if="indForm.aggFunc === 'EXPR'" label="表达式">
-          <el-input v-model="indForm.exprText" type="textarea" :rows="2" />
-        </el-form-item>
-        <el-form-item label="单位">
-          <el-input v-model="indForm.unitLabel" />
-        </el-form-item>
-        <el-form-item label="说明">
-          <el-input v-model="indForm.description" type="textarea" :rows="2" />
-        </el-form-item>
-      </el-form>
-      <template #footer>
-        <el-button @click="indDialog = false">取消</el-button>
-        <el-button type="primary" @click="saveIndicator">保存</el-button>
-      </template>
-    </el-dialog>
-
     <el-drawer v-model="modelDrawer" size="560px" :title="editingModel ? `设计：${editingModel.modelName}` : '分析模型'" destroy-on-close>
       <el-form v-if="editingModel" label-width="100px">
         <el-form-item label="模型名称">
@@ -721,7 +609,10 @@ onMounted(async () => {
           <el-input v-model="modelForm.dimensionJson" type="textarea" :rows="3" placeholder='例如 ["区县","年龄段"]' />
         </el-form-item>
         <el-form-item label="看板标识">
-          <el-input v-model="modelForm.deDashboardId" placeholder="DataEase dashboardId" />
+          <el-input
+            v-model="modelForm.deDashboardId"
+            placeholder="填预览地址中的 dvId，如 1280620734217064448（勿填公共分享码）"
+          />
         </el-form-item>
         <el-form-item label="说明">
           <el-input v-model="modelForm.description" type="textarea" :rows="2" />

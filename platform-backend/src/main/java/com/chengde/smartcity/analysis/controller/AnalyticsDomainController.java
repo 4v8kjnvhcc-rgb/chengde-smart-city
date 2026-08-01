@@ -88,6 +88,32 @@ public class AnalyticsDomainController {
         return ApiResponse.ok(service.listIndicators(domain));
     }
 
+    @GetMapping("/{domain}/indicators/datasources")
+    @PreAuthorize("isAuthenticated()")
+    public ApiResponse<List<Map<String, String>>> indicatorDatasources(@PathVariable String domain) {
+        return ApiResponse.ok(service.listIndicatorDatasources(domain));
+    }
+
+    @PostMapping("/{domain}/indicators/sql/parse")
+    @PreAuthorize("isAuthenticated()")
+    public ApiResponse<List<Map<String, Object>>> parseIndicatorSql(@RequestBody Map<String, Object> body) {
+        return ApiResponse.ok(service.parseIndicatorSql(body));
+    }
+
+    @PostMapping("/{domain}/indicators/sql/preview")
+    @PreAuthorize("isAuthenticated()")
+    public ApiResponse<Map<String, Object>> previewIndicatorSql(@RequestBody Map<String, Object> body) {
+        return ApiResponse.ok(service.previewIndicatorSql(body));
+    }
+
+    @PostMapping("/{domain}/indicators/sql")
+    @PreAuthorize("isAuthenticated()")
+    public ApiResponse<Long> createIndicatorSql(@AuthenticationPrincipal UserPrincipal principal,
+                                                @PathVariable String domain,
+                                                @RequestBody Map<String, Object> body) {
+        return ApiResponse.ok(service.createIndicatorSql(principal, domain, body));
+    }
+
     @PostMapping("/{domain}/indicators")
     @PreAuthorize("isAuthenticated()")
     public ApiResponse<Long> createIndicator(@AuthenticationPrincipal UserPrincipal principal,
