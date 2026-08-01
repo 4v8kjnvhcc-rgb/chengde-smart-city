@@ -147,8 +147,53 @@ export interface PipelineJob { id: number; jobCode: string; jobName: string; job
 export interface ProbeReport { id: number; reportCode: string; sourceName: string; nullRate: number; domainCheck: string; entityType: string; status: string }
 export interface DataDefinition { id: number; defCode: string; defName: string; businessDesc: string; techDesc: string; status: string }
 export interface ReconcileLog { id: number; batchNo: string; matchedPct: number; diffRows: number; alertLevel: string; status: string }
-export interface Registry { id: number; registryCode: string; title: string; categoryPath: string; secretLevel: string; publishStatus: string; approvalStatus: string }
-export interface CategoryNode { id: number; nodeCode: string; nodeName: string; parentId: number; secretLevel: string; sortOrder: number }
+export interface Registry {
+  id: number
+  registryCode: string
+  resourceCode?: string
+  title: string
+  providerOrg?: string
+  resourceFormat?: string
+  shareType?: string
+  updateCycle?: string
+  description?: string
+  categoryPath?: string
+  categoryId?: number
+  secretLevel: string
+  publishStatus: string
+  approvalStatus: string
+  refSourceId?: number
+  refTableId?: number
+  assetSummary?: string
+  orgId?: number
+}
+export interface CategoryNode {
+  id: number
+  nodeCode: string
+  nodeName: string
+  parentId: number
+  secretLevel: string
+  secretFlag?: number
+  description?: string
+  sortOrder: number
+}
+export interface CatalogApproval {
+  id: number
+  registryId?: number
+  categoryId?: number
+  actionType: string
+  status: string
+  submitComment?: string
+  reviewComment?: string
+  submittedBy?: string
+  submittedAt?: string
+  reviewedBy?: string
+  reviewedAt?: string
+  resourceCode?: string
+  resourceName?: string
+  publishStatus?: string
+  shareType?: string
+}
 export interface Policy { id: number; policyCode: string; policyName: string; policyType: string; ruleExpr?: string; lifecycleStage?: string; status?: string }
 export interface AssetTag {
   id: number
@@ -442,11 +487,46 @@ export const ingestionApi = {
   saveDefinition: (body: Record<string, unknown>) => api.post<number>('/exchange/ingestion/collect/definitions', body),
   reconcileLogs: () => api.get<ReconcileLog[]>('/exchange/ingestion/collect/reconcile-logs'),
   reconcile: (action: string) => api.get<Record<string, unknown>>(`/exchange/ingestion/reconcile/${action}`),
-  registries: () => api.get<Registry[]>('/exchange/ingestion/registries'),
+  registries: (params?: Record<string, unknown>) =>
+    api.get<Registry[]>('/exchange/ingestion/registries', { params }),
+  registryDetail: (id: number) => api.get<Registry>(`/exchange/ingestion/registries/${id}`),
   createRegistry: (body: Record<string, unknown>) => api.post<number>('/exchange/ingestion/registries', body),
-  approveRegistry: (id: number, body: Record<string, unknown>) => api.post<void>(`/exchange/ingestion/registries/${id}/approve`, body),
-  categories: () => api.get<CategoryNode[]>('/exchange/ingestion/collect/categories'),
-  createCategory: (body: Record<string, unknown>) => api.post<number>('/exchange/ingestion/collect/categories', body),
+  updateRegistry: (id: number, body: Record<string, unknown>) =>
+    api.put<void>(`/exchange/ingestion/registries/${id}`, body),
+  deleteRegistry: (id: number) => api.delete<void>(`/exchange/ingestion/registries/${id}`),
+  batchCreateRegistry: (body: Record<string, unknown>) =>
+    api.post<number[]>('/exchange/ingestion/registries/batch', body),
+  importRegistries: (body: Record<string, unknown>) =>
+    api.post<{ success: number; failed: number; errors: string[] }>('/exchange/ingestion/registries/import', body),
+  submitPublish: (body: { ids: number[]; comment?: string }) =>
+    api.post<number>('/exchange/ingestion/registries/submit-publish', body),
+  submitOffline: (body: { ids: number[]; comment?: string }) =>
+    api.post<number>('/exchange/ingestion/registries/submit-offline', body),
+  approveRegistry: (id: number, body: Record<string, unknown>) =>
+    api.post<void>(`/exchange/ingestion/registries/${id}/approve`, body),
+  categories: (params?: { keyword?: string }) =>
+    api.get<CategoryNode[]>('/exchange/ingestion/collect/categories', { params }),
+  createCategory: (body: Record<string, unknown>) =>
+    api.post<number>('/exchange/ingestion/collect/categories', body),
+  updateCategory: (id: number, body: Record<string, unknown>) =>
+    api.put<void>(`/exchange/ingestion/collect/categories/${id}`, body),
+  deleteCategory: (id: number) => api.delete<void>(`/exchange/ingestion/collect/categories/${id}`),
+  boundResources: (categoryId: number) =>
+    api.get<Registry[]>(`/exchange/ingestion/collect/categories/${categoryId}/bound`),
+  bindResources: (categoryId: number, ids: number[]) =>
+    api.post<void>(`/exchange/ingestion/collect/categories/${categoryId}/bind`, { ids }),
+  unbindResources: (ids: number[]) =>
+    api.post<void>('/exchange/ingestion/collect/categories/unbind', { ids }),
+  catalogApprovals: (params?: { status?: string }) =>
+    api.get<CatalogApproval[]>('/exchange/ingestion/collect/approvals', { params }),
+  approveCatalog: (id: number, body?: { comment?: string }) =>
+    api.post<void>(`/exchange/ingestion/collect/approvals/${id}/approve`, body || {}),
+  rejectCatalog: (id: number, body: { comment: string }) =>
+    api.post<void>(`/exchange/ingestion/collect/approvals/${id}/reject`, body),
+  batchApproveCatalog: (body: { ids: number[]; comment?: string }) =>
+    api.post<{ approved: number; errors: string[] }>('/exchange/ingestion/collect/approvals/batch-approve', body),
+  batchRejectCatalog: (body: { ids: number[]; comment: string }) =>
+    api.post<{ rejected: number; errors: string[] }>('/exchange/ingestion/collect/approvals/batch-reject', body),
   policies: (policyType?: string) => api.get<Policy[]>('/exchange/ingestion/policies', { params: { policyType } }),
   globalView: () => api.get<Record<string, unknown>>('/exchange/ingestion/global-view'),
   health: () => api.get<HealthMetric[]>('/exchange/ingestion/health'),

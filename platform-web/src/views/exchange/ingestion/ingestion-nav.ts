@@ -15,6 +15,29 @@ export const QUALITY_SUB_LABELS: Record<QualitySubKey, string> = {
   'quality.assess': '数据质量评估',
 }
 
+/** 指标与目录体系构建侧栏叶子 */
+export const CATALOG_SUB_KEYS = [
+  'catalog.resources',
+  'catalog.classify',
+  'catalog.publish',
+  'catalog.approvals',
+] as const
+export type CatalogSubKey = (typeof CATALOG_SUB_KEYS)[number]
+
+export const CATALOG_SUB_LABELS: Record<CatalogSubKey, string> = {
+  'catalog.resources': '数据资源编目管理',
+  'catalog.classify': '数据资源分类',
+  'catalog.publish': '资源目录注册发布',
+  'catalog.approvals': '数据资源目录审批',
+}
+
+export const CATALOG_SUB_PERMISSIONS: Record<CatalogSubKey, string> = {
+  'catalog.resources': 'hub:ingestion:collect:catalog:resources',
+  'catalog.classify': 'hub:ingestion:collect:catalog:classify',
+  'catalog.publish': 'hub:ingestion:collect:catalog:publish',
+  'catalog.approvals': 'hub:ingestion:collect:catalog:approvals',
+}
+
 /** 数据资产管理侧栏叶子 */
 export const ASSET_SUB_KEYS = [
   'asset.classify',
@@ -70,7 +93,7 @@ export const REGISTER_MODULES: IngestionModuleMeta[] = [
 export const COLLECT_MODULES: IngestionModuleMeta[] = [
   { key: 'ingest', mCode: 'M054', label: '数据汇聚接入', subLabel: '结构化·文件·其他接入', system: 'collect', permission: 'hub:ingestion:collect:ingest' },
   { key: 'pipeline', mCode: 'M061', label: '规范设计', subLabel: '分类·探查·定义·对账', system: 'collect', permission: 'hub:ingestion:collect:pipeline' },
-  { key: 'catalog', mCode: 'M065', label: '指标与目录体系构建', subLabel: '关联登记·编目·审批', system: 'collect', permission: 'hub:ingestion:collect:catalog' },
+  { key: 'catalog', mCode: 'M065', label: '指标与目录体系构建', subLabel: '编目·分类·注册发布·审批', system: 'collect', permission: 'hub:ingestion:collect:catalog' },
   {
     key: 'quality',
     mCode: 'QCTL',
@@ -110,8 +133,17 @@ export const LEGACY_TAB_MAP: Record<string, { system: IngestionSystem; module: s
   upload: { system: 'collect', module: 'ingest' },
   channel: { system: 'collect', module: 'ingest' },
   pipeline: { system: 'collect', module: 'pipeline' },
-  resource: { system: 'collect', module: 'catalog' },
-  govern: { system: 'collect', module: 'catalog' },
+  resource: { system: 'collect', module: 'catalog.resources' },
+  govern: { system: 'collect', module: 'catalog.approvals' },
+  catalog: { system: 'collect', module: 'catalog.resources' },
+  'catalog.resources': { system: 'collect', module: 'catalog.resources' },
+  'catalog.classify': { system: 'collect', module: 'catalog.classify' },
+  'catalog.publish': { system: 'collect', module: 'catalog.publish' },
+  'catalog.approvals': { system: 'collect', module: 'catalog.approvals' },
+  m065: { system: 'collect', module: 'catalog.resources' },
+  m066: { system: 'collect', module: 'catalog.classify' },
+  m067: { system: 'collect', module: 'catalog.publish' },
+  m068: { system: 'collect', module: 'catalog.approvals' },
   asset: { system: 'collect', module: 'asset.classify' },
   'asset.classify': { system: 'collect', module: 'asset.classify' },
   'asset.mask': { system: 'collect', module: 'asset.mask' },
@@ -136,9 +168,14 @@ export const LEGACY_TAB_MAP: Record<string, { system: IngestionSystem; module: s
 }
 for (let i = 39; i <= 50; i++) LEGACY_TAB_MAP[`m0${i}`] = { system: 'register', module: `m0${i}` }
 for (let i = 51; i <= 77; i++) {
+  if (i >= 65 && i <= 68) continue
   const ck = MCODE_TO_COLLECT[i]
   if (ck) LEGACY_TAB_MAP[`m${i}`] = { system: 'collect', module: ck }
 }
+LEGACY_TAB_MAP.m065 = { system: 'collect', module: 'catalog.resources' }
+LEGACY_TAB_MAP.m066 = { system: 'collect', module: 'catalog.classify' }
+LEGACY_TAB_MAP.m067 = { system: 'collect', module: 'catalog.publish' }
+LEGACY_TAB_MAP.m068 = { system: 'collect', module: 'catalog.approvals' }
 
 export function registerNavItems(): HubNavItem[] {
   return REGISTER_MODULES.map(toNavItem)
@@ -150,12 +187,12 @@ export function registerNavGroups(): HubNavGroup[] {
 
 /** 采集侧栏：平铺模块；质量管控带三级子项 */
 export function collectNavItems(): HubNavItem[] {
-  return COLLECT_MODULES.map(toCollectNavItem)
+  return COLLECT_MODULES.map((m) => toCollectNavItem(m))
 }
 
 /** @deprecated 使用 collectNavItems */
 export function collectNavGroups(): HubNavGroup[] {
-  return [{ title: '', items: COLLECT_MODULES.map(toCollectNavItem) }]
+  return [{ title: '', items: COLLECT_MODULES.map((m) => toCollectNavItem(m)) }]
 }
 
 /** 按角色权限严格过滤侧栏；无对应 hub 权限则不展示（禁止「无权限时回退全量」） */
@@ -165,7 +202,13 @@ export function filterIngestionModules(
 ): IngestionModuleMeta[] {
   if (opts.isSystemAdmin) return modules
   const perms = opts.permissions || []
-  return modules.filter((m) => perms.includes(m.permission))
+  return modules.filter((m) => {
+    if (perms.includes(m.permission)) return true
+    if (m.key === 'catalog') {
+      return CATALOG_SUB_KEYS.some((k) => perms.includes(CATALOG_SUB_PERMISSIONS[k]))
+    }
+    return false
+  })
 }
 
 export function filterRegisterNavItems(opts: { isSystemAdmin: boolean; permissions: string[] }): HubNavItem[] {
@@ -260,11 +303,20 @@ export function moduleKeyFromRegisterPath(path?: string): string | null {
 }
 
 export function filterCollectNavItems(opts: { isSystemAdmin: boolean; permissions: string[] }): HubNavItem[] {
-  return filterIngestionModules(COLLECT_MODULES, opts).map(toCollectNavItem)
+  return filterIngestionModules(COLLECT_MODULES, opts)
+    .map((m) => toCollectNavItem(m, opts))
+    .filter((item) => {
+      if (item.key !== 'catalog') return true
+      return !item.children || item.children.length > 0
+    })
 }
 
-/** 侧栏选中的 key 是否在已授权采集模块内（含质量/资产子页） */
-export function isCollectModuleAllowed(moduleKey: string, allowed: IngestionModuleMeta[]): boolean {
+/** 侧栏选中的 key 是否在已授权采集模块内（含质量/资产/目录子页） */
+export function isCollectModuleAllowed(
+  moduleKey: string,
+  allowed: IngestionModuleMeta[],
+  opts?: { isSystemAdmin: boolean; permissions: string[] },
+): boolean {
   if (allowed.some((m) => m.key === moduleKey)) return true
   if (isQualitySubKey(moduleKey) || moduleKey === 'quality') {
     return allowed.some((m) => m.key === 'quality')
@@ -272,7 +324,25 @@ export function isCollectModuleAllowed(moduleKey: string, allowed: IngestionModu
   if (isAssetSubKey(moduleKey) || moduleKey === 'asset') {
     return allowed.some((m) => m.key === 'asset')
   }
+  if (isCatalogSubKey(moduleKey) || moduleKey === 'catalog') {
+    if (!allowed.some((m) => m.key === 'catalog')) return false
+    if (!opts || opts.isSystemAdmin || moduleKey === 'catalog') return true
+    const p = CATALOG_SUB_PERMISSIONS[moduleKey as CatalogSubKey]
+    return opts.permissions.includes(p) || opts.permissions.includes('hub:ingestion:collect:catalog')
+  }
   return false
+}
+
+/** 目录模块：落到当前账号有权访问的第一个子页 */
+export function firstAllowedCatalogModule(opts: { isSystemAdmin: boolean; permissions: string[] }): CatalogSubKey {
+  for (const k of CATALOG_SUB_KEYS) {
+    if (opts.isSystemAdmin) return k
+    const p = CATALOG_SUB_PERMISSIONS[k]
+    if (opts.permissions.includes(p) || opts.permissions.includes('hub:ingestion:collect:catalog')) {
+      return k
+    }
+  }
+  return 'catalog.resources'
 }
 
 export function isQualitySubKey(key: string): key is QualitySubKey {
@@ -283,10 +353,18 @@ export function isAssetSubKey(key: string): key is AssetSubKey {
   return (ASSET_SUB_KEYS as readonly string[]).includes(key)
 }
 
+export function isCatalogSubKey(key: string): key is CatalogSubKey {
+  return (CATALOG_SUB_KEYS as readonly string[]).includes(key)
+}
+
 /** 父级点选时落到默认子页 */
-export function normalizeCollectModuleKey(key: string): string {
+export function normalizeCollectModuleKey(
+  key: string,
+  opts?: { isSystemAdmin: boolean; permissions: string[] },
+): string {
   if (key === 'quality') return 'quality.rule-config'
   if (key === 'asset') return 'asset.classify'
+  if (key === 'catalog') return opts ? firstAllowedCatalogModule(opts) : 'catalog.resources'
   return key
 }
 
@@ -294,7 +372,10 @@ function toNavItem(m: IngestionModuleMeta): HubNavItem {
   return { key: m.key, label: m.label, subLabel: m.subLabel }
 }
 
-function toCollectNavItem(m: IngestionModuleMeta): HubNavItem {
+function toCollectNavItem(
+  m: IngestionModuleMeta,
+  opts?: { isSystemAdmin: boolean; permissions: string[] },
+): HubNavItem {
   if (m.key === 'quality') {
     return {
       key: m.key,
@@ -311,6 +392,21 @@ function toCollectNavItem(m: IngestionModuleMeta): HubNavItem {
       children: ASSET_SUB_KEYS.map((k) => ({ key: k, label: ASSET_SUB_LABELS[k] })),
     }
   }
+  if (m.key === 'catalog') {
+    const children = CATALOG_SUB_KEYS
+      .filter((k) => {
+        if (!opts || opts.isSystemAdmin) return true
+        const p = CATALOG_SUB_PERMISSIONS[k]
+        return opts.permissions.includes(p) || opts.permissions.includes('hub:ingestion:collect:catalog')
+      })
+      .map((k) => ({ key: k, label: CATALOG_SUB_LABELS[k] }))
+    return {
+      key: m.key,
+      label: m.label,
+      subLabel: m.subLabel,
+      children,
+    }
+  }
   return toNavItem(m)
 }
 
@@ -319,10 +415,16 @@ function resolveCollectModule(mod: string): string | undefined {
   if (mod === 'quality') return 'quality.rule-config'
   if (isAssetSubKey(mod)) return mod
   if (mod === 'asset') return 'asset.classify'
+  if (isCatalogSubKey(mod)) return mod
+  if (mod === 'catalog') return 'catalog.resources'
   if (COLLECT_BY_KEY[mod]) return mod
   const m = /^m0?(\d+)$/i.exec(mod)
   if (m) {
     const num = Number(m[1])
+    if (num === 65) return 'catalog.resources'
+    if (num === 66) return 'catalog.classify'
+    if (num === 67) return 'catalog.publish'
+    if (num === 68) return 'catalog.approvals'
     if (num === 69) return 'asset.classify'
     if (num === 70) return 'asset.mask'
     if (num === 71) return 'asset.tag'
@@ -332,6 +434,7 @@ function resolveCollectModule(mod: string): string | undefined {
     if (num === 75) return 'asset.destroy'
     if (num === 76) return 'asset.global'
     const ck = MCODE_TO_COLLECT[num]
+    if (ck === 'catalog') return 'catalog.resources'
     if (ck) return ck
   }
   return undefined
@@ -361,6 +464,9 @@ export function moduleTitle(moduleKey: string): string {
   }
   if (isAssetSubKey(moduleKey)) {
     return `${COLLECT_BY_KEY.asset?.label || '数据资产管理'} · ${ASSET_SUB_LABELS[moduleKey]}`
+  }
+  if (isCatalogSubKey(moduleKey)) {
+    return `${COLLECT_BY_KEY.catalog?.label || '指标与目录体系构建'} · ${CATALOG_SUB_LABELS[moduleKey]}`
   }
   const m = REGISTER_BY_KEY[moduleKey] || COLLECT_BY_KEY[moduleKey]
   return m?.label || moduleKey
@@ -398,7 +504,7 @@ export function collectSectionFromQuery(query: Record<string, unknown>, module: 
   const defaults: Record<CollectModuleKey, string> = {
     ingest: 'structured-table',
     pipeline: 'step-probe',
-    catalog: 'm065',
+    catalog: 'catalog.resources',
     quality: 'rule-config',
     asset: 'classify',
   }

@@ -10,6 +10,7 @@ import {
   buildRegisterNavItems,
   filterCollectNavItems,
   filterIngestionModules,
+  firstAllowedCatalogModule,
   isCollectModuleAllowed,
   moduleTitle,
   normalizeCollectModuleKey,
@@ -47,7 +48,11 @@ const moduleComponents: Record<string, ReturnType<typeof defineAsyncComponent>> 
   upload: defineAsyncComponent(() => import('./collect/CollectIngestView.vue')),
   ingest: defineAsyncComponent(() => import('./collect/CollectIngestView.vue')),
   pipeline: defineAsyncComponent(() => import('./collect/CollectPipelineView.vue')),
-  catalog: defineAsyncComponent(() => import('./collect/CollectCatalogView.vue')),
+  catalog: defineAsyncComponent(() => import('./collect/catalog/CatalogResourcesView.vue')),
+  'catalog.resources': defineAsyncComponent(() => import('./collect/catalog/CatalogResourcesView.vue')),
+  'catalog.classify': defineAsyncComponent(() => import('./collect/catalog/CatalogClassifyView.vue')),
+  'catalog.publish': defineAsyncComponent(() => import('./collect/catalog/CatalogPublishView.vue')),
+  'catalog.approvals': defineAsyncComponent(() => import('./collect/catalog/CatalogApprovalsView.vue')),
   // 与数据融合治理 · 数据质量管理系统同组件，双入口保留
   'quality.rule-config': defineAsyncComponent(() => import('@/views/governance/quality/QualityRuleConfigView.vue')),
   'quality.monitor': defineAsyncComponent(() => import('@/views/governance/quality/QualityMonitorView.vue')),
@@ -101,7 +106,8 @@ function isRegisterModuleAllowed(moduleKey: string, allowed: typeof allowedRegis
 function firstAllowedModule(sys: IngestionSystem): string {
   const list = sys === 'register' ? allowedRegister.value : allowedCollect.value
   const key = list[0]?.key || DEFAULT_MODULE[sys]
-  return sys === 'collect' ? normalizeCollectModuleKey(key) : key
+  if (sys === 'collect' && key === 'catalog') return firstAllowedCatalogModule(permOpts.value)
+  return sys === 'collect' ? normalizeCollectModuleKey(key, permOpts.value) : key
 }
 
 function ensureAllowedModule() {
@@ -120,7 +126,7 @@ function ensureAllowedModule() {
   }
   const ok =
     system.value === 'collect'
-      ? isCollectModuleAllowed(module.value, allowed)
+      ? isCollectModuleAllowed(module.value, allowed, permOpts.value)
       : isRegisterModuleAllowed(module.value, allowed)
   if (!ok) {
     module.value = firstAllowedModule(system.value)
@@ -137,7 +143,10 @@ function syncFromRoute() {
   }
   const resolved = resolveIngestionNav(route.query as Record<string, unknown>)
   system.value = resolved.system
-  module.value = system.value === 'collect' ? normalizeCollectModuleKey(resolved.module) : resolved.module
+  module.value =
+    system.value === 'collect'
+      ? normalizeCollectModuleKey(resolved.module, permOpts.value)
+      : resolved.module
   ensureAllowedModule()
 }
 
@@ -156,9 +165,9 @@ function onSystemChange(next: IngestionSystem) {
 
 function onModuleChange(key: string) {
   const allowed = system.value === 'register' ? allowedRegister.value : allowedCollect.value
-  const next = system.value === 'collect' ? normalizeCollectModuleKey(key) : key
+  const next = system.value === 'collect' ? normalizeCollectModuleKey(key, permOpts.value) : key
   if (system.value === 'collect') {
-    if (!isCollectModuleAllowed(next, allowed)) return
+    if (!isCollectModuleAllowed(next, allowed, permOpts.value)) return
   } else if (!isRegisterModuleAllowed(next, allowed)) {
     return
   }

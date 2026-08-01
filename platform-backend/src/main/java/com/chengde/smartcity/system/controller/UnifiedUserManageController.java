@@ -1,7 +1,6 @@
 package com.chengde.smartcity.system.controller;
 
 import com.chengde.smartcity.analysis.entity.AnaPlatformApp;
-import com.chengde.smartcity.analysis.entity.AnaPlatformConfig;
 import com.chengde.smartcity.analysis.entity.AnaPlatformIntegration;
 import com.chengde.smartcity.analysis.entity.AnaPlatformService;
 import com.chengde.smartcity.analysis.service.AnalyticsPlatformService;
@@ -16,6 +15,7 @@ import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
@@ -76,13 +76,22 @@ public class UnifiedUserManageController {
 
     @GetMapping("/auth-configs")
     @PreAuthorize("isAuthenticated()")
-    public ApiResponse<List<AnaPlatformConfig>> authConfigs() {
+    public ApiResponse<List<Map<String, Object>>> authConfigs() {
         return ApiResponse.ok(uumService.authConfigs());
+    }
+
+    @PutMapping("/auth-configs/{id}")
+    @PreAuthorize("hasAuthority('system:uum:view') or hasAuthority('system:user:list') or hasAuthority('system:dict:edit') or hasRole('SYSTEM_ADMIN')")
+    public ApiResponse<Void> updateAuthConfig(@AuthenticationPrincipal UserPrincipal principal,
+                                              @PathVariable Long id,
+                                              @RequestBody Map<String, Object> body) {
+        uumService.updateAuthConfig(principal, id, body);
+        return ApiResponse.ok(null);
     }
 
     @GetMapping("/system-configs")
     @PreAuthorize("isAuthenticated()")
-    public ApiResponse<List<AnaPlatformConfig>> systemConfigs() {
+    public ApiResponse<List<Map<String, Object>>> systemConfigs() {
         return ApiResponse.ok(uumService.systemConfigs());
     }
 

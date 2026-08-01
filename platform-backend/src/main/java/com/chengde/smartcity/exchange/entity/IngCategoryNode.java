@@ -12,6 +12,8 @@ public class IngCategoryNode {
     private String nodeName;
     private Long parentId;
     private String secretLevel;
+    private String description;
+    private Integer secretFlag;
     private Integer sortOrder;
 
     public Long getId() { return id; }
@@ -24,6 +26,10 @@ public class IngCategoryNode {
     public void setParentId(Long parentId) { this.parentId = parentId; }
     public String getSecretLevel() { return secretLevel; }
     public void setSecretLevel(String secretLevel) { this.secretLevel = secretLevel; }
+    public String getDescription() { return description; }
+    public void setDescription(String description) { this.description = description; }
+    public Integer getSecretFlag() { return secretFlag; }
+    public void setSecretFlag(Integer secretFlag) { this.secretFlag = secretFlag; }
     public Integer getSortOrder() { return sortOrder; }
     public void setSortOrder(Integer sortOrder) { this.sortOrder = sortOrder; }
 }

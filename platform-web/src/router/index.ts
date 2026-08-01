@@ -63,7 +63,7 @@ const router = createRouter({
         },
         {
           path: 'system/portal-links',
-          redirect: { path: '/analytics/support', query: { tab: 'apps.links' } },
+          redirect: { path: '/analytics/support', query: { tab: 'apps.portal' } },
         },
         {
           path: 'system/tags',

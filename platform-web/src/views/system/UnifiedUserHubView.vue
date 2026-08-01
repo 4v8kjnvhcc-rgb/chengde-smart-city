@@ -263,7 +263,7 @@ async function removeGrant(id: number) {
 }
 
 async function saveConfig(row: Record<string, unknown>) {
-  await api.put(`/analytics/platform/configs/${row.id}`, { configValue: row.configValue })
+  await api.put(`/system/uum/auth-configs/${row.id}`, { configValue: row.configValue })
   ElMessage.success('配置已保存')
 }
 
@@ -548,7 +548,6 @@ onMounted(async () => {
             </template>
           </el-table-column>
         </el-table>
-        <el-button style="margin-top:12px" @click="router.push('/system/portal-links')">门户外链 / Token SSO 对接</el-button>
       </PageCard>
     </HubSideLayout>
   </div>

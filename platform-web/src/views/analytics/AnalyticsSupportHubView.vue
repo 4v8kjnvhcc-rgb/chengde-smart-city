@@ -11,7 +11,6 @@ import OrgManage from '@/views/system/OrgManage.vue'
 import UserManage from '@/views/system/UserManage.vue'
 import RoleManage from '@/views/system/RoleManage.vue'
 import MenuManage from '@/views/system/MenuManage.vue'
-import PortalLinkManage from '@/views/system/PortalLinkManage.vue'
 import TagLibraryManage from '@/views/system/TagLibraryManage.vue'
 import AuditLog from '@/views/system/AuditLog.vue'
 import AccessControlView from '@/views/exchange/ingestion/register/AccessControlView.vue'
@@ -19,6 +18,7 @@ import SecurityConfig from '@/views/system/SecurityConfig.vue'
 import SystemMaintenanceView from '@/views/system/maintenance/SystemMaintenanceView.vue'
 import SystemMailConfigView from '@/views/system/maintenance/SystemMailConfigView.vue'
 import PortalNavConfigPanel from '@/views/system/PortalNavConfigPanel.vue'
+import SysDictManagePanel from '@/views/system/SysDictManagePanel.vue'
 import KettleView from '@/views/integration/KettleView.vue'
 import SchedulerView from '@/views/integration/SchedulerView.vue'
 
@@ -40,7 +40,6 @@ const navItems: HubNavItem[] = [
       { key: 'apps.manage', label: '应用管理' },
       { key: 'apps.integration', label: '系统对接' },
       { key: 'apps.portal', label: '门户配置' },
-      { key: 'apps.links', label: '门户外链管理' },
     ],
   },
   { key: 'auth', label: '认证中心' },
@@ -108,6 +107,7 @@ const OLD_TAB_MAP: Record<string, string> = {
   integration: 'apps.integration',
   m145: 'other.probe',
   portal: 'apps.portal',
+  'apps.links': 'apps.portal',
   tasks: 'tasks',
   ops: 'ops.kettle',
   kettle: 'ops.kettle',
@@ -121,13 +121,6 @@ const router = useRouter()
 const tab = ref(DEFAULT_NAV)
 let applyingRoute = false
 
-interface Config {
-  id: number
-  configKey: string
-  configValue: string
-  configGroup: string
-  description?: string
-}
 interface Integration {
   id: number
   integrationCode: string
@@ -153,7 +146,6 @@ interface CheckNode {
   children?: CheckNode[]
 }
 
-const configs = ref<Config[]>([])
 const probeIntegrations = ref<Integration[]>([])
 const uumIntegrations = ref<Record<string, unknown>[]>([])
 const apps = ref<Record<string, unknown>[]>([])
@@ -268,11 +260,6 @@ async function loadUumIntegrations() {
   uumIntegrations.value = (await api.get('/system/uum/integrations')).data || []
 }
 
-async function loadDictConfigs() {
-  const ov = (await api.get('/analytics/platform/support/overview')).data
-  configs.value = (ov?.configs as Config[]) || []
-}
-
 async function loadProbe() {
   const ov = (await api.get('/analytics/platform/support/overview')).data
   probeIntegrations.value = (ov?.integrations as Integration[]) || []
@@ -323,7 +310,6 @@ async function loadTabData() {
     else if (tab.value === 'apps.integration') await loadUumIntegrations()
     else if (tab.value === 'auth') await loadAuthTab()
     else if (tab.value === 'services') await loadServicesTab()
-    else if (tab.value === 'sys.dict') await loadDictConfigs()
     else if (tab.value === 'other.probe') await loadProbe()
     else if (tab.value === 'other.roleMenus') await loadRoleMenusTab()
   } catch {
@@ -374,10 +360,6 @@ async function testUumIntegration(id: number) {
   if (res.data?.reachable) ElMessage.success(res.data.message || '可达')
   else ElMessage.warning(res.data?.message || '未连通')
   await loadUumIntegrations()
-}
-async function saveConfig(row: Config) {
-  await api.put(`/analytics/platform/configs/${row.id}`, { configValue: row.configValue })
-  ElMessage.success('配置已保存')
 }
 async function testProbe(id: number) {
   const res = await api.post(`/analytics/platform/integrations/${id}/test`, {})
@@ -487,10 +469,6 @@ onMounted(() => {
           <PortalNavConfigPanel />
         </PageCard>
 
-        <div v-else-if="tab === 'apps.links'" class="support-embed">
-          <PortalLinkManage />
-        </div>
-
         <!-- 认证 / 服务 -->
         <PageCard v-else-if="tab === 'auth'" title="认证中心">
           <el-alert
@@ -576,35 +554,8 @@ onMounted(() => {
 
         <!-- 系统管理 -->
         <div v-else-if="tab === 'sys.menus'" class="support-embed"><MenuManage /></div>
-        <PageCard v-else-if="tab === 'sys.dict'" title="字典管理">
-          <el-alert
-            type="info"
-            :closable="false"
-            style="margin-bottom:12px"
-            title="本页维护通用支撑平台参数表；业务「数据字典」仍在归集平台，可从下方入口打开（双能力并存）。"
-          />
-          <el-button
-            type="primary"
-            style="margin-bottom:12px"
-            @click="router.push('/exchange/ingestion?system=register&module=m050')"
-          >
-            打开数据字典管理（归集）
-          </el-button>
-          <el-table :data="configs" stripe size="small">
-            <el-table-column prop="configKey" label="配置项" width="200" />
-            <el-table-column prop="configGroup" label="分组" width="100" />
-            <el-table-column prop="description" label="说明" />
-            <el-table-column label="值" min-width="140">
-              <template #default="{ row }">
-                <el-input v-model="row.configValue" size="small" />
-              </template>
-            </el-table-column>
-            <el-table-column label="操作" width="80">
-              <template #default="{ row }">
-                <el-button link type="primary" @click="saveConfig(row)">保存</el-button>
-              </template>
-            </el-table-column>
-          </el-table>
+        <PageCard v-else-if="tab === 'sys.dict'" title="系统数据字典">
+          <SysDictManagePanel />
         </PageCard>
         <PageCard v-else-if="tab === 'sys.cfg.appearance'" title="基础信息">
           <SystemMaintenanceView embed />

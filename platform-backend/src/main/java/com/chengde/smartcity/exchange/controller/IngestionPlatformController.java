@@ -285,22 +285,169 @@ public class IngestionPlatformController {
     }
 
     @GetMapping("/registries")
-    public ApiResponse<List<IngResourceRegistry>> registries() {
-        return ApiResponse.ok(service.listRegistries());
+    @PreAuthorize("isAuthenticated()")
+    public ApiResponse<List<IngResourceRegistry>> registries(
+            @AuthenticationPrincipal UserPrincipal principal,
+            @RequestParam(required = false) String keyword,
+            @RequestParam(required = false) String approvalStatus,
+            @RequestParam(required = false) String shareType,
+            @RequestParam(required = false) Boolean unboundOnly,
+            @RequestParam(required = false) Long categoryId) {
+        return ApiResponse.ok(catalogService.listRegistries(
+                principal, keyword, approvalStatus, shareType, unboundOnly, categoryId));
+    }
+
+    @GetMapping("/registries/{id}")
+    @PreAuthorize("isAuthenticated()")
+    public ApiResponse<IngResourceRegistry> registryDetail(@AuthenticationPrincipal UserPrincipal principal,
+                                                           @PathVariable Long id) {
+        return ApiResponse.ok(catalogService.getRegistry(principal, id));
     }
 
     @PostMapping("/registries")
+    @PreAuthorize("hasRole('SYSTEM_ADMIN') or hasAuthority('hub:ingestion:collect:catalog:resources') or hasAuthority('hub:ingestion:collect:catalog')")
     public ApiResponse<Long> createRegistry(@AuthenticationPrincipal UserPrincipal principal,
                                             @RequestBody Map<String, Object> body) {
-        return ApiResponse.ok(service.createRegistry(principal, body));
+        return ApiResponse.ok(catalogService.createRegistry(principal, body));
+    }
+
+    @PostMapping("/registries/batch")
+    @PreAuthorize("hasRole('SYSTEM_ADMIN') or hasAuthority('hub:ingestion:collect:catalog:resources') or hasAuthority('hub:ingestion:collect:catalog')")
+    public ApiResponse<List<Long>> batchCreateRegistry(@AuthenticationPrincipal UserPrincipal principal,
+                                                       @RequestBody Map<String, Object> body) {
+        return ApiResponse.ok(catalogService.batchCreateFromTables(principal, body));
+    }
+
+    @PostMapping("/registries/import")
+    @PreAuthorize("hasRole('SYSTEM_ADMIN') or hasAuthority('hub:ingestion:collect:catalog:resources') or hasAuthority('hub:ingestion:collect:catalog')")
+    public ApiResponse<Map<String, Object>> importRegistries(@AuthenticationPrincipal UserPrincipal principal,
+                                                             @RequestBody Map<String, Object> body) {
+        return ApiResponse.ok(catalogService.importRegistries(principal, body));
+    }
+
+    @PutMapping("/registries/{id}")
+    @PreAuthorize("hasRole('SYSTEM_ADMIN') or hasAuthority('hub:ingestion:collect:catalog:resources') or hasAuthority('hub:ingestion:collect:catalog')")
+    public ApiResponse<Void> updateRegistry(@AuthenticationPrincipal UserPrincipal principal,
+                                            @PathVariable Long id,
+                                            @RequestBody Map<String, Object> body) {
+        catalogService.updateRegistry(principal, id, body);
+        return ApiResponse.ok(null);
+    }
+
+    @DeleteMapping("/registries/{id}")
+    @PreAuthorize("hasRole('SYSTEM_ADMIN') or hasAuthority('hub:ingestion:collect:catalog:resources') or hasAuthority('hub:ingestion:collect:catalog')")
+    public ApiResponse<Void> deleteRegistry(@AuthenticationPrincipal UserPrincipal principal,
+                                            @PathVariable Long id) {
+        catalogService.deleteRegistry(principal, id);
+        return ApiResponse.ok(null);
     }
 
     @PostMapping("/registries/{id}/approve")
+    @PreAuthorize("hasRole('SYSTEM_ADMIN') or hasAuthority('hub:ingestion:collect:catalog:approvals') or hasAuthority('hub:ingestion:collect:catalog')")
     public ApiResponse<Void> approveRegistry(@AuthenticationPrincipal UserPrincipal principal,
                                              @PathVariable Long id,
                                              @RequestBody Map<String, Object> body) {
-        service.approveRegistry(principal, id, body);
+        catalogService.approveRegistryLegacy(principal, id, body);
         return ApiResponse.ok(null);
+    }
+
+    @PostMapping("/registries/submit-publish")
+    @PreAuthorize("hasRole('SYSTEM_ADMIN') or hasAuthority('hub:ingestion:collect:catalog:publish') or hasAuthority('hub:ingestion:collect:catalog')")
+    public ApiResponse<Long> submitPublish(@AuthenticationPrincipal UserPrincipal principal,
+                                           @RequestBody Map<String, Object> body) {
+        @SuppressWarnings("unchecked")
+        List<Number> ids = (List<Number>) body.get("ids");
+        List<Long> registryIds = ids == null ? List.of() : ids.stream().map(Number::longValue).toList();
+        return ApiResponse.ok(catalogService.submitPublish(principal, registryIds,
+                body.get("comment") == null ? null : String.valueOf(body.get("comment"))));
+    }
+
+    @PostMapping("/registries/submit-offline")
+    @PreAuthorize("hasRole('SYSTEM_ADMIN') or hasAuthority('hub:ingestion:collect:catalog:publish') or hasAuthority('hub:ingestion:collect:catalog')")
+    public ApiResponse<Long> submitOffline(@AuthenticationPrincipal UserPrincipal principal,
+                                           @RequestBody Map<String, Object> body) {
+        @SuppressWarnings("unchecked")
+        List<Number> ids = (List<Number>) body.get("ids");
+        List<Long> registryIds = ids == null ? List.of() : ids.stream().map(Number::longValue).toList();
+        return ApiResponse.ok(catalogService.submitOffline(principal, registryIds,
+                body.get("comment") == null ? null : String.valueOf(body.get("comment"))));
+    }
+
+    @PostMapping("/collect/categories/{categoryId}/bind")
+    @PreAuthorize("hasRole('SYSTEM_ADMIN') or hasAuthority('hub:ingestion:collect:catalog:publish') or hasAuthority('hub:ingestion:collect:catalog')")
+    public ApiResponse<Void> bindResources(@AuthenticationPrincipal UserPrincipal principal,
+                                           @PathVariable Long categoryId,
+                                           @RequestBody Map<String, Object> body) {
+        @SuppressWarnings("unchecked")
+        List<Number> ids = (List<Number>) body.get("ids");
+        List<Long> registryIds = ids == null ? List.of() : ids.stream().map(Number::longValue).toList();
+        catalogService.bindResources(principal, categoryId, registryIds);
+        return ApiResponse.ok(null);
+    }
+
+    @PostMapping("/collect/categories/unbind")
+    @PreAuthorize("hasRole('SYSTEM_ADMIN') or hasAuthority('hub:ingestion:collect:catalog:publish') or hasAuthority('hub:ingestion:collect:catalog')")
+    public ApiResponse<Void> unbindResources(@AuthenticationPrincipal UserPrincipal principal,
+                                             @RequestBody Map<String, Object> body) {
+        @SuppressWarnings("unchecked")
+        List<Number> ids = (List<Number>) body.get("ids");
+        List<Long> registryIds = ids == null ? List.of() : ids.stream().map(Number::longValue).toList();
+        catalogService.unbindResources(principal, registryIds);
+        return ApiResponse.ok(null);
+    }
+
+    @GetMapping("/collect/categories/{categoryId}/bound")
+    @PreAuthorize("isAuthenticated()")
+    public ApiResponse<List<IngResourceRegistry>> boundResources(@AuthenticationPrincipal UserPrincipal principal,
+                                                                 @PathVariable Long categoryId) {
+        return ApiResponse.ok(catalogService.listBound(principal, categoryId));
+    }
+
+    @GetMapping("/collect/approvals")
+    @PreAuthorize("hasRole('SYSTEM_ADMIN') or hasAuthority('hub:ingestion:collect:catalog:approvals') or hasAuthority('hub:ingestion:collect:catalog')")
+    public ApiResponse<List<Map<String, Object>>> catalogApprovals(@RequestParam(required = false) String status) {
+        return ApiResponse.ok(catalogService.listApprovals(status));
+    }
+
+    @PostMapping("/collect/approvals/{id}/approve")
+    @PreAuthorize("hasRole('SYSTEM_ADMIN') or hasAuthority('hub:ingestion:collect:catalog:approvals') or hasAuthority('hub:ingestion:collect:catalog')")
+    public ApiResponse<Void> approveCatalog(@AuthenticationPrincipal UserPrincipal principal,
+                                            @PathVariable Long id,
+                                            @RequestBody(required = false) Map<String, Object> body) {
+        String comment = body == null || body.get("comment") == null ? "同意" : String.valueOf(body.get("comment"));
+        catalogService.approve(principal, id, comment);
+        return ApiResponse.ok(null);
+    }
+
+    @PostMapping("/collect/approvals/{id}/reject")
+    @PreAuthorize("hasRole('SYSTEM_ADMIN') or hasAuthority('hub:ingestion:collect:catalog:approvals') or hasAuthority('hub:ingestion:collect:catalog')")
+    public ApiResponse<Void> rejectCatalog(@AuthenticationPrincipal UserPrincipal principal,
+                                           @PathVariable Long id,
+                                           @RequestBody Map<String, Object> body) {
+        catalogService.reject(principal, id, body.get("comment") == null ? null : String.valueOf(body.get("comment")));
+        return ApiResponse.ok(null);
+    }
+
+    @PostMapping("/collect/approvals/batch-approve")
+    @PreAuthorize("hasRole('SYSTEM_ADMIN') or hasAuthority('hub:ingestion:collect:catalog:approvals') or hasAuthority('hub:ingestion:collect:catalog')")
+    public ApiResponse<Map<String, Object>> batchApproveCatalog(@AuthenticationPrincipal UserPrincipal principal,
+                                                                @RequestBody Map<String, Object> body) {
+        @SuppressWarnings("unchecked")
+        List<Number> ids = (List<Number>) body.get("ids");
+        List<Long> approvalIds = ids == null ? List.of() : ids.stream().map(Number::longValue).toList();
+        String comment = body.get("comment") == null ? "批量同意" : String.valueOf(body.get("comment"));
+        return ApiResponse.ok(catalogService.batchApprove(principal, approvalIds, comment));
+    }
+
+    @PostMapping("/collect/approvals/batch-reject")
+    @PreAuthorize("hasRole('SYSTEM_ADMIN') or hasAuthority('hub:ingestion:collect:catalog:approvals') or hasAuthority('hub:ingestion:collect:catalog')")
+    public ApiResponse<Map<String, Object>> batchRejectCatalog(@AuthenticationPrincipal UserPrincipal principal,
+                                                               @RequestBody Map<String, Object> body) {
+        @SuppressWarnings("unchecked")
+        List<Number> ids = (List<Number>) body.get("ids");
+        List<Long> approvalIds = ids == null ? List.of() : ids.stream().map(Number::longValue).toList();
+        return ApiResponse.ok(catalogService.batchReject(principal, approvalIds,
+                body.get("comment") == null ? null : String.valueOf(body.get("comment"))));
     }
 
     @GetMapping("/policies")
@@ -792,14 +939,32 @@ public class IngestionPlatformController {
     }
 
     @GetMapping("/collect/categories")
-    public ApiResponse<List<IngCategoryNode>> categories() {
-        return ApiResponse.ok(catalogService.listCategories());
+    public ApiResponse<List<IngCategoryNode>> categories(@RequestParam(required = false) String keyword) {
+        return ApiResponse.ok(catalogService.listCategories(keyword));
     }
 
     @PostMapping("/collect/categories")
+    @PreAuthorize("hasRole('SYSTEM_ADMIN') or hasAuthority('hub:ingestion:collect:catalog:classify') or hasAuthority('hub:ingestion:collect:catalog')")
     public ApiResponse<Long> createCategory(@AuthenticationPrincipal UserPrincipal principal,
                                             @RequestBody Map<String, Object> body) {
         return ApiResponse.ok(catalogService.createCategory(principal, body));
+    }
+
+    @PutMapping("/collect/categories/{id}")
+    @PreAuthorize("hasRole('SYSTEM_ADMIN') or hasAuthority('hub:ingestion:collect:catalog:classify') or hasAuthority('hub:ingestion:collect:catalog')")
+    public ApiResponse<Void> updateCategory(@AuthenticationPrincipal UserPrincipal principal,
+                                            @PathVariable Long id,
+                                            @RequestBody Map<String, Object> body) {
+        catalogService.updateCategory(principal, id, body);
+        return ApiResponse.ok(null);
+    }
+
+    @DeleteMapping("/collect/categories/{id}")
+    @PreAuthorize("hasRole('SYSTEM_ADMIN') or hasAuthority('hub:ingestion:collect:catalog:classify') or hasAuthority('hub:ingestion:collect:catalog')")
+    public ApiResponse<Void> deleteCategory(@AuthenticationPrincipal UserPrincipal principal,
+                                            @PathVariable Long id) {
+        catalogService.deleteCategory(principal, id);
+        return ApiResponse.ok(null);
     }
 
     @GetMapping("/collect/backup-jobs")

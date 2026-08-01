@@ -68,7 +68,7 @@ export function getAuthorizedPlatforms(menus: MenuNode[]): MenuNode[] {
   const set = new Set(PLATFORM_PATHS)
   return getMenuRoots(menus).filter((n) => {
     if (!set.has(n.path)) return false
-    // 业务功能、平台管理：门户卡片可空下拉；集成运维已迁出一级
+    // 业务功能可空下拉；平台管理为直达卡片；集成运维已迁出一级
     if (n.path === '/business' || n.path === '/system') return true
     if (n.path === '/integration') return false
     return visibleMenuChildren(n).length > 0

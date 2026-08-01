@@ -2,11 +2,9 @@ package com.chengde.smartcity.system.service;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.chengde.smartcity.analysis.entity.AnaPlatformApp;
-import com.chengde.smartcity.analysis.entity.AnaPlatformConfig;
 import com.chengde.smartcity.analysis.entity.AnaPlatformIntegration;
 import com.chengde.smartcity.analysis.entity.AnaPlatformService;
 import com.chengde.smartcity.analysis.mapper.AnaPlatformAppMapper;
-import com.chengde.smartcity.analysis.mapper.AnaPlatformConfigMapper;
 import com.chengde.smartcity.analysis.mapper.AnaPlatformIntegrationMapper;
 import com.chengde.smartcity.analysis.mapper.AnaPlatformServiceMapper;
 import com.chengde.smartcity.analysis.service.AnalyticsPlatformService;
@@ -40,7 +38,6 @@ public class UnifiedUserManageService {
     private final AnalyticsPlatformService analyticsPlatformService;
     private final AnaPlatformAppMapper appMapper;
     private final AnaPlatformServiceMapper serviceMapper;
-    private final AnaPlatformConfigMapper configMapper;
     private final AnaPlatformIntegrationMapper integrationMapper;
     private final SysAppGrantMapper appGrantMapper;
     private final SysServiceCallStatMapper callStatMapper;
@@ -48,22 +45,22 @@ public class UnifiedUserManageService {
     private final SysUserMapper userMapper;
     private final SysRoleMapper roleMapper;
     private final AuditService auditService;
+    private final SysDictService dictService;
 
     public UnifiedUserManageService(AnalyticsPlatformService analyticsPlatformService,
                                     AnaPlatformAppMapper appMapper,
                                     AnaPlatformServiceMapper serviceMapper,
-                                    AnaPlatformConfigMapper configMapper,
                                     AnaPlatformIntegrationMapper integrationMapper,
                                     SysAppGrantMapper appGrantMapper,
                                     SysServiceCallStatMapper callStatMapper,
                                     SysServiceApprovalMapper approvalMapper,
                                     SysUserMapper userMapper,
                                     SysRoleMapper roleMapper,
-                                    AuditService auditService) {
+                                    AuditService auditService,
+                                    SysDictService dictService) {
         this.analyticsPlatformService = analyticsPlatformService;
         this.appMapper = appMapper;
         this.serviceMapper = serviceMapper;
-        this.configMapper = configMapper;
         this.integrationMapper = integrationMapper;
         this.appGrantMapper = appGrantMapper;
         this.callStatMapper = callStatMapper;
@@ -71,6 +68,7 @@ public class UnifiedUserManageService {
         this.userMapper = userMapper;
         this.roleMapper = roleMapper;
         this.auditService = auditService;
+        this.dictService = dictService;
     }
 
     public Map<String, Object> overview() {
@@ -199,14 +197,18 @@ public class UnifiedUserManageService {
         approvalMapper.updateById(a);
     }
 
-    public List<AnaPlatformConfig> authConfigs() {
-        return configMapper.selectList(new LambdaQueryWrapper<AnaPlatformConfig>()
-                .eq(AnaPlatformConfig::getConfigGroup, "AUTH").orderByAsc(AnaPlatformConfig::getId));
+    public List<Map<String, Object>> authConfigs() {
+        return dictService.authConfigsLegacy();
     }
 
-    public List<AnaPlatformConfig> systemConfigs() {
-        return configMapper.selectList(new LambdaQueryWrapper<AnaPlatformConfig>()
-                .eq(AnaPlatformConfig::getConfigGroup, "SYSTEM").orderByAsc(AnaPlatformConfig::getId));
+    public List<Map<String, Object>> systemConfigs() {
+        return dictService.systemConfigsLegacy();
+    }
+
+    @Transactional
+    public void updateAuthConfig(UserPrincipal operator, Long id, Map<String, Object> body) {
+        Object v = body == null ? null : body.get("configValue");
+        dictService.updateItemValue(operator, id, v == null ? "" : String.valueOf(v));
     }
 
     public List<AnaPlatformApp> apps() {

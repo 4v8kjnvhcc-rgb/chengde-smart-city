@@ -4,13 +4,11 @@ import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.chengde.smartcity.analysis.entity.AnaBiDashboard;
 import com.chengde.smartcity.analysis.entity.AnaBiWidget;
 import com.chengde.smartcity.analysis.entity.AnaPlatformApp;
-import com.chengde.smartcity.analysis.entity.AnaPlatformConfig;
 import com.chengde.smartcity.analysis.entity.AnaPlatformIntegration;
 import com.chengde.smartcity.analysis.entity.AnaPlatformService;
 import com.chengde.smartcity.analysis.mapper.AnaBiDashboardMapper;
 import com.chengde.smartcity.analysis.mapper.AnaBiWidgetMapper;
 import com.chengde.smartcity.analysis.mapper.AnaPlatformAppMapper;
-import com.chengde.smartcity.analysis.mapper.AnaPlatformConfigMapper;
 import com.chengde.smartcity.analysis.mapper.AnaPlatformIntegrationMapper;
 import com.chengde.smartcity.analysis.mapper.AnaPlatformServiceMapper;
 import com.chengde.smartcity.audit.AuditService;
@@ -30,7 +28,6 @@ public class AnalyticsPlatformService {
 
     private final AnaPlatformAppMapper appMapper;
     private final AnaPlatformServiceMapper serviceMapper;
-    private final AnaPlatformConfigMapper configMapper;
     private final AnaPlatformIntegrationMapper integrationMapper;
     private final AnaBiWidgetMapper widgetMapper;
     private final AnaBiDashboardMapper dashboardMapper;
@@ -40,13 +37,12 @@ public class AnalyticsPlatformService {
     private final AnalysisDemoService analysisDemoService;
 
     public AnalyticsPlatformService(AnaPlatformAppMapper appMapper, AnaPlatformServiceMapper serviceMapper,
-                                    AnaPlatformConfigMapper configMapper, AnaPlatformIntegrationMapper integrationMapper,
+                                    AnaPlatformIntegrationMapper integrationMapper,
                                     AnaBiWidgetMapper widgetMapper, AnaBiDashboardMapper dashboardMapper,
                                     AuditService auditService, IntegrationProperties integrationProperties,
                                     DataEaseClient dataEaseClient, AnalysisDemoService analysisDemoService) {
         this.appMapper = appMapper;
         this.serviceMapper = serviceMapper;
-        this.configMapper = configMapper;
         this.integrationMapper = integrationMapper;
         this.widgetMapper = widgetMapper;
         this.dashboardMapper = dashboardMapper;
@@ -60,7 +56,6 @@ public class AnalyticsPlatformService {
         Map<String, Object> out = new LinkedHashMap<>();
         out.put("apps", appMapper.selectList(new LambdaQueryWrapper<AnaPlatformApp>().orderByAsc(AnaPlatformApp::getId)));
         out.put("services", serviceMapper.selectList(new LambdaQueryWrapper<AnaPlatformService>().orderByAsc(AnaPlatformService::getId)));
-        out.put("configs", configMapper.selectList(new LambdaQueryWrapper<AnaPlatformConfig>().orderByAsc(AnaPlatformConfig::getId)));
         out.put("integrations", integrationMapper.selectList(new LambdaQueryWrapper<AnaPlatformIntegration>().orderByAsc(AnaPlatformIntegration::getId)));
         out.put("systemLinks", List.of(
                 Map.of("mCode", "M139", "label", "用户中心", "route", "/system/users"),
@@ -98,20 +93,6 @@ public class AnalyticsPlatformService {
         auditService.log(operator.getUserId(), operator.getUsername(), operator.getOrgId(),
                 "ANA_SVC_CREATE", "ana_platform_service", String.valueOf(svc.getId()), svc.getServiceName());
         return svc.getId();
-    }
-
-    @Transactional
-    public void updateConfig(UserPrincipal operator, Long id, Map<String, Object> body) {
-        AnaPlatformConfig cfg = configMapper.selectById(id);
-        if (cfg == null) {
-            throw new BusinessException(404, "config not found");
-        }
-        if (body.containsKey("configValue")) {
-            cfg.setConfigValue(String.valueOf(body.get("configValue")));
-        }
-        configMapper.updateById(cfg);
-        auditService.log(operator.getUserId(), operator.getUsername(), operator.getOrgId(),
-                "ANA_CFG_UPDATE", "ana_platform_config", String.valueOf(id), cfg.getConfigKey());
     }
 
     @Transactional

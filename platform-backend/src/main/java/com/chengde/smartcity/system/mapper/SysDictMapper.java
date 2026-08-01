@@ -1,9 +1,9 @@
 package com.chengde.smartcity.system.mapper;
 
 import com.baomidou.mybatisplus.core.mapper.BaseMapper;
-import com.chengde.smartcity.system.entity.PortalCardLink;
+import com.chengde.smartcity.system.entity.SysDict;
 import org.apache.ibatis.annotations.Mapper;
 
 @Mapper
-public interface PortalCardLinkMapper extends BaseMapper<PortalCardLink> {
+public interface SysDictMapper extends BaseMapper<SysDict> {
 }

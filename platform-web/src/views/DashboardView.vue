@@ -145,8 +145,8 @@ const displayCards = computed<DisplayCard[]>(() => {
     key: `menu-${n.id}`,
     title: PLATFORM_LABELS[n.path] || n.menuName,
     themePath: n.path,
-    // 平台管理：无子入口时展开空抽屉（能力已在通用支撑）
-    direct: false,
+    // 平台管理：无下拉，点击直达统一用户管理系统（通用支撑平台）
+    direct: n.path === '/system',
     menu: n,
   }))
   return [...fromNav, ...fromMenu]
@@ -241,6 +241,11 @@ function toggleDrawer(index: number) {
 function onCardHeaderClick(card: DisplayCard, index: number) {
   if (card.direct && card.source === 'menu') {
     activeIndex.value = null
+    // 平台管理 → 统一用户管理系统（通用支撑 Hub）
+    if (card.menu.path === '/system') {
+      router.push('/analytics/support')
+      return
+    }
     enterMenuNode(card.menu)
     return
   }
