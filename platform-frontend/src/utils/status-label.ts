@@ -60,13 +60,21 @@ const STATUS_ZH: Record<string, string> = {
   SKIPPED: '已跳过',
   // 供需
   SUBMITTED: '已提交',
-  ANALYZING: '分析中',
-  CONFIRMED: '已确认',
+  ANALYZING: '预审中',
+  PRE_AUDITING: '预审中',
+  PRE_AUDIT: '预审',
+  AUDIT: '审核',
+  CONFIRMED: '已审核',
   DISPATCHED: '已分发',
   SUPERVISING: '督办中',
+  CORRECTION: '异议回流',
   FULFILLING: '履约中',
   MATCHED: '已匹配',
   UNMATCHED: '未匹配',
+  CONFIRM: '审核',
+  ANALYZE: '预审',
+  MANAGE: '填报',
+  SUPPLY: '供给',
   // 采集/解析/索引
   PARSED: '已解析',
   COMMITTED: '已入库',
@@ -334,7 +342,6 @@ const STATUS_ZH: Record<string, string> = {
   UPDATE_TAG: '更新标签',
   BIND: '打标',
   UNBIND: '摘标',
-  CONFIRM: '确认',
   REJECT: '驳回',
   RULE_RUN: '规则执行',
   MERGE: '合并标签',
@@ -431,7 +438,7 @@ export function statusTagType(value: unknown): 'success' | 'warning' | 'info' | 
   if (['ACTIVE', 'ENABLED', 'SUCCESS', 'APPROVED', 'COMPLETED', 'FINISHED', 'CONFIRMED', 'PUBLISHED', 'READY', 'CONFIGURED', 'NORMAL', 'SUBSCRIBED', 'DISTRIBUTED', 'MAPPED', 'MATCHED', 'INDEXED', 'OK', 'IMPLEMENTED', 'ONLINE', 'UP', 'PASS'].includes(key)) {
     return 'success'
   }
-  if (['PENDING', 'PENDING_ARCHIVE', 'RUNNING', 'ANALYZING', 'WAITING', 'DRAFT', 'SUPERVISING', 'DISPATCHED', 'FULFILLING', 'PARTIAL', 'WARN', 'POC', 'MEDIUM', 'RAW', 'TAGGED', 'CLEANED', 'LEDGER'].includes(key)) {
+  if (['PENDING', 'PENDING_ARCHIVE', 'RUNNING', 'ANALYZING', 'PRE_AUDITING', 'CORRECTION', 'WAITING', 'DRAFT', 'SUPERVISING', 'DISPATCHED', 'FULFILLING', 'PARTIAL', 'WARN', 'POC', 'MEDIUM', 'RAW', 'TAGGED', 'CLEANED', 'LEDGER'].includes(key)) {
     return 'warning'
   }
   if (['REJECTED', 'FAILED', 'ERROR', 'CANCELLED', 'ABNORMAL', 'EXPIRED', 'RETURNED', 'STOPPED', 'UNMAPPED', 'UNMATCHED', 'CRITICAL', 'BLOCKED', 'MISSING', 'HIGH', 'DOWN', 'FAIL'].includes(key)) {

@@ -5,6 +5,10 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import PageCard from '@/components/common/PageCard.vue'
 import { statusLabel, statusTagType } from '@/utils/status-label'
 
+const props = withDefaults(defineProps<{ catalogOrigin?: 'INGEST' | 'GOVERNANCE' }>(), {
+  catalogOrigin: 'GOVERNANCE',
+})
+
 interface CategoryNode {
   id: number
   categoryCode: string
@@ -56,7 +60,9 @@ const flatCategories = computed(() => {
 })
 
 async function loadTree() {
-  const res = await api.get('/governance/catalog/categories/tree')
+  const res = await api.get('/governance/catalog/categories/tree', {
+    params: { catalogOrigin: props.catalogOrigin },
+  })
   treeData.value = res.data || []
 }
 
@@ -66,14 +72,14 @@ async function loadBound() {
     return
   }
   const res = await api.get('/governance/catalog/resources-mgmt', {
-    params: { categoryId: selectedCategoryId.value },
+    params: { categoryId: selectedCategoryId.value, catalogOrigin: props.catalogOrigin },
   })
   boundRows.value = res.data || []
 }
 
 async function loadUnbound() {
   const res = await api.get('/governance/catalog/resources-mgmt', {
-    params: { unboundOnly: true },
+    params: { unboundOnly: true, catalogOrigin: props.catalogOrigin },
   })
   unboundRows.value = res.data || []
 }
@@ -108,6 +114,7 @@ async function saveCategory() {
     categoryName: catForm.categoryName,
     categoryCode: catForm.categoryCode || undefined,
     parentId: catForm.parentId || 0,
+    catalogOrigin: props.catalogOrigin,
   })
   ElMessage.success('分类已创建')
   catDialog.value = false

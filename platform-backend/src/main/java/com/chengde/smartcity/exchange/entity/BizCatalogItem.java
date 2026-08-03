@@ -13,6 +13,9 @@ public class BizCatalogItem {
     private String title;
     private String description;
     private String catalogKind;
+    /** INGEST | GOVERNANCE */
+    private String catalogOrigin;
+    private Long govResourceId;
     private String themeCode;
     private String themeName;
     private String providerOrg;
@@ -35,6 +38,10 @@ public class BizCatalogItem {
     public void setDescription(String description) { this.description = description; }
     public String getCatalogKind() { return catalogKind; }
     public void setCatalogKind(String catalogKind) { this.catalogKind = catalogKind; }
+    public String getCatalogOrigin() { return catalogOrigin; }
+    public void setCatalogOrigin(String catalogOrigin) { this.catalogOrigin = catalogOrigin; }
+    public Long getGovResourceId() { return govResourceId; }
+    public void setGovResourceId(Long govResourceId) { this.govResourceId = govResourceId; }
     public String getThemeCode() { return themeCode; }
     public void setThemeCode(String themeCode) { this.themeCode = themeCode; }
     public String getThemeName() { return themeName; }

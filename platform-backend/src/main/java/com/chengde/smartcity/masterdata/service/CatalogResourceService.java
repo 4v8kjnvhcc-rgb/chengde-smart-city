@@ -2,6 +2,8 @@ package com.chengde.smartcity.masterdata.service;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.chengde.smartcity.common.exception.BusinessException;
+import com.chengde.smartcity.exchange.entity.BizCatalogItem;
+import com.chengde.smartcity.exchange.mapper.BizCatalogItemMapper;
 import com.chengde.smartcity.masterdata.entity.GovCatalogApproval;
 import com.chengde.smartcity.masterdata.entity.GovCatalogCategory;
 import com.chengde.smartcity.masterdata.entity.GovCatalogResource;
@@ -49,27 +51,38 @@ public class CatalogResourceService {
     private final GovCatalogApprovalMapper approvalMapper;
     private final GovCatalogResourceVersionMapper versionMapper;
     private final GovMetadataRegistryMapper metadataRegistryMapper;
+    private final BizCatalogItemMapper portalCatalogMapper;
 
     public CatalogResourceService(GovCatalogResourceMapper resourceMapper,
                                   GovCatalogCategoryMapper categoryMapper,
                                   GovCatalogApprovalMapper approvalMapper,
                                   GovCatalogResourceVersionMapper versionMapper,
-                                  GovMetadataRegistryMapper metadataRegistryMapper) {
+                                  GovMetadataRegistryMapper metadataRegistryMapper,
+                                  BizCatalogItemMapper portalCatalogMapper) {
         this.resourceMapper = resourceMapper;
         this.categoryMapper = categoryMapper;
         this.approvalMapper = approvalMapper;
         this.versionMapper = versionMapper;
         this.metadataRegistryMapper = metadataRegistryMapper;
+        this.portalCatalogMapper = portalCatalogMapper;
     }
 
     public List<GovCatalogResource> list(Long categoryId, String resourceType, String publishStatus,
                                          String approvalStatus, String keyword) {
-        return list(categoryId, resourceType, publishStatus, approvalStatus, keyword, null, null, null);
+        return list(categoryId, resourceType, publishStatus, approvalStatus, keyword, null, null, null, null, null);
     }
 
     public List<GovCatalogResource> list(Long categoryId, String resourceType, String publishStatus,
                                          String approvalStatus, String keyword,
                                          String sourcePathType, String providerOrg, Boolean unboundOnly) {
+        return list(categoryId, resourceType, publishStatus, approvalStatus, keyword,
+                sourcePathType, providerOrg, unboundOnly, null, null);
+    }
+
+    public List<GovCatalogResource> list(Long categoryId, String resourceType, String publishStatus,
+                                         String approvalStatus, String keyword,
+                                         String sourcePathType, String providerOrg, Boolean unboundOnly,
+                                         String catalogOrigin, String shareType) {
         LambdaQueryWrapper<GovCatalogResource> q = new LambdaQueryWrapper<GovCatalogResource>()
                 .orderByDesc(GovCatalogResource::getId);
         if (Boolean.TRUE.equals(unboundOnly)) {
@@ -91,6 +104,12 @@ public class CatalogResourceService {
         }
         if (providerOrg != null && !providerOrg.isBlank()) {
             q.like(GovCatalogResource::getProviderOrg, providerOrg.trim());
+        }
+        if (catalogOrigin != null && !catalogOrigin.isBlank()) {
+            q.eq(GovCatalogResource::getCatalogOrigin, catalogOrigin.trim().toUpperCase(Locale.ROOT));
+        }
+        if (shareType != null && !shareType.isBlank()) {
+            q.eq(GovCatalogResource::getShareType, shareType.trim().toUpperCase(Locale.ROOT));
         }
         if (keyword != null && !keyword.isBlank()) {
             q.and(w -> w.like(GovCatalogResource::getResourceCode, keyword)
@@ -268,8 +287,10 @@ public class CatalogResourceService {
         if ("PUBLISH".equalsIgnoreCase(a.getActionType())) {
             r.setPublishStatus("PUBLISHED");
             snapshotOnPublish(r, operator, "审批发布 v");
+            syncPortal(r);
         } else if ("OFFLINE".equalsIgnoreCase(a.getActionType())) {
             r.setPublishStatus("OFFLINE");
+            offlinePortal(r);
         }
         touch(r, operator);
         resourceMapper.updateById(r);
@@ -741,6 +762,17 @@ public class CatalogResourceService {
         if (creating || body.containsKey("resourceType")) {
             r.setResourceType(str(body.get("resourceType"), creating ? "DATA" : r.getResourceType()));
         }
+        if (creating || body.containsKey("catalogOrigin")) {
+            String origin = str(body.get("catalogOrigin"), creating ? "GOVERNANCE" : r.getCatalogOrigin());
+            if (origin == null || origin.isBlank()) {
+                origin = "GOVERNANCE";
+            }
+            origin = origin.trim().toUpperCase(Locale.ROOT);
+            if (!"INGEST".equals(origin) && !"GOVERNANCE".equals(origin)) {
+                throw new BusinessException(400, "catalogOrigin 仅支持 INGEST / GOVERNANCE");
+            }
+            r.setCatalogOrigin(origin);
+        }
         if (body.containsKey("metadataEntryCode") || creating) {
             r.setMetadataEntryCode(str(body.get("metadataEntryCode"), creating ? null : r.getMetadataEntryCode()));
         }
@@ -879,6 +911,80 @@ public class CatalogResourceService {
             r.setUpdatedBy(operator.getUsername());
         }
         r.setUpdatedAt(LocalDateTime.now());
+    }
+
+    private void syncPortal(GovCatalogResource r) {
+        if (r.getSecretFlag() != null && r.getSecretFlag() == 1) {
+            return;
+        }
+        BizCatalogItem item = null;
+        if (r.getPortalCatalogId() != null) {
+            item = portalCatalogMapper.selectById(r.getPortalCatalogId());
+        }
+        if (item == null && r.getId() != null) {
+            item = portalCatalogMapper.selectOne(new LambdaQueryWrapper<BizCatalogItem>()
+                    .eq(BizCatalogItem::getGovResourceId, r.getId()).last("LIMIT 1"));
+        }
+        if (item == null) {
+            String code = "GOV_" + (r.getResourceCode() != null ? r.getResourceCode() : r.getId());
+            item = portalCatalogMapper.selectOne(new LambdaQueryWrapper<BizCatalogItem>()
+                    .eq(BizCatalogItem::getCatalogCode, code).last("LIMIT 1"));
+            if (item == null) {
+                item = new BizCatalogItem();
+                item.setCatalogCode(code);
+                item.setCreatedBy(r.getCreatedBy());
+                item.setCreatedAt(LocalDateTime.now());
+            }
+        }
+        item.setTitle(r.getResourceName());
+        item.setDescription(r.getDescription());
+        item.setCatalogKind("SERVICE".equalsIgnoreCase(r.getResourceType()) ? "SERVICE" : "DATA");
+        item.setCatalogOrigin(r.getCatalogOrigin() == null ? "GOVERNANCE" : r.getCatalogOrigin());
+        item.setGovResourceId(r.getId());
+        item.setThemeName(r.getCategoryPath());
+        item.setProviderOrg(r.getProviderOrg());
+        item.setShareModes(mapShareModes(r.getResourceFormat(), r.getShareType()));
+        item.setResourceCount(1);
+        item.setHotScore(item.getHotScore() == null ? 1 : item.getHotScore());
+        item.setPublishStatus("PUBLISHED");
+        item.setPublishedAt(LocalDateTime.now());
+        item.setUpdatedAt(LocalDateTime.now());
+        if (item.getId() == null) {
+            portalCatalogMapper.insert(item);
+        } else {
+            portalCatalogMapper.updateById(item);
+        }
+        r.setPortalCatalogId(item.getId());
+    }
+
+    private void offlinePortal(GovCatalogResource r) {
+        BizCatalogItem item = null;
+        if (r.getPortalCatalogId() != null) {
+            item = portalCatalogMapper.selectById(r.getPortalCatalogId());
+        }
+        if (item == null && r.getId() != null) {
+            item = portalCatalogMapper.selectOne(new LambdaQueryWrapper<BizCatalogItem>()
+                    .eq(BizCatalogItem::getGovResourceId, r.getId()).last("LIMIT 1"));
+        }
+        if (item == null) {
+            return;
+        }
+        item.setPublishStatus("OFFLINE");
+        item.setUpdatedAt(LocalDateTime.now());
+        portalCatalogMapper.updateById(item);
+    }
+
+    private static String mapShareModes(String format, String shareType) {
+        if ("NOT_SHARE".equalsIgnoreCase(shareType)) {
+            return "TABLE";
+        }
+        if ("API".equalsIgnoreCase(format)) {
+            return "API";
+        }
+        if ("FILE".equalsIgnoreCase(format)) {
+            return "FILE";
+        }
+        return "TABLE,FILE,API";
     }
 
     private GovCatalogResource require(Long id) {

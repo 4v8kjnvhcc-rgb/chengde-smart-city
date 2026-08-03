@@ -116,37 +116,24 @@ public class ExchangeDemoService {
     }
 
     public List<BizCatalogItem> listCatalog() {
-        return catalogMapper.selectList(new LambdaQueryWrapper<BizCatalogItem>().orderByDesc(BizCatalogItem::getId));
+        return catalogMapper.selectList(new LambdaQueryWrapper<BizCatalogItem>()
+                .isNotNull(BizCatalogItem::getGovResourceId)
+                .orderByDesc(BizCatalogItem::getId));
     }
 
     @Transactional
     public Long createCatalog(UserPrincipal operator, Map<String, Object> body) {
-        BizCatalogItem item = new BizCatalogItem();
-        item.setCatalogCode(str(body.get("catalogCode"), "CAT_" + UUID.randomUUID().toString().substring(0, 8)));
-        item.setTitle(required(body.get("title"), "目录标题"));
-        item.setDescription(str(body.get("description"), ""));
-        item.setPublishStatus("DRAFT");
-        item.setCreatedBy(operator.getUsername());
-        catalogMapper.insert(item);
-        auditService.log(operator.getUserId(), operator.getUsername(), operator.getOrgId(),
-                "CATALOG_CREATE", "biz_catalog_item", String.valueOf(item.getId()), item.getTitle());
-        return item.getId();
+        throw new BusinessException(400, "请勿通过演示接口新建目录；请在统一目录模块编目审批");
     }
 
     @Transactional
     public void publishCatalog(UserPrincipal operator, Long id) {
-        BizCatalogItem item = catalogMapper.selectById(id);
-        if (item == null) {
-            throw new BusinessException(404, "目录不存在");
-        }
-        item.setPublishStatus("PUBLISHED");
-        catalogMapper.updateById(item);
-        auditService.log(operator.getUserId(), operator.getUsername(), operator.getOrgId(),
-                "CATALOG_PUBLISH", "biz_catalog_item", String.valueOf(id), item.getTitle());
+        throw new BusinessException(400, "请勿通过演示接口发布目录；请通过统一目录审批发布");
     }
 
     public List<BizCatalogItem> sharedPortal() {
         return catalogMapper.selectList(new LambdaQueryWrapper<BizCatalogItem>()
+                .isNotNull(BizCatalogItem::getGovResourceId)
                 .eq(BizCatalogItem::getPublishStatus, "PUBLISHED")
                 .orderByDesc(BizCatalogItem::getId));
     }

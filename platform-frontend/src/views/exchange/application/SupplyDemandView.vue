@@ -29,7 +29,11 @@ const duties = ref<Record<string, unknown>[]>([])
 const objections = ref<Record<string, unknown>[]>([])
 const manifests = ref<Record<string, unknown>[]>([])
 const listCenterItems = ref<Record<string, unknown>[]>([])
-const listCenterSub = ref('dept-catalog')
+const listCenterSub = ref('catalog-published')
+const listCenterGroup = ref('目录清单')
+const catalogManifestSections = MANIFEST_CENTER_SECTIONS.filter((s) => s.group === '目录清单')
+const supplyManifestSections = MANIFEST_CENTER_SECTIONS.filter((s) => s.group === '供需清单')
+const objectionManifestSections = MANIFEST_CENTER_SECTIONS.filter((s) => s.group === '异议清单')
 const exchangeJobs = ref<Record<string, unknown>[]>([])
 const apiEndpoints = ref<Record<string, unknown>[]>([])
 const sharePages = ref<Record<string, unknown>[]>([])
@@ -97,7 +101,11 @@ const RESOURCE_TYPE_LABEL: Record<string, string> = {
 }
 
 const mainSections = SUPPLY_MAIN_SECTIONS
-const manifestCenterSections = MANIFEST_CENTER_SECTIONS
+const manifestCenterSections = computed(() => {
+  if (listCenterGroup.value === '供需清单') return supplyManifestSections
+  if (listCenterGroup.value === '异议清单') return objectionManifestSections
+  return catalogManifestSections
+})
 
 const selectedTemplate = computed(() =>
   templates.value.find((t) => t.templateCode === demandForm.templateCode),
@@ -159,13 +167,16 @@ function syncRoute() {
   let sec = String(route.query.sdSection || r.section || 'demand')
   if (sec === 'catalog') {
     sec = 'manifest-center'
-    listCenterSub.value = 'dept-catalog'
+    listCenterGroup.value = '目录清单'
+    listCenterSub.value = 'catalog-published'
   } else if (sec === 'objection') {
     sec = 'manifest-center'
+    listCenterGroup.value = '异议清单'
     listCenterSub.value = 'objection'
   } else if (sec === 'manifest') {
     sec = 'manifest-center'
-    listCenterSub.value = 'open-list'
+    listCenterGroup.value = '供需清单'
+    listCenterSub.value = 'sd-history'
   }
   if (!SUPPLY_MAIN_SECTIONS.some((s) => s.key === sec) && sec !== 'manifest-center') {
     sec = 'demand'
@@ -202,13 +213,22 @@ function setSection(key: string) {
 
 function setListCenterSub(key: string) {
   listCenterSub.value = key
+  const hit = MANIFEST_CENTER_SECTIONS.find((s) => s.key === key)
+  if (hit) listCenterGroup.value = hit.group
+  loadListCenter()
+}
+
+function setListCenterGroup(group: string) {
+  listCenterGroup.value = group
+  const first = MANIFEST_CENTER_SECTIONS.find((s) => s.group === group)
+  if (first) listCenterSub.value = first.key
   loadListCenter()
 }
 
 const statusTag = (s: string) => {
   if (['CONFIRMED', 'APPROVED', 'CLOSED', 'COMPLETED'].includes(s)) return 'success'
   if (['REJECTED', 'RETURNED', 'WITHDRAWN', 'CANCELLED'].includes(s)) return 'danger'
-  if (['DISPATCHED', 'ANALYZING', 'SUPERVISING'].includes(s)) return 'warning'
+  if (['DISPATCHED', 'PRE_AUDITING', 'ANALYZING', 'SUPERVISING', 'CORRECTION'].includes(s)) return 'warning'
   return 'info'
 }
 void statusTag
@@ -221,6 +241,14 @@ async function searchResourceCatalog() {
     },
   })
   resourceHits.value = res.data.items || []
+}
+
+function goPortalApply(row: Record<string, unknown>) {
+  const id = row.resourceId
+  router.push({
+    path: '/exchange/portal',
+    query: { tab: 'catalog', id: id != null ? String(id) : undefined },
+  })
 }
 
 async function loadSection() {
@@ -453,7 +481,7 @@ async function saveEdit() {
 }
 
 const confirmPending = computed(() =>
-  demands.value.filter((d) => ['ANALYZING', 'DISPATCHED', 'SUPERVISING'].includes(String(d.status))),
+  demands.value.filter((d) => ['PRE_AUDITING', 'ANALYZING', 'DISPATCHED', 'SUPERVISING', 'CORRECTION'].includes(String(d.status))),
 )
 const confirmManaged = computed(() =>
   demands.value.filter((d) => ['CONFIRMED', 'COMPLETED', 'CANCELLED', 'REJECTED', 'RETURNED'].includes(String(d.status))),
@@ -477,6 +505,16 @@ async function submitObjection() {
   objectionForm.content = ''
   ElMessage.success('异议已登记')
   await loadListCenter()
+}
+
+async function reopenObjectionAudit(id: number) {
+  await api.post(`/exchange/supply/objections/${id}/process`, {
+    action: 'REOPEN_AUDIT',
+    handlerNote: '发现数据问题，回流需求审核',
+  })
+  ElMessage.success('已回流需求审核')
+  await loadListCenter()
+  demands.value = (await api.get('/exchange/supply/demands')).data
 }
 
 watch(() => [route.query.module, route.query.section, route.query.tab, route.query.sdSection], () => {
@@ -511,7 +549,7 @@ onMounted(() => {
       :closable="false"
       show-icon
       style="margin-bottom:12px"
-      title="清单中心：查看部门目录清单、服务清单、开放清单与异议清单，监控数据共享开放全流程。目录发布请在系统管理·供需配置维护。"
+      title="清单中心监控共享开放全流程：目录清单与统一编目/门户一致；供需清单来自对接过程；异议清单可回流需求审核。目录编目请在指标与目录体系构建或数据目录管理系统完成。"
     />
     <el-radio-group :model-value="section" style="margin-bottom:12px" @change="setSection">
       <el-radio-button v-for="s in mainSections" :key="s.key" :value="s.key">{{ s.label }}</el-radio-button>
@@ -576,13 +614,13 @@ onMounted(() => {
       </el-table>
     </PageCard>
 
-    <PageCard v-else-if="section === 'analysis'" title="数据需求分析">
+    <PageCard v-else-if="section === 'analysis'" title="数据需求预审">
       <el-alert
         type="info"
         :closable="false"
         show-icon
         style="margin-bottom:12px"
-        title="数据管理员：分析 / 分发 / 退回 / 督查督办；支持资源目录快查与智能辅助匹配（目录·库表·接口），并可一键设置评估状态与共享属性。"
+        title="预审：分析/分发/退回/督办。资源目录快查仅含已发布到部门共享门户的统一目录；已满足可跳转门户申请，否则分发数源进入审核。支持智能匹配与一键设置评估状态/共享属性。"
       />
 
       <PageCard title="资源目录快速查询" style="margin-bottom:12px">
@@ -610,9 +648,15 @@ onMounted(() => {
           <el-table-column prop="title" label="名称" min-width="140" />
           <el-table-column prop="score" label="匹配度" width="80" />
           <el-table-column prop="subtitle" label="说明" min-width="140" show-overflow-tooltip />
-          <el-table-column label="操作" width="120">
+          <el-table-column label="操作" width="200">
             <template #default="{ row }">
               <el-button link type="primary" @click="bindResourceToDemand(row)">选用</el-button>
+              <el-button
+                v-if="row.resourceType === 'CATALOG'"
+                link
+                type="success"
+                @click="goPortalApply(row)"
+              >跳转门户申请</el-button>
             </template>
           </el-table-column>
         </el-table>
@@ -725,7 +769,7 @@ onMounted(() => {
       </div>
     </PageCard>
 
-    <PageCard v-else-if="section === 'confirm'" title="数据需求确认">
+    <PageCard v-else-if="section === 'confirm'" title="数据需求审核">
       <el-alert
         type="info"
         :closable="false"
@@ -742,7 +786,7 @@ onMounted(() => {
         </el-form-item>
       </el-form>
 
-      <h4 class="confirm-h">待确认需求</h4>
+      <h4 class="confirm-h">待审核需求</h4>
       <el-table :data="confirmPending" stripe size="small">
         <el-table-column prop="demandTitle" label="需求" min-width="140" />
         <el-table-column prop="assigneeOrg" label="供数单位" width="110" />
@@ -755,7 +799,7 @@ onMounted(() => {
         </el-table-column>
         <el-table-column label="操作" width="380" fixed="right">
           <template #default="{ row }">
-            <el-button link type="success" @click="confirmDemand(Number(row.id), row)">确认并生成任务</el-button>
+            <el-button link type="success" @click="confirmDemand(Number(row.id), row)">审核通过并生成任务</el-button>
             <el-button link type="warning" @click="confirmReturnDemand(Number(row.id))">退回</el-button>
             <el-button link @click="submitConfirmFeedback(Number(row.id))">督查反馈</el-button>
             <el-button link type="danger" @click="rejectDemand(Number(row.id))">驳回</el-button>
@@ -765,7 +809,7 @@ onMounted(() => {
         </el-table-column>
       </el-table>
 
-      <h4 class="confirm-h">已确认 / 办结台账</h4>
+      <h4 class="confirm-h">已审核 / 办结台账</h4>
       <el-table :data="confirmManaged" stripe size="small">
         <el-table-column prop="demandTitle" label="需求" min-width="140" />
         <el-table-column prop="confirmNote" label="确认说明" min-width="160" show-overflow-tooltip />
@@ -895,6 +939,11 @@ onMounted(() => {
     </PageCard>
 
     <PageCard v-else-if="section === 'manifest-center'" title="数据清单中心">
+      <el-radio-group :model-value="listCenterGroup" style="margin-bottom:12px" @change="setListCenterGroup">
+        <el-radio-button value="目录清单">目录清单</el-radio-button>
+        <el-radio-button value="供需清单">供需清单</el-radio-button>
+        <el-radio-button value="异议清单">异议清单</el-radio-button>
+      </el-radio-group>
       <el-radio-group :model-value="listCenterSub" style="margin-bottom:12px" @change="setListCenterSub">
         <el-radio-button v-for="s in manifestCenterSections" :key="s.key" :value="s.key">{{ s.label }}</el-radio-button>
       </el-radio-group>
@@ -902,7 +951,7 @@ onMounted(() => {
       <template v-if="listCenterSub === 'objection'">
         <el-form inline class="portal-inline-form portal-inline-form--block">
           <el-form-item label="目录" class="portal-field-default">
-            <el-select v-model="objectionForm.catalogId">
+            <el-select v-model="objectionForm.catalogId" filterable placeholder="统一编目已发布目录">
               <el-option v-for="c in catalogs" :key="String(c.id)" :label="String(c.title)" :value="Number(c.id)" />
             </el-select>
           </el-form-item>
@@ -917,14 +966,28 @@ onMounted(() => {
           <el-form-item class="portal-form-actions"><el-button type="primary" @click="submitObjection">登记异议</el-button></el-form-item>
         </el-form>
         <el-table :data="listCenterItems" stripe size="small">
+          <el-table-column prop="title" label="异议标题" min-width="140" />
           <el-table-column prop="catalogId" label="目录ID" width="90" />
+          <el-table-column prop="demandId" label="需求ID" width="90" />
           <el-table-column label="类型" width="100">
             <template #default="{ row }">{{ $statusLabel(row.objectionType) }}</template>
           </el-table-column>
-          <el-table-column prop="content" label="内容" min-width="200" />
+          <el-table-column prop="content" label="内容" min-width="160" />
+          <el-table-column prop="providerOrg" label="提出单位" width="120" />
+          <el-table-column prop="verifyOrg" label="核查单位" width="120" />
           <el-table-column label="状态" width="100">
-          <template #default="{ row }">{{ $statusLabel(row.status) }}</template>
-        </el-table-column>
+            <template #default="{ row }">{{ $statusLabel(row.status) }}</template>
+          </el-table-column>
+          <el-table-column label="操作" width="140" fixed="right">
+            <template #default="{ row }">
+              <el-button
+                v-if="row.status !== 'CLOSED'"
+                link
+                type="warning"
+                @click="reopenObjectionAudit(Number(row.id))"
+              >回流审核</el-button>
+            </template>
+          </el-table-column>
         </el-table>
       </template>
       <el-table v-else :data="listCenterItems" stripe size="small">
@@ -932,16 +995,18 @@ onMounted(() => {
           <template #default="{ row }">{{ row.code || row.catalogCode || row.id }}</template>
         </el-table-column>
         <el-table-column prop="title" label="名称" min-width="160" />
-        <el-table-column v-if="listCenterSub === 'service-list'" label="类型" width="120">
-          <template #default="{ row }">{{ $statusLabel(row.type) }}</template>
+        <el-table-column v-if="listCenterGroup === '目录清单'" prop="providerOrg" label="提供方" width="120" show-overflow-tooltip />
+        <el-table-column v-if="listCenterGroup === '目录清单'" prop="catalogOrigin" label="来源" width="110">
+          <template #default="{ row }">{{ row.catalogOrigin === 'INGEST' ? '指标与目录' : (row.catalogOrigin === 'GOVERNANCE' ? '数据目录管理' : (row.catalogOrigin || '-')) }}</template>
         </el-table-column>
-        <el-table-column v-if="listCenterSub === 'open-list'" label="共享属性" width="110">
-          <template #default="{ row }">{{ $statusLabel(row.shareAttr) }}</template>
+        <el-table-column v-if="listCenterGroup === '目录清单'" prop="shareAttr" label="共享属性" width="110" show-overflow-tooltip />
+        <el-table-column v-if="listCenterGroup === '供需清单'" prop="requesterOrg" label="需求单位" width="120" show-overflow-tooltip />
+        <el-table-column v-if="listCenterGroup === '供需清单'" prop="providerOrg" label="提供单位" width="120" show-overflow-tooltip />
+        <el-table-column label="状态" width="110">
+          <template #default="{ row }"><el-tag :type="$statusTagType(row.status || row.publishStatus)" size="small">{{ $statusLabel(row.status || row.publishStatus) }}</el-tag></template>
         </el-table-column>
-        <el-table-column label="状态" width="100">
-          <template #default="{ row }"><el-tag :type="$statusTagType(row.status)" size="small">{{ $statusLabel(row.status) }}</el-tag></template>
-        </el-table-column>
-        <el-table-column prop="description" label="说明" min-width="180" show-overflow-tooltip />
+        <el-table-column prop="createdAt" label="创建时间" width="160" />
+        <el-table-column prop="description" label="说明" min-width="160" show-overflow-tooltip />
       </el-table>
     </PageCard>
   </div>

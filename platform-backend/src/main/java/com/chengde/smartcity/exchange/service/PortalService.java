@@ -301,6 +301,7 @@ public class PortalService {
                                                    String catalogKind, String shareMode) {
         LambdaQueryWrapper<BizCatalogItem> q = new LambdaQueryWrapper<BizCatalogItem>()
                 .eq(BizCatalogItem::getPublishStatus, "PUBLISHED")
+                .isNotNull(BizCatalogItem::getGovResourceId)
                 .orderByDesc(BizCatalogItem::getHotScore)
                 .orderByDesc(BizCatalogItem::getId);
         if (keyword != null && !keyword.isBlank()) {
@@ -372,6 +373,8 @@ public class PortalService {
         row.put("title", c.getTitle());
         row.put("description", c.getDescription());
         row.put("catalogKind", nz(c.getCatalogKind(), "DATA"));
+        row.put("catalogOrigin", c.getCatalogOrigin());
+        row.put("govResourceId", c.getGovResourceId());
         row.put("themeCode", c.getThemeCode());
         row.put("themeName", c.getThemeName());
         row.put("providerOrg", c.getProviderOrg());

@@ -57,22 +57,32 @@ export const APPLICATION_SYSTEMS: { key: string; label: string; permission?: str
 ]
 
 export const SUPPLY_MODULES: ApplicationModuleMeta[] = [
-  { key: 'supply-flow', mCode: 'M020', label: '供需对接', subLabel: '需求·分析·确认·供给·清单', system: 'supply' },
+  { key: 'supply-flow', mCode: 'M020', label: '供需对接', subLabel: '填报·预审·审核·供给·清单', system: 'supply' },
 ]
 
 export const SUPPLY_MAIN_SECTIONS = [
   { key: 'demand', label: '数据需求管理', mCode: 'M020' },
-  { key: 'analysis', label: '数据需求分析', mCode: 'M021' },
-  { key: 'confirm', label: '数据需求确认', mCode: 'M022' },
+  { key: 'analysis', label: '数据需求预审', mCode: 'M021' },
+  { key: 'confirm', label: '数据需求审核', mCode: 'M022' },
   { key: 'supply', label: '数据供给查看', mCode: 'M023' },
   { key: 'manifest-center', label: '数据清单中心', mCode: 'M024' },
 ] as const
 
+/** 清单中心：目录清单 / 供需清单 / 异议清单 */
 export const MANIFEST_CENTER_SECTIONS = [
-  { key: 'dept-catalog', label: '部门目录清单', mCode: 'M024' },
-  { key: 'service-list', label: '服务清单', mCode: 'M024' },
-  { key: 'open-list', label: '开放清单', mCode: 'M024' },
-  { key: 'objection', label: '异议清单', mCode: 'M025' },
+  { key: 'catalog-publish', label: '目录发布清单', group: '目录清单', mCode: 'M024' },
+  { key: 'catalog-change', label: '目录变更清单', group: '目录清单', mCode: 'M024' },
+  { key: 'catalog-offline', label: '目录下线清单', group: '目录清单', mCode: 'M024' },
+  { key: 'catalog-access', label: '数据接入清单', group: '目录清单', mCode: 'M024' },
+  { key: 'catalog-update', label: '数据更新清单', group: '目录清单', mCode: 'M024' },
+  { key: 'catalog-published', label: '已发布目录清单', group: '目录清单', mCode: 'M024' },
+  { key: 'sd-demand-audit', label: '需求审核清单', group: '供需清单', mCode: 'M026' },
+  { key: 'sd-supply-audit', label: '供给审核清单', group: '供需清单', mCode: 'M026' },
+  { key: 'sd-joint-audit', label: '供需审核清单', group: '供需清单', mCode: 'M026' },
+  { key: 'sd-auth-history', label: '历史授权清单', group: '供需清单', mCode: 'M026' },
+  { key: 'sd-history', label: '历史供需清单', group: '供需清单', mCode: 'M026' },
+  { key: 'sd-cascade', label: '级联下行清单', group: '供需清单', mCode: 'M026' },
+  { key: 'objection', label: '数据异议清单', group: '异议清单', mCode: 'M025' },
 ] as const
 
 export const SUPPLY_FLOW_SECTIONS = SUPPLY_MAIN_SECTIONS.filter((s) => s.key !== 'manifest-center')

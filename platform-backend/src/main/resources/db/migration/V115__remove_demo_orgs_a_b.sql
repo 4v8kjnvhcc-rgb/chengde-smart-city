@@ -1,4 +1,4 @@
--- V111: 移除旧演示机构 ORG_A / ORG_B 及其演示账号
+-- V115: 移除旧演示机构 ORG_A / ORG_B 及其演示账号
 
 -- 访问控制演示授权（若存在）
 DELETE g FROM sys_data_grant g

@@ -11,10 +11,14 @@ public class GovCatalogCategory {
     private Long id;
     private String categoryCode;
     private String categoryName;
+    /** INGEST | GOVERNANCE */
+    private String catalogOrigin;
     private Long parentId;
     private String categoryPath;
     private Integer sortOrder;
     private String status;
+    private Integer secretFlag;
+    private String description;
     private String createdBy;
     private LocalDateTime createdAt;
 
@@ -24,6 +28,8 @@ public class GovCatalogCategory {
     public void setCategoryCode(String categoryCode) { this.categoryCode = categoryCode; }
     public String getCategoryName() { return categoryName; }
     public void setCategoryName(String categoryName) { this.categoryName = categoryName; }
+    public String getCatalogOrigin() { return catalogOrigin; }
+    public void setCatalogOrigin(String catalogOrigin) { this.catalogOrigin = catalogOrigin; }
     public Long getParentId() { return parentId; }
     public void setParentId(Long parentId) { this.parentId = parentId; }
     public String getCategoryPath() { return categoryPath; }
@@ -32,6 +38,10 @@ public class GovCatalogCategory {
     public void setSortOrder(Integer sortOrder) { this.sortOrder = sortOrder; }
     public String getStatus() { return status; }
     public void setStatus(String status) { this.status = status; }
+    public Integer getSecretFlag() { return secretFlag; }
+    public void setSecretFlag(Integer secretFlag) { this.secretFlag = secretFlag; }
+    public String getDescription() { return description; }
+    public void setDescription(String description) { this.description = description; }
     public String getCreatedBy() { return createdBy; }
     public void setCreatedBy(String createdBy) { this.createdBy = createdBy; }
     public LocalDateTime getCreatedAt() { return createdAt; }

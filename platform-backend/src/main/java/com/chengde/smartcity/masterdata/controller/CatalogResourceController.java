@@ -44,9 +44,11 @@ public class CatalogResourceController {
                                                       @RequestParam(required = false) String keyword,
                                                       @RequestParam(required = false) String sourcePathType,
                                                       @RequestParam(required = false) String providerOrg,
-                                                      @RequestParam(required = false) Boolean unboundOnly) {
+                                                      @RequestParam(required = false) Boolean unboundOnly,
+                                                      @RequestParam(required = false) String catalogOrigin,
+                                                      @RequestParam(required = false) String shareType) {
         return ApiResponse.ok(service.list(categoryId, resourceType, publishStatus, approvalStatus, keyword,
-                sourcePathType, providerOrg, unboundOnly));
+                sourcePathType, providerOrg, unboundOnly, catalogOrigin, shareType));
     }
 
     @GetMapping("/eligible-metadata")

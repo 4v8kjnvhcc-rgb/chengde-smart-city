@@ -72,6 +72,10 @@ const CYCLE_ZH: Record<string, string> = {
 }
 const TYPE_ZH: Record<string, string> = { DATA: '数据', SERVICE: '服务' }
 
+const props = withDefaults(defineProps<{ catalogOrigin?: 'INGEST' | 'GOVERNANCE' }>(), {
+  catalogOrigin: 'GOVERNANCE',
+})
+
 const treeData = ref<CategoryNode[]>([])
 const resources = ref<CatalogRes[]>([])
 const loading = ref(false)
@@ -142,7 +146,9 @@ const flatCategories = computed(() => {
 })
 
 async function loadTree() {
-  const res = await api.get('/governance/catalog/categories/tree')
+  const res = await api.get('/governance/catalog/categories/tree', {
+    params: { catalogOrigin: props.catalogOrigin },
+  })
   treeData.value = res.data || []
 }
 
@@ -153,6 +159,7 @@ async function loadResources() {
       params: {
         categoryId: selectedCategoryId.value || undefined,
         keyword: keyword.value || undefined,
+        catalogOrigin: props.catalogOrigin,
       },
     })
     resources.value = res.data || []
@@ -254,7 +261,7 @@ async function save() {
     ElMessage.warning('请填写资源名称')
     return
   }
-  const payload = { ...form }
+  const payload = { ...form, catalogOrigin: props.catalogOrigin }
   if (editMode.value && editingId.value != null) {
     await api.put(`/governance/catalog/resources-mgmt/${editingId.value}`, payload)
     ElMessage.success('已更新')

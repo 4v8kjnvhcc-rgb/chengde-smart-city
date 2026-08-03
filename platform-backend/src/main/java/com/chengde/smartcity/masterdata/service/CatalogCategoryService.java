@@ -32,13 +32,25 @@ public class CatalogCategoryService {
     }
 
     public List<GovCatalogCategory> list() {
-        return categoryMapper.selectList(new LambdaQueryWrapper<GovCatalogCategory>()
+        return list(null);
+    }
+
+    public List<GovCatalogCategory> list(String catalogOrigin) {
+        LambdaQueryWrapper<GovCatalogCategory> q = new LambdaQueryWrapper<GovCatalogCategory>()
                 .orderByAsc(GovCatalogCategory::getSortOrder)
-                .orderByAsc(GovCatalogCategory::getId));
+                .orderByAsc(GovCatalogCategory::getId);
+        if (catalogOrigin != null && !catalogOrigin.isBlank()) {
+            q.eq(GovCatalogCategory::getCatalogOrigin, catalogOrigin.trim().toUpperCase());
+        }
+        return categoryMapper.selectList(q);
     }
 
     public List<Map<String, Object>> tree() {
-        List<GovCatalogCategory> all = list();
+        return tree(null);
+    }
+
+    public List<Map<String, Object>> tree(String catalogOrigin) {
+        List<GovCatalogCategory> all = list(catalogOrigin);
         List<Map<String, Object>> roots = new ArrayList<>();
         for (GovCatalogCategory c : all) {
             if (c.getParentId() == null || c.getParentId() == 0L) {
@@ -63,9 +75,16 @@ public class CatalogCategoryService {
         GovCatalogCategory c = new GovCatalogCategory();
         c.setCategoryCode(str(body.get("categoryCode"), "CAT_" + System.currentTimeMillis()));
         c.setCategoryName(name);
+        String origin = str(body.get("catalogOrigin"), "GOVERNANCE");
+        if (!"INGEST".equalsIgnoreCase(origin) && !"GOVERNANCE".equalsIgnoreCase(origin)) {
+            throw new BusinessException(400, "catalogOrigin 仅支持 INGEST / GOVERNANCE");
+        }
+        c.setCatalogOrigin(origin.toUpperCase());
         c.setParentId(parentId);
         c.setSortOrder(intVal(body.get("sortOrder"), 0));
         c.setStatus(str(body.get("status"), "ACTIVE"));
+        c.setSecretFlag(intVal(body.get("secretFlag"), 0));
+        c.setDescription(str(body.get("description"), null));
         c.setCategoryPath(buildPath(parentId, name));
         if (operator != null) {
             c.setCreatedBy(operator.getUsername());
@@ -91,6 +110,18 @@ public class CatalogCategoryService {
         if (body.containsKey("status")) {
             c.setStatus(str(body.get("status"), c.getStatus()));
         }
+        if (body.containsKey("secretFlag")) {
+            c.setSecretFlag(intVal(body.get("secretFlag"), c.getSecretFlag() == null ? 0 : c.getSecretFlag()));
+        }
+        if (body.containsKey("description")) {
+            c.setDescription(str(body.get("description"), null));
+        }
+        if (body.containsKey("catalogOrigin")) {
+            String origin = str(body.get("catalogOrigin"), c.getCatalogOrigin());
+            if (origin != null) {
+                c.setCatalogOrigin(origin.toUpperCase());
+            }
+        }
         c.setCategoryPath(buildPath(c.getParentId(), c.getCategoryName()));
         categoryMapper.updateById(c);
     }
@@ -103,10 +134,13 @@ public class CatalogCategoryService {
         if (childCount != null && childCount > 0) {
             throw new BusinessException(400, "存在子分类，无法删除");
         }
-        Long resCount = resourceMapper.selectCount(new LambdaQueryWrapper<GovCatalogResource>()
+        // 删除分类时解除资源关联，资源可被其他分类再次关联
+        List<GovCatalogResource> bound = resourceMapper.selectList(new LambdaQueryWrapper<GovCatalogResource>()
                 .eq(GovCatalogResource::getCategoryId, id));
-        if (resCount != null && resCount > 0) {
-            throw new BusinessException(400, "分类下仍有资源，无法删除");
+        for (GovCatalogResource r : bound) {
+            r.setCategoryId(null);
+            r.setCategoryPath(null);
+            resourceMapper.updateById(r);
         }
         categoryMapper.deleteById(id);
     }
@@ -119,6 +153,9 @@ public class CatalogCategoryService {
         node.put("label", c.getCategoryName());
         node.put("parentId", c.getParentId());
         node.put("categoryPath", c.getCategoryPath());
+        node.put("catalogOrigin", c.getCatalogOrigin());
+        node.put("secretFlag", c.getSecretFlag());
+        node.put("description", c.getDescription());
         node.put("sortOrder", c.getSortOrder());
         node.put("status", c.getStatus());
         List<Map<String, Object>> children = new ArrayList<>();

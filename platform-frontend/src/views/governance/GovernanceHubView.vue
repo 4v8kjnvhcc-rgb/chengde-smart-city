@@ -13,6 +13,7 @@ const QualityMonitorView = defineAsyncComponent(() => import('./quality/QualityM
 const QualityAssessView = defineAsyncComponent(() => import('./quality/QualityAssessView.vue'))
 const QualityReportView = defineAsyncComponent(() => import('./quality/QualityReportView.vue'))
 const CatalogResourceView = defineAsyncComponent(() => import('./catalog/CatalogResourceView.vue'))
+const CatalogClassifyView = defineAsyncComponent(() => import('./catalog/CatalogClassifyView.vue'))
 const CatalogRegisterPublishView = defineAsyncComponent(() => import('./catalog/CatalogRegisterPublishView.vue'))
 const CatalogApprovalView = defineAsyncComponent(() => import('./catalog/CatalogApprovalView.vue'))
 const CatalogSubscriptionView = defineAsyncComponent(() => import('./catalog/CatalogSubscriptionView.vue'))
@@ -77,6 +78,7 @@ const navItems: HubNavItem[] = [
     label: '数据目录管理系统',
     children: [
       { key: 'catalog.resources', label: '资源目录编制' },
+      { key: 'catalog.classify', label: '数据资源分类' },
       { key: 'catalog.publish', label: '目录注册发布' },
       { key: 'catalog.approvals', label: '资源目录审批' },
       { key: 'catalog.subscriptions', label: '资源申请订阅' },
@@ -337,8 +339,9 @@ onMounted(() => { resolveFromRoute() })
           context-hint="融合组件支撑多表成主题/专题库（优先输出 DWS/ADS）。与「数据治理组件」同库同状态；单表过程清洗属数据治理（DWD）。执行统一 Kettle Carte。"
         />
 
-        <CatalogResourceView v-else-if="tab === 'catalog' && catalogSub === 'resources'" />
-        <CatalogRegisterPublishView v-else-if="tab === 'catalog' && catalogSub === 'publish'" />
+        <CatalogResourceView v-else-if="tab === 'catalog' && catalogSub === 'resources'" catalog-origin="GOVERNANCE" />
+        <CatalogClassifyView v-else-if="tab === 'catalog' && catalogSub === 'classify'" catalog-origin="GOVERNANCE" />
+        <CatalogRegisterPublishView v-else-if="tab === 'catalog' && catalogSub === 'publish'" catalog-origin="GOVERNANCE" />
         <CatalogApprovalView v-else-if="tab === 'catalog' && catalogSub === 'approvals'" />
         <CatalogSubscriptionView v-else-if="tab === 'catalog' && catalogSub === 'subscriptions'" />
         <CatalogPortalView v-else-if="tab === 'catalog' && catalogSub === 'portal'" />

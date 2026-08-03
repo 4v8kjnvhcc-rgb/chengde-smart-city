@@ -20,6 +20,7 @@ const templateForm = reactive({
   fieldSchema: '[{"key":"dataDomain","label":"数据域"},{"key":"updateFreq","label":"更新频率"},{"key":"shareScope","label":"共享范围"}]',
 })
 const catalogForm = reactive({ title: '', description: '' })
+void catalogForm
 
 async function load() {
   loading.value = true
@@ -67,25 +68,17 @@ async function setTemplateStatus(id: number, status: string) {
   await load()
 }
 
-async function createCatalog() {
-  if (!catalogForm.title) return
-  await api.post('/exchange/supply/catalog', catalogForm)
-  catalogForm.title = ''
-  await load()
-}
-
-async function publishCatalog(id: number) {
-  await api.post(`/exchange/supply/catalog/${id}/publish`)
-  await load()
-}
-
-async function offlineCatalog(id: number) {
-  await api.post(`/exchange/supply/catalog/${id}/offline`, { reason: '目录维护' })
-  await load()
-}
-
 async function closeObjection(id: number) {
   await api.post(`/exchange/supply/objections/${id}/process`, { action: 'CLOSE', handlerNote: '配置侧已处理' })
+  await load()
+}
+
+async function reopenObjection(id: number) {
+  await api.post(`/exchange/supply/objections/${id}/process`, {
+    action: 'REOPEN_AUDIT',
+    handlerNote: '配置侧回流需求审核',
+  })
+  ElMessage.success('已回流需求审核')
   await load()
 }
 
@@ -101,7 +94,7 @@ onMounted(load)
   <div v-loading="loading">
     <PageHeader
       title="供需配置"
-      description="系统管理 · 数据共享交换平台 · 应用平台 — 模板、目录发布、异议治理与数据责任台账"
+      description="系统管理 · 数据共享交换平台 · 应用平台 — 模板、统一目录只读、异议治理与数据责任台账"
     />
     <el-radio-group v-model="tab" class="mb" @change="load">
       <el-radio-button value="template">需求模板</el-radio-button>
@@ -159,39 +152,43 @@ onMounted(load)
       </el-table>
     </PageCard>
 
-    <PageCard v-else-if="tab === 'catalog'" title="目录发布与下线">
-      <el-form inline class="portal-inline-form portal-inline-form--block">
-        <el-form-item label="标题" class="portal-field-md"><el-input v-model="catalogForm.title" /></el-form-item>
-        <el-form-item label="说明" class="portal-field-lg"><el-input v-model="catalogForm.description" /></el-form-item>
-        <el-form-item class="portal-form-actions"><el-button type="primary" @click="createCatalog">新建</el-button></el-form-item>
-      </el-form>
+    <PageCard v-else-if="tab === 'catalog'" title="统一目录只读视图">
+      <el-alert
+        type="warning"
+        :closable="false"
+        show-icon
+        style="margin-bottom:12px"
+        title="供需对接系统不再新建/发布目录。目录请在「指标与目录体系构建」或「数据目录管理系统」编目审批，审批通过后同步至部门数据共享门户；此处仅查看已同步目录。"
+      />
       <el-table :data="catalogs" stripe size="small">
         <el-table-column prop="catalogCode" label="编码" width="140" />
         <el-table-column prop="title" label="标题" min-width="160" />
+        <el-table-column prop="catalogOrigin" label="来源" width="120">
+          <template #default="{ row }">{{ row.catalogOrigin === 'INGEST' ? '指标与目录' : (row.catalogOrigin === 'GOVERNANCE' ? '数据目录管理' : (row.catalogOrigin || '-')) }}</template>
+        </el-table-column>
+        <el-table-column prop="govResourceId" label="资源ID" width="90" />
+        <el-table-column prop="providerOrg" label="提供方" width="120" />
         <el-table-column label="状态" width="100">
           <template #default="{ row }">{{ $statusLabel(row.publishStatus) }}</template>
-        </el-table-column>
-        <el-table-column label="操作" width="160">
-          <template #default="{ row }">
-            <el-button v-if="row.publishStatus !== 'PUBLISHED'" link type="primary" @click="publishCatalog(Number(row.id))">发布</el-button>
-            <el-button v-if="row.publishStatus === 'PUBLISHED'" link type="warning" @click="offlineCatalog(Number(row.id))">下线</el-button>
-          </template>
         </el-table-column>
       </el-table>
     </PageCard>
 
     <PageCard v-else-if="tab === 'objection'" title="异议治理">
       <el-table :data="objections" stripe size="small">
+        <el-table-column prop="title" label="标题" min-width="140" />
         <el-table-column prop="catalogId" label="目录ID" width="90" />
+        <el-table-column prop="demandId" label="需求ID" width="90" />
         <el-table-column label="类型" width="100">
           <template #default="{ row }">{{ $statusLabel(row.objectionType) }}</template>
         </el-table-column>
-        <el-table-column prop="content" label="内容" min-width="200" />
+        <el-table-column prop="content" label="内容" min-width="180" />
         <el-table-column label="状态" width="100">
           <template #default="{ row }">{{ $statusLabel(row.status) }}</template>
         </el-table-column>
-        <el-table-column label="操作" width="100">
+        <el-table-column label="操作" width="180">
           <template #default="{ row }">
+            <el-button v-if="row.status !== 'CLOSED'" link type="warning" @click="reopenObjection(Number(row.id))">回流审核</el-button>
             <el-button v-if="row.status !== 'CLOSED'" link @click="closeObjection(Number(row.id))">关闭</el-button>
           </template>
         </el-table-column>

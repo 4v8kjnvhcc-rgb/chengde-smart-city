@@ -15,6 +15,7 @@ import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 @RestController
@@ -29,14 +30,14 @@ public class CatalogCategoryController {
 
     @GetMapping
     @PreAuthorize("isAuthenticated()")
-    public ApiResponse<List<GovCatalogCategory>> list() {
-        return ApiResponse.ok(service.list());
+    public ApiResponse<List<GovCatalogCategory>> list(@RequestParam(required = false) String catalogOrigin) {
+        return ApiResponse.ok(service.list(catalogOrigin));
     }
 
     @GetMapping("/tree")
     @PreAuthorize("isAuthenticated()")
-    public ApiResponse<List<Map<String, Object>>> tree() {
-        return ApiResponse.ok(service.tree());
+    public ApiResponse<List<Map<String, Object>>> tree(@RequestParam(required = false) String catalogOrigin) {
+        return ApiResponse.ok(service.tree(catalogOrigin));
     }
 
     @GetMapping("/{id}")

@@ -48,11 +48,11 @@ const moduleComponents: Record<string, ReturnType<typeof defineAsyncComponent>> 
   upload: defineAsyncComponent(() => import('./collect/CollectIngestView.vue')),
   ingest: defineAsyncComponent(() => import('./collect/CollectIngestView.vue')),
   pipeline: defineAsyncComponent(() => import('./collect/CollectPipelineView.vue')),
-  catalog: defineAsyncComponent(() => import('./collect/catalog/CatalogResourcesView.vue')),
-  'catalog.resources': defineAsyncComponent(() => import('./collect/catalog/CatalogResourcesView.vue')),
-  'catalog.classify': defineAsyncComponent(() => import('./collect/catalog/CatalogClassifyView.vue')),
-  'catalog.publish': defineAsyncComponent(() => import('./collect/catalog/CatalogPublishView.vue')),
-  'catalog.approvals': defineAsyncComponent(() => import('./collect/catalog/CatalogApprovalsView.vue')),
+  catalog: defineAsyncComponent(() => import('@/views/governance/catalog/CatalogResourceView.vue')),
+  'catalog.resources': defineAsyncComponent(() => import('@/views/governance/catalog/CatalogResourceView.vue')),
+  'catalog.classify': defineAsyncComponent(() => import('@/views/governance/catalog/CatalogClassifyView.vue')),
+  'catalog.publish': defineAsyncComponent(() => import('@/views/governance/catalog/CatalogRegisterPublishView.vue')),
+  'catalog.approvals': defineAsyncComponent(() => import('@/views/governance/catalog/CatalogApprovalView.vue')),
   // 与数据融合治理 · 数据质量管理系统同组件，双入口保留
   'quality.rule-config': defineAsyncComponent(() => import('@/views/governance/quality/QualityRuleConfigView.vue')),
   'quality.monitor': defineAsyncComponent(() => import('@/views/governance/quality/QualityMonitorView.vue')),
@@ -219,7 +219,12 @@ onUnmounted(() => {
     <HubSideLayout :model-value="module" :items="navItems" @update:model-value="onModuleChange">
       <el-empty v-if="!navItems.length" description="当前角色未授权任何归集子模块" />
       <keep-alive v-else :max="12">
-        <component :is="activeComponent" :key="module" :module="module" />
+        <component
+          :is="activeComponent"
+          :key="module"
+          :module="module"
+          :catalog-origin="module.startsWith('catalog') ? 'INGEST' : undefined"
+        />
       </keep-alive>
     </HubSideLayout>
   </div>

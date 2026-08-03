@@ -12,6 +12,8 @@ public class GovCatalogResource {
     private String resourceCode;
     private String resourceName;
     private String resourceType;
+    /** INGEST=指标与目录体系构建；GOVERNANCE=数据目录管理系统 */
+    private String catalogOrigin;
     private String metadataEntryCode;
     private Long dataSourceId;
     private String physicalTableName;
@@ -28,6 +30,7 @@ public class GovCatalogResource {
     private String publishStatus;
     private String approvalStatus;
     private String subscriptionStatus;
+    private Long portalCatalogId;
     private Integer versionNo;
     private String createdBy;
     private String updatedBy;
@@ -42,6 +45,8 @@ public class GovCatalogResource {
     public void setResourceName(String resourceName) { this.resourceName = resourceName; }
     public String getResourceType() { return resourceType; }
     public void setResourceType(String resourceType) { this.resourceType = resourceType; }
+    public String getCatalogOrigin() { return catalogOrigin; }
+    public void setCatalogOrigin(String catalogOrigin) { this.catalogOrigin = catalogOrigin; }
     public String getMetadataEntryCode() { return metadataEntryCode; }
     public void setMetadataEntryCode(String metadataEntryCode) { this.metadataEntryCode = metadataEntryCode; }
     public Long getDataSourceId() { return dataSourceId; }
@@ -74,6 +79,8 @@ public class GovCatalogResource {
     public void setApprovalStatus(String approvalStatus) { this.approvalStatus = approvalStatus; }
     public String getSubscriptionStatus() { return subscriptionStatus; }
     public void setSubscriptionStatus(String subscriptionStatus) { this.subscriptionStatus = subscriptionStatus; }
+    public Long getPortalCatalogId() { return portalCatalogId; }
+    public void setPortalCatalogId(Long portalCatalogId) { this.portalCatalogId = portalCatalogId; }
     public Integer getVersionNo() { return versionNo; }
     public void setVersionNo(Integer versionNo) { this.versionNo = versionNo; }
     public String getCreatedBy() { return createdBy; }
