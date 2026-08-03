@@ -18,7 +18,7 @@ import {
 import type { MenuNode } from '@/stores/auth'
 import api from '@/api/http'
 import { ElMessage } from 'element-plus'
-import { openAssessmentExternal } from '@/views/exchange/application/application-nav'
+import { openAssessmentWithPortalSso, assessmentExternalUrl } from '@/views/exchange/application/application-nav'
 
 interface PortalNavNode {
   id: number
@@ -29,6 +29,7 @@ interface PortalNavNode {
   url?: string
   menuPath?: string
   openMode?: string
+  ssoMode?: string
   themeKey?: string
   remark?: string
   status?: number
@@ -259,17 +260,24 @@ function isAssessmentMenu(node: MenuNode): boolean {
 
 function isAssessmentNav(node: PortalNavNode): boolean {
   const t = navigableTarget(node) || ''
-  return t.includes('/application/assessment') || node.name === '考核评估系统'
+  return t.includes('/application/assessment')
+    || t.includes('/assessment/')
+    || node.name === '考核评估系统'
 }
 
-function enterMenuNode(node: MenuNode) {
+function wantsPortalTicketSso(node: PortalNavNode): boolean {
+  return (node.ssoMode || 'none') === 'portal_ticket'
+}
+
+async function enterMenuNode(node: MenuNode) {
   if (isAssessmentMenu(node)) {
-    const r = openAssessmentExternal()
+    const landing = assessmentExternalUrl() || 'http://127.0.0.1:18081/assessment/index#/dashboard'
+    const r = await openAssessmentWithPortalSso(landing)
     if (r.ok) {
       ElMessage.success('已在新窗口打开考核评估系统')
       return
     }
-    router.push('/exchange/application/assessment')
+    ElMessage.warning(r.message || '单点登录失败')
     return
   }
   if (node.path && node.menuType !== 1) {
@@ -280,23 +288,29 @@ function enterMenuNode(node: MenuNode) {
   if (target) router.push(target)
 }
 
-function enterNavNode(node: PortalNavNode) {
-  if (isAssessmentNav(node)) {
-    const r = openAssessmentExternal()
-    if (r.ok) {
-      ElMessage.success('已在新窗口打开考核评估系统')
-      return
+async function enterNavNode(node: PortalNavNode) {
+  const target = navigableTarget(node)
+  if (wantsPortalTicketSso(node) || isAssessmentNav(node)) {
+    const landing = (target && (target.startsWith('http://') || target.startsWith('https://')))
+      ? target
+      : ''
+    if (landing || wantsPortalTicketSso(node)) {
+      const r = await openAssessmentWithPortalSso(landing)
+      if (r.ok) {
+        ElMessage.success('已在新窗口打开考核评估系统')
+        return
+      }
+      if (wantsPortalTicketSso(node)) {
+        ElMessage.error(r.message || '单点登录失败')
+        return
+      }
+      // 兼容：未配外链时继续站内
     }
   }
-  const target = navigableTarget(node)
   if (!target) return
   const mode = node.openMode || 'route'
   if (mode === 'new_tab' || target.startsWith('http://') || target.startsWith('https://')) {
-    if (target.startsWith('/')) {
-      window.open(target, '_blank', 'noopener,noreferrer')
-    } else {
-      window.open(target, '_blank', 'noopener,noreferrer')
-    }
+    window.open(target, '_blank', 'noopener,noreferrer')
     return
   }
   router.push(target)

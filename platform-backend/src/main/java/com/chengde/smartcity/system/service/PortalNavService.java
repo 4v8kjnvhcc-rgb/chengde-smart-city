@@ -27,6 +27,7 @@ public class PortalNavService {
 
     private static final Set<String> NODE_TYPES = Set.of("platform", "sub_platform", "system");
     private static final Set<String> OPEN_MODES = Set.of("route", "new_tab");
+    private static final Set<String> SSO_MODES = Set.of("none", "portal_ticket");
     private static final Set<String> THEME_KEYS = Set.of(
             "/exchange", "/master-data", "/analytics", "/business");
 
@@ -114,6 +115,10 @@ public class PortalNavService {
         if (!OPEN_MODES.contains(openMode)) {
             throw new BusinessException(400, "打开方式无效，须为 route 或 new_tab");
         }
+        String ssoMode = StringUtils.hasText(req.ssoMode()) ? req.ssoMode().trim().toLowerCase(Locale.ROOT) : "none";
+        if (!SSO_MODES.contains(ssoMode)) {
+            throw new BusinessException(400, "SSO 模式无效，须为 none 或 portal_ticket");
+        }
         if ("platform".equals(type)) {
             if (parentId != 0L) {
                 throw new BusinessException(400, "平台节点的上级必须为空（根）");
@@ -143,6 +148,7 @@ public class PortalNavService {
         node.setUrl(url);
         node.setMenuPath(menuPath);
         node.setOpenMode(openMode);
+        node.setSsoMode(ssoMode);
         node.setRemark(trimToNull(req.remark()));
         if (req.status() != null) {
             node.setStatus(req.status());
@@ -250,6 +256,7 @@ public class PortalNavService {
             n.setUrl(t.getUrl());
             n.setMenuPath(t.getMenuPath());
             n.setOpenMode(t.getOpenMode());
+            n.setSsoMode(t.getSsoMode());
             n.setThemeKey(t.getThemeKey());
             n.setRemark(t.getRemark());
             n.setStatus(t.getStatus());
@@ -268,6 +275,7 @@ public class PortalNavService {
         t.setUrl(n.getUrl());
         t.setMenuPath(n.getMenuPath());
         t.setOpenMode(n.getOpenMode());
+        t.setSsoMode(n.getSsoMode());
         t.setThemeKey(n.getThemeKey());
         t.setRemark(n.getRemark());
         t.setStatus(n.getStatus());

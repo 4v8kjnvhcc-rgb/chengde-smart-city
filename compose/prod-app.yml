@@ -63,9 +63,9 @@ services:
 
   web:
     build:
-      context: ../platform-web
+      context: ../platform-frontend
       dockerfile: Dockerfile
-    image: smart-city/platform-web:local
+    image: smart-city/platform-frontend:local
     container_name: sc_app_web
     restart: unless-stopped
     depends_on:

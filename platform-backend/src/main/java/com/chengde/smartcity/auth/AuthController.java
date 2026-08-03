@@ -3,6 +3,8 @@ package com.chengde.smartcity.auth;
 import com.chengde.smartcity.auth.dto.ChangePasswordRequest;
 import com.chengde.smartcity.auth.dto.LoginRequest;
 import com.chengde.smartcity.auth.dto.RefreshRequest;
+import com.chengde.smartcity.auth.dto.SsoTicketRequest;
+import com.chengde.smartcity.auth.dto.SsoTicketResponse;
 import com.chengde.smartcity.auth.dto.TokenResponse;
 import com.chengde.smartcity.common.api.ApiResponse;
 import com.chengde.smartcity.security.UserPrincipal;
@@ -11,6 +13,7 @@ import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
 import java.util.Map;
 import org.springframework.http.HttpHeaders;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -26,10 +29,12 @@ public class AuthController {
 
     private final AuthService authService;
     private final CaptchaService captchaService;
+    private final SsoTicketService ssoTicketService;
 
-    public AuthController(AuthService authService, CaptchaService captchaService) {
+    public AuthController(AuthService authService, CaptchaService captchaService, SsoTicketService ssoTicketService) {
         this.authService = authService;
         this.captchaService = captchaService;
+        this.ssoTicketService = ssoTicketService;
     }
 
     @PostMapping("/login")
@@ -61,5 +66,13 @@ public class AuthController {
                                             @Valid @RequestBody ChangePasswordRequest request) {
         authService.changePassword(principal, request);
         return ApiResponse.ok(null);
+    }
+
+    /** 签发短期一次性门户票据，供考核等外系统验票换本系统登录态 */
+    @PostMapping("/sso-ticket")
+    @PreAuthorize("isAuthenticated()")
+    public ApiResponse<SsoTicketResponse> issueSsoTicket(@AuthenticationPrincipal UserPrincipal principal,
+                                                         @Valid @RequestBody SsoTicketRequest request) {
+        return ApiResponse.ok(ssoTicketService.issue(principal, request));
     }
 }

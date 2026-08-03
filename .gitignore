@@ -1,4 +1,4 @@
-﻿esb.env.local
+esb.env.local
 local.env
 local.env.local
 *.env.local
@@ -10,8 +10,8 @@ local.env.local
 #   首次入库要提交；提交成功后执行 scripts/skip_prod_env_after_commit.ps1
 #   （skip-worktree，后续本地改密不会再进 git status / 提交）
 platform-backend/target/
-platform-web/node_modules/
-platform-web/dist/
+platform-frontend/node_modules/
+platform-frontend/dist/
 mysql-data/
 data/
 platform-backend/data/

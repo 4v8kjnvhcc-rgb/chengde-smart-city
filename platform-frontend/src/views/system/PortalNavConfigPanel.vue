@@ -13,6 +13,7 @@ export interface PortalNavNode {
   url?: string
   menuPath?: string
   openMode?: string
+  ssoMode?: string
   themeKey?: string
   remark?: string
   status: number
@@ -47,6 +48,7 @@ const form = reactive({
   url: '',
   menuPath: '',
   openMode: 'route',
+  ssoMode: 'none',
   themeKey: '',
   remark: '',
   status: 1,
@@ -107,6 +109,7 @@ function resetForm() {
   form.url = ''
   form.menuPath = ''
   form.openMode = 'route'
+  form.ssoMode = 'none'
   form.themeKey = ''
   form.remark = ''
   form.status = 1
@@ -120,6 +123,7 @@ function fillForm(row: PortalNavNode) {
   form.url = row.url || ''
   form.menuPath = row.menuPath || ''
   form.openMode = row.openMode || 'route'
+  form.ssoMode = row.ssoMode || 'none'
   form.themeKey = row.themeKey || ''
   form.remark = row.remark || ''
   form.status = row.status ?? 1
@@ -182,6 +186,7 @@ async function submit() {
       url: form.url || null,
       menuPath: form.menuPath || null,
       openMode: form.openMode || 'route',
+      ssoMode: form.ssoMode || 'none',
       themeKey: form.nodeType === 'platform' ? form.themeKey || null : null,
       remark: form.remark || null,
       status: form.status,
@@ -319,6 +324,12 @@ onMounted(load)
           <el-select v-model="form.openMode" style="width: 100%">
             <el-option label="站内路由" value="route" />
             <el-option label="新窗口" value="new_tab" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="SSO 模式">
+          <el-select v-model="form.ssoMode" style="width: 100%">
+            <el-option label="关闭" value="none" />
+            <el-option label="门户票据" value="portal_ticket" />
           </el-select>
         </el-form-item>
         <el-form-item v-if="form.nodeType === 'platform'" label="主题键">

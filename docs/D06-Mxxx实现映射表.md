@@ -24,7 +24,7 @@
 | **框架/组件** | 外购/开源/自研产品 |
 | **部署** | VM1：平台+ESB+OM+DS+Kettle；VM2：ES+DataEase+Canal 等 |
 | **门户集成** | 甲方须从统一门户进入 |
-| **代码包** | 规划路径（`platform-backend` / `platform-web`） |
+| **代码包** | 规划路径（`platform-backend` / `platform-frontend`） |
 | **二次开发要点** | 适配或自研重点 |
 
 ---

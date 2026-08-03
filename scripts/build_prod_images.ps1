@@ -1,4 +1,4 @@
-﻿# 按远程分支构建生产前后端镜像并 docker save
+# 按远程分支构建生产前后端镜像并 docker save
 # 用法: .\scripts\build_prod_images.ps1 -Branch feature_yxj
 # 默认 git fetch 后按 origin/<分支> 构建（不以本机工作区为准）
 # 默认输出到仓库根目录 release/
@@ -54,15 +54,15 @@ git worktree add --detach $work $ref
 if ($LASTEXITCODE -ne 0) { throw "git worktree add 失败" }
 
 $backendTagLocal = "smart-city/platform-backend:local"
-$webTagLocal = "smart-city/platform-web:local"
+$webTagLocal = "smart-city/platform-frontend:local"
 $backendTagVer = "smart-city/platform-backend:$tagSuffix"
-$webTagVer = "smart-city/platform-web:$tagSuffix"
+$webTagVer = "smart-city/platform-frontend:$tagSuffix"
 
 try {
   # 在宿主机构建产物：Docker Desktop 构建容器内 DNS 常不可用，
   # 无法在镜像里跑 mvn / npm 拉依赖，故先本机 build 再打包产物。
   $backendDir = Join-Path $work "platform-backend"
-  $webDir = Join-Path $work "platform-web"
+  $webDir = Join-Path $work "platform-frontend"
 
   Write-Host "==> 本机构建后端 jar（Maven，较慢）..."
   Push-Location $backendDir
@@ -80,7 +80,7 @@ try {
   Push-Location $webDir
   try {
     # 复用主仓库 node_modules，避免每次 npm ci 联网
-    $srcModules = Join-Path $Root "platform-web\node_modules"
+    $srcModules = Join-Path $Root "platform-frontend\node_modules"
     if ((Test-Path $srcModules) -and (-not (Test-Path (Join-Path $webDir "node_modules")))) {
       Write-Host "    复用本仓库 node_modules"
       cmd /c mklink /J "$webDir\node_modules" "$srcModules" | Out-Null
@@ -96,7 +96,7 @@ try {
   } finally {
     Pop-Location
   }
-  if (-not (Test-Path (Join-Path $webDir "dist"))) { throw "未找到 platform-web/dist" }
+  if (-not (Test-Path (Join-Path $webDir "dist"))) { throw "未找到 platform-frontend/dist" }
 
   # 生产机为 aarch64，必须打 linux/arm64（本机 Windows/x86 上靠 Docker Desktop 跨架构）
   $platform = "linux/arm64"
@@ -160,7 +160,7 @@ finally {
   Write-Host "==> 清理临时 worktree"
   Set-Location $Root
   # 先摘掉 node_modules 联接，否则删除会顺着联接删主仓库依赖
-  $linkedModules = Join-Path $work "platform-web\node_modules"
+  $linkedModules = Join-Path $work "platform-frontend\node_modules"
   if (Test-Path $linkedModules) {
     cmd /c rmdir "$linkedModules" 2>$null | Out-Null
   }

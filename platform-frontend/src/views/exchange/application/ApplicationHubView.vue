@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
-import { openAssessmentExternal } from './application-nav'
+import { assessmentExternalUrl, openAssessmentWithPortalSso } from './application-nav'
 
 const router = useRouter()
 
@@ -16,7 +16,7 @@ const apps = [
   {
     key: 'assessment',
     title: '考核评估系统',
-    desc: '外系统 · 新窗口打开',
+    desc: '门户票据 SSO · 新窗口打开',
     path: '',
     external: true,
   },
@@ -36,11 +36,12 @@ const apps = [
   },
 ] as const
 
-function openApp(app: (typeof apps)[number]) {
+async function openApp(app: (typeof apps)[number]) {
   if (app.external) {
-    const r = openAssessmentExternal()
+    const landing = assessmentExternalUrl() || 'http://127.0.0.1:18081/assessment/index#/dashboard'
+    const r = await openAssessmentWithPortalSso(landing)
     if (r.ok) ElMessage.success('已在新窗口打开考核评估系统')
-    else ElMessage.warning('尚未配置 VITE_ASSESSMENT_EXTERNAL_URL')
+    else ElMessage.warning(r.message || '单点登录失败')
     return
   }
   router.push(app.path)

@@ -21,7 +21,7 @@
    - Mapper: `platform-backend/src/main/java/com/chengde/smartcity/{module}/mapper/`
    - Service: `platform-backend/src/main/java/com/chengde/smartcity/{module}/service/`
    - Controller: `platform-backend/src/main/java/com/chengde/smartcity/{module}/controller/`
-   - Vue页面: `platform-web/src/views/{module}/`
+   - Vue页面: `platform-frontend/src/views/{module}/`
    - Flyway: `platform-backend/src/main/resources/db/migration/`
 
 ## 代码规范

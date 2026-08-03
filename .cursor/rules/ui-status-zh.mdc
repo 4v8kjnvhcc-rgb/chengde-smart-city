@@ -1,6 +1,6 @@
 ---
 description: 用户可见状态须显示中文，禁止直接展示 ACTIVE/PENDING 等英文码
-globs: platform-web/src/**/*.{vue,ts}
+globs: platform-frontend/src/**/*.{vue,ts}
 alwaysApply: true
 ---
 
@@ -10,7 +10,7 @@ alwaysApply: true
 
 ## 必须遵守
 
-1. 展示统一调用 [`platform-web/src/utils/status-label.ts`](platform-web/src/utils/status-label.ts) 的 `statusLabel()`（或模板全局 `$statusLabel`）。
+1. 展示统一调用 [`platform-frontend/src/utils/status-label.ts`](platform-frontend/src/utils/status-label.ts) 的 `statusLabel()`（或模板全局 `$statusLabel`）。
 2. API / 表单提交 / 条件判断仍使用英文状态码（`ACTIVE`、`PENDING` 等），只做展示层转换。
 3. 表格禁止裸写 `<el-table-column prop="status" />`；应使用：
 

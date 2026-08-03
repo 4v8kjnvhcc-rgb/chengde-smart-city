@@ -1,6 +1,6 @@
 ---
 description: D05 模块编号不得出现在用户可见界面；归集/采集修改须查 mapping
-globs: platform-web/src/**/*HubView.vue,platform-web/src/views/**/ingestion/**,platform-web/src/views/**/application/**,platform-web/src/components/common/HubSideLayout.vue,scripts/generate_d05_catalog.py,catalog/v3-to-m215.*.json
+globs: platform-frontend/src/**/*HubView.vue,platform-frontend/src/views/**/ingestion/**,platform-frontend/src/views/**/application/**,platform-frontend/src/components/common/HubSideLayout.vue,scripts/generate_d05_catalog.py,catalog/v3-to-m215.*.json
 alwaysApply: false
 ---
 
