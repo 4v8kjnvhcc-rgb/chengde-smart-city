@@ -1,0 +1,23 @@
+---
+description: 禁止自动提交 Git；平台/业务字典表边界约定
+alwaysApply: true
+---
+
+# 全局约定（Git / 数据字典）
+
+## Git（硬约束）
+
+- **禁止**在未获用户明确指示时执行 `git commit`、`git push`、`git commit --amend`。
+- 用户只说「提交 / push / 推远程」时才可执行；未说清时先确认。
+- 可执行只读 git（如 `status` / `diff` / `log`）用于排查，不得因此顺带提交。
+
+## 数据字典表边界
+
+| 用途 | 表 | 说明 |
+|------|-----|------|
+| 平台统一字典（含原平台参数） | `sys_dict` / `sys_dict_item` | 通用支撑「字典管理」、认证参数等 |
+| 归集 / 数据资产登记业务字典 | `ing_dict` / `ing_dict_item` | M042/M050；**不得**迁入或替换为 sys_dict |
+
+- 新建平台级码表/参数 → 写 `sys_dict*`，不要再新建 `ana_platform_config`。
+- 改业务标准码表（性别、区划等）→ 只动 `ing_dict*`。
+- 两套并存；UI/文档须写清「平台字典」与「归集业务字典」差异，避免混用 API。

@@ -16,7 +16,8 @@ const STATUS_ZH: Record<string, string> = {
   OFFLINE: '已下线',
   ARCHIVED: '已归档',
   ARCHIVE: '归档',
-  PENDING_ARCHIVE: '待归档',
+  PENDING_ARCHIVE: '待审核',
+  PENDING_REVIEW: '待审核',
   METADATA: '元数据',
   // 监控/预检
   OK: '正常',
@@ -24,9 +25,9 @@ const STATUS_ZH: Record<string, string> = {
   CRITICAL: '严重',
   BLOCKED: '阻断',
   // 审批/订阅
-  PENDING: '待处理',
-  APPROVED: '已通过',
-  REJECTED: '已驳回',
+  PENDING: '待审核',
+  APPROVED: '审核通过',
+  REJECTED: '驳回待提交',
   CANCELLED: '已取消',
   WITHDRAWN: '已撤回',
   RETURNED: '已退回',

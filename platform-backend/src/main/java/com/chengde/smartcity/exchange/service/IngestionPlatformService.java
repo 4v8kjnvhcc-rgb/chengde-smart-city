@@ -203,6 +203,7 @@ public class IngestionPlatformService {
         p.setBoundOrgId(boundOrgId);
         p.setSystemName(systemName.isEmpty() ? null : systemName);
         p.setStatus("ACTIVE");
+        p.setRegisterStatus(com.chengde.smartcity.exchange.support.RegisterStatuses.DRAFT);
         p.setCreatedBy(operator.getUsername());
         projectMapper.insert(p);
         accessControlService.ensureCreatorProjectGrant(operator, p.getId());
@@ -217,6 +218,9 @@ public class IngestionPlatformService {
         IngProject p = projectMapper.selectById(id);
         if (p == null) {
             throw new BusinessException(404, "项目不存在");
+        }
+        if (!com.chengde.smartcity.exchange.support.RegisterStatuses.canEdit(p.getRegisterStatus())) {
+            throw new BusinessException(400, "当前登记状态不可编辑");
         }
         if (isBuiltinOtherProject(p.getProjectCode())) {
             // 系统初始化「其他」项目：名称固定，仅允许维护系统/数据源；部门归属不可改
@@ -259,12 +263,11 @@ public class IngestionPlatformService {
         if (isBuiltinOtherProject(p.getProjectCode())) {
             throw new BusinessException(400, "平台默认项目「其他」不可删除");
         }
-        List<IngDataSource> sources = dataSourceMapper.selectList(
-                new LambdaQueryWrapper<IngDataSource>().eq(IngDataSource::getProjectId, id));
-        for (IngDataSource ds : sources) {
-            deleteDataSourceCascade(ds.getId());
+        Long sysCnt = bizSystemMapper.selectCount(new LambdaQueryWrapper<IngBizSystem>()
+                .eq(IngBizSystem::getProjectId, id));
+        if (sysCnt != null && sysCnt > 0) {
+            throw new BusinessException(400, "该项目下已关联系统，请先删除系统后再删除项目");
         }
-        bizSystemMapper.delete(new LambdaQueryWrapper<IngBizSystem>().eq(IngBizSystem::getProjectId, id));
         projectMapper.deleteById(id);
         auditService.log(operator.getUserId(), operator.getUsername(), operator.getOrgId(),
                 "ING_PROJECT_DELETE", "ing_project", String.valueOf(id), p.getProjectName());
@@ -304,6 +307,7 @@ public class IngestionPlatformService {
         s.setSystemCode(str(body.get("systemCode"), "SYS_" + projectId + "_" + System.currentTimeMillis()));
         s.setSystemName(systemName);
         s.setStatus("ACTIVE");
+        s.setRegisterStatus(com.chengde.smartcity.exchange.support.RegisterStatuses.DRAFT);
         s.setCreatedBy(operator.getUsername());
         bizSystemMapper.insert(s);
         if (project.getSystemName() == null || project.getSystemName().isBlank()) {
@@ -391,8 +395,13 @@ public class IngestionPlatformService {
         if (isBuiltinManualUploadSource(ds.getSourceCode())) {
             throw new BusinessException(400, "平台默认「手动上传」数据源不可删除，可修改其系统名称，或新增系统/数据源");
         }
+        Long tableCnt = dataTableMapper.selectCount(new LambdaQueryWrapper<IngDataTable>()
+                .eq(IngDataTable::getSourceId, id));
+        if (tableCnt != null && tableCnt > 0) {
+            throw new BusinessException(400, "该数据库下已关联数据表，不可删除");
+        }
         String name = ds.getSourceName();
-        deleteDataSourceCascade(id);
+        dataSourceMapper.deleteById(id);
         auditService.log(operator.getUserId(), operator.getUsername(), operator.getOrgId(),
                 "ING_DS_DELETE", "ing_data_source", String.valueOf(id), name);
     }
@@ -616,6 +625,7 @@ public class IngestionPlatformService {
         ds.setConnConfigJson(buildConnConfigJson(body, null));
         ds.setConnStatus("FILE".equalsIgnoreCase(ds.getSourceType()) || "API".equalsIgnoreCase(ds.getSourceType())
                 ? "OK" : "UNTESTED");
+        ds.setRegisterStatus(com.chengde.smartcity.exchange.support.RegisterStatuses.DRAFT);
         ds.setTableCount(0);
         ds.setSyncStatus("PENDING");
         if ("FILE".equalsIgnoreCase(ds.getSourceType()) && (ds.getConnConfigJson() == null || ds.getConnConfigJson().isBlank())) {
@@ -740,6 +750,7 @@ public class IngestionPlatformService {
         d.setRemark(str(body.get("remark"), null));
         d.setItemCount(0);
         d.setStatus("ACTIVE");
+        d.setRegisterStatus(com.chengde.smartcity.exchange.support.RegisterStatuses.DRAFT);
         dictMapper.insert(d);
         return d.getId();
     }

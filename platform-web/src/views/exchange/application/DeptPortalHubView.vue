@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, defineAsyncComponent, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
+import UserAccountMenu from '@/components/layout/UserAccountMenu.vue'
 import { DEPT_PORTAL_BRAND, DEPT_PORTAL_TABS } from './application-nav'
 
 const route = useRoute()
@@ -52,9 +53,12 @@ const flushMain = computed(() => portalSection.value === 'home')
           </button>
         </nav>
 
-        <button type="button" class="share-back" @click="router.push('/dashboard')">
-          返回总览
-        </button>
+        <div class="share-topnav__right">
+          <button type="button" class="share-back" @click="router.push('/dashboard')">
+            返回总览
+          </button>
+          <UserAccountMenu tone="onDark" />
+        </div>
       </div>
     </header>
 
@@ -90,6 +94,13 @@ const flushMain = computed(() => portalSection.value === 'home')
   display: flex;
   align-items: center;
   gap: 16px;
+}
+.share-topnav__right {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-shrink: 0;
 }
 .share-brand {
   appearance: none;
@@ -172,7 +183,6 @@ const flushMain = computed(() => portalSection.value === 'home')
   border-radius: 4px;
   cursor: pointer;
   flex-shrink: 0;
-  margin-left: 8px;
 }
 .share-back:hover {
   color: #fff;

@@ -16,6 +16,8 @@ import com.chengde.smartcity.exchange.mapper.IngDataSourceMapper;
 import com.chengde.smartcity.exchange.mapper.IngDataTableMapper;
 import com.chengde.smartcity.exchange.mapper.IngLineageEdgeMapper;
 import com.chengde.smartcity.exchange.mapper.IngProjectMapper;
+import com.chengde.smartcity.security.UserPrincipal;
+import com.chengde.smartcity.system.service.AccessControlService;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -39,6 +41,7 @@ public class LineageService {
     private final IngColumnLineageMapper columnLineageMapper;
     private final IngAssetTagBindingMapper tagBindingMapper;
     private final IngAssetTagMapper tagMapper;
+    private final AccessControlService accessControlService;
 
     public LineageService(IngProjectMapper projectMapper,
                           IngDataSourceMapper dataSourceMapper,
@@ -46,7 +49,8 @@ public class LineageService {
                           IngLineageEdgeMapper edgeMapper,
                           IngColumnLineageMapper columnLineageMapper,
                           IngAssetTagBindingMapper tagBindingMapper,
-                          IngAssetTagMapper tagMapper) {
+                          IngAssetTagMapper tagMapper,
+                          AccessControlService accessControlService) {
         this.projectMapper = projectMapper;
         this.dataSourceMapper = dataSourceMapper;
         this.tableMapper = tableMapper;
@@ -54,10 +58,21 @@ public class LineageService {
         this.columnLineageMapper = columnLineageMapper;
         this.tagBindingMapper = tagBindingMapper;
         this.tagMapper = tagMapper;
+        this.accessControlService = accessControlService;
     }
 
+    public Map<String, Object> panorama(UserPrincipal operator, Long projectId, String keyword, Long categoryTagId) {
+        IngProject project = resolveProject(operator, projectId);
+        return panoramaForProject(project, keyword, categoryTagId);
+    }
+
+    /** 兼容内部调用（无操作者时不鉴权，仅按项目） */
     public Map<String, Object> panorama(Long projectId, String keyword, Long categoryTagId) {
-        IngProject project = resolveProject(projectId);
+        IngProject project = resolveProject(null, projectId);
+        return panoramaForProject(project, keyword, categoryTagId);
+    }
+
+    private Map<String, Object> panoramaForProject(IngProject project, String keyword, Long categoryTagId) {
         List<IngDataSource> sources = dataSourceMapper.selectList(new LambdaQueryWrapper<IngDataSource>()
                 .eq(IngDataSource::getProjectId, project.getId()));
         Map<Long, IngDataSource> sourceById = sources.stream()
@@ -153,6 +168,11 @@ public class LineageService {
         return out;
     }
 
+    public Map<String, Object> drill(UserPrincipal operator, String nodeId) {
+        assertNodeAccess(operator, nodeId);
+        return drill(nodeId);
+    }
+
     public Map<String, Object> drill(String nodeId) {
         if (nodeId == null || nodeId.isBlank()) throw new BusinessException(400, "nodeId required");
         List<IngLineageEdge> all = edgeMapper.selectList(null);
@@ -219,6 +239,11 @@ public class LineageService {
         return out;
     }
 
+    public Map<String, Object> fieldLineage(UserPrincipal operator, String tableNode) {
+        assertNodeAccess(operator, tableNode);
+        return fieldLineage(tableNode);
+    }
+
     public Map<String, Object> fieldLineage(String tableNode) {
         if (tableNode == null || tableNode.isBlank()) throw new BusinessException(400, "tableNode required");
         List<IngColumnLineage> rows = columnLineageMapper.selectList(new LambdaQueryWrapper<IngColumnLineage>()
@@ -247,6 +272,11 @@ public class LineageService {
         out.put("fieldEdges", fieldEdges);
         out.put("focusMeta", tableMetaInternal(tableNode));
         return out;
+    }
+
+    public Map<String, Object> tableMeta(UserPrincipal operator, String tableNode) {
+        assertNodeAccess(operator, tableNode);
+        return tableMetaInternal(tableNode);
     }
 
     public Map<String, Object> tableMeta(String tableNode) {
@@ -329,15 +359,47 @@ public class LineageService {
         return meta;
     }
 
-    private IngProject resolveProject(Long projectId) {
+    private IngProject resolveProject(UserPrincipal operator, Long projectId) {
         if (projectId != null) {
+            if (operator != null) {
+                accessControlService.assertProjectAccess(operator, projectId);
+            }
             IngProject p = projectMapper.selectById(projectId);
             if (p == null) throw new BusinessException(404, "项目不存在");
             return p;
         }
+        if (operator != null) {
+            Set<Long> allowed = accessControlService.effectiveProjectIds(operator);
+            if (allowed.isEmpty()) {
+                throw new BusinessException(404, "暂无可见登记项目");
+            }
+            IngProject first = projectMapper.selectOne(new LambdaQueryWrapper<IngProject>()
+                    .in(IngProject::getId, allowed)
+                    .orderByAsc(IngProject::getId)
+                    .last("LIMIT 1"));
+            if (first == null) throw new BusinessException(404, "暂无可见登记项目");
+            return first;
+        }
         IngProject first = projectMapper.selectOne(new LambdaQueryWrapper<IngProject>().orderByAsc(IngProject::getId).last("LIMIT 1"));
         if (first == null) throw new BusinessException(404, "暂无登记项目");
         return first;
+    }
+
+    private void assertNodeAccess(UserPrincipal operator, String nodeId) {
+        if (operator == null || nodeId == null) return;
+        Long tableId = parseTableId(nodeId);
+        if (tableId != null) {
+            accessControlService.assertTableAccess(operator, tableId);
+            return;
+        }
+        if (nodeId.startsWith("ds-")) {
+            try {
+                Long sourceId = Long.parseLong(nodeId.substring(3));
+                accessControlService.assertSourceAccess(operator, sourceId);
+            } catch (NumberFormatException ignored) {
+                // 非标准 id，放行给后续业务校验
+            }
+        }
     }
 
     private boolean edgeInProject(IngLineageEdge e, Long projectId, Set<String> tableNodes) {

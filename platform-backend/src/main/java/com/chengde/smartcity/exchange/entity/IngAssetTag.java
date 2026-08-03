@@ -28,6 +28,8 @@ public class IngAssetTag {
     private Integer sortNo;
     private Integer hitCount;
     private String status;
+    private String registerStatus;
+    private String rejectReason;
 
     @TableField(exist = false)
     private List<IngAssetTag> children = new ArrayList<>();
@@ -70,6 +72,10 @@ public class IngAssetTag {
     public void setHitCount(Integer hitCount) { this.hitCount = hitCount; }
     public String getStatus() { return status; }
     public void setStatus(String status) { this.status = status; }
+    public String getRegisterStatus() { return registerStatus; }
+    public void setRegisterStatus(String registerStatus) { this.registerStatus = registerStatus; }
+    public String getRejectReason() { return rejectReason; }
+    public void setRejectReason(String rejectReason) { this.rejectReason = rejectReason; }
     public List<IngAssetTag> getChildren() { return children; }
     public void setChildren(List<IngAssetTag> children) { this.children = children; }
     public Integer getBindingCount() { return bindingCount; }

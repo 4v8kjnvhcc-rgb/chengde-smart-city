@@ -36,4 +36,8 @@ public class UserPrincipal {
     public boolean isDeptAdmin() {
         return roleCodes.contains("DEPT_ADMIN");
     }
+
+    public boolean isPlatformAdmin() {
+        return roleCodes.contains("PLATFORM_ADMIN");
+    }
 }

@@ -115,6 +115,9 @@ public class RegisterService {
             throw new BusinessException(404, "数据源不存在");
         }
         String modelingMode = str(body.get("modelingMode"), "FORWARD").toUpperCase(Locale.ROOT);
+        if ("FORWARD".equals(modelingMode)) {
+            throw new BusinessException(400, "数据表不可手工新增；请通过「数据库表登记」从源库登记");
+        }
         String tableNameRaw = required(body.get("tableName"), "tableName").toString().trim();
         String tableName = "FORWARD".equals(modelingMode)
                 ? JdbcProbeService.sanitizeIdent(tableNameRaw)
@@ -169,6 +172,11 @@ public class RegisterService {
 
     @Transactional
     public Long createColumn(UserPrincipal operator, Long tableId, Map<String, Object> body) {
+        throw new BusinessException(400, "数据项不可新增/修改，仅支持查看；字段随「数据库表登记」同步");
+    }
+
+    /** 内部写入字段元数据（仅登记流水线使用） */
+    private Long insertColumnMeta(UserPrincipal operator, Long tableId, Map<String, Object> body) {
         IngDataTable table = tableMapper.selectById(tableId);
         if (table == null) {
             throw new BusinessException(404, "表不存在");
@@ -197,11 +205,7 @@ public class RegisterService {
                 .eq(IngDataColumn::getTableId, tableId)).stream()
                 .mapToInt(c -> c.getSortOrder() == null ? 0 : c.getSortOrder()).max().orElse(0);
         col.setSortOrder(maxSort + 1);
-        try {
-            columnMapper.insert(col);
-        } catch (Exception e) {
-            throw new BusinessException(500, "字段登记写入失败：" + (e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage()));
-        }
+        columnMapper.insert(col);
         long colCnt = columnMapper.selectCount(new LambdaQueryWrapper<IngDataColumn>().eq(IngDataColumn::getTableId, tableId));
         table.setColumnCount((int) colCnt);
         tableMapper.updateById(table);
@@ -341,37 +345,7 @@ public class RegisterService {
 
     @Transactional
     public void updateColumn(UserPrincipal operator, Long columnId, Map<String, Object> body) {
-        IngDataColumn col = columnMapper.selectById(columnId);
-        if (col == null) {
-            throw new BusinessException(404, "数据项不存在");
-        }
-        IngDataTable table = tableMapper.selectById(col.getTableId());
-        if (table != null) {
-            accessControlService.assertSourceAccess(operator, table.getSourceId());
-        }
-        if (col.getBuiltInFlag() != null && col.getBuiltInFlag() == 1) {
-            throw new BusinessException(400, "系统内置属性不可编辑");
-        }
-        Integer newBuiltIn = body.containsKey("builtInFlag")
-                ? intVal(body.get("builtInFlag"), 0)
-                : (col.getBuiltInFlag() == null ? 0 : col.getBuiltInFlag());
-        boolean nowBuiltIn = newBuiltIn != null && newBuiltIn == 1;
-        if (body.containsKey("columnName")) col.setColumnName(body.get("columnName").toString());
-        if (body.containsKey("dataType")) col.setDataType(body.get("dataType").toString());
-        if (body.containsKey("nullableFlag")) col.setNullableFlag(intVal(body.get("nullableFlag"), col.getNullableFlag()));
-        if (body.containsKey("semanticDesc")) col.setSemanticDesc(str(body.get("semanticDesc"), null));
-        if (body.containsKey("lengthVal")) col.setLengthVal(intVal(body.get("lengthVal"), null));
-        if (body.containsKey("componentType")) col.setComponentType(body.get("componentType").toString());
-        if (body.containsKey("requiredTip")) col.setRequiredTip(str(body.get("requiredTip"), null));
-        col.setBuiltInFlag(nowBuiltIn ? 1 : 0);
-        columnMapper.updateById(col);
-        // 覆盖元数据维护中对应属性，原信息不可恢复
-        metadataSubsystemService.overwriteColumnMetadataFromIngest(
-                col.getTableId(),
-                col.getColumnCode(),
-                col.getColumnName(),
-                col.getDataType(),
-                col.getSemanticDesc());
+        throw new BusinessException(400, "数据项不可修改，仅支持查看");
     }
 
     @Transactional
@@ -406,7 +380,7 @@ public class RegisterService {
             cBody.put("dataType", parts[3].trim());
             if (parts.length > 4) cBody.put("nullableFlag", "0".equals(parts[4].trim()) ? 0 : 1);
             if (parts.length > 5 && !parts[5].isBlank()) cBody.put("semanticDesc", parts[5].trim());
-            createColumn(operator, currentTableId, cBody);
+            insertColumnMeta(operator, currentTableId, cBody);
             imported++;
         }
         return Map.of("importedRows", imported);
@@ -515,6 +489,7 @@ public class RegisterService {
         tag.setTagDesc(str(body.get("tagDesc"), ""));
         tag.setHitCount(0);
         tag.setStatus("ACTIVE");
+        tag.setRegisterStatus(com.chengde.smartcity.exchange.support.RegisterStatuses.DRAFT);
         tag.setTagSource("CUSTOM");
         tag.setDimType(str(body.get("dimType"), "BUSINESS"));
         tag.setValueType(str(body.get("valueType"), "ENUM"));

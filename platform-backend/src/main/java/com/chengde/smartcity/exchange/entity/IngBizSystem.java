@@ -14,6 +14,8 @@ public class IngBizSystem {
     private String systemCode;
     private String systemName;
     private String status;
+    private String registerStatus;
+    private String rejectReason;
     private String createdBy;
     private LocalDateTime createdAt;
 
@@ -31,6 +33,10 @@ public class IngBizSystem {
     public void setSystemName(String systemName) { this.systemName = systemName; }
     public String getStatus() { return status; }
     public void setStatus(String status) { this.status = status; }
+    public String getRegisterStatus() { return registerStatus; }
+    public void setRegisterStatus(String registerStatus) { this.registerStatus = registerStatus; }
+    public String getRejectReason() { return rejectReason; }
+    public void setRejectReason(String rejectReason) { this.rejectReason = rejectReason; }
     public String getCreatedBy() { return createdBy; }
     public void setCreatedBy(String createdBy) { this.createdBy = createdBy; }
     public LocalDateTime getCreatedAt() { return createdAt; }

@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { defineAsyncComponent } from 'vue'
 import { useRouter } from 'vue-router'
+import UserAccountMenu from '@/components/layout/UserAccountMenu.vue'
 import { LEADER_PORTAL_BRAND } from './application-nav'
 
 const router = useRouter()
@@ -16,9 +17,12 @@ const CockpitView = defineAsyncComponent(() => import('./CockpitView.vue'))
           <span class="share-brand__text">{{ LEADER_PORTAL_BRAND }}</span>
         </div>
         <div class="share-topnav__spacer" />
-        <button type="button" class="share-back" @click="router.push('/dashboard')">
-          返回总览
-        </button>
+        <div class="share-topnav__right">
+          <button type="button" class="share-back" @click="router.push('/dashboard')">
+            返回总览
+          </button>
+          <UserAccountMenu tone="onDark" />
+        </div>
       </div>
     </header>
     <main class="share-main">
@@ -53,6 +57,13 @@ const CockpitView = defineAsyncComponent(() => import('./CockpitView.vue'))
   display: flex;
   align-items: center;
   gap: 16px;
+}
+.share-topnav__right {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-shrink: 0;
 }
 .share-brand {
   display: inline-flex;

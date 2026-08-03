@@ -1,12 +1,12 @@
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { ElMessage } from 'element-plus'
 import { useAuthStore } from '@/stores/auth'
 import api from '@/api/http'
-import { ArrowDown, DataBoard, HomeFilled } from '@element-plus/icons-vue'
+import { DataBoard, HomeFilled } from '@element-plus/icons-vue'
 import { isSystemRoute, findSubsystemRoot, findPlatformNode } from '@/utils/menu'
 import type { AppearancePublic } from '@/utils/appearance'
+import UserAccountMenu from '@/components/layout/UserAccountMenu.vue'
 
 const props = defineProps<{
   showBackHub?: boolean
@@ -17,8 +17,6 @@ const auth = useAuthStore()
 const route = useRoute()
 const router = useRouter()
 const appearance = ref<AppearancePublic | null>(null)
-const pwdVisible = ref(false)
-const pwdForm = reactive({ oldPassword: '', newPassword: '', confirm: '' })
 
 onMounted(async () => {
   try {
@@ -27,38 +25,6 @@ onMounted(async () => {
     appearance.value = null
   }
 })
-
-async function onUserCommand(cmd: string) {
-  if (cmd === 'logout') {
-    await logout()
-  } else if (cmd === 'password') {
-    pwdVisible.value = true
-  }
-}
-
-async function submitPwd() {
-  if (!pwdForm.oldPassword || !pwdForm.newPassword) {
-    ElMessage.warning('请填写旧密码与新密码')
-    return
-  }
-  if (pwdForm.newPassword !== pwdForm.confirm) {
-    ElMessage.warning('两次新密码不一致')
-    return
-  }
-  try {
-    await api.put('/auth/password', {
-      oldPassword: pwdForm.oldPassword,
-      newPassword: pwdForm.newPassword,
-    })
-    ElMessage.success('密码已修改')
-    pwdVisible.value = false
-    pwdForm.oldPassword = ''
-    pwdForm.newPassword = ''
-    pwdForm.confirm = ''
-  } catch (e: unknown) {
-    ElMessage.error(e instanceof Error ? e.message : '修改失败')
-  }
-}
 
 const breadcrumbs = computed(() => {
   const items: { title: string }[] = []
@@ -79,11 +45,6 @@ const breadcrumbs = computed(() => {
 
 function goHub() {
   router.push('/dashboard')
-}
-
-async function logout() {
-  await auth.logout()
-  router.push('/login')
 }
 </script>
 
@@ -120,36 +81,8 @@ async function logout() {
       </el-breadcrumb>
     </div>
     <div class="app-header__right">
-      <el-dropdown trigger="click" @command="onUserCommand">
-        <span class="app-header__user">
-          {{ auth.user?.displayName || auth.user?.username }}
-          <el-icon><ArrowDown /></el-icon>
-        </span>
-        <template #dropdown>
-          <el-dropdown-menu>
-            <el-dropdown-item command="password">修改密码</el-dropdown-item>
-            <el-dropdown-item command="logout" divided>退出登录</el-dropdown-item>
-          </el-dropdown-menu>
-        </template>
-      </el-dropdown>
+      <UserAccountMenu :tone="props.hubTheme ? 'onDark' : 'default'" />
     </div>
-    <el-dialog v-model="pwdVisible" title="修改密码" width="420px" destroy-on-close>
-      <el-form label-width="100px">
-        <el-form-item label="旧密码">
-          <el-input v-model="pwdForm.oldPassword" type="password" show-password />
-        </el-form-item>
-        <el-form-item label="新密码">
-          <el-input v-model="pwdForm.newPassword" type="password" show-password />
-        </el-form-item>
-        <el-form-item label="确认新密码">
-          <el-input v-model="pwdForm.confirm" type="password" show-password />
-        </el-form-item>
-      </el-form>
-      <template #footer>
-        <el-button @click="pwdVisible = false">取消</el-button>
-        <el-button type="primary" @click="submitPwd">确定</el-button>
-      </template>
-    </el-dialog>
   </header>
 </template>
 
@@ -237,19 +170,9 @@ async function logout() {
 .app-header__back {
   padding: 4px 8px;
 }
-.app-header__user {
+.app-header__right {
   display: flex;
   align-items: center;
-  gap: 4px;
-  cursor: pointer;
-  font-size: 14px;
-  color: var(--portal-text);
-}
-.app-header--hub .app-header__user {
-  color: #d6ecff;
-  text-shadow: 0 1px 6px rgba(0, 20, 50, 0.45);
-}
-.app-header--hub .app-header__user:hover {
-  color: #f2d68a;
+  gap: 12px;
 }
 </style>

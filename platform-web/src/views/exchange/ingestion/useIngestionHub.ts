@@ -11,6 +11,8 @@ export interface Project {
   boundOrgName?: string
   systemName?: string
   status: string
+  registerStatus?: string
+  rejectReason?: string
   createdBy?: string
 }
 export interface BizSystem {
@@ -19,6 +21,8 @@ export interface BizSystem {
   systemCode: string
   systemName: string
   status: string
+  registerStatus?: string
+  rejectReason?: string
   createdBy?: string
   dataSourceCount?: number
 }
@@ -31,6 +35,8 @@ export interface DataSource {
   systemName?: string
   sourceType: string
   connStatus: string
+  registerStatus?: string
+  rejectReason?: string
   tableCount: number
   connConfigJson?: string
   sourceSchema?: string
@@ -62,6 +68,8 @@ export interface Dict {
   remark?: string
   itemCount: number
   status: string
+  registerStatus?: string
+  rejectReason?: string
 }
 export interface DictItem {
   id: number
@@ -377,6 +385,10 @@ export const ingestionApi = {
   dictTemplate: () => api.get<string>('/exchange/ingestion/dicts/template'),
   importDict: (csvText: string) => api.post<Record<string, unknown>>('/exchange/ingestion/dicts/import', { csvText }),
   exportDict: (ids: number[]) => api.post<string>('/exchange/ingestion/dicts/export', { ids }),
+  dictColumnLinks: (dictId: number) => api.get<Record<string, unknown>[]>(`/exchange/ingestion/dicts/${dictId}/column-links`),
+  bindDictColumn: (dictId: number, body: Record<string, unknown>) =>
+    api.post<number>(`/exchange/ingestion/dicts/${dictId}/column-links`, body),
+  unbindDictColumn: (linkId: number) => api.delete<void>(`/exchange/ingestion/dicts/column-links/${linkId}`),
   tags: () => api.get<AssetTag[]>('/exchange/ingestion/register/tags'),
   tagTree: () => api.get<AssetTagTreeResult>('/exchange/ingestion/register/tags', { params: { tree: true } }),
   createTag: (body: Record<string, unknown>) => api.post<number>('/exchange/ingestion/register/tags', body),

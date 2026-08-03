@@ -204,6 +204,9 @@ export function filterIngestionModules(
   const perms = opts.permissions || []
   return modules.filter((m) => {
     if (perms.includes(m.permission)) return true
+    // 部门报告/图谱权限可打开同一模块
+    if (m.key === 'm046' && perms.includes('hub:ingestion:register:m046:dept')) return true
+    if (m.key === 'm047' && perms.includes('hub:ingestion:register:m047:dept')) return true
     if (m.key === 'catalog') {
       return CATALOG_SUB_KEYS.some((k) => perms.includes(CATALOG_SUB_PERMISSIONS[k]))
     }
@@ -249,17 +252,23 @@ export function buildRegisterNavItems(
     dbMenus.filter((m) => m.permission).map((m) => [m.permission as string, m]),
   )
   const staticPerms = new Set(REGISTER_MODULES.map((m) => m.permission))
+  // 部门报告/图谱权限节点不作为侧栏自定义项重复展示
+  staticPerms.add('hub:ingestion:register:m046:dept')
+  staticPerms.add('hub:ingestion:register:m047:dept')
   const staticIndex = new Map(REGISTER_MODULES.map((m, i) => [m.key, i]))
 
   const merged = base
     .map((m) => {
-      const db = byPerm.get(m.permission)
+      const db =
+        byPerm.get(m.permission)
+        || (m.key === 'm046' ? byPerm.get('hub:ingestion:register:m046:dept') : undefined)
+        || (m.key === 'm047' ? byPerm.get('hub:ingestion:register:m047:dept') : undefined)
       // 内置模块不因库表 visible=0 而丢掉 Hub 入口（避免「只剩菜单管理」）
       const sort =
         m.key === 'menu-mgmt'
           ? 100_000
           : (db?.sortOrder ?? staticIndex.get(m.key) ?? 0)
-      const label = db?.menuName || m.label
+      const label = normalizeRegisterMenuLabel(db?.menuName || m.label)
       return { ...m, label, _sort: sort }
     })
     .sort((a, b) => a._sort - b._sort || a.key.localeCompare(b.key))
@@ -282,11 +291,21 @@ export function buildRegisterNavItems(
     if (!opts.isSystemAdmin && !opts.permissions.includes(c.permission!)) continue
     items.push({
       key: `custom-${c.id}`,
-      label: c.menuName,
+      label: normalizeRegisterMenuLabel(c.menuName),
       subLabel: c.routeName || '自定义',
     })
   }
   return items
+}
+
+/** 去掉历史「（总体）/（部门）」后缀，侧栏统一简称 */
+function normalizeRegisterMenuLabel(name: string): string {
+  return String(name || '')
+    .replace(/（总体）/g, '')
+    .replace(/（部门）/g, '')
+    .replace(/\(总体\)/g, '')
+    .replace(/\(部门\)/g, '')
+    .trim()
 }
 
 /** 从登记菜单 path 解析 module query */

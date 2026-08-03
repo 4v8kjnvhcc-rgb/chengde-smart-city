@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { defineAsyncComponent } from 'vue'
 import { useRouter } from 'vue-router'
+import UserAccountMenu from '@/components/layout/UserAccountMenu.vue'
 
 const router = useRouter()
 const SupplyDemandView = defineAsyncComponent(() => import('./SupplyDemandView.vue'))
@@ -13,6 +14,7 @@ const SupplyDemandView = defineAsyncComponent(() => import('./SupplyDemandView.v
       <div class="app-shell__actions">
         <button type="button" class="app-shell__btn" @click="router.push('/exchange/application/supply-config')">供需配置</button>
         <button type="button" class="app-shell__btn app-shell__btn--ghost" @click="router.push('/dashboard')">返回总览</button>
+        <UserAccountMenu tone="onDark" />
       </div>
     </header>
     <main class="app-shell__main">
@@ -34,7 +36,7 @@ const SupplyDemandView = defineAsyncComponent(() => import('./SupplyDemandView.v
   gap: 12px;
 }
 .app-shell__brand { font-size: 16px; font-weight: 700; white-space: nowrap; }
-.app-shell__actions { display: flex; gap: 8px; flex-wrap: wrap; }
+.app-shell__actions { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .app-shell__btn {
   appearance: none;
   border: 1px solid rgba(255,255,255,.35);

@@ -34,7 +34,11 @@ import com.chengde.smartcity.exchange.service.KettleCollectService;
 import com.chengde.smartcity.exchange.service.LineageService;
 import com.chengde.smartcity.exchange.service.PipelineDesignService;
 import com.chengde.smartcity.exchange.service.RegisterService;
+import com.chengde.smartcity.exchange.service.RegisterWorkflowService;
+import com.chengde.smartcity.exchange.service.DictColumnLinkService;
 import com.chengde.smartcity.exchange.service.TableIngestEngine;
+import com.chengde.smartcity.exchange.entity.IngDictColumnLink;
+import com.chengde.smartcity.exchange.entity.IngRegisterAuditLog;
 import com.chengde.smartcity.security.UserPrincipal;
 import java.util.List;
 import java.util.Map;
@@ -66,6 +70,8 @@ public class IngestionPlatformController {
     private final IngestAssetGovernService assetGovernService;
     private final KettleCollectService kettleCollectService;
     private final TableIngestEngine tableIngestEngine;
+    private final RegisterWorkflowService registerWorkflowService;
+    private final DictColumnLinkService dictColumnLinkService;
 
     public IngestionPlatformController(IngestionPlatformService service, RegisterService registerService,
                                        AssetReportService assetReportService,
@@ -76,7 +82,9 @@ public class IngestionPlatformController {
                                        IngestCatalogService catalogService,
                                        IngestAssetGovernService assetGovernService,
                                        KettleCollectService kettleCollectService,
-                                       TableIngestEngine tableIngestEngine) {
+                                       TableIngestEngine tableIngestEngine,
+                                       RegisterWorkflowService registerWorkflowService,
+                                       DictColumnLinkService dictColumnLinkService) {
         this.service = service;
         this.registerService = registerService;
         this.assetReportService = assetReportService;
@@ -88,6 +96,8 @@ public class IngestionPlatformController {
         this.assetGovernService = assetGovernService;
         this.kettleCollectService = kettleCollectService;
         this.tableIngestEngine = tableIngestEngine;
+        this.registerWorkflowService = registerWorkflowService;
+        this.dictColumnLinkService = dictColumnLinkService;
     }
 
     @GetMapping("/stats/base")
@@ -491,20 +501,24 @@ public class IngestionPlatformController {
 
     @GetMapping("/register/asset-report")
     @PreAuthorize("isAuthenticated()")
-    public ApiResponse<Map<String, Object>> assetReport() {
-        return ApiResponse.ok(assetReportService.dashboard());
+    public ApiResponse<Map<String, Object>> assetReport(@AuthenticationPrincipal UserPrincipal principal) {
+        return ApiResponse.ok(assetReportService.dashboard(principal));
     }
 
     @GetMapping("/register/asset-report/projects/{projectId}/tables")
     @PreAuthorize("isAuthenticated()")
-    public ApiResponse<List<Map<String, Object>>> assetReportProjectTables(@PathVariable Long projectId) {
-        return ApiResponse.ok(assetReportService.projectTables(projectId));
+    public ApiResponse<List<Map<String, Object>>> assetReportProjectTables(
+            @AuthenticationPrincipal UserPrincipal principal,
+            @PathVariable Long projectId) {
+        return ApiResponse.ok(assetReportService.projectTables(principal, projectId));
     }
 
     @GetMapping("/register/asset-report/tables/{id}/detail")
     @PreAuthorize("isAuthenticated()")
-    public ApiResponse<Map<String, Object>> assetReportTableDetail(@PathVariable Long id) {
-        return ApiResponse.ok(assetReportService.tableDetail(id));
+    public ApiResponse<Map<String, Object>> assetReportTableDetail(
+            @AuthenticationPrincipal UserPrincipal principal,
+            @PathVariable Long id) {
+        return ApiResponse.ok(assetReportService.tableDetail(principal, id));
     }
 
     @GetMapping("/register/asset-report/scripts/{id}/detail")
@@ -527,30 +541,34 @@ public class IngestionPlatformController {
 
     @GetMapping("/register/lineage")
     @PreAuthorize("isAuthenticated()")
-    public ApiResponse<Map<String, Object>> lineage(@RequestParam(required = false) Long projectId,
+    public ApiResponse<Map<String, Object>> lineage(@AuthenticationPrincipal UserPrincipal principal,
+                                                    @RequestParam(required = false) Long projectId,
                                                     @RequestParam(required = false) String keyword,
                                                     @RequestParam(required = false) Long categoryTagId,
                                                     @RequestParam(required = false) String projectScope) {
         // projectScope 兼容旧参数：若未传 projectId 则忽略
-        return ApiResponse.ok(lineageService.panorama(projectId, keyword, categoryTagId));
+        return ApiResponse.ok(lineageService.panorama(principal, projectId, keyword, categoryTagId));
     }
 
     @GetMapping("/register/lineage/drill")
     @PreAuthorize("isAuthenticated()")
-    public ApiResponse<Map<String, Object>> lineageDrill(@RequestParam String nodeId) {
-        return ApiResponse.ok(lineageService.drill(nodeId));
+    public ApiResponse<Map<String, Object>> lineageDrill(@AuthenticationPrincipal UserPrincipal principal,
+                                                         @RequestParam String nodeId) {
+        return ApiResponse.ok(lineageService.drill(principal, nodeId));
     }
 
     @GetMapping("/register/lineage/fields")
     @PreAuthorize("isAuthenticated()")
-    public ApiResponse<Map<String, Object>> fieldLineage(@RequestParam String tableNode) {
-        return ApiResponse.ok(lineageService.fieldLineage(tableNode));
+    public ApiResponse<Map<String, Object>> fieldLineage(@AuthenticationPrincipal UserPrincipal principal,
+                                                          @RequestParam String tableNode) {
+        return ApiResponse.ok(lineageService.fieldLineage(principal, tableNode));
     }
 
     @GetMapping("/register/lineage/table-meta")
     @PreAuthorize("isAuthenticated()")
-    public ApiResponse<Map<String, Object>> lineageTableMeta(@RequestParam String tableNode) {
-        return ApiResponse.ok(lineageService.tableMeta(tableNode));
+    public ApiResponse<Map<String, Object>> lineageTableMeta(@AuthenticationPrincipal UserPrincipal principal,
+                                                             @RequestParam String tableNode) {
+        return ApiResponse.ok(lineageService.tableMeta(principal, tableNode));
     }
 
     @GetMapping("/register/tables")
@@ -975,5 +993,64 @@ public class IngestionPlatformController {
     @GetMapping("/collect/archive-jobs")
     public ApiResponse<List<Map<String, Object>>> archiveJobs() {
         return ApiResponse.ok(assetGovernService.listArchiveJobs());
+    }
+
+    // ── 登记审核流（sjzc）────────────────────────────────────
+    @PostMapping("/register/workflow/submit")
+    @PreAuthorize("isAuthenticated()")
+    public ApiResponse<Void> registerSubmit(@AuthenticationPrincipal UserPrincipal principal,
+                                            @RequestBody Map<String, Object> body) {
+        var t = RegisterWorkflowService.parseTarget(body);
+        registerWorkflowService.submit(principal, t.getKey(), t.getValue());
+        return ApiResponse.ok(null);
+    }
+
+    @PostMapping("/register/workflow/approve")
+    @PreAuthorize("isAuthenticated()")
+    public ApiResponse<Void> registerApprove(@AuthenticationPrincipal UserPrincipal principal,
+                                             @RequestBody Map<String, Object> body) {
+        var t = RegisterWorkflowService.parseTarget(body);
+        String comment = body.get("comment") == null ? null : String.valueOf(body.get("comment"));
+        registerWorkflowService.approve(principal, t.getKey(), t.getValue(), comment);
+        return ApiResponse.ok(null);
+    }
+
+    @PostMapping("/register/workflow/reject")
+    @PreAuthorize("isAuthenticated()")
+    public ApiResponse<Void> registerReject(@AuthenticationPrincipal UserPrincipal principal,
+                                            @RequestBody Map<String, Object> body) {
+        var t = RegisterWorkflowService.parseTarget(body);
+        String reason = body.get("reason") == null ? null : String.valueOf(body.get("reason"));
+        registerWorkflowService.reject(principal, t.getKey(), t.getValue(), reason);
+        return ApiResponse.ok(null);
+    }
+
+    @GetMapping("/register/workflow/logs")
+    @PreAuthorize("isAuthenticated()")
+    public ApiResponse<List<IngRegisterAuditLog>> registerAuditLogs(@RequestParam String objectType,
+                                                                    @RequestParam Long objectId) {
+        return ApiResponse.ok(registerWorkflowService.listAuditLogs(objectType, objectId));
+    }
+
+    @GetMapping("/dicts/{id}/column-links")
+    @PreAuthorize("isAuthenticated()")
+    public ApiResponse<List<IngDictColumnLink>> dictColumnLinks(@PathVariable Long id) {
+        return ApiResponse.ok(dictColumnLinkService.listByDict(id));
+    }
+
+    @PostMapping("/dicts/{id}/column-links")
+    @PreAuthorize("isAuthenticated()")
+    public ApiResponse<Long> bindDictColumn(@AuthenticationPrincipal UserPrincipal principal,
+                                            @PathVariable Long id,
+                                            @RequestBody Map<String, Object> body) {
+        return ApiResponse.ok(dictColumnLinkService.bind(principal, id, body));
+    }
+
+    @DeleteMapping("/dicts/column-links/{linkId}")
+    @PreAuthorize("isAuthenticated()")
+    public ApiResponse<Void> unbindDictColumn(@AuthenticationPrincipal UserPrincipal principal,
+                                              @PathVariable Long linkId) {
+        dictColumnLinkService.unbind(principal, linkId);
+        return ApiResponse.ok(null);
     }
 }

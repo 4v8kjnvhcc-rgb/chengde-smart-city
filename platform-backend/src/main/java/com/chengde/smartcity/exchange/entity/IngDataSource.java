@@ -16,6 +16,8 @@ public class IngDataSource {
     private String systemName;
     private String sourceType;
     private String connStatus;
+    private String registerStatus;
+    private String rejectReason;
     private Integer tableCount;
     private String connConfigJson;
     private String sourceSchema;
@@ -41,6 +43,10 @@ public class IngDataSource {
     public void setSourceType(String sourceType) { this.sourceType = sourceType; }
     public String getConnStatus() { return connStatus; }
     public void setConnStatus(String connStatus) { this.connStatus = connStatus; }
+    public String getRegisterStatus() { return registerStatus; }
+    public void setRegisterStatus(String registerStatus) { this.registerStatus = registerStatus; }
+    public String getRejectReason() { return rejectReason; }
+    public void setRejectReason(String rejectReason) { this.rejectReason = rejectReason; }
     public Integer getTableCount() { return tableCount; }
     public void setTableCount(Integer tableCount) { this.tableCount = tableCount; }
     public String getConnConfigJson() { return connConfigJson; }

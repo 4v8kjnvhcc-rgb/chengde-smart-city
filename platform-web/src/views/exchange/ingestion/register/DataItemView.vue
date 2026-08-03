@@ -192,24 +192,10 @@ function openEdit(row: DataColumn) {
   colForm.requiredTip = row.requiredTip || ''
   colForm.builtInFlag = isBuiltIn(row) ? 1 : 0
   dialogVisible.value = true
-  if (isBuiltIn(row)) {
-    ElMessage.info('该字段已是内置属性，不可再编辑')
-  }
 }
 
 function openBatchEdit() {
-  const editable = selectedCols.value.filter((c) => !isBuiltIn(c))
-  if (!editable.length) {
-    ElMessage.warning('请先勾选可编辑的数据项（内置属性不可改）')
-    return
-  }
-  batchRows.value = editable.map((c) => ({
-    id: c.id,
-    columnCode: c.columnCode,
-    columnName: c.columnName || '',
-    semanticDesc: c.semanticDesc || '',
-  }))
-  batchDialogVisible.value = true
+  ElMessage.info('数据项仅支持查看，不可批量编辑')
 }
 
 async function confirmIrreversible(count = 1) {
@@ -332,8 +318,7 @@ onMounted(reload)
     <el-alert v-if="loadError" type="error" :title="loadError" show-icon :closable="false" style="margin-bottom:12px" />
     <PageCard title="数据项管理">
       <p class="hint">
-        按当前项目过滤物理表。系统内置属性不可编辑；自定义属性可编辑。
-        编辑保存后，元数据维护中对应属性信息将被覆盖且不可恢复。
+        按当前项目过滤物理表。数据项仅支持查看，不可新增、修改或删除（字段随数据库表登记同步）。
       </p>
       <el-form inline class="portal-inline-form portal-inline-form--block">
         <el-form-item label="当前项目" class="portal-field-xl">
@@ -362,13 +347,8 @@ onMounted(reload)
             <el-option v-for="t in tables" :key="t.id" :label="t.tableName" :value="t.id" />
           </el-select>
         </el-form-item>
-        <el-form-item class="portal-form-actions">
-          <el-button type="primary" :disabled="!selectedTableId" @click="openCreate">新建数据项</el-button>
-          <el-button :disabled="!selectedCols.length" @click="openBatchEdit">批量编辑</el-button>
-        </el-form-item>
       </el-form>
-      <el-table :data="columns" stripe @selection-change="onSelectionChange">
-        <el-table-column type="selection" width="48" :selectable="(row: DataColumn) => !isBuiltIn(row)" />
+      <el-table :data="columns" stripe>
         <el-table-column prop="columnCode" label="字段编码" width="120" />
         <el-table-column prop="columnName" label="字段名称" min-width="120" />
         <el-table-column label="数据类型 & 长度" min-width="140">
@@ -380,19 +360,13 @@ onMounted(reload)
         <el-table-column label="必填" width="60">
           <template #default="{ row }">{{ row.nullableFlag ? '否' : '是' }}</template>
         </el-table-column>
-        <el-table-column prop="semanticDesc" label="语义说明" min-width="160" show-overflow-tooltip />
-        <el-table-column label="内置" width="80">
-          <template #default="{ row }">
-            <el-tag :type="isBuiltIn(row) ? 'info' : 'success'" size="small">
-              {{ isBuiltIn(row) ? '是' : '否' }}
-            </el-tag>
-          </template>
+        <el-table-column label="内置" width="70">
+          <template #default="{ row }">{{ isBuiltIn(row) ? '是' : '否' }}</template>
         </el-table-column>
-        <el-table-column label="操作" width="80">
+        <el-table-column prop="semanticDesc" label="注释" min-width="140" show-overflow-tooltip />
+        <el-table-column label="操作" width="80" fixed="right">
           <template #default="{ row }">
-            <el-button link type="primary" @click="openEdit(row)">
-              {{ isBuiltIn(row) ? '查看' : '编辑' }}
-            </el-button>
+            <el-button link type="primary" @click="openEdit(row)">查看</el-button>
           </template>
         </el-table-column>
       </el-table>
@@ -400,7 +374,7 @@ onMounted(reload)
 
     <el-dialog
       v-model="dialogVisible"
-      :title="editingCol ? (isBuiltIn(editingCol) ? '查看数据项（内置）' : '编辑数据项') : '新建数据项'"
+      title="查看数据项"
       width="520px"
       destroy-on-close
     >

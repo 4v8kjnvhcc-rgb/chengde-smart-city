@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
+import UserAccountMenu from '@/components/layout/UserAccountMenu.vue'
 import { openAssessmentExternal } from './application-nav'
 
 const router = useRouter()
@@ -51,7 +52,10 @@ function openApp(app: (typeof apps)[number]) {
   <div class="landing">
     <header class="landing__top">
       <div class="landing__brand">应用平台</div>
-      <button type="button" class="landing__back" @click="router.push('/dashboard')">返回总览</button>
+      <div class="landing__actions">
+        <button type="button" class="landing__back" @click="router.push('/dashboard')">返回总览</button>
+        <UserAccountMenu tone="onDark" />
+      </div>
     </header>
     <main class="landing__main">
       <h1 class="landing__title">应用平台</h1>
@@ -85,6 +89,7 @@ function openApp(app: (typeof apps)[number]) {
   padding: 0 24px;
 }
 .landing__brand { font-size: 16px; font-weight: 700; }
+.landing__actions { display: flex; align-items: center; gap: 12px; }
 .landing__back {
   appearance: none;
   border: 1px solid rgba(255,255,255,.35);

@@ -247,6 +247,12 @@ onMounted(load)
 
 <template>
   <div class="menu-mgmt" v-loading="loading">
+    <el-alert
+      type="info"
+      :closable="false"
+      style="grid-column: 1 / -1; margin-bottom: 8px"
+      title="与统一身份认证「菜单管理」共用 sys_menu。本页仅维护数据资产登记（parent=7000）子树；UUM 可管理全部菜单。修改后两端同步生效。"
+    />
     <aside class="menu-mgmt__side">
       <div class="menu-mgmt__side-title">菜单管理</div>
       <p class="menu-mgmt__side-hint">左侧为菜单结构树；各业务入口请用外层 Hub 侧栏切换。</p>

@@ -12,6 +12,17 @@ import {
 import { ingestionApi, useIngestionLoading, type Project } from '../useIngestionHub'
 import { ingestionRegisterCache } from '../ingestion-register-cache'
 import ProjectSystemDetailView from './ProjectSystemDetailView.vue'
+import {
+  approveRegister,
+  canAuditRegister,
+  canEditRegister,
+  canSubmitRegister,
+  loadRegisterLogs,
+  registerStatusZh,
+  rejectRegister,
+  submitRegister,
+  useRegisterWorkflowRole,
+} from './register-workflow'
 
 const router = useRouter()
 const auth = useAuthStore()
@@ -62,8 +73,16 @@ const detailProject = computed(() =>
   projects.value.find((p) => p.id === detailProjectId.value) || null,
 )
 
-const canDeleteProject = computed(() => auth.hasPermission('exchange:project:delete'))
-const canCreateProject = computed(() => auth.hasPermission('exchange:project:create') || auth.permissions.length === 0)
+const canDeleteProject = computed(() => auth.hasPermission('exchange:project:delete') || auth.isSystemAdmin)
+const canCreateProject = computed(() => auth.hasPermission('exchange:project:create') || auth.permissions.length === 0 || auth.isSystemAdmin)
+const { canSubmit, canAudit } = useRegisterWorkflowRole()
+
+const viewDialog = ref(false)
+const viewLogs = ref<Record<string, unknown>[]>([])
+const viewRow = ref<Project | null>(null)
+const auditRejectVisible = ref(false)
+const auditRejectReason = ref('')
+const auditTarget = ref<Project | null>(null)
 
 const selectedProject = computed(() => {
   if (selectedIds.value.length !== 1) return null
@@ -224,11 +243,46 @@ async function deleteProject(row?: Project | null) {
     ElMessage.warning('「其他」为系统初始化项目，不可删除')
     return
   }
-  await ElMessageBox.confirm(`确定删除项目「${target.projectName}」？关联系统与数据源将一并删除。`, '删除确认', { type: 'warning' })
+  await ElMessageBox.confirm(`确定删除项目「${target.projectName}」？若该项目下仍有系统将无法删除。`, '删除确认', { type: 'warning' })
   await ingestionApi.deleteProject(target.id)
   ElMessage.success('项目已删除')
   if (detailProjectId.value === target.id) detailProjectId.value = null
   selectedIds.value = selectedIds.value.filter((id) => id !== target.id)
+  await reload()
+}
+
+async function openView(row: Project) {
+  viewRow.value = row
+  viewLogs.value = await loadRegisterLogs('PROJECT', row.id)
+  viewDialog.value = true
+}
+
+async function doSubmit(row: Project) {
+  await submitRegister('PROJECT', row.id)
+  ElMessage.success('已提交审核')
+  await reload()
+}
+
+async function doApprove(row: Project) {
+  await approveRegister('PROJECT', row.id)
+  ElMessage.success('审核通过')
+  await reload()
+}
+
+function openReject(row: Project) {
+  auditTarget.value = row
+  auditRejectReason.value = ''
+  auditRejectVisible.value = true
+}
+
+async function doReject() {
+  if (!auditTarget.value || !auditRejectReason.value.trim()) {
+    ElMessage.warning('请填写驳回原因')
+    return
+  }
+  await rejectRegister('PROJECT', auditTarget.value.id, auditRejectReason.value.trim())
+  ElMessage.success('已驳回')
+  auditRejectVisible.value = false
   await reload()
 }
 
@@ -329,10 +383,43 @@ onMounted(reload)
           <el-table-column label="部门" min-width="140" show-overflow-tooltip>
             <template #default="{ row }">{{ row.boundOrgName || currentDeptName }}</template>
           </el-table-column>
-          <el-table-column label="操作" width="160" fixed="right">
+          <el-table-column label="状态" width="110">
             <template #default="{ row }">
+              <el-tag size="small">{{ registerStatusZh(row.registerStatus) }}</el-tag>
+            </template>
+          </el-table-column>
+          <el-table-column label="操作" width="280" fixed="right">
+            <template #default="{ row }">
+              <el-button link type="primary" @click="openView(row)">查看</el-button>
+              <el-button
+                v-if="canEditRegister(row.registerStatus) && canCreateProject"
+                link
+                type="primary"
+                @click="openEditProject(row)"
+              >
+                编辑
+              </el-button>
+              <el-button
+                v-if="canSubmit && canSubmitRegister(row.registerStatus)"
+                link
+                type="primary"
+                @click="doSubmit(row)"
+              >
+                提交
+              </el-button>
+              <template v-if="canAudit && canAuditRegister(row.registerStatus)">
+                <el-button link type="success" @click="doApprove(row)">审核</el-button>
+                <el-button link type="warning" @click="openReject(row)">驳回</el-button>
+              </template>
               <el-button link type="primary" @click="openDetail(row)">详情</el-button>
-              <el-button link type="primary" @click="openUserGrant(row)">项目授权</el-button>
+              <el-button
+                v-if="canDeleteProject && !isOtherProject(row.projectCode)"
+                link
+                type="danger"
+                @click="deleteProject(row)"
+              >
+                删除
+              </el-button>
             </template>
           </el-table-column>
         </el-table>
@@ -398,6 +485,39 @@ onMounted(reload)
         <el-button type="primary" :loading="projectSaving" @click="submitProjectDialog">
           保存
         </el-button>
+      </template>
+    </el-dialog>
+
+    <el-dialog v-model="viewDialog" title="查看项目（基本信息与审核记录）" width="640px" destroy-on-close>
+      <el-descriptions v-if="viewRow" :column="1" border size="small">
+        <el-descriptions-item label="项目名称">{{ viewRow.projectName }}</el-descriptions-item>
+        <el-descriptions-item label="状态">{{ registerStatusZh(viewRow.registerStatus) }}</el-descriptions-item>
+        <el-descriptions-item v-if="viewRow.rejectReason" label="驳回原因">{{ viewRow.rejectReason }}</el-descriptions-item>
+        <el-descriptions-item label="部门">{{ viewRow.boundOrgName || currentDeptName }}</el-descriptions-item>
+      </el-descriptions>
+      <h4 style="margin:16px 0 8px">提交 / 审核记录</h4>
+      <el-table :data="viewLogs" size="small" stripe max-height="280">
+        <el-table-column prop="action" label="动作" width="100" />
+        <el-table-column label="状态变更" min-width="160">
+          <template #default="{ row }">
+            {{ registerStatusZh(row.fromStatus as string) }} → {{ registerStatusZh(row.toStatus as string) }}
+          </template>
+        </el-table-column>
+        <el-table-column prop="commentText" label="说明" min-width="140" show-overflow-tooltip />
+        <el-table-column prop="operatorName" label="操作人" width="100" />
+        <el-table-column prop="createdAt" label="时间" width="170" />
+      </el-table>
+    </el-dialog>
+
+    <el-dialog v-model="auditRejectVisible" title="驳回" width="420px" destroy-on-close>
+      <el-form label-position="top">
+        <el-form-item label="驳回原因" required>
+          <el-input v-model="auditRejectReason" type="textarea" :rows="3" placeholder="必填" />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="auditRejectVisible = false">取消</el-button>
+        <el-button type="danger" @click="doReject">确认驳回</el-button>
       </template>
     </el-dialog>
   </div>

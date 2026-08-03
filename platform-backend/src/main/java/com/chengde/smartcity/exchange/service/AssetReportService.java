@@ -36,6 +36,8 @@ import com.chengde.smartcity.masterdata.mapper.GovGovernanceTaskMapper;
 import com.chengde.smartcity.masterdata.mapper.GovGovernanceTaskRunMapper;
 import com.chengde.smartcity.masterdata.mapper.GovQualityTaskDetailMapper;
 import com.chengde.smartcity.masterdata.mapper.GovTaskScriptRelMapper;
+import com.chengde.smartcity.security.UserPrincipal;
+import com.chengde.smartcity.system.service.AccessControlService;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
 import java.time.Duration;
@@ -80,6 +82,7 @@ public class AssetReportService {
     private final GovGovernanceNodeLogMapper nodeLogMapper;
     private final GovTaskScriptRelMapper taskScriptRelMapper;
     private final GovQualityTaskDetailMapper qualityDetailMapper;
+    private final AccessControlService accessControlService;
 
     public AssetReportService(IngProjectMapper projectMapper,
                               IngDataSourceMapper dataSourceMapper,
@@ -98,7 +101,8 @@ public class AssetReportService {
                               GovGovernanceTaskRunMapper workflowRunMapper,
                               GovGovernanceNodeLogMapper nodeLogMapper,
                               GovTaskScriptRelMapper taskScriptRelMapper,
-                              GovQualityTaskDetailMapper qualityDetailMapper) {
+                              GovQualityTaskDetailMapper qualityDetailMapper,
+                              AccessControlService accessControlService) {
         this.projectMapper = projectMapper;
         this.dataSourceMapper = dataSourceMapper;
         this.tableMapper = tableMapper;
@@ -117,19 +121,31 @@ public class AssetReportService {
         this.nodeLogMapper = nodeLogMapper;
         this.taskScriptRelMapper = taskScriptRelMapper;
         this.qualityDetailMapper = qualityDetailMapper;
+        this.accessControlService = accessControlService;
     }
 
-    public Map<String, Object> dashboard() {
-        Map<String, Object> out = new LinkedHashMap<>();
-        List<IngDataTable> tables = tableMapper.selectList(null);
-        List<IngDataSource> sources = dataSourceMapper.selectList(null);
-        List<IngProject> projects = projectMapper.selectList(null);
-        List<GovFusionScript> scripts = scriptMapper.selectList(null);
-        List<GovGovernanceTask> workflows = workflowMapper.selectList(null);
+    public Map<String, Object> dashboard(UserPrincipal operator) {
+        Set<Long> projectIds = accessControlService.effectiveProjectIds(operator);
+        Set<Long> sourceIds = accessControlService.effectiveSourceIds(operator);
+        Set<Long> tableIds = accessControlService.effectiveTableIds(operator);
 
+        List<IngProject> projects = projectIds.isEmpty() ? List.of()
+                : projectMapper.selectList(new LambdaQueryWrapper<IngProject>().in(IngProject::getId, projectIds));
+        List<IngDataSource> sources = sourceIds.isEmpty() ? List.of()
+                : dataSourceMapper.selectList(new LambdaQueryWrapper<IngDataSource>().in(IngDataSource::getId, sourceIds));
+        List<IngDataTable> tables = tableIds.isEmpty() ? List.of()
+                : tableMapper.selectList(new LambdaQueryWrapper<IngDataTable>().in(IngDataTable::getId, tableIds));
+
+        boolean globalViewer = operator.isSystemAdmin() || operator.isPlatformAdmin();
+        List<GovFusionScript> scripts = globalViewer ? scriptMapper.selectList(null) : List.of();
+        List<GovGovernanceTask> workflows = globalViewer ? workflowMapper.selectList(null) : List.of();
+
+        Map<String, Object> out = new LinkedHashMap<>();
         long storageSum = tables.stream().mapToLong(t -> t.getStorageBytes() == null ? 0L : t.getStorageBytes()).sum();
-        long linkedScriptIds = taskScriptRelMapper.selectList(null).stream()
-                .map(GovTaskScriptRel::getScriptId).filter(Objects::nonNull).distinct().count();
+        long linkedScriptIds = globalViewer
+                ? taskScriptRelMapper.selectList(null).stream()
+                    .map(GovTaskScriptRel::getScriptId).filter(Objects::nonNull).distinct().count()
+                : 0L;
         long scheduledWorkflows = workflows.stream()
                 .filter(w -> w.getScheduleEnabled() != null && w.getScheduleEnabled() == 1).count();
 
@@ -143,16 +159,47 @@ public class AssetReportService {
         out.put("scriptLinkedWorkflowCount", linkedScriptIds);
         out.put("workflowCount", workflows.size());
         out.put("workflowScheduledCount", scheduledWorkflows);
-        out.put("taskCount", ingestTaskMapper.selectCount(null));
+        out.put("taskCount", countIngestTasks(sourceIds, tableIds));
+        out.put("scope", globalViewer ? "ALL" : "DEPT");
+        out.put("orgId", operator.getOrgId());
 
         out.put("tableTrend", metricSeries("TABLE_NEW", null, 30));
         out.put("storageTrend", metricSeries("STORAGE_GB", null, 30));
         out.put("topProjects", topProjects(projects, sources, tables));
         out.put("topScriptsByDuration", topScriptsByDuration(scripts));
         out.put("topTablesByStorage", topTablesByStorage(tables));
-        out.put("topTasks", topIngestTasks());
+        out.put("topTasks", topIngestTasks(sourceIds, tableIds));
         out.put("workflows", workflows.stream().limit(10).map(this::workflowBrief).collect(Collectors.toList()));
         return out;
+    }
+
+    private long countIngestTasks(Set<Long> sourceIds, Set<Long> tableIds) {
+        if ((sourceIds == null || sourceIds.isEmpty()) && (tableIds == null || tableIds.isEmpty())) {
+            return 0L;
+        }
+        LambdaQueryWrapper<IngIngestTask> q = new LambdaQueryWrapper<>();
+        q.and(w -> {
+            boolean first = true;
+            if (sourceIds != null && !sourceIds.isEmpty()) {
+                w.in(IngIngestTask::getSourceId, sourceIds);
+                first = false;
+            }
+            if (tableIds != null && !tableIds.isEmpty()) {
+                if (!first) w.or();
+                w.in(IngIngestTask::getTableId, tableIds);
+            }
+        });
+        return ingestTaskMapper.selectCount(q);
+    }
+
+    public List<Map<String, Object>> projectTables(UserPrincipal operator, Long projectId) {
+        accessControlService.assertProjectAccess(operator, projectId);
+        return projectTables(projectId);
+    }
+
+    public Map<String, Object> tableDetail(UserPrincipal operator, Long tableId) {
+        accessControlService.assertTableAccess(operator, tableId);
+        return tableDetail(tableId);
     }
 
     public List<Map<String, Object>> projectTables(Long projectId) {
@@ -475,8 +522,24 @@ public class AssetReportService {
                 }).collect(Collectors.toList());
     }
 
-    private List<Map<String, Object>> topIngestTasks() {
-        return ingestTaskMapper.selectList(new LambdaQueryWrapper<IngIngestTask>().last("LIMIT 5")).stream()
+    private List<Map<String, Object>> topIngestTasks(Set<Long> sourceIds, Set<Long> tableIds) {
+        LambdaQueryWrapper<IngIngestTask> q = new LambdaQueryWrapper<>();
+        if ((sourceIds == null || sourceIds.isEmpty()) && (tableIds == null || tableIds.isEmpty())) {
+            return List.of();
+        }
+        q.and(w -> {
+            boolean first = true;
+            if (sourceIds != null && !sourceIds.isEmpty()) {
+                w.in(IngIngestTask::getSourceId, sourceIds);
+                first = false;
+            }
+            if (tableIds != null && !tableIds.isEmpty()) {
+                if (!first) w.or();
+                w.in(IngIngestTask::getTableId, tableIds);
+            }
+        });
+        q.last("LIMIT 5");
+        return ingestTaskMapper.selectList(q).stream()
                 .map(t -> {
                     Map<String, Object> m = new LinkedHashMap<>();
                     m.put("taskName", t.getTaskName());

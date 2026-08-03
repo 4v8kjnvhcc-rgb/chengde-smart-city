@@ -103,8 +103,8 @@ public class AccessControlService {
     public Set<Long> effectiveProjectIds(UserPrincipal user) {
         Set<Long> ids = new HashSet<>();
 
-        // 系统管理员：可见全部登记项目（运维与验收需要；写授权仍受限）
-        if (user.isSystemAdmin()) {
+        // 系统管理员 / 平台管理员：可见全部登记项目
+        if (user.isSystemAdmin() || user.isPlatformAdmin()) {
             projectMapper.selectList(new LambdaQueryWrapper<IngProject>().select(IngProject::getId))
                     .forEach(p -> {
                         if (p.getId() != null) ids.add(p.getId());

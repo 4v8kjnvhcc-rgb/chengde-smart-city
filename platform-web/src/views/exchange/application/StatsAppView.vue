@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { defineAsyncComponent } from 'vue'
 import { useRouter } from 'vue-router'
+import UserAccountMenu from '@/components/layout/UserAccountMenu.vue'
 
 const props = defineProps<{ domain: 'base' | 'domain' }>()
 const router = useRouter()
@@ -15,6 +16,7 @@ const title = props.domain === 'base' ? '基础库统计分析应用' : '重点�
       <div class="app-shell__brand">{{ title }}</div>
       <div class="app-shell__actions">
         <button type="button" class="app-shell__btn app-shell__btn--ghost" @click="router.push('/dashboard')">返回总览</button>
+        <UserAccountMenu tone="onDark" />
       </div>
     </header>
     <main class="app-shell__main">
@@ -36,7 +38,7 @@ const title = props.domain === 'base' ? '基础库统计分析应用' : '重点�
   gap: 12px;
 }
 .app-shell__brand { font-size: 16px; font-weight: 700; white-space: nowrap; }
-.app-shell__actions { display: flex; gap: 8px; }
+.app-shell__actions { display: flex; align-items: center; gap: 8px; }
 .app-shell__btn {
   appearance: none;
   border: 1px solid rgba(255,255,255,.35);

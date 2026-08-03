@@ -2,6 +2,7 @@
 import { onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
+import UserAccountMenu from '@/components/layout/UserAccountMenu.vue'
 import { assessmentExternalUrl, openAssessmentExternal } from './application-nav'
 
 const router = useRouter()
@@ -28,6 +29,7 @@ onMounted(openExt)
       <div class="app-shell__actions">
         <button type="button" class="app-shell__btn" @click="router.push('/exchange/application/assessment-config')">考核配置</button>
         <button type="button" class="app-shell__btn app-shell__btn--ghost" @click="router.push('/dashboard')">返回总览</button>
+        <UserAccountMenu tone="onDark" />
       </div>
     </header>
     <main class="app-shell__main">
@@ -52,7 +54,7 @@ onMounted(openExt)
   padding: 0 20px;
 }
 .app-shell__brand { font-size: 16px; font-weight: 700; }
-.app-shell__actions { display: flex; gap: 8px; }
+.app-shell__actions { display: flex; align-items: center; gap: 8px; }
 .app-shell__btn {
   appearance: none;
   border: 1px solid rgba(255,255,255,.35);

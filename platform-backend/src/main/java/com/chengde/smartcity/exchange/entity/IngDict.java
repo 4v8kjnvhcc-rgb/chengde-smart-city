@@ -18,6 +18,8 @@ public class IngDict {
     private String remark;
     private Integer itemCount;
     private String status;
+    private String registerStatus;
+    private String rejectReason;
 
     public Long getId() { return id; }
     public void setId(Long id) { this.id = id; }
@@ -39,4 +41,8 @@ public class IngDict {
     public void setItemCount(Integer itemCount) { this.itemCount = itemCount; }
     public String getStatus() { return status; }
     public void setStatus(String status) { this.status = status; }
+    public String getRegisterStatus() { return registerStatus; }
+    public void setRegisterStatus(String registerStatus) { this.registerStatus = registerStatus; }
+    public String getRejectReason() { return rejectReason; }
+    public void setRejectReason(String rejectReason) { this.rejectReason = rejectReason; }
 }

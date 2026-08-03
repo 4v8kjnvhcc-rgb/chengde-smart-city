@@ -3,8 +3,22 @@ import { computed, onMounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import PageCard from '@/components/common/PageCard.vue'
 import { downloadText, ingestionApi, useIngestionLoading, type Dict, type DictItem } from '../useIngestionHub'
+import {
+  approveRegister,
+  canAuditRegister,
+  canEditRegister,
+  canSubmitRegister,
+  loadRegisterLogs,
+  registerStatusZh,
+  rejectRegister,
+  submitRegister,
+  useRegisterWorkflowRole,
+} from './register-workflow'
+import { useAuthStore } from '@/stores/auth'
 
 const props = defineProps<{ module: string }>()
+const auth = useAuthStore()
+const { canSubmit, canAudit } = useRegisterWorkflowRole()
 const { loading, loadError, withLoad } = useIngestionLoading()
 const dicts = ref<Dict[]>([])
 const selectedIds = ref<number[]>([])
@@ -25,6 +39,29 @@ const editingItemId = ref<number | null>(null)
 const importText = ref('')
 const exportDialog = ref(false)
 const exportIds = ref<number[]>([])
+
+const linkDialog = ref(false)
+const linkDict = ref<Dict | null>(null)
+const links = ref<Record<string, unknown>[]>([])
+const linkForm = reactive({
+  projectId: undefined as number | undefined,
+  systemId: undefined as number | undefined,
+  sourceId: undefined as number | undefined,
+  tableId: undefined as number | undefined,
+  columnId: undefined as number | undefined,
+})
+const linkProjects = ref<Array<{ id: number; projectName: string }>>([])
+const linkSystems = ref<Array<{ id: number; systemName: string }>>([])
+const linkSources = ref<Array<{ id: number; sourceName: string }>>([])
+const linkTables = ref<Array<{ id: number; tableName: string }>>([])
+const linkColumns = ref<Array<{ id: number; columnCode: string; columnName: string }>>([])
+
+const viewDialog = ref(false)
+const viewLogs = ref<Record<string, unknown>[]>([])
+const viewRow = ref<Dict | null>(null)
+const rejectVisible = ref(false)
+const rejectReason = ref('')
+const rejectTarget = ref<Dict | null>(null)
 
 const isManage = computed(() => props.module === 'm050')
 const title = computed(() => (isManage.value ? '数据字典管理' : '数据字典登记'))
@@ -176,6 +213,112 @@ async function removeItem(row: DictItem) {
   await reload()
 }
 
+async function openView(row: Dict) {
+  viewRow.value = row
+  viewLogs.value = await loadRegisterLogs('DICT', row.id)
+  viewDialog.value = true
+}
+
+async function doSubmit(row: Dict) {
+  await submitRegister('DICT', row.id)
+  ElMessage.success('已提交审核')
+  await reload()
+}
+
+async function doApprove(row: Dict) {
+  await approveRegister('DICT', row.id)
+  ElMessage.success('审核通过')
+  await reload()
+}
+
+function openReject(row: Dict) {
+  rejectTarget.value = row
+  rejectReason.value = ''
+  rejectVisible.value = true
+}
+
+async function doReject() {
+  if (!rejectTarget.value || !rejectReason.value.trim()) {
+    ElMessage.warning('请填写驳回原因')
+    return
+  }
+  await rejectRegister('DICT', rejectTarget.value.id, rejectReason.value.trim())
+  ElMessage.success('已驳回')
+  rejectVisible.value = false
+  await reload()
+}
+
+async function openLink(row: Dict) {
+  linkDict.value = row
+  links.value = (await ingestionApi.dictColumnLinks(row.id)).data || []
+  linkProjects.value = ((await ingestionApi.projects()).data || []) as Array<{ id: number; projectName: string }>
+  linkForm.projectId = undefined
+  linkForm.systemId = undefined
+  linkForm.sourceId = undefined
+  linkForm.tableId = undefined
+  linkForm.columnId = undefined
+  linkSystems.value = []
+  linkSources.value = []
+  linkTables.value = []
+  linkColumns.value = []
+  linkDialog.value = true
+}
+
+async function onLinkProjectChange(pid?: number) {
+  linkForm.systemId = undefined
+  linkForm.sourceId = undefined
+  linkForm.tableId = undefined
+  linkForm.columnId = undefined
+  linkSystems.value = pid ? ((await ingestionApi.systems(pid)).data || []) : []
+  linkSources.value = []
+  linkTables.value = []
+  linkColumns.value = []
+}
+
+async function onLinkSystemChange(sid?: number) {
+  linkForm.sourceId = undefined
+  linkForm.tableId = undefined
+  linkForm.columnId = undefined
+  if (!linkForm.projectId || !sid) {
+    linkSources.value = []
+    return
+  }
+  linkSources.value = ((await ingestionApi.dataSources(linkForm.projectId, sid)).data || []) as Array<{
+    id: number
+    sourceName: string
+  }>
+  linkTables.value = []
+  linkColumns.value = []
+}
+
+async function onLinkSourceChange(sourceId?: number) {
+  linkForm.tableId = undefined
+  linkForm.columnId = undefined
+  linkTables.value = sourceId ? ((await ingestionApi.tables(sourceId)).data || []) : []
+  linkColumns.value = []
+}
+
+async function onLinkTableChange(tableId?: number) {
+  linkForm.columnId = undefined
+  linkColumns.value = tableId ? ((await ingestionApi.columns(tableId)).data || []) : []
+}
+
+async function bindLink() {
+  if (!linkDict.value || !linkForm.columnId) {
+    ElMessage.warning('请选择到数据项')
+    return
+  }
+  await ingestionApi.bindDictColumn(linkDict.value.id, { columnId: linkForm.columnId })
+  ElMessage.success('已关联')
+  links.value = (await ingestionApi.dictColumnLinks(linkDict.value.id)).data || []
+}
+
+async function unbindLink(linkId: number) {
+  await ingestionApi.unbindDictColumn(linkId)
+  ElMessage.success('已取消关联')
+  if (linkDict.value) links.value = (await ingestionApi.dictColumnLinks(linkDict.value.id)).data || []
+}
+
 onMounted(reload)
 </script>
 
@@ -201,11 +344,37 @@ onMounted(reload)
         <el-table-column prop="dictName" label="字典名称" min-width="140" />
         <el-table-column prop="standardNo" label="标准依据" min-width="160" show-overflow-tooltip />
         <el-table-column prop="itemCount" label="字典项数" width="90" />
-        <el-table-column prop="remark" label="说明" min-width="140" show-overflow-tooltip />
-        <el-table-column label="操作" width="160" fixed="right">
+        <el-table-column label="状态" width="110">
           <template #default="{ row }">
-            <el-button link type="primary" @click="openEditDict(row)">编辑</el-button>
+            <el-tag size="small">{{ registerStatusZh(row.registerStatus) }}</el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column prop="remark" label="说明" min-width="120" show-overflow-tooltip />
+        <el-table-column label="操作" width="320" fixed="right">
+          <template #default="{ row }">
+            <el-button link type="primary" @click="openView(row)">查看</el-button>
+            <el-button
+              v-if="canEditRegister(row.registerStatus)"
+              link
+              type="primary"
+              @click="openEditDict(row)"
+            >
+              编辑
+            </el-button>
             <el-button link type="primary" @click="openItems(row)">字典项</el-button>
+            <el-button link type="primary" @click="openLink(row)">关联</el-button>
+            <el-button
+              v-if="canSubmit && canSubmitRegister(row.registerStatus)"
+              link
+              type="primary"
+              @click="doSubmit(row)"
+            >
+              提交
+            </el-button>
+            <template v-if="canAudit && canAuditRegister(row.registerStatus)">
+              <el-button link type="success" @click="doApprove(row)">审核</el-button>
+              <el-button link type="warning" @click="openReject(row)">驳回</el-button>
+            </template>
           </template>
         </el-table-column>
       </el-table>
@@ -263,6 +432,87 @@ onMounted(reload)
       <template #footer>
         <el-button @click="exportDialog = false">取消</el-button>
         <el-button type="primary" @click="doExport">导出</el-button>
+      </template>
+    </el-dialog>
+
+    <el-dialog v-model="linkDialog" title="关联数据项" width="720px" destroy-on-close>
+      <el-form label-width="96px">
+        <el-form-item label="项目">
+          <el-select v-model="linkForm.projectId" filterable clearable style="width:100%" @change="onLinkProjectChange">
+            <el-option v-for="p in linkProjects" :key="p.id" :label="p.projectName" :value="p.id" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="系统">
+          <el-select v-model="linkForm.systemId" filterable clearable style="width:100%" @change="onLinkSystemChange">
+            <el-option v-for="s in linkSystems" :key="s.id" :label="s.systemName" :value="s.id" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="数据库">
+          <el-select v-model="linkForm.sourceId" filterable clearable style="width:100%" @change="onLinkSourceChange">
+            <el-option v-for="s in linkSources" :key="s.id" :label="s.sourceName" :value="s.id" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="数据表">
+          <el-select v-model="linkForm.tableId" filterable clearable style="width:100%" @change="onLinkTableChange">
+            <el-option v-for="t in linkTables" :key="t.id" :label="t.tableName" :value="t.id" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="数据项">
+          <el-select v-model="linkForm.columnId" filterable clearable style="width:100%">
+            <el-option
+              v-for="c in linkColumns"
+              :key="c.id"
+              :label="`${c.columnCode}${c.columnName ? ' / ' + c.columnName : ''}`"
+              :value="c.id"
+            />
+          </el-select>
+        </el-form-item>
+        <el-form-item>
+          <el-button type="primary" @click="bindLink">关联</el-button>
+        </el-form-item>
+      </el-form>
+      <el-table :data="links" size="small" stripe>
+        <el-table-column prop="projectName" label="项目" min-width="100" />
+        <el-table-column prop="systemName" label="系统" min-width="100" />
+        <el-table-column prop="sourceName" label="数据库" min-width="100" />
+        <el-table-column prop="tableName" label="表" min-width="100" />
+        <el-table-column label="数据项" min-width="140">
+          <template #default="{ row }">{{ row.columnCode }} {{ row.columnName ? '/ ' + row.columnName : '' }}</template>
+        </el-table-column>
+        <el-table-column label="操作" width="90">
+          <template #default="{ row }">
+            <el-button link type="danger" @click="unbindLink(row.id as number)">取消关联</el-button>
+          </template>
+        </el-table-column>
+      </el-table>
+    </el-dialog>
+
+    <el-dialog v-model="viewDialog" title="查看字典" width="640px" destroy-on-close>
+      <el-descriptions v-if="viewRow" :column="1" border size="small">
+        <el-descriptions-item label="名称">{{ viewRow.dictName }}</el-descriptions-item>
+        <el-descriptions-item label="状态">{{ registerStatusZh(viewRow.registerStatus) }}</el-descriptions-item>
+        <el-descriptions-item v-if="viewRow.rejectReason" label="驳回原因">{{ viewRow.rejectReason }}</el-descriptions-item>
+        <el-descriptions-item label="标准依据">{{ viewRow.standardNo || '—' }}</el-descriptions-item>
+      </el-descriptions>
+      <h4 style="margin:16px 0 8px">提交 / 审核记录</h4>
+      <el-table :data="viewLogs" size="small" stripe max-height="240">
+        <el-table-column prop="action" label="动作" width="90" />
+        <el-table-column label="状态" min-width="140">
+          <template #default="{ row }">
+            {{ registerStatusZh(row.fromStatus as string) }} → {{ registerStatusZh(row.toStatus as string) }}
+          </template>
+        </el-table-column>
+        <el-table-column prop="commentText" label="说明" min-width="120" />
+        <el-table-column prop="operatorName" label="操作人" width="90" />
+        <el-table-column prop="createdAt" label="时间" width="160" />
+      </el-table>
+    </el-dialog>
+
+    <el-dialog v-model="rejectVisible" title="驳回" width="420px" destroy-on-close>
+      <el-input v-model="rejectReason" type="textarea" :rows="3" placeholder="驳回原因（必填）" />
+      <template #footer>
+        <el-button @click="rejectVisible = false">取消</el-button>
+        <el-button type="danger" @click="doReject">确认驳回</el-button>
       </template>
     </el-dialog>
   </div>
