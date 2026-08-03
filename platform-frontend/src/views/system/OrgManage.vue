@@ -434,7 +434,6 @@ onMounted(async () => {
   <div>
     <PageHeader title="组织与账号" description="在组织树中点选单位，查看并管理该单位下的账号、角色与菜单权限">
       <el-button
-        v-if="auth.hasPermission('system:user:add')"
         type="primary"
         :disabled="!selectedOrgId"
         @click="openCreateUser"
@@ -456,7 +455,6 @@ onMounted(async () => {
         </div>
         <div class="org-toolbar">
           <el-button
-            v-if="auth.hasPermission('system:org:add')"
             type="primary"
             size="small"
             :disabled="!selectedOrgId"
@@ -465,7 +463,6 @@ onMounted(async () => {
             新增下级
           </el-button>
           <el-button
-            v-if="auth.hasPermission('system:org:edit')"
             size="small"
             :disabled="!selectedOrgId"
             @click="openEditOrg"
@@ -473,7 +470,6 @@ onMounted(async () => {
             编辑
           </el-button>
           <el-button
-            v-if="auth.hasPermission('system:org:delete')"
             type="danger"
             plain
             size="small"
@@ -563,7 +559,6 @@ onMounted(async () => {
             <el-table-column label="操作" width="280" fixed="right">
               <template #default="{ row }">
                 <el-button
-                  v-if="auth.hasPermission('system:user:edit')"
                   link
                   type="primary"
                   @click="openEditUser(row)"
@@ -572,7 +567,6 @@ onMounted(async () => {
                 </el-button>
                 <el-button link type="primary" @click="viewUserPerms(row)">看权限</el-button>
                 <el-button
-                  v-if="auth.hasPermission('system:user:edit')"
                   link
                   type="primary"
                   @click="resetPassword(row)"
@@ -580,7 +574,7 @@ onMounted(async () => {
                   重置密码
                 </el-button>
                 <el-button
-                  v-if="auth.hasPermission('system:user:delete') && row.status === 1"
+                  v-if="row.status === 1"
                   link
                   type="danger"
                   @click="disableUser(row)"
@@ -641,7 +635,6 @@ onMounted(async () => {
         <el-button @click="orgEditVisible = false">取消</el-button>
         <el-button type="primary" :loading="submitting" @click="submitEditOrg">保存</el-button>
         <el-button
-          v-if="auth.hasPermission('system:org:delete')"
           type="danger"
           plain
           @click="removeOrg"

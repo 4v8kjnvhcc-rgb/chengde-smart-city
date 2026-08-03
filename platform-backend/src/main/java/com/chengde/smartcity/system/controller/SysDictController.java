@@ -43,14 +43,14 @@ public class SysDictController {
     }
 
     @PostMapping
-    @PreAuthorize("hasRole('SYSTEM_ADMIN') or hasAuthority('system:dict:add') or hasAuthority('hub:analytics:support:sys:dict')")
+    @PreAuthorize("hasRole('SYSTEM_ADMIN') or hasAuthority('system:dict:list') or hasAuthority('hub:analytics:support:sys:dict')")
     public ApiResponse<Long> create(@AuthenticationPrincipal UserPrincipal principal,
                                     @Valid @RequestBody SysDictRequest request) {
         return ApiResponse.ok(dictService.createDict(principal, request));
     }
 
     @PutMapping("/{id}")
-    @PreAuthorize("hasRole('SYSTEM_ADMIN') or hasAuthority('system:dict:edit') or hasAuthority('hub:analytics:support:sys:dict')")
+    @PreAuthorize("hasRole('SYSTEM_ADMIN') or hasAuthority('system:dict:list') or hasAuthority('hub:analytics:support:sys:dict')")
     public ApiResponse<Void> update(@AuthenticationPrincipal UserPrincipal principal,
                                     @PathVariable Long id,
                                     @Valid @RequestBody SysDictRequest request) {
@@ -59,7 +59,7 @@ public class SysDictController {
     }
 
     @DeleteMapping("/{id}")
-    @PreAuthorize("hasRole('SYSTEM_ADMIN') or hasAuthority('system:dict:delete') or hasAuthority('hub:analytics:support:sys:dict')")
+    @PreAuthorize("hasRole('SYSTEM_ADMIN') or hasAuthority('system:dict:list') or hasAuthority('hub:analytics:support:sys:dict')")
     public ApiResponse<Void> delete(@AuthenticationPrincipal UserPrincipal principal,
                                     @PathVariable Long id) {
         dictService.deleteDict(principal, id);
@@ -73,7 +73,7 @@ public class SysDictController {
     }
 
     @PostMapping("/{id}/items")
-    @PreAuthorize("hasRole('SYSTEM_ADMIN') or hasAuthority('system:dict:add') or hasAuthority('system:dict:edit') or hasAuthority('hub:analytics:support:sys:dict')")
+    @PreAuthorize("hasRole('SYSTEM_ADMIN') or hasAuthority('system:dict:list') or hasAuthority('hub:analytics:support:sys:dict')")
     public ApiResponse<Long> createItem(@AuthenticationPrincipal UserPrincipal principal,
                                         @PathVariable Long id,
                                         @Valid @RequestBody SysDictItemRequest request) {
@@ -81,7 +81,7 @@ public class SysDictController {
     }
 
     @PutMapping("/items/{itemId}")
-    @PreAuthorize("hasRole('SYSTEM_ADMIN') or hasAuthority('system:dict:edit') or hasAuthority('hub:analytics:support:sys:dict')")
+    @PreAuthorize("hasRole('SYSTEM_ADMIN') or hasAuthority('system:dict:list') or hasAuthority('hub:analytics:support:sys:dict')")
     public ApiResponse<Void> updateItem(@AuthenticationPrincipal UserPrincipal principal,
                                         @PathVariable Long itemId,
                                         @Valid @RequestBody SysDictItemRequest request) {
@@ -90,7 +90,7 @@ public class SysDictController {
     }
 
     @DeleteMapping("/items/{itemId}")
-    @PreAuthorize("hasRole('SYSTEM_ADMIN') or hasAuthority('system:dict:delete') or hasAuthority('hub:analytics:support:sys:dict')")
+    @PreAuthorize("hasRole('SYSTEM_ADMIN') or hasAuthority('system:dict:list') or hasAuthority('hub:analytics:support:sys:dict')")
     public ApiResponse<Void> deleteItem(@AuthenticationPrincipal UserPrincipal principal,
                                         @PathVariable Long itemId) {
         dictService.deleteItem(principal, itemId);

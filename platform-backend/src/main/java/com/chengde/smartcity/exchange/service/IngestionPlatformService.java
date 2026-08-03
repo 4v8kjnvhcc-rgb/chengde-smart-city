@@ -253,9 +253,6 @@ public class IngestionPlatformService {
 
     @Transactional
     public void deleteProject(UserPrincipal operator, Long id) {
-        if (!operator.isSystemAdmin() && !operator.getPermissions().contains("exchange:project:delete")) {
-            throw new BusinessException(403, "仅系统管理员可删除登记项目");
-        }
         IngProject p = projectMapper.selectById(id);
         if (p == null) {
             throw new BusinessException(404, "项目不存在");

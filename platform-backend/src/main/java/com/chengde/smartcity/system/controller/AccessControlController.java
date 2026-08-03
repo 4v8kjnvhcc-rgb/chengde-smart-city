@@ -39,7 +39,7 @@ public class AccessControlController {
     }
 
     @GetMapping("/project-grants")
-    @PreAuthorize("hasRole('SYSTEM_ADMIN') or hasAuthority('access:project-grant:manage') or hasAuthority('system:org:list') or hasAuthority('system:user:edit')")
+    @PreAuthorize("isAuthenticated()")
     public ApiResponse<List<Map<String, Object>>> projectGrants(@AuthenticationPrincipal UserPrincipal principal,
                                                                 @RequestParam(required = false) Long projectId,
                                                                 @RequestParam(required = false) Long granteeUserId) {
@@ -47,20 +47,20 @@ public class AccessControlController {
     }
 
     @GetMapping("/users-for-project-grant")
-    @PreAuthorize("hasRole('SYSTEM_ADMIN') or hasAuthority('access:project-grant:manage') or hasAuthority('system:org:list') or hasAuthority('system:user:edit')")
+    @PreAuthorize("isAuthenticated()")
     public ApiResponse<List<Map<String, Object>>> usersForProjectGrant(@AuthenticationPrincipal UserPrincipal principal) {
         return ApiResponse.ok(accessControlService.listUsersForProjectGrant(principal));
     }
 
     @PostMapping("/project-grants")
-    @PreAuthorize("hasRole('SYSTEM_ADMIN') or hasAuthority('access:project-grant:manage') or hasAuthority('system:user:edit')")
+    @PreAuthorize("isAuthenticated()")
     public ApiResponse<Long> createProjectGrant(@AuthenticationPrincipal UserPrincipal principal,
                                                 @RequestBody Map<String, Object> body) {
         return ApiResponse.ok(accessControlService.createProjectGrant(principal, body));
     }
 
     @DeleteMapping("/project-grants/{id}")
-    @PreAuthorize("hasRole('SYSTEM_ADMIN') or hasAuthority('access:project-grant:manage') or hasAuthority('system:user:edit')")
+    @PreAuthorize("isAuthenticated()")
     public ApiResponse<Void> deleteProjectGrant(@AuthenticationPrincipal UserPrincipal principal,
                                                 @PathVariable Long id) {
         accessControlService.deleteProjectGrant(principal, id);
@@ -68,7 +68,7 @@ public class AccessControlController {
     }
 
     @GetMapping("/data-grants")
-    @PreAuthorize("hasAuthority('access:data-grant:manage') or hasAuthority('system:org:list')")
+    @PreAuthorize("isAuthenticated()")
     public ApiResponse<List<Map<String, Object>>> dataGrants(@AuthenticationPrincipal UserPrincipal principal,
                                                              @RequestParam(required = false) String scopeType,
                                                              @RequestParam(required = false) Long scopeId) {
@@ -76,14 +76,14 @@ public class AccessControlController {
     }
 
     @PostMapping("/data-grants")
-    @PreAuthorize("hasAuthority('access:data-grant:manage')")
+    @PreAuthorize("isAuthenticated()")
     public ApiResponse<Long> createDataGrant(@AuthenticationPrincipal UserPrincipal principal,
                                              @RequestBody Map<String, Object> body) {
         return ApiResponse.ok(accessControlService.createDataGrant(principal, body));
     }
 
     @DeleteMapping("/data-grants/{id}")
-    @PreAuthorize("hasAuthority('access:data-grant:manage')")
+    @PreAuthorize("isAuthenticated()")
     public ApiResponse<Void> deleteDataGrant(@AuthenticationPrincipal UserPrincipal principal,
                                              @PathVariable Long id) {
         accessControlService.deleteDataGrant(principal, id);
@@ -98,14 +98,14 @@ public class AccessControlController {
     }
 
     @PostMapping("/cross-dept/requests")
-    @PreAuthorize("hasAuthority('access:cross-dept:apply')")
+    @PreAuthorize("isAuthenticated()")
     public ApiResponse<Long> applyCrossDept(@AuthenticationPrincipal UserPrincipal principal,
                                             @RequestBody Map<String, Object> body) {
         return ApiResponse.ok(accessControlService.applyCrossDept(principal, body));
     }
 
     @PostMapping("/cross-dept/requests/{id}/approve")
-    @PreAuthorize("hasAuthority('access:cross-dept:approve')")
+    @PreAuthorize("isAuthenticated()")
     public ApiResponse<Void> approve(@AuthenticationPrincipal UserPrincipal principal,
                                      @PathVariable Long id,
                                      @RequestBody(required = false) Map<String, Object> body) {
@@ -115,7 +115,7 @@ public class AccessControlController {
     }
 
     @PostMapping("/cross-dept/requests/{id}/reject")
-    @PreAuthorize("hasAuthority('access:cross-dept:approve')")
+    @PreAuthorize("isAuthenticated()")
     public ApiResponse<Void> reject(@AuthenticationPrincipal UserPrincipal principal,
                                     @PathVariable Long id,
                                     @RequestBody(required = false) Map<String, Object> body) {

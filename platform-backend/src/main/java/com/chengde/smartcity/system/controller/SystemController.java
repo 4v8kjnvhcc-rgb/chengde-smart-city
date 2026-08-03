@@ -68,7 +68,7 @@ public class SystemController {
     }
 
     @GetMapping("/menus")
-    @PreAuthorize("hasRole('SYSTEM_ADMIN') or hasAuthority('system:menu:list') or hasAuthority('system:role:list') or hasAuthority('system:org:list') or hasAuthority('system:role:edit')")
+    @PreAuthorize("hasRole('SYSTEM_ADMIN') or hasAuthority('system:menu:list') or hasAuthority('system:role:list') or hasAuthority('system:org:list')")
     public ApiResponse<List<SysMenu>> allMenus(
             @RequestParam(required = false, defaultValue = "false") boolean manage) {
         return ApiResponse.ok(manage ? menuService.listForManage() : menuService.listAll());
@@ -130,7 +130,7 @@ public class SystemController {
     }
 
     @GetMapping("/users")
-    @PreAuthorize("hasAuthority('system:user:list')")
+    @PreAuthorize("hasRole('SYSTEM_ADMIN') or hasAuthority('system:user:list')")
     public ApiResponse<Page<UserListItem>> users(
             @AuthenticationPrincipal UserPrincipal principal,
             @RequestParam(defaultValue = "1") int page,
@@ -141,14 +141,14 @@ public class SystemController {
     }
 
     @PostMapping("/users")
-    @PreAuthorize("hasAuthority('system:user:add')")
+    @PreAuthorize("hasRole('SYSTEM_ADMIN') or hasAuthority('system:user:list')")
     public ApiResponse<Long> createUser(@AuthenticationPrincipal UserPrincipal principal,
                                         @Valid @RequestBody UserCreateRequest request) {
         return ApiResponse.ok(userService.create(principal, request));
     }
 
     @PutMapping("/users/{id}")
-    @PreAuthorize("hasAuthority('system:user:edit')")
+    @PreAuthorize("hasRole('SYSTEM_ADMIN') or hasAuthority('system:user:list')")
     public ApiResponse<Void> updateUser(@AuthenticationPrincipal UserPrincipal principal,
                                         @PathVariable Long id,
                                         @RequestBody UserUpdateRequest request) {
@@ -157,7 +157,7 @@ public class SystemController {
     }
 
     @DeleteMapping("/users/{id}")
-    @PreAuthorize("hasAuthority('system:user:delete')")
+    @PreAuthorize("hasRole('SYSTEM_ADMIN') or hasAuthority('system:user:list')")
     public ApiResponse<Void> disableUser(@AuthenticationPrincipal UserPrincipal principal,
                                          @PathVariable Long id) {
         userService.disable(principal, id);
@@ -165,7 +165,7 @@ public class SystemController {
     }
 
     @PutMapping("/users/{id}/password")
-    @PreAuthorize("hasAuthority('system:user:edit')")
+    @PreAuthorize("hasRole('SYSTEM_ADMIN') or hasAuthority('system:user:list')")
     public ApiResponse<Void> resetPassword(@AuthenticationPrincipal UserPrincipal principal,
                                            @PathVariable Long id,
                                            @RequestBody Map<String, Object> body) {
@@ -178,7 +178,7 @@ public class SystemController {
     }
 
     @GetMapping("/users/{id}/roles")
-    @PreAuthorize("hasAuthority('system:user:query') or hasAuthority('system:user:list') or hasAuthority('system:user:edit')")
+    @PreAuthorize("hasRole('SYSTEM_ADMIN') or hasAuthority('system:user:list')")
     public ApiResponse<List<Long>> userRoles(@PathVariable Long id) {
         return ApiResponse.ok(userService.roleIdsOfUser(id));
     }
@@ -191,14 +191,14 @@ public class SystemController {
     }
 
     @PostMapping("/roles")
-    @PreAuthorize("hasRole('SYSTEM_ADMIN') or hasAuthority('system:role:add')")
+    @PreAuthorize("hasRole('SYSTEM_ADMIN') or hasAuthority('system:role:list')")
     public ApiResponse<Long> createRole(@AuthenticationPrincipal UserPrincipal principal,
                                         @Valid @RequestBody RoleCreateRequest request) {
         return ApiResponse.ok(roleService.create(principal, request));
     }
 
     @PutMapping("/roles/{id}")
-    @PreAuthorize("hasRole('SYSTEM_ADMIN') or hasAuthority('system:role:edit')")
+    @PreAuthorize("hasRole('SYSTEM_ADMIN') or hasAuthority('system:role:list')")
     public ApiResponse<Void> updateRole(@AuthenticationPrincipal UserPrincipal principal,
                                         @PathVariable Long id,
                                         @RequestBody RoleUpdateRequest request) {
@@ -207,7 +207,7 @@ public class SystemController {
     }
 
     @DeleteMapping("/roles/{id}")
-    @PreAuthorize("hasRole('SYSTEM_ADMIN') or hasAuthority('system:role:delete')")
+    @PreAuthorize("hasRole('SYSTEM_ADMIN') or hasAuthority('system:role:list')")
     public ApiResponse<Void> deleteRole(@AuthenticationPrincipal UserPrincipal principal,
                                         @PathVariable Long id) {
         roleService.delete(principal, id);
@@ -215,7 +215,7 @@ public class SystemController {
     }
 
     @PutMapping("/roles/{id}/menus")
-    @PreAuthorize("hasRole('SYSTEM_ADMIN') or hasAuthority('system:role:list') or hasAuthority('system:role:edit') or hasAuthority('system:org:list')")
+    @PreAuthorize("hasRole('SYSTEM_ADMIN') or hasAuthority('system:role:list') or hasAuthority('system:org:list')")
     public ApiResponse<Void> assignRoleMenus(@AuthenticationPrincipal UserPrincipal principal,
                                              @PathVariable Long id,
                                              @Valid @RequestBody RoleMenuAssignRequest request) {
@@ -230,20 +230,20 @@ public class SystemController {
     }
 
     @GetMapping("/orgs")
-    @PreAuthorize("hasAuthority('system:org:list')")
+    @PreAuthorize("hasRole('SYSTEM_ADMIN') or hasAuthority('system:org:list')")
     public ApiResponse<List<SysOrg>> orgs() {
         return ApiResponse.ok(orgService.list());
     }
 
     @PostMapping("/orgs")
-    @PreAuthorize("hasAuthority('system:org:add')")
+    @PreAuthorize("hasRole('SYSTEM_ADMIN') or hasAuthority('system:org:list')")
     public ApiResponse<Long> createOrg(@AuthenticationPrincipal UserPrincipal principal,
                                        @Valid @RequestBody OrgCreateRequest request) {
         return ApiResponse.ok(orgService.create(principal, request));
     }
 
     @PutMapping("/orgs/{id}")
-    @PreAuthorize("hasAuthority('system:org:edit')")
+    @PreAuthorize("hasRole('SYSTEM_ADMIN') or hasAuthority('system:org:list')")
     public ApiResponse<Void> updateOrg(@AuthenticationPrincipal UserPrincipal principal,
                                        @PathVariable Long id,
                                        @RequestBody OrgUpdateRequest request) {
@@ -252,7 +252,7 @@ public class SystemController {
     }
 
     @DeleteMapping("/orgs/{id}")
-    @PreAuthorize("hasAuthority('system:org:delete')")
+    @PreAuthorize("hasRole('SYSTEM_ADMIN') or hasAuthority('system:org:list')")
     public ApiResponse<Void> deleteOrg(@AuthenticationPrincipal UserPrincipal principal,
                                        @PathVariable Long id) {
         orgService.delete(principal, id);

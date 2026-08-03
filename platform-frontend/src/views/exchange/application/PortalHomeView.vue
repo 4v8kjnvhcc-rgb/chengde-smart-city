@@ -219,9 +219,6 @@ function applyFromCatalog(row: CatalogRow) {
 }
 
 async function submitSubscription() {
-  if (!auth.hasPermission('portal:subscription:create') && auth.permissions.length) {
-    // 无细权限时：已登录仍允许（兼容未跑 V28 的环境）
-  }
   if (!subForm.catalogId) return ElMessage.warning('请选择目录')
   await api.post('/exchange/portal/subscriptions', subForm)
   ElMessage.success('订阅申请已提交')

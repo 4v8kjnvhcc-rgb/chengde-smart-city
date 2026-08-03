@@ -2,7 +2,6 @@
 import { computed, nextTick, onMounted, reactive, ref } from 'vue'
 import api from '@/api/http'
 import { ElMessage, ElMessageBox, type ElTree } from 'element-plus'
-import { useAuthStore } from '@/stores/auth'
 import PageHeader from '@/components/common/PageHeader.vue'
 import PageCard from '@/components/common/PageCard.vue'
 import { statusLabel } from '@/utils/status-label'
@@ -30,7 +29,6 @@ interface TreeNode {
   children?: TreeNode[]
 }
 
-const auth = useAuthStore()
 const roles = ref<Role[]>([])
 const loading = ref(false)
 const keyword = ref('')
@@ -50,9 +48,10 @@ const form = reactive({
   status: 1,
 })
 
-const canAdd = computed(() => auth.isSystemAdmin || auth.hasPermission('system:role:add'))
-const canEdit = computed(() => auth.isSystemAdmin || auth.hasPermission('system:role:edit'))
-const canDelete = computed(() => auth.isSystemAdmin || auth.hasPermission('system:role:delete'))
+/** 有角色管理菜单即可增删改（内置角色仍不可删） */
+const canAdd = computed(() => true)
+const canEdit = computed(() => true)
+const canDelete = computed(() => true)
 
 function isBuiltin(row: Role) {
   return row.roleCode === 'SYSTEM_ADMIN' || row.roleType === 1

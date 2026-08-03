@@ -1,5 +1,4 @@
 import { computed } from 'vue'
-import { useAuthStore } from '@/stores/auth'
 import { statusLabel } from '@/utils/status-label'
 import api from '@/api/http'
 
@@ -39,14 +38,13 @@ export function canAuditRegister(status?: string | null) {
   return s === 'PENDING_REVIEW' || s === 'PENDING' || s === 'PENDING_ARCHIVE'
 }
 
+/**
+ * 角色只控菜单显隐：能进登记页则提交/审核按钮都可见，
+ * 是否可点仍由业务状态（草稿/待审核）决定。
+ */
 export function useRegisterWorkflowRole() {
-  const auth = useAuthStore()
-  const canSubmit = computed(
-    () => auth.hasPermission('hub:ingestion:register:submit') || auth.isSystemAdmin,
-  )
-  const canAudit = computed(
-    () => auth.hasPermission('hub:ingestion:register:audit') || auth.isSystemAdmin,
-  )
+  const canSubmit = computed(() => true)
+  const canAudit = computed(() => true)
   return { canSubmit, canAudit }
 }
 

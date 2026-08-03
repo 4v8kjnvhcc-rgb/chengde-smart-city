@@ -20,9 +20,12 @@ const denied = ref(false)
 const canAccess = computed(() =>
   auth.hasPermission('system:tag:list')
   || auth.hasPermission('system:tag:edit')
-  || auth.hasPermission('system:tag:query'),
+  || auth.hasPermission('system:tag:query')
+  || auth.isSystemAdmin
+  || auth.permissions.length === 0,
 )
-const canEdit = computed(() => auth.hasPermission('system:tag:edit'))
+/** 能进标签库页即可维护扩展标签 */
+const canEdit = computed(() => canAccess.value)
 
 const filteredTree = computed(() => {
   const kw = keyword.value.trim().toLowerCase()

@@ -49,18 +49,26 @@ const form = reactive({
 })
 
 const formRules = {
-  routeName: [{ required: true, message: '请输入名称', trigger: 'blur' }],
   menuName: [{ required: true, message: '请输入标题', trigger: 'blur' }],
   path: [
     {
       validator: (_: unknown, v: string, cb: (e?: Error) => void) => {
-        if (form.menuType === 1) return cb()
+        if (form.menuType === 1 || form.menuType === 3) return cb()
         if (!v?.trim()) return cb(new Error('请输入访问地址'))
         cb()
       },
       trigger: 'blur',
     },
   ],
+}
+
+function resolveRouteName(row?: Pick<RegisterMenuRow, 'routeName' | 'permission' | 'mCode' | 'id' | 'menuName'>, fallbackTitle = '') {
+  const fromRow = row?.routeName?.trim() || row?.permission?.trim() || row?.mCode?.trim()
+  if (fromRow) return fromRow
+  const title = (fallbackTitle || row?.menuName || '').trim()
+  if (title) return title
+  if (row?.id != null) return `menu_${row.id}`
+  return ''
 }
 
 const formRef = ref<{ validate: () => Promise<void>; resetFields: () => void } | null>(null)
@@ -178,7 +186,7 @@ function openEdit(row: RegisterMenuRow) {
   Object.assign(form, {
     parentId: row.parentId,
     sortOrder: row.sortOrder ?? 0,
-    routeName: row.routeName || '',
+    routeName: resolveRouteName(row),
     menuName: row.menuName || '',
     icon: row.icon || '',
     path: row.path || '',
@@ -193,11 +201,20 @@ async function submitForm() {
   await formRef.value?.validate()
   saving.value = true
   try {
+    const menuName = form.menuName.trim()
+    const routeName =
+      form.routeName.trim() ||
+      resolveRouteName(
+        editingId.value != null
+          ? { id: editingId.value, menuName, routeName: form.routeName, permission: undefined }
+          : { menuName, routeName: form.routeName },
+        menuName,
+      )
     const body = {
       parentId: form.parentId,
       sortOrder: form.sortOrder,
-      routeName: form.routeName.trim(),
-      menuName: form.menuName.trim(),
+      routeName,
+      menuName,
       icon: form.icon,
       path: form.path,
       component: form.component,
@@ -231,7 +248,11 @@ async function removeRows(list: RegisterMenuRow[]) {
     ElMessage.warning('系统初始化菜单不可删除；自定义菜单可删')
     return
   }
-  await ElMessageBox.confirm(`确认删除选中的 ${list.length} 项？`, '删除确认', { type: 'warning' })
+  try {
+    await ElMessageBox.confirm(`确认删除选中的 ${list.length} 项？`, '删除确认', { type: 'warning' })
+  } catch {
+    return
+  }
   try {
     await api.delete('/system/menus/register-scope', { data: { ids: list.map((r) => r.id) } })
     ElMessage.success('删除成功')
@@ -302,7 +323,7 @@ onMounted(load)
           <el-input-number v-model="form.sortOrder" :min="0" :max="9999" controls-position="right" />
         </el-form-item>
         <el-form-item label="名称" prop="routeName">
-          <el-input v-model="form.routeName" placeholder="如 MenuManage" />
+          <el-input v-model="form.routeName" placeholder="可选；空则按标题自动生成" />
         </el-form-item>
         <el-form-item label="标题" prop="menuName">
           <el-input v-model="form.menuName" placeholder="显示标题" />
@@ -311,7 +332,7 @@ onMounted(load)
           <el-input v-model="form.icon" placeholder="可选" />
         </el-form-item>
         <el-form-item label="访问地址" prop="path">
-          <el-input v-model="form.path" placeholder="/exchange/ingestion?system=register&module=..." />
+          <el-input v-model="form.path" placeholder="目录/按钮可空；菜单项如 /exchange/ingestion?system=register&module=..." />
         </el-form-item>
         <el-form-item label="文件地址">
           <el-input v-model="form.component" placeholder="组件路径，可空" />
