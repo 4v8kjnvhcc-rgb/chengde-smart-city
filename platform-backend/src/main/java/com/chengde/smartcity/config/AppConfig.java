@@ -10,7 +10,7 @@ import org.springframework.context.annotation.Configuration;
 
 @Configuration
 @MapperScan("com.chengde.smartcity.**.mapper")
-@EnableConfigurationProperties({JwtProperties.class, SecurityProperties.class})
+@EnableConfigurationProperties({JwtProperties.class, SecurityProperties.class, PortalSsoProperties.class})
 public class AppConfig {
 
     @Bean

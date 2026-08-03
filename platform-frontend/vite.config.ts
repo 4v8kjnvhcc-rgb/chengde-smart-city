@@ -57,7 +57,7 @@ async function probeDevPort() {
   } catch {
     /* not listening or netstat failed */
   }
-  const isThisProject = Boolean(occupant.cmd?.includes('chengde-smart-city\\platform-web'))
+  const isThisProject = Boolean(occupant.cmd?.includes('chengde-smart-city\\platform-frontend'))
   const isOtherVite = Boolean(occupant.cmd?.toLowerCase().includes('vite'))
   agentLog('B', 'port_occupant', { ...occupant, isThisProject, isOtherVite })
   agentLog('C', 'strictPort_will_hard_fail', { strictPort: true, willFailIfInUse: inUse && true })

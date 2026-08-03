@@ -57,6 +57,8 @@ copy local.env.example local.env
 
 `application-dev.yml` 会读取项目根目录 `local.env`（键值对格式）。
 
+门户 → 考核评估 **票据 SSO**：默认密钥已写入 `application-*.yml` 的 `app.portal-sso.secret`（与考核 `assessment.portal-sso.secret` 相同）。门户配置中「考核评估系统」设地址为考核落地页、SSO 模式「门户票据」、打开方式「新窗口」。生产改地址即可，密钥可用 `PORTAL_SSO_SECRET` 覆盖。
+
 ## 4. 启动 Redis
 
 Redis 安装后默认服务名 **Redis**，或：
@@ -79,7 +81,7 @@ Flyway 自动执行 V1～V3（建表 + 菜单/测试账号）。
 ## 6. 启动前端
 
 ```powershell
-cd .\chengde-smart-city\platform-web\
+cd .\chengde-smart-city\platform-frontend\
 npm install
 npm run dev
 ```

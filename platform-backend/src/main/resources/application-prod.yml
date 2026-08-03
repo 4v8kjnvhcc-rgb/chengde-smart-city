@@ -24,6 +24,10 @@ app:
     secret: ${APP_JWT_SECRET:change-me-in-production-use-256bit-secret-key-here}
   security:
     credential-key: ${CREDENTIAL_KEY:chengde-smartcity-credential-key}
+  portal-sso:
+    enabled: ${PORTAL_SSO_ENABLED:true}
+    secret: ${PORTAL_SSO_SECRET:chengde-portal-assessment-sso-shared-secret-2026}
+    ticket-ttl-seconds: ${PORTAL_SSO_TTL_SECONDS:60}
   integration:
     enabled: ${INTEGRATION_ENABLED:true}
     demo-fallback: ${INTEGRATION_DEMO_FALLBACK:false}

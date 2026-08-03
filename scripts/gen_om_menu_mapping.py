@@ -444,7 +444,7 @@ def generate_md(rows: list[dict], today: str) -> str:
         "| 功能模块 | D05 模块名 |",
         "| 门户父菜单 | 二级菜单块（元数据/质量/目录/治理任务） |",
         "| 门户菜单名 | 甲方可见叶子菜单名（= 功能模块名） |",
-        "| 门户路由 | `platform-web` 路由 |",
+        "| 门户路由 | `platform-frontend` 路由 |",
         "| OM 原生入口 | OpenMetadata 1.12 侧栏/页面 |",
         "| OM 路由/API | UI path 或 REST 前缀（部署后核对） |",
         "| 集成方式 | 纯代理 / 代理+自研扩展 |",

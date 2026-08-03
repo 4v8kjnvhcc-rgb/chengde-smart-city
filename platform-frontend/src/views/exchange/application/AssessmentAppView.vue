@@ -3,18 +3,20 @@ import { onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import UserAccountMenu from '@/components/layout/UserAccountMenu.vue'
-import { assessmentExternalUrl, openAssessmentExternal } from './application-nav'
+import { assessmentExternalUrl, openAssessmentWithPortalSso } from './application-nav'
 
 const router = useRouter()
 const hint = ref('')
+const DEFAULT_LANDING = 'http://127.0.0.1:18081/assessment/index#/dashboard'
 
-function openExt() {
-  const r = openAssessmentExternal()
+async function openExt() {
+  const landing = assessmentExternalUrl() || DEFAULT_LANDING
+  const r = await openAssessmentWithPortalSso(landing)
   if (r.ok) {
-    hint.value = '已在新窗口打开考核评估系统'
+    hint.value = '已在新窗口打开考核评估系统（门户票据 SSO）'
     ElMessage.success(hint.value)
   } else {
-    hint.value = '尚未配置考核评估外系统地址（VITE_ASSESSMENT_EXTERNAL_URL）'
+    hint.value = r.message || '单点登录失败'
     ElMessage.warning(hint.value)
   }
 }
@@ -33,11 +35,11 @@ onMounted(openExt)
       </div>
     </header>
     <main class="app-shell__main">
-      <el-alert :title="hint || '考核评估为外系统，请在新窗口中使用'" type="info" show-icon :closable="false" />
+      <el-alert :title="hint || '考核评估为外系统，请通过门户票据 SSO 在新窗口中使用'" type="info" show-icon :closable="false" />
       <div class="actions">
         <el-button type="primary" @click="openExt">打开考核评估系统</el-button>
       </div>
-      <p v-if="!assessmentExternalUrl()" class="muted">配置项：<code>VITE_ASSESSMENT_EXTERNAL_URL</code></p>
+      <p class="muted">落地地址优先门户配置；也可设 <code>VITE_ASSESSMENT_EXTERNAL_URL</code></p>
     </main>
   </div>
 </template>

@@ -10,8 +10,8 @@ import sys
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 CATALOG = os.path.join(ROOT, "catalog")
-NAV_TS = os.path.join(ROOT, "platform-web", "src", "views", "exchange", "ingestion", "ingestion-nav.ts")
-APP_NAV_TS = os.path.join(ROOT, "platform-web", "src", "views", "exchange", "application", "application-nav.ts")
+NAV_TS = os.path.join(ROOT, "platform-frontend", "src", "views", "exchange", "ingestion", "ingestion-nav.ts")
+APP_NAV_TS = os.path.join(ROOT, "platform-frontend", "src", "views", "exchange", "application", "application-nav.ts")
 D05_MODULES = os.path.join(
     ROOT, "platform-backend", "src", "main", "resources", "catalog", "d05-modules.json"
 )

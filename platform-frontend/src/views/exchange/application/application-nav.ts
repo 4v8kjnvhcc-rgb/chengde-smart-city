@@ -1,4 +1,5 @@
 import type { HubNavItem } from '@/components/common/HubSideLayout.vue'
+import api from '@/api/http'
 
 /** 应用平台应用入口（不再承载门户 Tab） */
 export type ApplicationApp = 'home' | 'supply' | 'assessment' | 'stats-base' | 'stats-domain'
@@ -123,11 +124,55 @@ export function assessmentExternalUrl(): string {
   return raw
 }
 
+/**
+ * 根据落地地址拼考核验票入口。
+ * landing 例：http://127.0.0.1:18081/assessment/index#/dashboard
+ * → http://127.0.0.1:18081/assessment/sso/portal?ticket=...&redirect=...
+ */
+export function buildAssessmentPortalSsoUrl(landingUrl: string, ticket: string): string | null {
+  const raw = String(landingUrl || '').trim()
+  if (!raw.startsWith('http://') && !raw.startsWith('https://')) return null
+  const hashIdx = raw.indexOf('#')
+  const withoutHash = hashIdx >= 0 ? raw.slice(0, hashIdx) : raw
+  const marker = '/assessment'
+  const i = withoutHash.toLowerCase().indexOf(marker)
+  if (i < 0) return null
+  const base = withoutHash.slice(0, i + marker.length)
+  const redirectTarget =
+    hashIdx >= 0 ? raw : `${base}/index#/dashboard`
+  return `${base}/sso/portal?ticket=${encodeURIComponent(ticket)}&redirect=${encodeURIComponent(redirectTarget)}`
+}
+
 export function openAssessmentExternal(): { ok: boolean; url: string } {
   const url = assessmentExternalUrl()
   if (!url) return { ok: false, url: '' }
   window.open(url, '_blank', 'noopener,noreferrer')
   return { ok: true, url }
+}
+
+export async function openAssessmentWithPortalSso(landingUrl: string): Promise<{ ok: boolean; message?: string }> {
+  const landing = String(landingUrl || '').trim() || assessmentExternalUrl()
+  if (!landing.startsWith('http://') && !landing.startsWith('https://')) {
+    return { ok: false, message: '请先在门户配置中填写考核系统 http(s) 地址' }
+  }
+  try {
+    const res = await api.post<{ ticket: string }>('/auth/sso-ticket', {
+      targetApp: 'assessment',
+      redirectUrl: landing,
+    })
+    const ticket = res.data?.ticket
+    if (!ticket) {
+      return { ok: false, message: '签发门户票据失败' }
+    }
+    const openUrl = buildAssessmentPortalSsoUrl(landing, ticket)
+    if (!openUrl) {
+      return { ok: false, message: '考核地址须包含 /assessment 路径' }
+    }
+    window.open(openUrl, '_blank', 'noopener,noreferrer')
+    return { ok: true }
+  } catch (e: unknown) {
+    return { ok: false, message: e instanceof Error ? e.message : '单点登录失败' }
+  }
 }
 
 const LEGACY_TAB_MAP: Record<string, { app?: ApplicationApp; portal?: 'dept' | 'leader'; section?: string }> = {

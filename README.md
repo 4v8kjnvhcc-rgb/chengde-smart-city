@@ -5,7 +5,7 @@
 | 目录 | 说明 |
 |------|------|
 | `platform-backend/` | Spring Boot 3.2 后端 |
-| `platform-web/` | Vue3 统一门户 |
+| `platform-frontend/` | Vue3 统一门户 |
 | `compose/` | Docker Compose（开源栈 / 生产 mid·app） |
 | `catalog/` | V3.0 ↔ M215 能力映射 JSON |
 | `scripts/` | 启停、冒烟、打包、导出脚本 |
@@ -18,7 +18,7 @@
 1. 启动 **MySQL 8.4** 与 **Redis**（见 [`platform-backend/README.md`](platform-backend/README.md)）
 2. 执行 `scripts/setup_smart_city.sql`，配置 `local.env`
 3. 后端：`cd platform-backend  .\mvnw.cmd spring-boot:run "-Dspring-boot.run.profiles=dev"`
-4. 前端：`cd platform-web && npm run dev`
+4. 前端：`cd platform-frontend && npm run dev`
 5. 登录 `http://localhost:4000`，`sys_admin` / `Test@12345`
 
 ## 开源组件联调（D04/D07/D13）

@@ -13,6 +13,7 @@ public class PortalNavNodeTree {
     private String url;
     private String menuPath;
     private String openMode;
+    private String ssoMode;
     private String themeKey;
     private String remark;
     private Integer status;
@@ -34,6 +35,8 @@ public class PortalNavNodeTree {
     public void setMenuPath(String menuPath) { this.menuPath = menuPath; }
     public String getOpenMode() { return openMode; }
     public void setOpenMode(String openMode) { this.openMode = openMode; }
+    public String getSsoMode() { return ssoMode; }
+    public void setSsoMode(String ssoMode) { this.ssoMode = ssoMode; }
     public String getThemeKey() { return themeKey; }
     public void setThemeKey(String themeKey) { this.themeKey = themeKey; }
     public String getRemark() { return remark; }

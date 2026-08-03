@@ -1,6 +1,6 @@
 ---
 description: 门户/Hub 页面单行工具栏表单对齐规范
-globs: platform-web/src/**/*.vue
+globs: platform-frontend/src/**/*.vue
 alwaysApply: true
 ---
 
@@ -37,4 +37,4 @@ alwaysApply: true
 - 禁止在 inline 工具栏上用零散 `style="width:..."` 控制宽度（对话框/多行表单除外）
 - 禁止 inline 表单项高度不一致（输入框 32px、按钮须同高）
 
-样式定义见 `platform-web/src/styles/element-overrides.css`。
+样式定义见 `platform-frontend/src/styles/element-overrides.css`。

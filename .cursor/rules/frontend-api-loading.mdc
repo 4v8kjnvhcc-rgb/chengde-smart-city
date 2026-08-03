@@ -1,6 +1,6 @@
 ---
 description: 前端 API 按需加载，禁止过度并行请求与 Tab 切换全量 reload
-globs: platform-web/src/**/*.{vue,ts}
+globs: platform-frontend/src/**/*.{vue,ts}
 alwaysApply: true
 ---
 

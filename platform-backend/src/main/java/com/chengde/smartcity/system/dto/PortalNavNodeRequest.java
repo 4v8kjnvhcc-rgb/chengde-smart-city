@@ -11,6 +11,7 @@ public record PortalNavNodeRequest(
         String url,
         String menuPath,
         String openMode,
+        String ssoMode,
         String themeKey,
         String remark,
         Integer status
