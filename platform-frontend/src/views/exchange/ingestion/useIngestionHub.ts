@@ -9,6 +9,8 @@ export interface Project {
   projectName: string
   boundOrgId: number
   boundOrgName?: string
+  clusterAccountId?: number | null
+  clusterAccountName?: string
   systemName?: string
   status: string
   registerStatus?: string
@@ -56,7 +58,7 @@ export interface DataTable {
   sourceTable?: string
   physicalTableName?: string
 }
-export interface DataColumn { id: number; tableId: number; columnCode: string; columnName: string; dataType: string; nullableFlag: number; semanticDesc?: string; lengthVal?: number; componentType?: string; requiredTip?: string; builtInFlag?: number }
+export interface DataColumn { id: number; tableId: number; columnCode: string; columnName: string; dataType: string; nullableFlag: number; semanticDesc?: string; lengthVal?: number; componentType?: string; requiredTip?: string }
 export interface Dict {
   id: number
   dictCode: string
@@ -350,6 +352,10 @@ export const ingestionApi = {
   lineageTableMeta: (tableNode: string) =>
     api.get<Record<string, unknown>>('/exchange/ingestion/register/lineage/table-meta', { params: { tableNode } }),
   projects: () => api.get<Project[]>('/exchange/ingestion/projects'),
+  clusterAccountOptions: () =>
+    api.get<Array<{ id: number; clusterCode: string; clusterName: string; accountName: string }>>(
+      '/exchange/ingestion/cluster-accounts/options',
+    ),
   createProject: (body: Record<string, unknown>) => api.post<number>('/exchange/ingestion/projects', body),
   updateProject: (id: number, body: Record<string, unknown>) => api.put<void>(`/exchange/ingestion/projects/${id}`, body),
   deleteProject: (id: number) => api.delete<void>(`/exchange/ingestion/projects/${id}`),
@@ -372,6 +378,7 @@ export const ingestionApi = {
   columns: (tableId: number) => api.get<DataColumn[]>(`/exchange/ingestion/register/tables/${tableId}/columns`),
   createColumn: (tableId: number, body: Record<string, unknown>) => api.post<number>(`/exchange/ingestion/register/tables/${tableId}/columns`, body),
   updateColumn: (columnId: number, body: Record<string, unknown>) => api.put<void>(`/exchange/ingestion/register/columns/${columnId}`, body),
+  builtinAttrConfig: () => api.get<Record<string, boolean>>('/system/builtin-attr-config'),
   metadataTemplate: () => api.get<string>('/exchange/ingestion/register/metadata/template'),
   importMetadata: (body: Record<string, unknown>) => api.post<Record<string, unknown>>('/exchange/ingestion/register/metadata/import', body),
   dicts: (keyword?: string) => api.get<Dict[]>('/exchange/ingestion/dicts', { params: { keyword } }),

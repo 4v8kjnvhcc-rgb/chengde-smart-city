@@ -2,6 +2,7 @@
 import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import PageCard from '@/components/common/PageCard.vue'
+import { useAuthStore } from '@/stores/auth'
 import { projectOptionLabel } from '../ingestion-project-scope'
 import {
   ingestionApi,
@@ -11,9 +12,12 @@ import {
   type Project,
 } from '../useIngestionHub'
 import { ingestionRegisterCache } from '../ingestion-register-cache'
+import { loadRegisterLogs, registerStatusZh } from './register-workflow'
 
 const props = defineProps<{
   project: Project
+  /** 审核查看：只读，不可新增/改名称；删除按规则保留 */
+  readonly?: boolean
 }>()
 
 const emit = defineEmits<{
@@ -21,12 +25,20 @@ const emit = defineEmits<{
   changed: []
 }>()
 
+const auth = useAuthStore()
+const isReadonly = computed(() => !!props.readonly)
+/** 新增/改名：非只读；删除：非只读，或超级管理员（审核通过项目） */
+const canMutate = computed(() => !isReadonly.value)
+const canDeleteChild = computed(() => !isReadonly.value || !!auth.isSystemAdmin)
+
 const { loading, loadError, withLoad } = useIngestionLoading()
 const systems = ref<BizSystem[]>([])
 /** 按系统懒加载缓存 */
 const sourcesBySystem = ref<Record<number, DataSource[]>>({})
 const loadedSystemIds = ref<Set<number>>(new Set())
 const expandLoading = ref<Record<number, boolean>>({})
+const auditLogs = ref<Record<string, unknown>[]>([])
+const auditLogsLoading = ref(false)
 
 const addSystemDialog = ref(false)
 const addSystemSaving = ref(false)
@@ -193,16 +205,38 @@ async function deleteSystem(row: BizSystem) {
     ElMessage.warning('平台默认「其他」系统不可删除')
     return
   }
-  if ((row.dataSourceCount || 0) > 0) {
-    ElMessage.warning('请先删除该系统下的数据源后再删除系统')
+  if (!canDeleteChild.value) {
+    ElMessage.warning('当前状态不可删除系统')
+    return
+  }
+  // 优先用列表计数，必要时再拉一次数据源确认
+  let dsCount = row.dataSourceCount || 0
+  if (dsCount <= 0) {
+    try {
+      const list = (await ingestionApi.dataSources(undefined, row.id)).data || []
+      dsCount = list.length
+    } catch {
+      /* 后端会再校验 */
+    }
+  }
+  if (dsCount > 0) {
+    await ElMessageBox.alert(
+      `该系统下已关联 ${dsCount} 个数据库，无法删除，请先删除数据库后再删系统。`,
+      '删除校验',
+      { type: 'warning', confirmButtonText: '知道了' },
+    )
     return
   }
   await ElMessageBox.confirm(`确定删除系统「${row.systemName}」？`, '删除确认', { type: 'warning' })
-  await ingestionApi.deleteSystem(row.id)
-  ElMessage.success('系统已删除')
-  invalidateSources(row.id)
-  await reloadSystems()
-  emit('changed')
+  try {
+    await ingestionApi.deleteSystem(row.id)
+    ElMessage.success('系统已删除')
+    invalidateSources(row.id)
+    await reloadSystems()
+    emit('changed')
+  } catch (e: unknown) {
+    ElMessage.error(e instanceof Error ? e.message : '删除失败')
+  }
 }
 
 function openAddDs(systemId: number) {
@@ -334,21 +368,65 @@ async function deleteDs(row: DataSource) {
     ElMessage.warning('平台默认「手动上传」数据源不可删除')
     return
   }
-  await ElMessageBox.confirm(`确定删除数据源「${row.sourceName}」？`, '删除确认', { type: 'warning' })
+  if (!canDeleteChild.value) {
+    ElMessage.warning('当前状态不可删除数据库')
+    return
+  }
+  const tableCnt = row.tableCount ?? 0
+  const tip = tableCnt > 0
+    ? `确定删除数据库「${row.sourceName}」？其下已登记的 ${tableCnt} 张数据表及字段将一并删除。`
+    : `确定删除数据库「${row.sourceName}」？`
+  await ElMessageBox.confirm(tip, '删除确认', { type: 'warning' })
   const systemId = row.systemId
-  await ingestionApi.deleteDataSource(row.id)
-  ElMessage.success('数据源已删除')
-  if (systemId) await ensureSourcesLoaded(systemId, true)
-  await reloadSystems()
-  emit('changed')
+  try {
+    await ingestionApi.deleteDataSource(row.id)
+    ElMessage.success('数据库已删除')
+    if (systemId) await ensureSourcesLoaded(systemId, true)
+    await reloadSystems()
+    emit('changed')
+  } catch (e: unknown) {
+    ElMessage.error(e instanceof Error ? e.message : '删除失败')
+  }
 }
 
 watch(() => props.project.id, () => {
   invalidateSources()
   void reloadSystems()
+  void loadAuditLogs()
 })
 
-onMounted(reloadSystems)
+async function loadAuditLogs() {
+  if (!isReadonly.value || !props.project?.id) {
+    auditLogs.value = []
+    return
+  }
+  auditLogsLoading.value = true
+  try {
+    auditLogs.value = await loadRegisterLogs('PROJECT', props.project.id)
+  } catch {
+    auditLogs.value = []
+  } finally {
+    auditLogsLoading.value = false
+  }
+}
+
+function auditActionZh(action?: unknown) {
+  const a = String(action || '').toUpperCase()
+  const map: Record<string, string> = {
+    SUBMIT: '提交',
+    APPROVE: '审核通过',
+    REJECT: '审核驳回',
+    CREATE: '创建',
+    UPDATE: '更新',
+    DELETE: '删除',
+  }
+  return map[a] || String(action || '—')
+}
+
+onMounted(() => {
+  void reloadSystems()
+  void loadAuditLogs()
+})
 </script>
 
 <template>
@@ -370,12 +448,16 @@ onMounted(reloadSystems)
 
       <div class="section-head">
         <h4 class="section-title">业务系统</h4>
-        <el-button type="primary" size="small" @click="openAddSystem">新增系统</el-button>
+        <el-button v-if="canMutate" type="primary" size="small" @click="openAddSystem">新增系统</el-button>
       </div>
       <p class="hint">
         展开系统行可查看其下全部数据源；归属项目：{{ projectPathLabel }}。
-        <template v-if="isOtherProject(project.projectCode)">
+        <template v-if="canMutate && isOtherProject(project.projectCode)">
           「其他」为系统初始化项目，可新增业务系统或另建项目。
+        </template>
+        <template v-if="isReadonly">
+          当前为只读查看，不可新增或修改；
+          <template v-if="canDeleteChild">超级管理员仍可删除无下级关联的系统/数据库。</template>
         </template>
       </p>
 
@@ -392,7 +474,15 @@ onMounted(reloadSystems)
             <div class="expand-panel" v-loading="expandLoading[row.id]">
               <div class="expand-head">
                 <span class="expand-path">{{ projectPathLabel }} / {{ row.systemName }}</span>
-                <el-button type="primary" link size="small" @click="openAddDs(row.id)">新增数据源</el-button>
+                <el-button
+                  v-if="canMutate"
+                  type="primary"
+                  link
+                  size="small"
+                  @click="openAddDs(row.id)"
+                >
+                  新增数据源
+                </el-button>
               </div>
               <el-table
                 v-if="sourcesOf(row.id).length"
@@ -410,18 +500,21 @@ onMounted(reloadSystems)
                     {{ isDbType(ds.sourceType) ? connLabel(ds.connStatus) : '—' }}
                   </template>
                 </el-table-column>
-                <el-table-column label="表数" width="70">
-                  <template #default="{ row: ds }">{{ ds.tableCount ?? '—' }}</template>
+                <el-table-column label="已登记表" width="90">
+                  <template #default="{ row: ds }">{{ ds.tableCount ?? 0 }}</template>
                 </el-table-column>
-                <el-table-column label="操作" min-width="260">
+                <el-table-column v-if="canMutate || canDeleteChild" label="操作" min-width="260">
                   <template #default="{ row: ds }">
-                    <el-button link type="primary" @click="openEditMeta(ds)">改名称</el-button>
-                    <template v-if="isDbType(ds.sourceType)">
-                      <el-button link @click="openConn(ds)">配置连接</el-button>
-                      <el-button link type="primary" @click="testDs(ds)">测试</el-button>
+                    <template v-if="canMutate">
+                      <el-button link type="primary" @click="openEditMeta(ds)">改名称</el-button>
+                      <template v-if="isDbType(ds.sourceType)">
+                        <el-button link @click="openConn(ds)">配置连接</el-button>
+                        <el-button link type="primary" @click="testDs(ds)">测试</el-button>
+                      </template>
+                      <span v-else class="muted">文件源</span>
                     </template>
-                    <span v-else class="muted">文件源</span>
                     <el-button
+                      v-if="canDeleteChild"
                       link
                       type="danger"
                       :disabled="isManualUploadSource(ds.sourceCode)"
@@ -447,15 +540,17 @@ onMounted(reloadSystems)
         <el-table-column label="数据源数" width="100">
           <template #default="{ row }">{{ row.dataSourceCount ?? 0 }}</template>
         </el-table-column>
-        <el-table-column label="操作" min-width="220">
+        <el-table-column v-if="canMutate || canDeleteChild" label="操作" min-width="240">
           <template #default="{ row }">
-            <el-button link type="primary" @click="openAddDs(row.id)">新增数据源</el-button>
+            <el-button v-if="canMutate" link type="primary" @click="openAddDs(row.id)">新增数据源</el-button>
             <el-button
+              v-if="canMutate"
               link
               :disabled="isOtherSystem(row.systemCode)"
               @click="openRenameSystem(row)"
             >改名称</el-button>
             <el-button
+              v-if="canDeleteChild"
               link
               type="danger"
               :disabled="isOtherSystem(row.systemCode)"
@@ -464,9 +559,51 @@ onMounted(reloadSystems)
           </template>
         </el-table-column>
       </el-table>
-      <el-empty v-else description="暂无业务系统，请点击「新增系统」" :image-size="48" />
+      <el-empty
+        v-else
+        :description="canMutate ? '暂无业务系统，请点击「新增系统」' : '暂无业务系统'"
+        :image-size="48"
+      />
     </PageCard>
 
+    <PageCard v-if="isReadonly" title="审核记录" style="margin-top:12px">
+      <el-descriptions :column="2" border size="small" style="margin-bottom:12px">
+        <el-descriptions-item label="项目名称">{{ project.projectName }}</el-descriptions-item>
+        <el-descriptions-item label="当前状态">{{ registerStatusZh(project.registerStatus) }}</el-descriptions-item>
+        <el-descriptions-item v-if="project.rejectReason" label="驳回原因" :span="2">
+          {{ project.rejectReason }}
+        </el-descriptions-item>
+      </el-descriptions>
+      <el-table
+        v-loading="auditLogsLoading"
+        :data="auditLogs"
+        size="small"
+        stripe
+        border
+        max-height="320"
+      >
+        <el-table-column label="动作" width="110">
+          <template #default="{ row }">{{ auditActionZh(row.action) }}</template>
+        </el-table-column>
+        <el-table-column label="状态变更" min-width="180">
+          <template #default="{ row }">
+            {{ registerStatusZh(row.fromStatus as string) }} → {{ registerStatusZh(row.toStatus as string) }}
+          </template>
+        </el-table-column>
+        <el-table-column prop="commentText" label="说明" min-width="160" show-overflow-tooltip>
+          <template #default="{ row }">{{ row.commentText || '—' }}</template>
+        </el-table-column>
+        <el-table-column prop="operatorName" label="操作人" width="110">
+          <template #default="{ row }">{{ row.operatorName || '—' }}</template>
+        </el-table-column>
+        <el-table-column prop="createdAt" label="时间" width="170">
+          <template #default="{ row }">{{ row.createdAt || '—' }}</template>
+        </el-table-column>
+      </el-table>
+      <el-empty v-if="!auditLogsLoading && !auditLogs.length" description="暂无提交/审核记录" :image-size="40" />
+    </PageCard>
+
+    <template v-if="canMutate">
     <el-dialog v-model="addSystemDialog" title="新增系统" width="420px" destroy-on-close>
       <el-form label-width="90px">
         <el-form-item label="系统名称" required>
@@ -543,6 +680,7 @@ onMounted(reloadSystems)
         <el-button type="primary" @click="saveConn">保存</el-button>
       </template>
     </el-dialog>
+    </template>
   </div>
 </template>
 

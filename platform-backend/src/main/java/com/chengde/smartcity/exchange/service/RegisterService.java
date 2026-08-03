@@ -26,6 +26,7 @@ import com.chengde.smartcity.integration.jdbc.JdbcProbeService;
 import com.chengde.smartcity.masterdata.service.MetadataSubsystemService;
 import com.chengde.smartcity.security.UserPrincipal;
 import com.chengde.smartcity.system.service.AccessControlService;
+import com.chengde.smartcity.system.service.BuiltinAttrConfigService;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -59,6 +60,7 @@ public class RegisterService {
     private final AccessControlService accessControlService;
     private final JdbcProbeService jdbcProbeService;
     private final MetadataSubsystemService metadataSubsystemService;
+    private final BuiltinAttrConfigService builtinAttrConfigService;
 
     public RegisterService(IngDataTableMapper tableMapper, IngDataColumnMapper columnMapper,
                            IngDataSourceMapper dataSourceMapper,
@@ -69,7 +71,8 @@ public class RegisterService {
                            LineageService lineageService,
                            AccessControlService accessControlService,
                            JdbcProbeService jdbcProbeService,
-                           MetadataSubsystemService metadataSubsystemService) {
+                           MetadataSubsystemService metadataSubsystemService,
+                           BuiltinAttrConfigService builtinAttrConfigService) {
         this.tableMapper = tableMapper;
         this.columnMapper = columnMapper;
         this.dataSourceMapper = dataSourceMapper;
@@ -84,6 +87,7 @@ public class RegisterService {
         this.accessControlService = accessControlService;
         this.jdbcProbeService = jdbcProbeService;
         this.metadataSubsystemService = metadataSubsystemService;
+        this.builtinAttrConfigService = builtinAttrConfigService;
     }
 
     public List<IngDataTable> listTables(UserPrincipal operator, Long sourceId) {
@@ -139,10 +143,17 @@ public class RegisterService {
         String tableCode = str(body.get("tableCode"), null);
         if (tableCode == null || tableCode.isBlank()) {
             tableCode = "TBL_" + tableName.toUpperCase(Locale.ROOT);
-            IngDataTable byCode = tableMapper.selectOne(new LambdaQueryWrapper<IngDataTable>()
-                    .eq(IngDataTable::getTableCode, tableCode).last("LIMIT 1"));
-            if (byCode != null) {
+        }
+        IngDataTable byCode = tableMapper.selectOne(new LambdaQueryWrapper<IngDataTable>()
+                .eq(IngDataTable::getSourceId, sourceId)
+                .eq(IngDataTable::getTableCode, tableCode)
+                .last("LIMIT 1"));
+        if (byCode != null) {
+            if (tableCode.equals("TBL_" + tableName.toUpperCase(Locale.ROOT))
+                    && (body.get("tableCode") == null || String.valueOf(body.get("tableCode")).isBlank())) {
                 tableCode = "TBL_" + tableName.toUpperCase(Locale.ROOT) + "_" + System.currentTimeMillis();
+            } else {
+                throw new BusinessException(409, "该数据源下表编码已存在：" + tableCode);
             }
         }
 
@@ -172,10 +183,10 @@ public class RegisterService {
 
     @Transactional
     public Long createColumn(UserPrincipal operator, Long tableId, Map<String, Object> body) {
-        throw new BusinessException(400, "数据项不可新增/修改，仅支持查看；字段随「数据库表登记」同步");
+        return insertColumnMeta(operator, tableId, body);
     }
 
-    /** 内部写入字段元数据（仅登记流水线使用） */
+    /** 内部写入字段元数据（登记流水线 / 数据项新建） */
     private Long insertColumnMeta(UserPrincipal operator, Long tableId, Map<String, Object> body) {
         IngDataTable table = tableMapper.selectById(tableId);
         if (table == null) {
@@ -200,7 +211,7 @@ public class RegisterService {
         col.setLengthVal(intVal(body.get("lengthVal"), null));
         col.setComponentType(str(body.get("componentType"), "INPUT"));
         col.setRequiredTip(str(body.get("requiredTip"), null));
-        col.setBuiltInFlag(Integer.valueOf(1).equals(intVal(body.get("builtInFlag"), 0)) ? 1 : 0);
+        col.setBuiltInFlag(0);
         int maxSort = columnMapper.selectList(new LambdaQueryWrapper<IngDataColumn>()
                 .eq(IngDataColumn::getTableId, tableId)).stream()
                 .mapToInt(c -> c.getSortOrder() == null ? 0 : c.getSortOrder()).max().orElse(0);
@@ -345,7 +356,59 @@ public class RegisterService {
 
     @Transactional
     public void updateColumn(UserPrincipal operator, Long columnId, Map<String, Object> body) {
-        throw new BusinessException(400, "数据项不可修改，仅支持查看");
+        IngDataColumn col = columnMapper.selectById(columnId);
+        if (col == null) {
+            throw new BusinessException(404, "数据项不存在");
+        }
+        IngDataTable table = tableMapper.selectById(col.getTableId());
+        if (table == null) {
+            throw new BusinessException(404, "表不存在");
+        }
+        accessControlService.assertSourceAccess(operator, table.getSourceId());
+        if (body != null && body.containsKey("columnName")) {
+            builtinAttrConfigService.assertEditable("columnName", "属性名称");
+        }
+        if (body != null && body.containsKey("dataType")) {
+            builtinAttrConfigService.assertEditable("dataType", "数据类型");
+        }
+        if (body != null && body.containsKey("lengthVal")) {
+            builtinAttrConfigService.assertEditable("lengthVal", "长度");
+        }
+        if (body != null && body.containsKey("componentType")) {
+            builtinAttrConfigService.assertEditable("componentType", "组件类型");
+        }
+        if (body != null && body.containsKey("nullableFlag")) {
+            builtinAttrConfigService.assertEditable("nullableFlag", "必填");
+        }
+        if (body != null && body.containsKey("columnCode")) {
+            builtinAttrConfigService.assertEditable("columnCode", "属性代码");
+        }
+        if (body.containsKey("columnName")) {
+            String name = body.get("columnName") == null ? "" : String.valueOf(body.get("columnName")).trim();
+            if (name.isEmpty()) {
+                throw new BusinessException(400, "属性名称必填");
+            }
+            col.setColumnName(name);
+        }
+        if (body.containsKey("dataType")) {
+            col.setDataType(str(body.get("dataType"), col.getDataType()));
+        }
+        if (body.containsKey("lengthVal")) {
+            col.setLengthVal(intVal(body.get("lengthVal"), col.getLengthVal()));
+        }
+        if (body.containsKey("nullableFlag")) {
+            col.setNullableFlag(intVal(body.get("nullableFlag"), col.getNullableFlag()));
+        }
+        if (body.containsKey("semanticDesc")) {
+            col.setSemanticDesc(str(body.get("semanticDesc"), null));
+        }
+        if (body.containsKey("componentType")) {
+            col.setComponentType(str(body.get("componentType"), col.getComponentType()));
+        }
+        if (body.containsKey("requiredTip")) {
+            col.setRequiredTip(str(body.get("requiredTip"), null));
+        }
+        columnMapper.updateById(col);
     }
 
     @Transactional

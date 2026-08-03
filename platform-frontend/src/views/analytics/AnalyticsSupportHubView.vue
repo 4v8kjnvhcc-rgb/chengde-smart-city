@@ -10,6 +10,7 @@ import { leafKeysForTreeCheck } from '@/utils/menu-tree-check'
 import OrgManage from '@/views/system/OrgManage.vue'
 import UserManage from '@/views/system/UserManage.vue'
 import RoleManage from '@/views/system/RoleManage.vue'
+import ClusterManage from '@/views/system/ClusterManage.vue'
 import MenuManage from '@/views/system/MenuManage.vue'
 import TagLibraryManage from '@/views/system/TagLibraryManage.vue'
 import AuditLog from '@/views/system/AuditLog.vue'
@@ -19,6 +20,7 @@ import SystemMaintenanceView from '@/views/system/maintenance/SystemMaintenanceV
 import SystemMailConfigView from '@/views/system/maintenance/SystemMailConfigView.vue'
 import PortalNavConfigPanel from '@/views/system/PortalNavConfigPanel.vue'
 import SysDictManagePanel from '@/views/system/SysDictManagePanel.vue'
+import BuiltinAttrManageView from '@/views/system/BuiltinAttrManageView.vue'
 import KettleView from '@/views/integration/KettleView.vue'
 import SchedulerView from '@/views/integration/SchedulerView.vue'
 
@@ -31,6 +33,7 @@ const navItems: HubNavItem[] = [
       { key: 'users.org', label: '组织管理' },
       { key: 'users.user', label: '用户管理' },
       { key: 'users.role', label: '角色管理' },
+      { key: 'users.cluster', label: '集群管理' },
     ],
   },
   {
@@ -61,6 +64,7 @@ const navItems: HubNavItem[] = [
         ],
       },
       { key: 'sys.tags', label: '标签库' },
+      { key: 'sys.builtin', label: '内置属性管理' },
     ],
   },
   {
@@ -390,6 +394,7 @@ onMounted(() => {
         <OrgManage v-if="tab === 'users.org'" />
         <UserManage v-else-if="tab === 'users.user'" />
         <RoleManage v-else-if="tab === 'users.role'" />
+        <ClusterManage v-else-if="tab === 'users.cluster'" />
 
         <!-- 应用中心 · 应用管理 -->
         <PageCard v-else-if="tab === 'apps.manage'" title="应用管理">
@@ -564,6 +569,7 @@ onMounted(() => {
           <SystemMailConfigView embed />
         </PageCard>
         <div v-else-if="tab === 'sys.tags'" class="support-embed"><TagLibraryManage /></div>
+        <div v-else-if="tab === 'sys.builtin'" class="support-embed"><BuiltinAttrManageView /></div>
 
         <!-- 日志审计 -->
         <div v-else-if="tab === 'audit.log'" class="support-embed"><AuditLog /></div>

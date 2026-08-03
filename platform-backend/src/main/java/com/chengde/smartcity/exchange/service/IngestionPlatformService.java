@@ -1,6 +1,7 @@
 package com.chengde.smartcity.exchange.service;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.chengde.smartcity.audit.AuditService;
 import com.chengde.smartcity.common.exception.BusinessException;
 import com.chengde.smartcity.exchange.entity.BizDataAsset;
@@ -38,7 +39,9 @@ import com.chengde.smartcity.integration.jdbc.JdbcProbeService;
 import com.chengde.smartcity.integration.storage.StorageIntegrationClient;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.chengde.smartcity.security.UserPrincipal;
+import com.chengde.smartcity.system.entity.SysClusterAccount;
 import com.chengde.smartcity.system.entity.SysOrg;
+import com.chengde.smartcity.system.mapper.SysClusterAccountMapper;
 import com.chengde.smartcity.system.mapper.SysOrgMapper;
 import com.chengde.smartcity.system.service.AccessControlService;
 import java.time.LocalDateTime;
@@ -78,6 +81,7 @@ public class IngestionPlatformService {
     private final CredentialCipher credentialCipher;
     private final JdbcProbeService jdbcProbeService;
     private final SysOrgMapper orgMapper;
+    private final SysClusterAccountMapper clusterAccountMapper;
     private final AccessControlService accessControlService;
     private final KettleCollectService kettleCollectService;
     private final ObjectMapper objectMapper = new ObjectMapper();
@@ -92,7 +96,8 @@ public class IngestionPlatformService {
                                     IngHealthMetricMapper healthMapper, BizDataAssetMapper assetMapper,
                                     AuditService auditService, StorageIntegrationClient storageClient,
                                     CredentialCipher credentialCipher, JdbcProbeService jdbcProbeService,
-                                    SysOrgMapper orgMapper, AccessControlService accessControlService,
+                                    SysOrgMapper orgMapper, SysClusterAccountMapper clusterAccountMapper,
+                                    AccessControlService accessControlService,
                                     KettleCollectService kettleCollectService) {
         this.statsMapper = statsMapper;
         this.guideMapper = guideMapper;
@@ -114,6 +119,7 @@ public class IngestionPlatformService {
         this.credentialCipher = credentialCipher;
         this.jdbcProbeService = jdbcProbeService;
         this.orgMapper = orgMapper;
+        this.clusterAccountMapper = clusterAccountMapper;
         this.accessControlService = accessControlService;
         this.kettleCollectService = kettleCollectService;
     }
@@ -163,7 +169,27 @@ public class IngestionPlatformService {
         List<IngProject> list = projectMapper.selectList(
                 new LambdaQueryWrapper<IngProject>().in(IngProject::getId, allowed).orderByDesc(IngProject::getId));
         fillBoundOrgNames(list);
+        fillClusterAccountNames(list);
         return list;
+    }
+
+    /** 项目登记下拉：启用中的集群账号（不含密码） */
+    public List<Map<String, Object>> listClusterAccountOptions() {
+        List<SysClusterAccount> rows = clusterAccountMapper.selectList(
+                new LambdaQueryWrapper<SysClusterAccount>()
+                        .eq(SysClusterAccount::getStatus, 1)
+                        .orderByAsc(SysClusterAccount::getClusterName)
+                        .orderByAsc(SysClusterAccount::getId));
+        List<Map<String, Object>> out = new ArrayList<>();
+        for (SysClusterAccount c : rows) {
+            Map<String, Object> m = new LinkedHashMap<>();
+            m.put("id", c.getId());
+            m.put("clusterCode", c.getClusterCode());
+            m.put("clusterName", c.getClusterName());
+            m.put("accountName", c.getAccountName());
+            out.add(m);
+        }
+        return out;
     }
 
     private void fillBoundOrgNames(List<IngProject> list) {
@@ -192,6 +218,34 @@ public class IngestionPlatformService {
         }
     }
 
+    private void fillClusterAccountNames(List<IngProject> list) {
+        if (list == null || list.isEmpty()) {
+            return;
+        }
+        Set<Long> ids = list.stream()
+                .map(IngProject::getClusterAccountId)
+                .filter(Objects::nonNull)
+                .collect(Collectors.toCollection(HashSet::new));
+        if (ids.isEmpty()) {
+            return;
+        }
+        Map<Long, String> names = new HashMap<>();
+        for (SysClusterAccount c : clusterAccountMapper.selectBatchIds(ids)) {
+            if (c != null && c.getId() != null) {
+                String label = c.getClusterName();
+                if (c.getClusterCode() != null && !c.getClusterCode().isBlank()) {
+                    label = label + "（" + c.getClusterCode() + "）";
+                }
+                names.put(c.getId(), label);
+            }
+        }
+        for (IngProject p : list) {
+            if (p.getClusterAccountId() != null) {
+                p.setClusterAccountName(names.getOrDefault(p.getClusterAccountId(), "—"));
+            }
+        }
+    }
+
     @Transactional
     public Long createProject(UserPrincipal operator, Map<String, Object> body) {
         IngProject p = new IngProject();
@@ -201,6 +255,7 @@ public class IngestionPlatformService {
         // 默认系统名可选；系统在项目下单独创建，不再强制首系统
         String systemName = str(body.get("systemName"), "").trim();
         p.setBoundOrgId(boundOrgId);
+        p.setClusterAccountId(resolveClusterAccountId(body.get("clusterAccountId"), false));
         p.setSystemName(systemName.isEmpty() ? null : systemName);
         p.setStatus("ACTIVE");
         p.setRegisterStatus(com.chengde.smartcity.exchange.support.RegisterStatuses.DRAFT);
@@ -246,7 +301,16 @@ public class IngestionPlatformService {
             String systemName = body.get("systemName") == null ? "" : String.valueOf(body.get("systemName")).trim();
             p.setSystemName(systemName.isEmpty() ? null : systemName);
         }
+        if (body.containsKey("clusterAccountId")) {
+            p.setClusterAccountId(resolveClusterAccountId(body.get("clusterAccountId"), false));
+        }
         projectMapper.updateById(p);
+        // MP 默认忽略 null：显式清空绑定
+        if (body.containsKey("clusterAccountId") && p.getClusterAccountId() == null) {
+            projectMapper.update(null, new LambdaUpdateWrapper<IngProject>()
+                    .eq(IngProject::getId, id)
+                    .set(IngProject::getClusterAccountId, null));
+        }
         auditService.log(operator.getUserId(), operator.getUsername(), operator.getOrgId(),
                 "ING_PROJECT_UPDATE", "ing_project", String.valueOf(id), p.getProjectName());
     }
@@ -259,6 +323,10 @@ public class IngestionPlatformService {
         }
         if (isBuiltinOtherProject(p.getProjectCode())) {
             throw new BusinessException(400, "平台默认项目「其他」不可删除");
+        }
+        String reg = p.getRegisterStatus() == null ? "" : p.getRegisterStatus().trim().toUpperCase();
+        if (("APPROVED".equals(reg) || "ARCHIVED".equals(reg)) && !operator.isSystemAdmin()) {
+            throw new BusinessException(403, "审核通过的项目仅超级管理员可删除");
         }
         Long sysCnt = bizSystemMapper.selectCount(new LambdaQueryWrapper<IngBizSystem>()
                 .eq(IngBizSystem::getProjectId, id));
@@ -362,7 +430,7 @@ public class IngestionPlatformService {
         Long cnt = dataSourceMapper.selectCount(new LambdaQueryWrapper<IngDataSource>()
                 .eq(IngDataSource::getSystemId, s.getId()));
         if (cnt != null && cnt > 0) {
-            throw new BusinessException(400, "请先删除该系统下的数据源后再删除系统");
+            throw new BusinessException(400, "该系统下已关联数据库，请先删除数据库后再删除系统");
         }
         String name = s.getSystemName();
         bizSystemMapper.deleteById(id);
@@ -392,13 +460,9 @@ public class IngestionPlatformService {
         if (isBuiltinManualUploadSource(ds.getSourceCode())) {
             throw new BusinessException(400, "平台默认「手动上传」数据源不可删除，可修改其系统名称，或新增系统/数据源");
         }
-        Long tableCnt = dataTableMapper.selectCount(new LambdaQueryWrapper<IngDataTable>()
-                .eq(IngDataTable::getSourceId, id));
-        if (tableCnt != null && tableCnt > 0) {
-            throw new BusinessException(400, "该数据库下已关联数据表，不可删除");
-        }
         String name = ds.getSourceName();
-        dataSourceMapper.deleteById(id);
+        // 允许连带删除已登记表/字段，不再因存在数据表而拦截
+        deleteDataSourceCascade(id);
         auditService.log(operator.getUserId(), operator.getUsername(), operator.getOrgId(),
                 "ING_DS_DELETE", "ing_data_source", String.valueOf(id), name);
     }
@@ -438,7 +502,13 @@ public class IngestionPlatformService {
             q.eq(IngDataSource::getProjectId, projectId);
         }
         List<IngDataSource> list = dataSourceMapper.selectList(q);
-        list.forEach(ds -> ds.setConnConfigJson(maskConnConfig(ds.getConnConfigJson())));
+        for (IngDataSource ds : list) {
+            ds.setConnConfigJson(maskConnConfig(ds.getConnConfigJson()));
+            // 登记侧「表数」= 已登记数据表数量（删除校验口径）
+            Long regTables = dataTableMapper.selectCount(new LambdaQueryWrapper<IngDataTable>()
+                    .eq(IngDataTable::getSourceId, ds.getId()));
+            ds.setTableCount(regTables == null ? 0 : regTables.intValue());
+        }
         return list;
     }
 
@@ -526,18 +596,9 @@ public class IngestionPlatformService {
             long rowCount = ((Number) desc.getOrDefault("rowCount", -1L)).longValue();
 
             String tableCode = str(tm.get("tableCode"), "TBL_" + sourceTable.toUpperCase());
-            // uk_table_code 全局唯一：先按 source+code，再按全局 code，避免误插入撞唯一键后变成迷惑性 401
+            // 表编码在同一数据源内唯一；不同数据源/系统可登记同名源表
             IngDataTable table = dataTableMapper.selectOne(new LambdaQueryWrapper<IngDataTable>()
                     .eq(IngDataTable::getSourceId, id).eq(IngDataTable::getTableCode, tableCode).last("LIMIT 1"));
-            if (table == null) {
-                IngDataTable byCode = dataTableMapper.selectOne(new LambdaQueryWrapper<IngDataTable>()
-                        .eq(IngDataTable::getTableCode, tableCode).last("LIMIT 1"));
-                if (byCode != null && !id.equals(byCode.getSourceId())) {
-                    throw new BusinessException(409, "tableCode 已被其他数据源占用: " + tableCode
-                            + "（sourceId=" + byCode.getSourceId() + "），请更换编码");
-                }
-                table = byCode;
-            }
             boolean isNew = table == null;
             if (isNew) {
                 table = new IngDataTable();
@@ -1117,6 +1178,32 @@ public class IngestionPlatformService {
 
     private String str(Object v, String def) {
         return v == null || String.valueOf(v).isBlank() ? def : String.valueOf(v);
+    }
+
+    /**
+     * 解析项目绑定的集群账号。空值表示不绑定；一项目至多一个集群，多项目可共用同一集群。
+     */
+    private Long resolveClusterAccountId(Object raw, boolean required) {
+        if (raw == null || String.valueOf(raw).isBlank()) {
+            if (required) {
+                throw new BusinessException(400, "请选择绑定集群账号");
+            }
+            return null;
+        }
+        Long id;
+        try {
+            id = Long.valueOf(String.valueOf(raw).trim());
+        } catch (NumberFormatException e) {
+            throw new BusinessException(400, "集群账号 ID 无效");
+        }
+        SysClusterAccount c = clusterAccountMapper.selectById(id);
+        if (c == null) {
+            throw new BusinessException(400, "集群账号不存在");
+        }
+        if (c.getStatus() != null && c.getStatus() == 0) {
+            throw new BusinessException(400, "集群账号已停用，无法绑定");
+        }
+        return id;
     }
 
     /**

@@ -1,7 +1,7 @@
 <script setup lang="ts">
-import { onMounted, reactive, ref, watch } from 'vue'
+import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { ElMessage, ElMessageBox } from 'element-plus'
+import { ElMessage } from 'element-plus'
 import PageCard from '@/components/common/PageCard.vue'
 import {
   activeProjectId,
@@ -18,6 +18,25 @@ import {
   type Project,
 } from '../useIngestionHub'
 
+type EditCtrlKey =
+  | 'columnCode'
+  | 'columnName'
+  | 'dataType'
+  | 'lengthVal'
+  | 'componentType'
+  | 'nullableFlag'
+
+function defaultEditCtrl(): Record<EditCtrlKey, boolean> {
+  return {
+    columnCode: true,
+    columnName: true,
+    dataType: true,
+    lengthVal: true,
+    componentType: true,
+    nullableFlag: true,
+  }
+}
+
 const route = useRoute()
 const router = useRouter()
 const { loading, loadError, withLoad } = useIngestionLoading()
@@ -26,24 +45,20 @@ const sources = ref<DataSource[]>([])
 const tables = ref<DataTable[]>([])
 const columns = ref<DataColumn[]>([])
 const selectedTableId = ref<number>()
-const selectedCols = ref<DataColumn[]>([])
 const dialogVisible = ref(false)
 const editingCol = ref<DataColumn | null>(null)
 const saving = ref(false)
-const batchDialogVisible = ref(false)
-const batchSaving = ref(false)
-const batchRows = ref<{ id: number; columnCode: string; columnName: string; semanticDesc: string }[]>([])
 const colForm = reactive({
   columnCode: '',
   columnName: '',
-  dataType: 'VARCHAR(64)',
+  dataType: 'VARCHAR',
   lengthVal: 64,
   nullableFlag: 1,
-  semanticDesc: '',
   componentType: 'INPUT',
   requiredTip: '',
-  builtInFlag: 0 as 0 | 1,
 })
+
+const editCtrl = reactive(defaultEditCtrl())
 
 const componentOptions = [
   { value: 'INPUT', label: '文本输入' },
@@ -53,19 +68,27 @@ const componentOptions = [
   { value: 'TEXTAREA', label: '多行文本' },
 ]
 
-function isBuiltIn(row: DataColumn) {
-  return row.builtInFlag === 1
+const dialogTitle = computed(() => (editingCol.value ? '编辑数据项' : '新建数据项'))
+const isCreate = computed(() => !editingCol.value)
+
+/** 新建时全部可填；编辑时按「内置属性管理」全局配置禁用 */
+function canEditAttr(key: EditCtrlKey) {
+  if (isCreate.value) return true
+  return editCtrl[key] !== false
 }
 
 function componentLabel(code?: string) {
   return componentOptions.find((c) => c.value === code)?.label || code || '—'
 }
 
-function typeLengthLabel(row: DataColumn) {
-  if (row.lengthVal != null && row.lengthVal > 0 && !/\(\d+\)/.test(row.dataType || '')) {
-    return `${row.dataType || '—'}(${row.lengthVal})`
-  }
-  return row.dataType || '—'
+function dataTypeLabel(row: DataColumn) {
+  return (row.dataType || '—').replace(/\(\d+\)/, '') || '—'
+}
+
+function lengthLabel(row: DataColumn) {
+  if (row.lengthVal != null && row.lengthVal > 0) return String(row.lengthVal)
+  const m = (row.dataType || '').match(/\((\d+)\)/)
+  return m ? m[1] : '—'
 }
 
 function parseRouteTableId(): number | undefined {
@@ -81,6 +104,30 @@ async function clearRouteTableId() {
   const q = { ...route.query }
   delete q.tableId
   await router.replace({ path: route.path, query: q })
+}
+
+function applyEditCtrl(raw?: Record<string, boolean> | null) {
+  const d = defaultEditCtrl()
+  for (const k of Object.keys(d) as EditCtrlKey[]) {
+    editCtrl[k] = raw && typeof raw[k] === 'boolean' ? raw[k] : true
+  }
+}
+
+async function loadEditCtrl() {
+  try {
+    const data = (await ingestionApi.builtinAttrConfig()).data
+    applyEditCtrl(data)
+  } catch {
+    applyEditCtrl(null)
+  }
+}
+
+async function refreshColumns() {
+  if (!selectedTableId.value) {
+    columns.value = []
+    return
+  }
+  columns.value = (await ingestionApi.columns(selectedTableId.value)).data || []
 }
 
 async function resolveTableContext(preferTableId?: number) {
@@ -101,11 +148,7 @@ async function resolveTableContext(preferTableId?: number) {
     selectedTableId.value = undefined
   }
   if (!selectedTableId.value) selectedTableId.value = tables.value[0]?.id
-  if (selectedTableId.value) {
-    columns.value = (await ingestionApi.columns(selectedTableId.value)).data || []
-  } else {
-    columns.value = []
-  }
+  await refreshColumns()
 }
 
 async function applyPreferTableId(preferTableId: number) {
@@ -129,6 +172,7 @@ async function reload() {
   await withLoad(async () => {
     projects.value = (await ingestionApi.projects()).data || []
     syncActiveProject(projects.value)
+    await loadEditCtrl()
     const preferTableId = parseRouteTableId()
     if (preferTableId) {
       await applyPreferTableId(preferTableId)
@@ -148,18 +192,12 @@ async function reload() {
 watch(activeProjectId, () => {
   if (parseRouteTableId()) return
   selectedTableId.value = undefined
-  selectedCols.value = []
   void reload()
 })
 
 async function onTableChange(id: number) {
   selectedTableId.value = id
-  selectedCols.value = []
-  columns.value = (await ingestionApi.columns(id)).data
-}
-
-function onSelectionChange(rows: DataColumn[]) {
-  selectedCols.value = rows
+  await refreshColumns()
 }
 
 function openCreate() {
@@ -170,143 +208,66 @@ function openCreate() {
   editingCol.value = null
   colForm.columnCode = ''
   colForm.columnName = ''
-  colForm.dataType = 'VARCHAR(64)'
+  colForm.dataType = 'VARCHAR'
   colForm.lengthVal = 64
   colForm.nullableFlag = 1
-  colForm.semanticDesc = ''
   colForm.componentType = 'INPUT'
   colForm.requiredTip = ''
-  colForm.builtInFlag = 0
   dialogVisible.value = true
 }
 
 function openEdit(row: DataColumn) {
   editingCol.value = row
   colForm.columnCode = row.columnCode
-  colForm.columnName = row.columnName
-  colForm.dataType = row.dataType
+  colForm.columnName = row.columnName || ''
+  colForm.dataType = (row.dataType || 'VARCHAR').replace(/\(\d+\)/, '')
   colForm.lengthVal = row.lengthVal ?? 64
   colForm.nullableFlag = row.nullableFlag
-  colForm.semanticDesc = row.semanticDesc || ''
   colForm.componentType = row.componentType || 'INPUT'
   colForm.requiredTip = row.requiredTip || ''
-  colForm.builtInFlag = isBuiltIn(row) ? 1 : 0
   dialogVisible.value = true
 }
 
-function openBatchEdit() {
-  ElMessage.info('数据项仅支持查看，不可批量编辑')
-}
-
-async function confirmIrreversible(count = 1) {
-  const tip = count > 1
-    ? `将覆盖 ${count} 个自定义数据项。保存后，元数据维护中对应属性信息不可恢复，是否继续？`
-    : '保存后，元数据维护中对应的属性信息不可恢复，是否继续？'
-  await ElMessageBox.confirm(tip, '编辑确认', {
-    type: 'warning',
-    confirmButtonText: '确认保存',
-    cancelButtonText: '取消',
-  })
-}
-
 async function saveColumn() {
-  if (!colForm.columnName?.trim()) {
-    ElMessage.warning('请填写字段名称')
+  if (canEditAttr('columnName') && !colForm.columnName?.trim()) {
+    ElMessage.warning('请填写属性名称')
     return
   }
-  if (editingCol.value && isBuiltIn(editingCol.value)) {
-    ElMessage.warning('系统内置属性不可编辑')
+  if (isCreate.value && !colForm.columnCode?.trim()) {
+    ElMessage.warning('请填写属性代码')
     return
   }
   saving.value = true
   try {
     if (editingCol.value) {
-      if (colForm.builtInFlag !== 1) {
-        await confirmIrreversible(1)
-      } else {
-        await ElMessageBox.confirm(
-          '设为内置属性后将不可再编辑，列表将显示「内置=是」。是否继续？',
-          '设为内置',
-          { type: 'warning', confirmButtonText: '确认', cancelButtonText: '取消' },
-        )
+      const payload: Record<string, unknown> = {
+        requiredTip: colForm.requiredTip.trim() || null,
       }
-      await ingestionApi.updateColumn(editingCol.value.id, {
+      if (canEditAttr('columnName')) payload.columnName = colForm.columnName.trim()
+      if (canEditAttr('dataType')) payload.dataType = colForm.dataType
+      if (canEditAttr('lengthVal')) payload.lengthVal = colForm.lengthVal
+      if (canEditAttr('nullableFlag')) payload.nullableFlag = colForm.nullableFlag
+      if (canEditAttr('componentType')) payload.componentType = colForm.componentType
+      await ingestionApi.updateColumn(editingCol.value.id, payload)
+      ElMessage.success('数据项已保存')
+    } else if (selectedTableId.value) {
+      await ingestionApi.createColumn(selectedTableId.value, {
+        columnCode: colForm.columnCode.trim(),
         columnName: colForm.columnName.trim(),
         dataType: colForm.dataType,
         lengthVal: colForm.lengthVal,
         nullableFlag: colForm.nullableFlag,
-        semanticDesc: colForm.semanticDesc,
         componentType: colForm.componentType,
-        requiredTip: colForm.requiredTip,
-        builtInFlag: colForm.builtInFlag,
+        requiredTip: colForm.requiredTip.trim() || null,
       })
-      ElMessage.success(
-        colForm.builtInFlag === 1
-          ? '已设为内置属性，之后不可编辑'
-          : '已保存；元数据维护中对应属性已覆盖且不可恢复',
-      )
-    } else if (selectedTableId.value) {
-      if (!colForm.columnCode?.trim()) {
-        ElMessage.warning('请填写字段编码')
-        return
-      }
-      if (colForm.builtInFlag === 1) {
-        await ElMessageBox.confirm(
-          '设为内置属性后将不可再编辑，列表将显示「内置=是」。是否继续？',
-          '设为内置',
-          { type: 'warning', confirmButtonText: '确认', cancelButtonText: '取消' },
-        )
-      }
-      await ingestionApi.createColumn(selectedTableId.value, {
-        ...colForm,
-        columnCode: colForm.columnCode.trim(),
-        columnName: colForm.columnName.trim(),
-        builtInFlag: colForm.builtInFlag,
-      })
-      ElMessage.success(colForm.builtInFlag === 1 ? '已新建为内置属性' : '数据项已新建')
+      ElMessage.success('数据项已新建')
     }
     dialogVisible.value = false
-    if (selectedTableId.value) columns.value = (await ingestionApi.columns(selectedTableId.value)).data
+    await refreshColumns()
   } catch (e: unknown) {
-    if (e === 'cancel' || (e as { message?: string })?.message === 'cancel') return
     ElMessage.error(e instanceof Error ? e.message : '保存失败')
   } finally {
     saving.value = false
-  }
-}
-
-async function saveBatchEdit() {
-  if (!batchRows.value.length) return
-  for (const row of batchRows.value) {
-    if (!row.columnName?.trim()) {
-      ElMessage.warning(`字段「${row.columnCode}」名称不能为空`)
-      return
-    }
-  }
-  batchSaving.value = true
-  try {
-    await confirmIrreversible(batchRows.value.length)
-    const chunk = 3
-    for (let i = 0; i < batchRows.value.length; i += chunk) {
-      const part = batchRows.value.slice(i, i + chunk)
-      await Promise.all(
-        part.map((r) =>
-          ingestionApi.updateColumn(r.id, {
-            columnName: r.columnName.trim(),
-            semanticDesc: r.semanticDesc?.trim() || '',
-          }),
-        ),
-      )
-    }
-    ElMessage.success(`已批量更新 ${batchRows.value.length} 个数据项；元数据对应属性已覆盖且不可恢复`)
-    batchDialogVisible.value = false
-    selectedCols.value = []
-    if (selectedTableId.value) columns.value = (await ingestionApi.columns(selectedTableId.value)).data
-  } catch (e: unknown) {
-    if (e === 'cancel' || (e as { message?: string })?.message === 'cancel') return
-    ElMessage.error(e instanceof Error ? e.message : '批量保存失败')
-  } finally {
-    batchSaving.value = false
   }
 }
 
@@ -318,7 +279,7 @@ onMounted(reload)
     <el-alert v-if="loadError" type="error" :title="loadError" show-icon :closable="false" style="margin-bottom:12px" />
     <PageCard title="数据项管理">
       <p class="hint">
-        按当前项目过滤物理表。数据项仅支持查看，不可新增、修改或删除（字段随数据库表登记同步）。
+        按当前项目过滤物理表。属性是否可编辑由平台管理 · 系统管理 ·「内置属性管理」统一配置。
       </p>
       <el-form inline class="portal-inline-form portal-inline-form--block">
         <el-form-item label="当前项目" class="portal-field-xl">
@@ -347,90 +308,73 @@ onMounted(reload)
             <el-option v-for="t in tables" :key="t.id" :label="t.tableName" :value="t.id" />
           </el-select>
         </el-form-item>
+        <el-form-item class="portal-form-actions">
+          <el-button type="primary" :disabled="!selectedTableId" @click="openCreate">新建</el-button>
+        </el-form-item>
       </el-form>
+
       <el-table :data="columns" stripe>
-        <el-table-column prop="columnCode" label="字段编码" width="120" />
-        <el-table-column prop="columnName" label="字段名称" min-width="120" />
-        <el-table-column label="数据类型 & 长度" min-width="140">
-          <template #default="{ row }">{{ typeLengthLabel(row) }}</template>
+        <el-table-column prop="columnCode" label="属性代码" width="140" show-overflow-tooltip />
+        <el-table-column prop="columnName" label="属性名称" min-width="120" show-overflow-tooltip />
+        <el-table-column label="数据类型" width="110" show-overflow-tooltip>
+          <template #default="{ row }">{{ dataTypeLabel(row) }}</template>
         </el-table-column>
-        <el-table-column label="控件类型" width="100">
+        <el-table-column label="长度" width="80" align="center">
+          <template #default="{ row }">{{ lengthLabel(row) }}</template>
+        </el-table-column>
+        <el-table-column label="组件类型" width="100">
           <template #default="{ row }">{{ componentLabel(row.componentType) }}</template>
         </el-table-column>
-        <el-table-column label="必填" width="60">
+        <el-table-column label="必填" width="70" align="center">
           <template #default="{ row }">{{ row.nullableFlag ? '否' : '是' }}</template>
         </el-table-column>
-        <el-table-column label="内置" width="70">
-          <template #default="{ row }">{{ isBuiltIn(row) ? '是' : '否' }}</template>
+        <el-table-column prop="requiredTip" label="必填提示" min-width="140" show-overflow-tooltip>
+          <template #default="{ row }">{{ row.requiredTip || '—' }}</template>
         </el-table-column>
-        <el-table-column prop="semanticDesc" label="注释" min-width="140" show-overflow-tooltip />
-        <el-table-column label="操作" width="80" fixed="right">
+        <el-table-column label="操作" width="90" fixed="right">
           <template #default="{ row }">
-            <el-button link type="primary" @click="openEdit(row)">查看</el-button>
+            <el-button link type="primary" @click="openEdit(row)">编辑</el-button>
           </template>
         </el-table-column>
       </el-table>
     </PageCard>
 
-    <el-dialog
-      v-model="dialogVisible"
-      title="查看数据项"
-      width="520px"
-      destroy-on-close
-    >
-      <el-alert
-        v-if="editingCol && isBuiltIn(editingCol)"
-        type="info"
-        :closable="false"
-        show-icon
-        style="margin-bottom:12px"
-        title="该字段已是内置属性，不可再编辑。"
-      />
-      <el-alert
-        v-else-if="editingCol"
-        type="warning"
-        :closable="false"
-        show-icon
-        style="margin-bottom:12px"
-        title="编辑后元数据维护中对应属性不可恢复；若设为内置并保存，之后将不可再编辑。"
-      />
-      <el-form label-width="100px">
-        <el-form-item label="字段编码" required>
-          <el-input v-model="colForm.columnCode" :disabled="!!editingCol" placeholder="如 ENT_CODE" />
+    <el-dialog v-model="dialogVisible" :title="dialogTitle" width="520px" destroy-on-close>
+      <el-form label-width="120px">
+        <el-form-item label="属性代码" required>
+          <el-input
+            v-model="colForm.columnCode"
+            :disabled="!!editingCol || !canEditAttr('columnCode')"
+            placeholder="如 ENT_CODE"
+          />
         </el-form-item>
-        <el-form-item label="内置属性">
-          <el-radio-group
-            v-model="colForm.builtInFlag"
-            :disabled="editingCol != null && isBuiltIn(editingCol)"
-          >
-            <el-radio-button :value="1">是</el-radio-button>
-            <el-radio-button :value="0">否</el-radio-button>
-          </el-radio-group>
-          <div class="field-tip">
-            <template v-if="editingCol && isBuiltIn(editingCol)">已锁定为内置，不可修改</template>
-            <template v-else-if="colForm.builtInFlag === 1">保存后列表显示「内置=是」，且不可再编辑</template>
-            <template v-else>自定义属性可编辑；保存后元数据对应信息不可恢复</template>
-          </div>
+        <el-form-item label="属性名称" required>
+          <el-input
+            v-model="colForm.columnName"
+            :disabled="!canEditAttr('columnName')"
+            placeholder="显示名称"
+          />
         </el-form-item>
-        <el-form-item label="字段名称" required>
-          <el-input v-model="colForm.columnName" :disabled="editingCol != null && isBuiltIn(editingCol)" />
-        </el-form-item>
-        <el-form-item label="数据类型">
-          <el-input v-model="colForm.dataType" :disabled="editingCol != null && isBuiltIn(editingCol)" />
+        <el-form-item label="数据类型" required>
+          <el-input
+            v-model="colForm.dataType"
+            :disabled="!canEditAttr('dataType')"
+            placeholder="如 VARCHAR / BIGINT"
+          />
         </el-form-item>
         <el-form-item label="长度">
           <el-input-number
             v-model="colForm.lengthVal"
             :min="1"
             style="width:100%"
-            :disabled="editingCol != null && isBuiltIn(editingCol)"
+            :disabled="!canEditAttr('lengthVal')"
           />
         </el-form-item>
-        <el-form-item label="控件类型">
+        <el-form-item label="组件类型">
           <el-select
             v-model="colForm.componentType"
             style="width:100%"
-            :disabled="editingCol != null && isBuiltIn(editingCol)"
+            :disabled="!canEditAttr('componentType')"
           >
             <el-option v-for="c in componentOptions" :key="c.value" :label="c.label" :value="c.value" />
           </el-select>
@@ -438,71 +382,32 @@ onMounted(reload)
         <el-form-item label="必填">
           <el-switch
             :model-value="colForm.nullableFlag === 0"
-            :disabled="editingCol != null && isBuiltIn(editingCol)"
-            @change="(v: boolean) => colForm.nullableFlag = v ? 0 : 1"
+            :disabled="!canEditAttr('nullableFlag')"
+            @change="(v: boolean) => (colForm.nullableFlag = v ? 0 : 1)"
           />
         </el-form-item>
-        <el-form-item label="必填提示">
-          <el-input v-model="colForm.requiredTip" :disabled="editingCol != null && isBuiltIn(editingCol)" />
-        </el-form-item>
-        <el-form-item label="语义说明">
+        <el-form-item label="必填项提示说明">
           <el-input
-            v-model="colForm.semanticDesc"
+            v-model="colForm.requiredTip"
             type="textarea"
             :rows="2"
-            :disabled="editingCol != null && isBuiltIn(editingCol)"
+            placeholder="必填时的提示文案"
           />
         </el-form-item>
       </el-form>
       <template #footer>
-        <el-button @click="dialogVisible = false">{{ editingCol && isBuiltIn(editingCol) ? '关闭' : '取消' }}</el-button>
-        <el-button
-          v-if="!(editingCol && isBuiltIn(editingCol))"
-          type="primary"
-          :loading="saving"
-          @click="saveColumn"
-        >
-          保存
-        </el-button>
-      </template>
-    </el-dialog>
-
-    <el-dialog v-model="batchDialogVisible" title="批量编辑字段名称 / 注释" width="720px" destroy-on-close>
-      <el-alert
-        type="warning"
-        :closable="false"
-        show-icon
-        style="margin-bottom:12px"
-        title="仅可编辑自定义属性；保存后元数据维护中对应属性信息不可恢复。"
-      />
-      <p class="hint">仅修改字段名称与语义说明；字段编码不变。内置属性不会出现在此列表。</p>
-      <el-table :data="batchRows" stripe size="small" max-height="420">
-        <el-table-column prop="columnCode" label="字段编码" width="140" />
-        <el-table-column label="字段名称" min-width="160">
-          <template #default="{ row }">
-            <el-input v-model="row.columnName" placeholder="字段名称" />
-          </template>
-        </el-table-column>
-        <el-table-column label="语义说明（注释）" min-width="220">
-          <template #default="{ row }">
-            <el-input v-model="row.semanticDesc" placeholder="注释 / 语义说明" />
-          </template>
-        </el-table-column>
-      </el-table>
-      <template #footer>
-        <el-button @click="batchDialogVisible = false">取消</el-button>
-        <el-button type="primary" :loading="batchSaving" @click="saveBatchEdit">保存</el-button>
+        <el-button @click="dialogVisible = false">取消</el-button>
+        <el-button type="primary" :loading="saving" @click="saveColumn">保存</el-button>
       </template>
     </el-dialog>
   </div>
 </template>
 
 <style scoped>
-.hint { margin: 0 0 12px; color: #606266; font-size: 13px; line-height: 1.5; }
-.field-tip {
-  margin-top: 6px;
-  font-size: 12px;
-  color: #909399;
-  line-height: 1.4;
+.hint {
+  margin: 0 0 12px;
+  color: #606266;
+  font-size: 13px;
+  line-height: 1.5;
 }
 </style>

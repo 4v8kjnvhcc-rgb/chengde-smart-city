@@ -32,6 +32,7 @@ const module = ref('m039')
 const moduleComponents: Record<string, ReturnType<typeof defineAsyncComponent>> = {
   m039: defineAsyncComponent(() => import('./register/GuideView.vue')),
   m040: defineAsyncComponent(() => import('./register/ProjectSystemView.vue')),
+  'project-system-mgmt': defineAsyncComponent(() => import('./register/ProjectSystemManageView.vue')),
   m041: defineAsyncComponent(() => import('./register/DataSourceModelView.vue')),
   m042: defineAsyncComponent(() => import('./register/DictRegisterView.vue')),
   m043: defineAsyncComponent(() => import('./register/TagRegisterView.vue')),
