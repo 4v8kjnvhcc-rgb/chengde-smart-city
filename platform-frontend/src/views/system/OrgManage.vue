@@ -495,10 +495,7 @@ onMounted(async () => {
           @node-click="(data: Org) => selectOrg(data.id)"
         >
           <template #default="{ data }">
-            <span class="org-node">
-              <span>{{ data.orgName }}</span>
-              <span class="org-code">{{ data.orgCode }}</span>
-            </span>
+            <span class="org-node">{{ data.orgName }}</span>
           </template>
         </el-tree>
       </PageCard>
@@ -628,7 +625,7 @@ onMounted(async () => {
             <el-option
               v-for="o in orgs.filter((x) => x.id !== orgEditForm.id)"
               :key="o.id"
-              :label="`${o.orgName} (${o.orgCode})`"
+              :label="o.orgName"
               :value="o.id"
             />
           </el-select>
@@ -695,7 +692,7 @@ onMounted(async () => {
         </el-form-item>
         <el-form-item label="所属机构">
           <el-select v-model="userEditForm.orgId" filterable style="width: 100%">
-            <el-option v-for="o in orgs" :key="o.id" :label="`${o.orgName} (${o.orgCode})`" :value="o.id" />
+            <el-option v-for="o in orgs" :key="o.id" :label="o.orgName" :value="o.id" />
           </el-select>
         </el-form-item>
         <el-form-item label="角色">
@@ -775,14 +772,7 @@ onMounted(async () => {
   margin-left: auto;
 }
 .org-node {
-  display: flex;
-  align-items: center;
-  gap: 8px;
   font-size: 13px;
-}
-.org-code {
-  color: var(--el-text-color-secondary);
-  font-size: 12px;
 }
 .role-tag { margin-right: 4px; margin-bottom: 2px; }
 .muted { color: var(--el-text-color-secondary); }
