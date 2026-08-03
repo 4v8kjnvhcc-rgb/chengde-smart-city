@@ -73,8 +73,9 @@ const detailProject = computed(() =>
   projects.value.find((p) => p.id === detailProjectId.value) || null,
 )
 
-const canDeleteProject = computed(() => auth.hasPermission('exchange:project:delete') || auth.isSystemAdmin)
-const canCreateProject = computed(() => auth.hasPermission('exchange:project:create') || auth.permissions.length === 0 || auth.isSystemAdmin)
+/** 有登记菜单即可操作页内全部按钮（角色不再拆按钮权限） */
+const canDeleteProject = computed(() => true)
+const canCreateProject = computed(() => true)
 const { canSubmit, canAudit } = useRegisterWorkflowRole()
 
 const viewDialog = ref(false)

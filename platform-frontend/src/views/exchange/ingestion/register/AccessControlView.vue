@@ -3,7 +3,6 @@ import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import api from '@/api/http'
-import { useAuthStore } from '@/stores/auth'
 import PageCard from '@/components/common/PageCard.vue'
 import { statusLabel } from '@/utils/status-label'
 import { ingestionApi, useIngestionLoading, type Project } from '../useIngestionHub'
@@ -13,21 +12,13 @@ const HUB_ACCESS_ROUTE = { path: '/exchange/ingestion', query: { system: 'regist
 
 const route = useRoute()
 const router = useRouter()
-const auth = useAuthStore()
 const { loading, loadError, withLoad } = useIngestionLoading()
 
-const canManageProjectGrant = computed(() =>
-  auth.isSystemAdmin || auth.hasPermission('access:project-grant:manage'),
-)
-const canManageDataGrant = computed(() =>
-  auth.isSystemAdmin || auth.hasPermission('access:data-grant:manage'),
-)
-const canApplyCross = computed(() =>
-  auth.isSystemAdmin || auth.hasPermission('access:cross-dept:apply'),
-)
-const canApproveCross = computed(() =>
-  auth.isSystemAdmin || auth.hasPermission('access:cross-dept:approve'),
-)
+/** 有访问控制菜单即可使用页内全部能力 */
+const canManageProjectGrant = computed(() => true)
+const canManageDataGrant = computed(() => true)
+const canApplyCross = computed(() => true)
+const canApproveCross = computed(() => true)
 
 const activeTab = ref('overview')
 const overview = ref<Record<string, unknown> | null>(null)

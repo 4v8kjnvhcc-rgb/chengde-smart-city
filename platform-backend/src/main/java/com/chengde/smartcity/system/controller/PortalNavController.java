@@ -31,7 +31,7 @@ public class PortalNavController {
     }
 
     @GetMapping
-    @PreAuthorize("hasAuthority('system:portal-nav:list') or hasAuthority('hub:system:uum:portal')")
+    @PreAuthorize("hasRole('SYSTEM_ADMIN') or hasAuthority('system:portal-nav:list') or hasAuthority('hub:system:uum:portal')")
     public ApiResponse<List<?>> list(@RequestParam(defaultValue = "flat") String format) {
         if ("tree".equalsIgnoreCase(format)) {
             return ApiResponse.ok(portalNavService.listTree());
@@ -45,14 +45,14 @@ public class PortalNavController {
     }
 
     @PostMapping
-    @PreAuthorize("hasAuthority('system:portal-nav:add')")
+    @PreAuthorize("hasRole('SYSTEM_ADMIN') or hasAuthority('system:portal-nav:list') or hasAuthority('hub:system:uum:portal')")
     public ApiResponse<Long> create(@AuthenticationPrincipal UserPrincipal principal,
                                     @Valid @RequestBody PortalNavNodeRequest request) {
         return ApiResponse.ok(portalNavService.create(principal, request));
     }
 
     @PutMapping("/{id}")
-    @PreAuthorize("hasAuthority('system:portal-nav:edit')")
+    @PreAuthorize("hasRole('SYSTEM_ADMIN') or hasAuthority('system:portal-nav:list') or hasAuthority('hub:system:uum:portal')")
     public ApiResponse<Void> update(@AuthenticationPrincipal UserPrincipal principal,
                                     @PathVariable Long id,
                                     @Valid @RequestBody PortalNavNodeRequest request) {
@@ -61,7 +61,7 @@ public class PortalNavController {
     }
 
     @DeleteMapping("/{id}")
-    @PreAuthorize("hasAuthority('system:portal-nav:delete')")
+    @PreAuthorize("hasRole('SYSTEM_ADMIN') or hasAuthority('system:portal-nav:list') or hasAuthority('hub:system:uum:portal')")
     public ApiResponse<Void> delete(@AuthenticationPrincipal UserPrincipal principal,
                                     @PathVariable Long id) {
         portalNavService.delete(principal, id);
@@ -70,7 +70,7 @@ public class PortalNavController {
 
     /** 便于前端类型推断的扁平列表别名（与 GET /?format=flat 相同） */
     @GetMapping("/flat")
-    @PreAuthorize("hasAuthority('system:portal-nav:list') or hasAuthority('hub:system:uum:portal')")
+    @PreAuthorize("hasRole('SYSTEM_ADMIN') or hasAuthority('system:portal-nav:list') or hasAuthority('hub:system:uum:portal')")
     public ApiResponse<List<PortalNavNode>> flat() {
         return ApiResponse.ok(portalNavService.listFlat());
     }

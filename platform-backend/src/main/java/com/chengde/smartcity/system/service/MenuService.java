@@ -119,7 +119,7 @@ public class MenuService {
             m.setIntegrationType("self");
         }
         if (m.getPermission() == null || m.getPermission().isBlank()) {
-            m.setPermission("system:menu:custom:" + sanitizeSlug(req.getRouteName()));
+            m.setPermission("system:menu:custom:" + sanitizeSlug(m.getRouteName()));
         }
         menuMapper.insert(m);
         jdbcTemplate.update(
@@ -291,7 +291,7 @@ public class MenuService {
         m.setStatus(1);
         m.setIntegrationType("hub");
         // 新增一律走自定义权限码，便于删除与侧栏识别
-        String slug = sanitizeSlug(req.getRouteName());
+        String slug = sanitizeSlug(m.getRouteName());
         m.setPermission("hub:ingestion:register:custom:" + slug);
         menuMapper.insert(m);
         // 赋权系统管理员角色，侧栏立即可见
@@ -363,12 +363,35 @@ public class MenuService {
 
     private void applyUpsert(SysMenu m, RegisterMenuUpsertRequest req, boolean creating) {
         m.setParentId(req.getParentId());
-        m.setRouteName(req.getRouteName().trim());
-        m.setMenuName(req.getMenuName().trim());
+        String menuName = req.getMenuName() == null ? "" : req.getMenuName().trim();
+        if (menuName.isBlank()) {
+            throw new BusinessException(400, "标题不能为空");
+        }
+        m.setMenuName(menuName);
+        String routeName = req.getRouteName() == null ? "" : req.getRouteName().trim();
+        if (routeName.isBlank()) {
+            if (!creating && m.getRouteName() != null && !m.getRouteName().isBlank()) {
+                routeName = m.getRouteName();
+            } else if (req.getPermission() != null && !req.getPermission().isBlank()) {
+                routeName = sanitizeSlug(req.getPermission());
+            } else {
+                routeName = sanitizeSlug(menuName);
+            }
+            if (routeName.isBlank()) {
+                routeName = creating ? "menu" : ("menu_" + (m.getId() == null ? "x" : m.getId()));
+            }
+        }
+        m.setRouteName(routeName);
         m.setIcon(blankToNull(req.getIcon()));
-        if (req.getMenuType() != null && req.getMenuType() == 1) {
+        Integer menuType = req.getMenuType();
+        if (menuType != null && menuType == 1) {
+            // 目录：路径可选
             m.setPath(blankToNull(req.getPath()));
             m.setComponent(null);
+        } else if (menuType != null && menuType == 3) {
+            // 按钮：路径可选（权限码即可）
+            m.setPath(blankToNull(req.getPath()));
+            m.setComponent(blankToNull(req.getComponent()));
         } else {
             if (req.getPath() == null || req.getPath().isBlank()) {
                 throw new BusinessException(400, "访问地址不能为空");
@@ -376,7 +399,7 @@ public class MenuService {
             m.setPath(req.getPath().trim());
             m.setComponent(blankToNull(req.getComponent()));
         }
-        m.setMenuType(req.getMenuType());
+        m.setMenuType(menuType);
         m.setVisible(req.getVisible() != null && req.getVisible() == 0 ? 0 : 1);
         m.setSortOrder(req.getSortOrder() == null ? 0 : req.getSortOrder());
         if (req.getPermission() != null && !req.getPermission().isBlank()) {

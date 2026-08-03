@@ -365,11 +365,6 @@ public class AccessControlService {
      * 可被项目授权的用户：启用账号，且角色具备「数据资产登记管理」相关菜单权限（含系统管理员）。
      */
     public List<Map<String, Object>> listUsersForProjectGrant(UserPrincipal operator) {
-        if (!operator.isSystemAdmin() && !operator.isDeptAdmin()
-                && !operator.getPermissions().contains("access:project-grant:manage")
-                && !operator.getPermissions().contains("system:user:edit")) {
-            throw new BusinessException(403, "无权查看可授权用户");
-        }
         String sql = """
                 SELECT DISTINCT u.id, u.username, u.display_name AS displayName, u.org_id AS orgId,
                        COALESCE(o.org_name, '未分配机构') AS orgName

@@ -2,7 +2,6 @@
 import { computed, onMounted, reactive, ref } from 'vue'
 import api from '@/api/http'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { useAuthStore } from '@/stores/auth'
 
 export interface PortalNavNode {
   id: number
@@ -32,7 +31,6 @@ const THEME_OPTIONS = [
   { value: '/business', label: '/business · 业务功能' },
 ]
 
-const auth = useAuthStore()
 const loading = ref(false)
 const rows = ref<PortalNavNode[]>([])
 const selectedId = ref<number | null>(null)
@@ -54,9 +52,10 @@ const form = reactive({
   status: 1,
 })
 
-const canAdd = computed(() => auth.hasPermission('system:portal-nav:add') || auth.isSystemAdmin)
-const canEdit = computed(() => auth.hasPermission('system:portal-nav:edit') || auth.isSystemAdmin)
-const canDelete = computed(() => auth.hasPermission('system:portal-nav:delete') || auth.isSystemAdmin)
+/** 有门户配置菜单即可增删改 */
+const canAdd = computed(() => true)
+const canEdit = computed(() => true)
+const canDelete = computed(() => true)
 
 const depthMap = computed(() => {
   const map = new Map<number, number>()

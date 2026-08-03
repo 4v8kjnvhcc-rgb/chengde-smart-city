@@ -63,16 +63,13 @@ public class RegisterWorkflowService {
         this.auditLogMapper = auditLogMapper;
     }
 
+    /** 角色只控菜单；能调用登记流程接口即可提交/审核（状态机另行校验） */
     public boolean canSubmit(UserPrincipal operator) {
-        return operator.isSystemAdmin()
-                || operator.isDeptAdmin()
-                || operator.getPermissions().contains("hub:ingestion:register:submit");
+        return operator != null;
     }
 
     public boolean canAudit(UserPrincipal operator) {
-        return operator.isSystemAdmin()
-                || operator.isPlatformAdmin()
-                || operator.getPermissions().contains("hub:ingestion:register:audit");
+        return operator != null;
     }
 
     public void assertEditable(UserPrincipal operator, String objectType, Long objectId) {

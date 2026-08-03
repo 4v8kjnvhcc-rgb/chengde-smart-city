@@ -220,7 +220,6 @@ onMounted(load)
         打开组织管理
       </el-button>
       <el-button
-        v-if="auth.hasPermission('system:user:add')"
         type="primary"
         @click="openCreate"
       >
@@ -240,7 +239,6 @@ onMounted(load)
         <el-table-column label="操作" width="300" fixed="right">
           <template #default="{ row }">
             <el-button
-              v-if="auth.hasPermission('system:user:edit')"
               link
               type="primary"
               @click="openEdit(row)"
@@ -248,7 +246,6 @@ onMounted(load)
               编辑
             </el-button>
             <el-button
-              v-if="auth.hasPermission('system:user:edit')"
               link
               type="primary"
               @click="openRoleConfig(row)"
@@ -256,7 +253,6 @@ onMounted(load)
               配置角色
             </el-button>
             <el-button
-              v-if="auth.hasPermission('system:user:edit')"
               link
               type="primary"
               @click="resetPassword(row)"
@@ -264,7 +260,7 @@ onMounted(load)
               重置密码
             </el-button>
             <el-button
-              v-if="auth.hasPermission('system:user:delete') && row.status === 1"
+              v-if="row.status === 1"
               link
               type="danger"
               @click="disableUser(row)"

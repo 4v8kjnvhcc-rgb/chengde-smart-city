@@ -42,23 +42,34 @@ const form = reactive({
   icon: '',
   path: '',
   component: '',
+  permission: '',
   menuType: 2,
   visible: 1,
 })
 
 const formRules = {
-  routeName: [{ required: true, message: '请输入名称', trigger: 'blur' }],
   menuName: [{ required: true, message: '请输入标题', trigger: 'blur' }],
   path: [
     {
       validator: (_: unknown, v: string, cb: (e?: Error) => void) => {
-        if (form.menuType === 1) return cb()
+        // 目录、按钮可不填访问地址
+        if (form.menuType === 1 || form.menuType === 3) return cb()
         if (!v?.trim()) return cb(new Error('请输入访问地址'))
         cb()
       },
       trigger: 'blur',
     },
   ],
+}
+
+/** 存量菜单多数无 route_name，编辑时用权限码/编码兜底，避免校验拦死增改 */
+function resolveRouteName(row?: Pick<MenuRow, 'routeName' | 'permission' | 'mCode' | 'id' | 'menuName'>, fallbackTitle = '') {
+  const fromRow = row?.routeName?.trim() || row?.permission?.trim() || row?.mCode?.trim()
+  if (fromRow) return fromRow
+  const title = (fallbackTitle || row?.menuName || '').trim()
+  if (title) return title
+  if (row?.id != null) return `menu_${row.id}`
+  return ''
 }
 
 const formRef = ref<{ validate: () => Promise<void>; resetFields: () => void } | null>(null)
@@ -203,6 +214,7 @@ function openCreate() {
     icon: '',
     path: '',
     component: '',
+    permission: '',
     menuType: 2,
     visible: 1,
   })
@@ -215,11 +227,12 @@ function openEdit(row: MenuRow) {
   Object.assign(form, {
     parentId: row.parentId ?? 0,
     sortOrder: row.sortOrder ?? 0,
-    routeName: row.routeName || '',
+    routeName: resolveRouteName(row),
     menuName: row.menuName || '',
     icon: row.icon || '',
     path: row.path || '',
     component: row.component || '',
+    permission: row.permission || '',
     menuType: row.menuType ?? 2,
     visible: row.visible === 0 ? 0 : 1,
   })
@@ -230,14 +243,24 @@ async function submitForm() {
   await formRef.value?.validate()
   saving.value = true
   try {
+    const menuName = form.menuName.trim()
+    const routeName =
+      form.routeName.trim() ||
+      resolveRouteName(
+        editingId.value != null
+          ? { id: editingId.value, menuName, routeName: form.routeName, permission: form.permission }
+          : { menuName, routeName: form.routeName, permission: form.permission },
+        menuName,
+      )
     const body = {
       parentId: form.parentId,
       sortOrder: form.sortOrder,
-      routeName: form.routeName.trim(),
-      menuName: form.menuName.trim(),
+      routeName,
+      menuName,
       icon: form.icon,
       path: form.path,
       component: form.component,
+      permission: form.permission.trim() || undefined,
       menuType: form.menuType,
       visible: form.visible,
     }
@@ -267,7 +290,13 @@ async function removeRows(list: MenuRow[]) {
     ElMessage.warning('根菜单不可删除')
     return
   }
-  await ElMessageBox.confirm(`确认删除选中的 ${list.length} 项？`, '删除确认', { type: 'warning' })
+  try {
+    await ElMessageBox.confirm(`确认删除选中的 ${list.length} 项？有子菜单的节点需先删子项。`, '删除确认', {
+      type: 'warning',
+    })
+  } catch {
+    return
+  }
   try {
     await api.delete('/system/menus', { data: { ids: list.map((r) => r.id) } })
     ElMessage.success('删除成功')
@@ -292,7 +321,10 @@ onMounted(load)
 
 <template>
   <div>
-    <PageHeader title="菜单管理" description="维护门户菜单树；支持按名称模糊检索，同级上下调整排序。" />
+    <PageHeader
+      title="菜单管理"
+      description="维护各子系统菜单树（增删改查落库 sys_menu）；左侧选节点查看子项，支持检索与同级排序。"
+    />
     <div class="menu-mgmt" v-loading="loading">
       <aside class="menu-mgmt__side">
         <div class="menu-mgmt__side-title">菜单结构</div>
@@ -315,7 +347,7 @@ onMounted(load)
             class="menu-mgmt__search"
           />
           <el-button type="primary" @click="openCreate">+ 新增</el-button>
-          <el-button type="primary" @click="removeRows(tableSelection)">删除</el-button>
+          <el-button type="danger" @click="removeRows(tableSelection)">删除</el-button>
         </div>
         <el-table
           class="portal-table"
@@ -329,9 +361,12 @@ onMounted(load)
           <el-table-column label="名称" min-width="140" show-overflow-tooltip>
             <template #default="{ row }">{{ displayName(row) }}</template>
           </el-table-column>
-          <el-table-column prop="menuName" label="标题" min-width="160" show-overflow-tooltip />
-          <el-table-column label="类型" width="100">
+          <el-table-column prop="menuName" label="标题" min-width="140" show-overflow-tooltip />
+          <el-table-column label="类型" width="90">
             <template #default="{ row }">{{ typeLabel(row.menuType) }}</template>
+          </el-table-column>
+          <el-table-column label="访问地址" min-width="160" show-overflow-tooltip>
+            <template #default="{ row }">{{ row.path || '—' }}</template>
           </el-table-column>
           <el-table-column label="排序" width="120">
             <template #default="{ row }">
@@ -359,7 +394,7 @@ onMounted(load)
           <el-table-column label="操作" width="140" fixed="right">
             <template #default="{ row }">
               <el-button link type="primary" @click="openEdit(row)">编辑</el-button>
-              <el-button link type="primary" :disabled="!canDelete(row)" @click="removeRows([row])">
+              <el-button link type="danger" :disabled="!canDelete(row)" @click="removeRows([row])">
                 删除
               </el-button>
             </template>
@@ -377,7 +412,7 @@ onMounted(load)
         </div>
       </section>
 
-      <el-dialog v-model="dialogVisible" :title="dialogTitle" width="520px" destroy-on-close>
+      <el-dialog v-model="dialogVisible" :title="dialogTitle" width="560px" destroy-on-close>
         <el-form ref="formRef" :model="form" :rules="formRules" label-width="100px">
           <el-form-item label="上级菜单">
             <el-select v-model="form.parentId" filterable style="width: 100%">
@@ -387,17 +422,29 @@ onMounted(load)
           <el-form-item label="排序">
             <el-input-number v-model="form.sortOrder" :min="0" :max="9999" controls-position="right" />
           </el-form-item>
-          <el-form-item label="名称" prop="routeName">
-            <el-input v-model="form.routeName" placeholder="如 MenuManage" />
-          </el-form-item>
           <el-form-item label="标题" prop="menuName">
-            <el-input v-model="form.menuName" placeholder="显示标题" />
+            <el-input v-model="form.menuName" placeholder="侧栏/页面显示标题" />
+          </el-form-item>
+          <el-form-item label="名称" prop="routeName">
+            <el-input
+              v-model="form.routeName"
+              placeholder="可选；空则按标题/权限码自动生成"
+            />
+          </el-form-item>
+          <el-form-item label="权限码">
+            <el-input
+              v-model="form.permission"
+              placeholder="可选；新增空则自动生成 system:menu:custom:..."
+            />
           </el-form-item>
           <el-form-item label="图标">
             <el-input v-model="form.icon" placeholder="可选" />
           </el-form-item>
           <el-form-item label="访问地址" prop="path">
-            <el-input v-model="form.path" placeholder="目录可空；菜单项必填，如 /analytics/support" />
+            <el-input
+              v-model="form.path"
+              placeholder="目录/按钮可空；菜单项必填，如 /analytics/support"
+            />
           </el-form-item>
           <el-form-item label="组件路径">
             <el-input v-model="form.component" placeholder="可选" />

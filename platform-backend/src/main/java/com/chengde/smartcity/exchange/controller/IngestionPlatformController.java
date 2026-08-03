@@ -140,7 +140,7 @@ public class IngestionPlatformController {
     }
 
     @DeleteMapping("/projects/{id}")
-    @PreAuthorize("hasAuthority('exchange:project:delete')")
+    @PreAuthorize("isAuthenticated()")
     public ApiResponse<Void> deleteProject(@AuthenticationPrincipal UserPrincipal principal,
                                            @PathVariable Long id) {
         service.deleteProject(principal, id);
@@ -640,14 +640,14 @@ public class IngestionPlatformController {
     }
 
     @PostMapping("/register/tags")
-    @PreAuthorize("hasAuthority('system:tag:edit')")
+    @PreAuthorize("hasRole('SYSTEM_ADMIN') or hasAuthority('system:tag:list') or hasAuthority('system:tag:edit') or hasAuthority('system:tag:query')")
     public ApiResponse<Long> createTag(@AuthenticationPrincipal UserPrincipal principal,
                                        @RequestBody Map<String, Object> body) {
         return ApiResponse.ok(registerService.createTag(principal, body));
     }
 
     @PutMapping("/register/tags/{id}")
-    @PreAuthorize("hasAuthority('system:tag:edit')")
+    @PreAuthorize("hasRole('SYSTEM_ADMIN') or hasAuthority('system:tag:list') or hasAuthority('system:tag:edit') or hasAuthority('system:tag:query')")
     public ApiResponse<Void> updateTag(@AuthenticationPrincipal UserPrincipal principal,
                                        @PathVariable Long id,
                                        @RequestBody Map<String, Object> body) {

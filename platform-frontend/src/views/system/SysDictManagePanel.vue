@@ -3,7 +3,6 @@ import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import api from '@/api/http'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { useAuthStore } from '@/stores/auth'
 
 interface SysDict {
   id: number
@@ -25,7 +24,6 @@ interface SysDictItem {
   remark?: string
 }
 
-const auth = useAuthStore()
 const router = useRouter()
 const loading = ref(false)
 const dicts = ref<SysDict[]>([])
@@ -53,15 +51,10 @@ const itemForm = reactive({
   remark: '',
 })
 
-const canAdd = computed(
-  () => auth.hasPermission('system:dict:add') || auth.hasPermission('hub:analytics:support:sys:dict'),
-)
-const canEdit = computed(
-  () => auth.hasPermission('system:dict:edit') || auth.hasPermission('hub:analytics:support:sys:dict'),
-)
-const canDelete = computed(
-  () => auth.hasPermission('system:dict:delete') || auth.hasPermission('hub:analytics:support:sys:dict'),
-)
+/** 有字典管理菜单即可增删改 */
+const canAdd = computed(() => true)
+const canEdit = computed(() => true)
+const canDelete = computed(() => true)
 
 const selectedDict = computed(() => dicts.value.find((d) => d.id === selectedDictId.value) || null)
 

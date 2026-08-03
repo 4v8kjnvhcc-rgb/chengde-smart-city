@@ -7,7 +7,7 @@ public class RegisterMenuUpsertRequest {
 
     @NotNull
     private Long parentId;
-    @NotBlank
+    /** 可空：空则服务端按标题/权限码自动生成 */
     private String routeName;
     @NotBlank
     private String menuName;
