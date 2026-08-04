@@ -1,4 +1,4 @@
--- V120: 内置属性管理（全局：属性维度是否可编辑）+ 系统管理菜单
+-- V126: 内置属性管理（全局：属性维度是否可编辑）+ 系统管理菜单
 
 CREATE TABLE IF NOT EXISTS sys_builtin_attr_config (
   id              BIGINT       NOT NULL PRIMARY KEY COMMENT '固定为 1',

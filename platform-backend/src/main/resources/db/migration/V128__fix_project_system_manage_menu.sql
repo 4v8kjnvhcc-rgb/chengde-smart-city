@@ -1,5 +1,5 @@
--- V122: 修复「项目/系统信息管理」菜单未写入
--- 原因：V118 误用 id=7020，该 ID 在 V80 已占用为「数据资源采集汇聚」目录，INSERT 被 WHERE NOT EXISTS 跳过
+-- V128: 修复「项目/系统信息管理」菜单未写入
+-- 原因：V124（原 V118）误用 id=7020，该 ID 在 V80 已占用为「数据资源采集汇聚」目录，INSERT 被 WHERE NOT EXISTS 跳过
 
 INSERT INTO sys_menu (id, parent_id, menu_name, menu_type, path, component, permission, icon, sort_order, m_code, integration_type, status, visible)
 SELECT 7026, 7000, '项目/系统信息管理', 2,

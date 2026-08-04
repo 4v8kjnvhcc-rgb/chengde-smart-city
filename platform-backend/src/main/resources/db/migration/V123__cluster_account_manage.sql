@@ -1,4 +1,4 @@
--- V117: 集群账号管理（用户中心）
+-- V123: 集群账号管理（用户中心）
 
 CREATE TABLE IF NOT EXISTS sys_cluster_account (
   id BIGINT NOT NULL AUTO_INCREMENT PRIMARY KEY,
