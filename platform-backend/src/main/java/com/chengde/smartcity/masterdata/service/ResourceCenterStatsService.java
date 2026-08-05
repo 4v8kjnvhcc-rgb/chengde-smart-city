@@ -543,6 +543,16 @@ public class ResourceCenterStatsService {
             m.put("forecast", List.of());
             return m;
         }
+        double maxY = 0;
+        for (Map<String, Object> point : trend) {
+            maxY = Math.max(maxY, numOf(point.get(field)));
+        }
+        if (maxY <= 0) {
+            m.put("available", false);
+            m.put("hint", "该指标当前全部为 0，请先在「资源监控管理」刷新真实容量或完成资产纳管后再做预测。");
+            m.put("forecast", List.of());
+            return m;
+        }
         double sumX = 0;
         double sumY = 0;
         double sumXy = 0;
@@ -566,7 +576,8 @@ public class ResourceCenterStatsService {
             ssTot += (y - meanY) * (y - meanY);
             ssRes += (y - fit) * (y - fit);
         }
-        double r2 = ssTot == 0 ? 1 : 1 - ssRes / ssTot;
+        boolean flat = ssTot == 0;
+        double r2 = flat ? 0 : 1 - ssRes / ssTot;
         double first = numOf(trend.get(0).get(field));
         double last = numOf(trend.get(n - 1).get(field));
         double growthRate = first <= 0 ? 0 : (Math.pow(last / first, 1.0 / (n - 1)) - 1) * 100;
@@ -580,7 +591,7 @@ public class ResourceCenterStatsService {
             f.put("value", Math.max(0, round2(v)));
             forecast.add(f);
         }
-        String reliability = r2 >= 0.8 ? "HIGH" : r2 >= 0.5 ? "MEDIUM" : "LOW";
+        String reliability = flat ? "LOW" : r2 >= 0.8 ? "HIGH" : r2 >= 0.5 ? "MEDIUM" : "LOW";
         m.put("available", true);
         m.put("slopePerMonth", round2(slope));
         m.put("intercept", round2(intercept));
@@ -588,7 +599,9 @@ public class ResourceCenterStatsService {
         m.put("reliability", reliability);
         m.put("monthlyGrowthRate", round2(growthRate));
         m.put("forecast", forecast);
-        m.put("hint", "LOW".equals(reliability)
+        m.put("hint", flat
+                ? "最近 " + n + " 期该指标无变化，暂未观察到增长趋势。"
+                : "LOW".equals(reliability)
                 ? "序列波动较大（R² < 0.5），线性外推仅作参考，建议积累更多月度样本。"
                 : "按最近 " + n + " 期线性拟合外推未来 " + aheadPeriods + " 个月。");
         return m;
