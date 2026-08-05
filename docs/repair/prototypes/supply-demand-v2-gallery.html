@@ -1,0 +1,86 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>数据供需对接系统 · V2 门户风格全流程原型</title>
+<style>
+:root{--bg:#f5f7fa;--card:#fff;--blue:#1677ff;--text:#1f2d3d;--mut:#909399;--line:#e8edf5}
+*{box-sizing:border-box}
+body{margin:0;font-family:"PingFang SC","Microsoft YaHei",sans-serif;background:var(--bg);color:var(--text);line-height:1.55}
+.wrap{max-width:1120px;margin:0 auto;padding:20px 16px 48px}
+.hero{background:#1677ff;color:#fff;border-radius:10px;padding:18px 20px;margin-bottom:16px}
+.hero h1{margin:0 0 6px;font-size:20px}
+.hero p{margin:0;font-size:13px;opacity:.92}
+.nav{display:flex;flex-wrap:wrap;gap:8px;margin-top:12px}
+.nav a{color:#fff;text-decoration:none;background:rgba(255,255,255,.18);padding:4px 10px;border-radius:6px;font-size:12px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:10px;padding:14px 16px;margin-bottom:14px}
+.card h2{margin:0 0 10px;font-size:15px;border-left:4px solid var(--blue);padding-left:8px}
+.shot{border:1px solid var(--line);border-radius:8px;overflow:hidden;margin-bottom:12px;background:#fff}
+.shot img{display:block;width:100%;height:auto}
+.shot .cap{padding:8px 10px;font-size:12px;color:var(--mut);border-top:1px solid var(--line);background:#fafbfc}
+.grid{display:grid;gap:12px}
+@media(min-width:960px){.grid-2{grid-template-columns:1fr 1fr}}
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="hero">
+    <h1>数据供需对接系统 · 全流程原型（对齐首页风格）</h1>
+    <p>侧栏 + 蓝顶栏（城市轮廓）+ 白卡片 + 蓝/绿/橙状态色 · 承德门户风格</p>
+    <div class="nav">
+      <a href="#home">首页</a>
+      <a href="#mgmt">需求管理</a>
+      <a href="#analysis">需求分析</a>
+      <a href="#confirm">需求确认</a>
+      <a href="#supply">供给查看</a>
+      <a href="#supervise">业务督办</a>
+      <a href="#list">清单中心</a>
+      <a href="#objection">异议清单</a>
+    </div>
+  </div>
+
+  <div class="card" id="home">
+    <h2>① 首页（风格基准 · 你提供的稿）</h2>
+    <div class="shot">
+      <img src="supply-demand-home-style-ref.png" alt="首页" />
+      <div class="cap">流程 7 步 + KPI（待预审/待确认/异议）+ 三清单入口</div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h2>②～⑧ 后续菜单页</h2>
+    <div class="grid grid-2">
+      <div class="shot" id="mgmt">
+        <img src="supply-demand-v2-demand-mgmt.png" alt="需求管理" />
+        <div class="cap">② 数据需求管理：筛选 / 新建导入导出 / 跟踪撤销</div>
+      </div>
+      <div class="shot" id="analysis">
+        <img src="supply-demand-v2-analysis.png" alt="需求分析" />
+        <div class="cap">③ 数据需求分析：匹配度 · 关联图 · 分发/退回/督办</div>
+      </div>
+      <div class="shot" id="confirm">
+        <img src="supply-demand-v2-confirm.png" alt="需求确认" />
+        <div class="cap">④ 数据需求确认：确认可满足 → 生成共享任务 / 数据责任</div>
+      </div>
+      <div class="shot" id="supply">
+        <img src="supply-demand-v2-supply.png" alt="供给查看" />
+        <div class="cap">⑤ 数据供给查看：共享方式 / 交换作业 / 接口 Tab</div>
+      </div>
+      <div class="shot" id="supervise">
+        <img src="supply-demand-v2-supervise.png" alt="业务督办" />
+        <div class="cap">⑥ 业务督办：超时/退回督办与反馈</div>
+      </div>
+      <div class="shot" id="list">
+        <img src="supply-demand-v2-list-center.png" alt="清单中心" />
+        <div class="cap">⑦ 清单中心：目录×6 · 供需×6 · 异议 入口</div>
+      </div>
+    </div>
+    <div class="shot" id="objection">
+      <img src="supply-demand-v2-objection.png" alt="异议清单" />
+      <div class="cap">⑧ 异议清单：核查 / 回流审核闭环</div>
+    </div>
+  </div>
+</div>
+</body>
+</html>
