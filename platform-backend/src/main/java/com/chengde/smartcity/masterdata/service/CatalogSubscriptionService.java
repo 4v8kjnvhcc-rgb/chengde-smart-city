@@ -10,6 +10,8 @@ import com.chengde.smartcity.masterdata.mapper.GovCatalogAuthorizationMapper;
 import com.chengde.smartcity.masterdata.mapper.GovCatalogResourceMapper;
 import com.chengde.smartcity.masterdata.mapper.GovCatalogSubscriptionMapper;
 import com.chengde.smartcity.security.UserPrincipal;
+import com.chengde.smartcity.system.entity.SysOrg;
+import com.chengde.smartcity.system.mapper.SysOrgMapper;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -32,15 +34,18 @@ public class CatalogSubscriptionService {
     private final GovCatalogResourceMapper resourceMapper;
     private final GovCatalogAuthorizationMapper authorizationMapper;
     private final AuditService auditService;
+    private final SysOrgMapper orgMapper;
 
     public CatalogSubscriptionService(GovCatalogSubscriptionMapper subscriptionMapper,
                                       GovCatalogResourceMapper resourceMapper,
                                       GovCatalogAuthorizationMapper authorizationMapper,
-                                      AuditService auditService) {
+                                      AuditService auditService,
+                                      SysOrgMapper orgMapper) {
         this.subscriptionMapper = subscriptionMapper;
         this.resourceMapper = resourceMapper;
         this.authorizationMapper = authorizationMapper;
         this.auditService = auditService;
+        this.orgMapper = orgMapper;
     }
 
     public List<Map<String, Object>> listMine(UserPrincipal operator, String status) {
@@ -56,11 +61,40 @@ public class CatalogSubscriptionService {
     }
 
     public List<Map<String, Object>> listPending() {
+        return listPending(null);
+    }
+
+    public List<Map<String, Object>> listPending(UserPrincipal operator) {
         List<GovCatalogSubscription> list = subscriptionMapper.selectList(
                 new LambdaQueryWrapper<GovCatalogSubscription>()
                         .eq(GovCatalogSubscription::getStatus, "PENDING")
                         .orderByDesc(GovCatalogSubscription::getId));
-        return toRows(list);
+        if (operator == null || operator.isSystemAdmin()) {
+            return toRows(list);
+        }
+        String myOrg = resolveOrgName(operator);
+        if (myOrg == null || myOrg.isBlank()) {
+            return List.of();
+        }
+        List<GovCatalogSubscription> filtered = new ArrayList<>();
+        for (GovCatalogSubscription sub : list) {
+            if (operator.getUsername() != null && operator.getUsername().equals(sub.getApplicantUser())) {
+                continue;
+            }
+            GovCatalogResource resource = resourceMapper.selectById(sub.getResourceId());
+            if (resource != null && myOrg.equals(resource.getProviderOrg())) {
+                filtered.add(sub);
+            }
+        }
+        return toRows(filtered);
+    }
+
+    private String resolveOrgName(UserPrincipal operator) {
+        if (operator == null || operator.getOrgId() == null) {
+            return null;
+        }
+        SysOrg org = orgMapper.selectById(operator.getOrgId());
+        return org == null ? null : org.getOrgName();
     }
 
     public Map<String, Object> get(Long id) {
@@ -93,6 +127,9 @@ public class CatalogSubscriptionService {
         sub.setApplicantUser(operator.getUsername());
         sub.setShareMode(shareMode);
         sub.setPurpose(str(body.get("purpose"), ""));
+        if (body.get("applyPayload") != null) {
+            sub.setApplyPayload(String.valueOf(body.get("applyPayload")));
+        }
         sub.setStatus("PENDING");
         sub.setCreatedAt(LocalDateTime.now());
         sub.setUpdatedAt(LocalDateTime.now());

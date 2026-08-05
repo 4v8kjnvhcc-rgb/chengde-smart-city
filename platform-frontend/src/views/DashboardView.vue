@@ -1,5 +1,7 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+defineOptions({ name: 'DashboardView' })
+
+import { computed, onActivated, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { useAuthStore } from '@/stores/auth'
 import {
@@ -16,25 +18,13 @@ import {
   visibleMenuChildren,
 } from '@/utils/menu'
 import type { MenuNode } from '@/stores/auth'
-import api from '@/api/http'
 import { ElMessage } from 'element-plus'
 import { openAssessmentWithPortalSso, assessmentExternalUrl } from '@/views/exchange/application/application-nav'
-
-interface PortalNavNode {
-  id: number
-  parentId: number
-  name: string
-  nodeType: string
-  sortOrder?: number
-  url?: string
-  menuPath?: string
-  openMode?: string
-  ssoMode?: string
-  themeKey?: string
-  remark?: string
-  status?: number
-  children?: PortalNavNode[]
-}
+import {
+  loadPortalNav,
+  peekPortalNavCache,
+  type PortalNavNode,
+} from '@/utils/portal-nav-cache'
 
 type DisplayCard =
   | { source: 'nav'; key: string; title: string; themePath: string; direct: boolean; nav: PortalNavNode }
@@ -124,8 +114,11 @@ const platformThemes: Record<
   },
 }
 
-const navPlatforms = ref<PortalNavNode[]>([])
+const bootCache = peekPortalNavCache()
+const navPlatforms = ref<PortalNavNode[]>(bootCache ? bootCache.slice() : [])
 const navLoadError = ref(false)
+/** 路由守卫已预取时首屏直接出卡；保活返回时组件不销毁 */
+const navReady = ref(bootCache !== null)
 
 /** 一级「平台管理」（原系统管理）；集成运维已迁入通用支撑，不再作为门户卡片 */
 const menuExtraPlatforms = computed(() =>
@@ -133,6 +126,7 @@ const menuExtraPlatforms = computed(() =>
 )
 
 const displayCards = computed<DisplayCard[]>(() => {
+  if (!navReady.value) return []
   const fromNav: DisplayCard[] = navPlatforms.value.map((n) => ({
     source: 'nav' as const,
     key: `nav-${n.id}`,
@@ -269,6 +263,26 @@ function wantsPortalTicketSso(node: PortalNavNode): boolean {
   return (node.ssoMode || 'none') === 'portal_ticket'
 }
 
+/** 站内地址拆成 path + query，保证 system=collect/register 生效 */
+function pushInternalTarget(target: string) {
+  const t = target.trim()
+  if (t.startsWith('http://') || t.startsWith('https://')) {
+    window.open(t, '_blank', 'noopener,noreferrer')
+    return
+  }
+  const qIdx = t.indexOf('?')
+  if (qIdx < 0) {
+    router.push(t)
+    return
+  }
+  const path = t.slice(0, qIdx) || '/'
+  const query: Record<string, string> = {}
+  new URLSearchParams(t.slice(qIdx + 1)).forEach((v, k) => {
+    if (k) query[k] = v
+  })
+  router.push({ path, query })
+}
+
 async function enterMenuNode(node: MenuNode) {
   if (isAssessmentMenu(node)) {
     const landing = assessmentExternalUrl() || 'http://127.0.0.1:18081/assessment/index#/dashboard'
@@ -281,11 +295,11 @@ async function enterMenuNode(node: MenuNode) {
     return
   }
   if (node.path && node.menuType !== 1) {
-    router.push(node.path)
+    pushInternalTarget(node.path)
     return
   }
   const target = firstNavPath(node)
-  if (target) router.push(target)
+  if (target) pushInternalTarget(target)
 }
 
 async function enterNavNode(node: PortalNavNode) {
@@ -313,11 +327,17 @@ async function enterNavNode(node: PortalNavNode) {
     window.open(target, '_blank', 'noopener,noreferrer')
     return
   }
-  router.push(target)
+  pushInternalTarget(target)
 }
 
 function onCardItemClick(item: CardItem) {
   if (itemHasChildren(item)) {
+    // 有子入口且自身可导航（如「大数据归集平台」）→ 进选择页；悬停飞出仍可直达子系统
+    if (item.kind === 'nav' && navigableTarget(item.node)) {
+      hoverGroupKey.value = null
+      void enterNavNode(item.node)
+      return
+    }
     hoverGroupKey.value = hoverGroupKey.value === item.key ? null : item.key
     return
   }
@@ -333,15 +353,40 @@ function onFlyoutChildClick(item: CardItem) {
   onCardItemClick(item)
 }
 
-onMounted(async () => {
+async function refreshNav(force = false) {
   try {
-    const res = await api.get<PortalNavNode[]>('/system/portal-nav/enabled-tree')
-    navPlatforms.value = res.data || []
+    const list = await loadPortalNav(force)
+    navPlatforms.value = list
     navLoadError.value = false
   } catch {
-    navPlatforms.value = []
-    navLoadError.value = true
+    if (!peekPortalNavCache()) {
+      navPlatforms.value = []
+      navLoadError.value = true
+    }
+  } finally {
+    navReady.value = true
   }
+}
+
+onMounted(() => {
+  void refreshNav(false)
+})
+
+/** keep-alive 再次进入：界面已是上次完整状态，仅后台对齐最新门户树 */
+onActivated(() => {
+  const cached = peekPortalNavCache()
+  if (cached) {
+    navPlatforms.value = cached.slice()
+    navReady.value = true
+  }
+  void loadPortalNav(true)
+    .then((list) => {
+      navPlatforms.value = list
+      navLoadError.value = false
+    })
+    .catch(() => {
+      /* 保留现画面 */
+    })
 })
 </script>
 
@@ -351,7 +396,17 @@ onMounted(async () => {
       <h1 class="portal-drawer__title">承德高新区智慧城市数据中台</h1>
     </div>
 
-    <div v-if="displayCards.length" class="cards-row">
+    <!-- 冷启动无缓存：骨架占位，避免地球背景上空无一物像白屏 -->
+    <div v-if="!navReady" class="cards-row" aria-busy="true">
+      <div v-for="i in 4" :key="i" class="drawer-card drawer-card--skeleton">
+        <div class="card-header card-header--skeleton">
+          <div class="skel-icon" />
+          <div class="skel-title" />
+        </div>
+      </div>
+    </div>
+
+    <div v-else-if="displayCards.length" class="cards-row">
       <div
         v-for="(card, index) in displayCards"
         :key="card.key"
@@ -481,6 +536,41 @@ onMounted(async () => {
   min-height: 0;
   margin-top: 40px;
   overflow: visible;
+}
+.drawer-card--skeleton {
+  border-color: rgba(181, 212, 244, 0.55);
+  background: rgba(255, 255, 255, 0.72);
+  height: 202px;
+  pointer-events: none;
+}
+.card-header--skeleton {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 16px;
+  height: 100%;
+  padding: 24px;
+}
+.skel-icon {
+  width: 56px;
+  height: 56px;
+  border-radius: 12px;
+  background: linear-gradient(90deg, #e8eef8 25%, #f5f8fd 50%, #e8eef8 75%);
+  background-size: 200% 100%;
+  animation: skel-shine 1.2s ease-in-out infinite;
+}
+.skel-title {
+  width: 120px;
+  height: 16px;
+  border-radius: 4px;
+  background: linear-gradient(90deg, #e8eef8 25%, #f5f8fd 50%, #e8eef8 75%);
+  background-size: 200% 100%;
+  animation: skel-shine 1.2s ease-in-out infinite;
+}
+@keyframes skel-shine {
+  0% { background-position: 100% 0; }
+  100% { background-position: -100% 0; }
 }
 
 /* 原宽 289px，缩小 10% → 260px */

@@ -1,8 +1,8 @@
 <script setup lang="ts">
-import { onMounted, ref, watch } from 'vue'
+import { computed, onMounted, reactive, ref, watch } from 'vue'
 import api from '@/api/http'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import PageCard from '@/components/common/PageCard.vue'
+import PortalPagination from '@/components/common/PortalPagination.vue'
 import { statusLabel, statusTagType } from '@/utils/status-label'
 
 interface SubRow {
@@ -21,6 +21,7 @@ interface SubRow {
   distributeResult?: string
   distributeAt?: string
   createdAt?: string
+  applyPayload?: string | Record<string, unknown>
   authorization?: {
     authorizationCode?: string
     status?: string
@@ -33,6 +34,8 @@ const SHARE_ZH: Record<string, string> = {
   DB_SYNC: '库表同步',
   FILE_SYNC: '文件同步',
   API: '接口服务',
+  TABLE: '库表同步',
+  FILE: '文件同步',
 }
 
 const activeTab = ref('mine')
@@ -40,6 +43,31 @@ const mineRows = ref<SubRow[]>([])
 const pendingRows = ref<SubRow[]>([])
 const loading = ref(false)
 const statusFilter = ref('')
+const minePage = ref(1)
+const minePageSize = ref(10)
+const pendingPage = ref(1)
+const pendingPageSize = ref(10)
+const reviewNote = ref('')
+
+const subDetail = reactive<{
+  visible: boolean
+  mode: 'mine' | 'pending'
+  row: SubRow | null
+}>({ visible: false, mode: 'mine', row: null })
+
+const pagedMine = computed(() => {
+  const start = (minePage.value - 1) * minePageSize.value
+  return mineRows.value.slice(start, start + minePageSize.value)
+})
+const pagedPending = computed(() => {
+  const start = (pendingPage.value - 1) * pendingPageSize.value
+  return pendingRows.value.slice(start, start + pendingPageSize.value)
+})
+
+function shareLabel(mode?: string) {
+  if (!mode) return '—'
+  return SHARE_ZH[mode] || statusLabel(mode)
+}
 
 async function loadMine() {
   loading.value = true
@@ -48,6 +76,7 @@ async function loadMine() {
       params: { status: statusFilter.value || undefined },
     })
     mineRows.value = res.data || []
+    minePage.value = 1
   } catch {
     ElMessage.error('加载我的申请失败')
   } finally {
@@ -60,6 +89,7 @@ async function loadPending() {
   try {
     const res = await api.get('/governance/catalog/subscriptions/pending')
     pendingRows.value = res.data || []
+    pendingPage.value = 1
   } catch {
     ElMessage.error('加载待审批失败')
   } finally {
@@ -72,35 +102,102 @@ async function load() {
   else await loadPending()
 }
 
+function openDetail(row: SubRow, mode: 'mine' | 'pending') {
+  subDetail.row = row
+  subDetail.mode = mode
+  subDetail.visible = true
+  reviewNote.value = ''
+}
+
+function payloadEntries(row: SubRow | null): { label: string; value: string }[] {
+  if (!row) return []
+  const base: { label: string; value: string }[] = [
+    { label: '资源名称', value: row.resourceName || String(row.resourceId || '—') },
+    { label: '资源编码', value: row.resourceCode || '—' },
+    { label: '共享方式', value: shareLabel(row.shareMode) },
+    { label: '申请单位', value: row.applicantOrg || '—' },
+    { label: '申请人', value: row.applicantUser || '—' },
+    { label: '用途/场景', value: row.purpose || '—' },
+    { label: '状态', value: statusLabel(row.status) },
+    { label: '申请时间', value: row.createdAt ? String(row.createdAt).replace('T', ' ').slice(0, 19) : '—' },
+  ]
+  if (row.reviewComment) base.push({ label: '审批意见', value: row.reviewComment })
+  if (row.authorization?.authorizationCode) {
+    base.push({ label: '授权码', value: row.authorization.authorizationCode })
+  }
+  if (row.distributeResult) base.push({ label: '分发结果', value: row.distributeResult })
+
+  const p = row.applyPayload
+  const obj = typeof p === 'string'
+    ? (() => { try { return JSON.parse(p) as Record<string, unknown> } catch { return null } })()
+    : p
+  if (obj && typeof obj === 'object') {
+    const map: Record<string, string> = {
+      contactName: '联系人',
+      contactPhone: '联系电话',
+      contactEmail: '联系邮箱',
+      scene: '使用办事场景',
+      systemName: '应用系统名称',
+      timeRange: '使用时间范围',
+      callFreq: '接口调用频次',
+      peakFreq: '接口峰值频率',
+      useDays: '接口使用期限(天)',
+      useScope: '使用范围说明',
+      dataDesc: '数据描述',
+      applyBasis: '申请依据',
+      techReq: '其他技术需求',
+    }
+    for (const [k, label] of Object.entries(map)) {
+      if (obj[k] != null && String(obj[k]).trim() !== '') {
+        base.push({ label, value: String(obj[k]) })
+      }
+    }
+  }
+  return base
+}
+
 async function approve(row: SubRow) {
-  await api.post(`/governance/catalog/subscriptions/${row.id}/approve`, { comment: '同意' })
+  await api.post(`/governance/catalog/subscriptions/${row.id}/approve`, {
+    comment: reviewNote.value || '同意',
+  })
   ElMessage.success('已通过')
-  await load()
+  subDetail.visible = false
+  await loadPending()
 }
 
 async function reject(row: SubRow) {
-  const { value } = await ElMessageBox.prompt('请填写驳回意见', '驳回订阅', {
-    confirmButtonText: '驳回',
-    cancelButtonText: '取消',
-    inputPattern: /\S+/,
-    inputErrorMessage: '意见不能为空',
-  })
-  await api.post(`/governance/catalog/subscriptions/${row.id}/reject`, { comment: value })
+  let comment = reviewNote.value
+  if (!comment?.trim()) {
+    const { value } = await ElMessageBox.prompt('请填写驳回意见', '驳回订阅', {
+      confirmButtonText: '驳回',
+      cancelButtonText: '取消',
+      inputPattern: /\S+/,
+      inputErrorMessage: '意见不能为空',
+    })
+    comment = value
+  }
+  await api.post(`/governance/catalog/subscriptions/${row.id}/reject`, { comment })
   ElMessage.success('已驳回')
-  await load()
+  subDetail.visible = false
+  await loadPending()
 }
 
 async function cancel(row: SubRow) {
   await ElMessageBox.confirm('确认取消该订阅申请？', '取消申请', { type: 'warning' })
   await api.post(`/governance/catalog/subscriptions/${row.id}/cancel`)
   ElMessage.success('已取消')
-  await load()
+  subDetail.visible = false
+  await loadMine()
 }
 
 async function distribute(row: SubRow) {
   const res = await api.post(`/governance/catalog/subscriptions/${row.id}/distribute`)
   ElMessage.success(res.data?.distributeResult || '分发完成')
-  await load()
+  await loadMine()
+  if (subDetail.row?.id === row.id) {
+    const refreshed = mineRows.value.find((r) => r.id === row.id)
+    if (refreshed) subDetail.row = refreshed
+  }
 }
 
 async function showResult(row: SubRow) {
@@ -123,7 +220,9 @@ async function testApi(row: SubRow) {
   )
 }
 
-watch(activeTab, load)
+watch(activeTab, () => {
+  void load()
+})
 onMounted(load)
 </script>
 
@@ -145,11 +244,25 @@ onMounted(load)
             <el-button type="primary" @click="loadMine">刷新</el-button>
           </el-form-item>
         </el-form>
-        <el-table v-loading="loading" :data="mineRows" stripe size="small">
+        <p class="hint">仅可查看详情；通过后可在详情中分发。点击行查看申请内容。</p>
+        <el-table
+          v-loading="loading"
+          :data="pagedMine"
+          stripe
+          size="small"
+          class="clickable-table"
+          @row-click="(row: SubRow) => openDetail(row, 'mine')"
+        >
           <el-table-column prop="resourceCode" label="资源编码" width="130" />
-          <el-table-column prop="resourceName" label="资源名称" min-width="140" />
+          <el-table-column label="资源名称" min-width="160">
+            <template #default="{ row }">
+              <button type="button" class="link-title" @click.stop="openDetail(row, 'mine')">
+                {{ row.resourceName || row.resourceId }}
+              </button>
+            </template>
+          </el-table-column>
           <el-table-column label="共享方式" width="100">
-            <template #default="{ row }">{{ SHARE_ZH[row.shareMode] || $statusLabel(row.shareMode) }}</template>
+            <template #default="{ row }">{{ shareLabel(row.shareMode) }}</template>
           </el-table-column>
           <el-table-column prop="purpose" label="用途" min-width="120" show-overflow-tooltip />
           <el-table-column label="状态" width="100">
@@ -157,32 +270,19 @@ onMounted(load)
               <el-tag size="small" :type="statusTagType(row.status)">{{ statusLabel(row.status) }}</el-tag>
             </template>
           </el-table-column>
-          <el-table-column label="授权码" width="180" show-overflow-tooltip>
-            <template #default="{ row }">{{ row.authorization?.authorizationCode || '—' }}</template>
-          </el-table-column>
-          <el-table-column label="授权状态" width="100">
-            <template #default="{ row }">
-              <el-tag v-if="row.authorization" size="small" :type="statusTagType(row.authorization.status)">
-                {{ statusLabel(row.authorization.status) }}
-              </el-tag>
-              <span v-else>—</span>
-            </template>
-          </el-table-column>
           <el-table-column prop="createdAt" label="申请时间" width="160" />
-          <el-table-column label="操作" width="260" fixed="right">
+          <el-table-column label="操作" width="90" fixed="right">
             <template #default="{ row }">
-              <template v-if="row.status === 'PENDING'">
-                <el-button link type="danger" @click="cancel(row)">取消</el-button>
-              </template>
-              <template v-else-if="row.status === 'APPROVED' || row.status === 'DISTRIBUTED'">
-                <el-button link type="primary" @click="distribute(row)">分发</el-button>
-                <el-button link @click="showResult(row)">分发结果</el-button>
-                <el-button v-if="row.shareMode === 'API'" link @click="testApi(row)">测试接口</el-button>
-              </template>
-              <span v-else>—</span>
+              <el-button link type="primary" @click.stop="openDetail(row, 'mine')">详情</el-button>
             </template>
           </el-table-column>
         </el-table>
+        <PortalPagination
+          v-if="mineRows.length"
+          v-model:page="minePage"
+          v-model:page-size="minePageSize"
+          :total="mineRows.length"
+        />
       </el-tab-pane>
 
       <el-tab-pane label="待我审批" name="pending" lazy>
@@ -191,24 +291,106 @@ onMounted(load)
             <el-button type="primary" @click="loadPending">刷新</el-button>
           </el-form-item>
         </el-form>
-        <el-table v-loading="loading" :data="pendingRows" stripe size="small">
-          <el-table-column prop="resourceCode" label="资源编码" width="130" />
-          <el-table-column prop="resourceName" label="资源名称" min-width="140" />
-          <el-table-column label="共享方式" width="100">
-            <template #default="{ row }">{{ SHARE_ZH[row.shareMode] || $statusLabel(row.shareMode) }}</template>
+        <el-empty v-if="!pendingRows.length && !loading" description="暂无待审批申请" :image-size="72" />
+        <el-table
+          v-else
+          v-loading="loading"
+          :data="pagedPending"
+          stripe
+          size="small"
+          class="clickable-table"
+          @row-click="(row: SubRow) => openDetail(row, 'pending')"
+        >
+          <el-table-column label="资源" min-width="160">
+            <template #default="{ row }">
+              <button type="button" class="link-title" @click.stop="openDetail(row, 'pending')">
+                {{ row.resourceName || row.resourceCode || row.resourceId }}
+              </button>
+            </template>
           </el-table-column>
-          <el-table-column prop="applicantOrg" label="申请机构" width="120" />
-          <el-table-column prop="applicantUser" label="申请人" width="100" />
+          <el-table-column prop="applicantOrg" label="申请单位" width="140" />
+          <el-table-column label="共享方式" width="100">
+            <template #default="{ row }">{{ shareLabel(row.shareMode) }}</template>
+          </el-table-column>
           <el-table-column prop="purpose" label="用途" min-width="120" show-overflow-tooltip />
           <el-table-column prop="createdAt" label="申请时间" width="160" />
-          <el-table-column label="操作" width="140" fixed="right">
+          <el-table-column label="操作" width="90" fixed="right">
             <template #default="{ row }">
-              <el-button link type="primary" @click="approve(row)">通过</el-button>
-              <el-button link type="danger" @click="reject(row)">驳回</el-button>
+              <el-button link type="primary" @click.stop="openDetail(row, 'pending')">审核</el-button>
             </template>
           </el-table-column>
         </el-table>
+        <PortalPagination
+          v-if="pendingRows.length"
+          v-model:page="pendingPage"
+          v-model:page-size="pendingPageSize"
+          :total="pendingRows.length"
+        />
       </el-tab-pane>
     </el-tabs>
+
+    <el-drawer
+      v-model="subDetail.visible"
+      :title="subDetail.mode === 'mine' ? '申请详情' : '审批详情'"
+      size="520px"
+    >
+      <template v-if="subDetail.row">
+        <el-descriptions :column="1" border size="small">
+          <el-descriptions-item v-for="(it, i) in payloadEntries(subDetail.row)" :key="i" :label="it.label">
+            {{ it.value }}
+          </el-descriptions-item>
+        </el-descriptions>
+
+        <div v-if="subDetail.mode === 'pending' && subDetail.row.status === 'PENDING'" class="sub-detail-ops">
+          <el-input
+            v-model="reviewNote"
+            placeholder="审批意见（驳回时建议填写）"
+            clearable
+            style="margin-bottom: 12px"
+          />
+          <el-button type="success" @click="approve(subDetail.row)">通过</el-button>
+          <el-button type="danger" @click="reject(subDetail.row)">驳回</el-button>
+        </div>
+
+        <div v-else-if="subDetail.mode === 'mine'" class="sub-detail-ops">
+          <template v-if="subDetail.row.status === 'PENDING'">
+            <el-button type="danger" plain @click="cancel(subDetail.row)">取消申请</el-button>
+          </template>
+          <template v-else-if="subDetail.row.status === 'APPROVED' || subDetail.row.status === 'DISTRIBUTED'">
+            <el-button type="primary" @click="distribute(subDetail.row)">分发</el-button>
+            <el-button @click="showResult(subDetail.row)">分发结果</el-button>
+            <el-button v-if="subDetail.row.shareMode === 'API'" @click="testApi(subDetail.row)">测试接口</el-button>
+          </template>
+        </div>
+      </template>
+    </el-drawer>
   </PageCard>
 </template>
+
+<style scoped>
+.hint {
+  margin: 0 0 10px;
+  font-size: 12px;
+  color: #909399;
+}
+.link-title {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  color: #1677ff;
+  cursor: pointer;
+  padding: 0;
+  font: inherit;
+  text-align: left;
+}
+.link-title:hover { text-decoration: underline; }
+.clickable-table :deep(.el-table__row) { cursor: pointer; }
+.sub-detail-ops {
+  margin-top: 16px;
+  padding-top: 12px;
+  border-top: 1px solid #eef1f6;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+</style>

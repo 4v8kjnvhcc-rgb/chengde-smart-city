@@ -13,7 +13,6 @@ const QualityMonitorView = defineAsyncComponent(() => import('./quality/QualityM
 const QualityAssessView = defineAsyncComponent(() => import('./quality/QualityAssessView.vue'))
 const QualityReportView = defineAsyncComponent(() => import('./quality/QualityReportView.vue'))
 const CatalogResourceView = defineAsyncComponent(() => import('./catalog/CatalogResourceView.vue'))
-const CatalogClassifyView = defineAsyncComponent(() => import('./catalog/CatalogClassifyView.vue'))
 const CatalogRegisterPublishView = defineAsyncComponent(() => import('./catalog/CatalogRegisterPublishView.vue'))
 const CatalogApprovalView = defineAsyncComponent(() => import('./catalog/CatalogApprovalView.vue'))
 const CatalogSubscriptionView = defineAsyncComponent(() => import('./catalog/CatalogSubscriptionView.vue'))
@@ -78,7 +77,6 @@ const navItems: HubNavItem[] = [
     label: '数据目录管理系统',
     children: [
       { key: 'catalog.resources', label: '资源目录编制' },
-      { key: 'catalog.classify', label: '数据资源分类' },
       { key: 'catalog.publish', label: '目录注册发布' },
       { key: 'catalog.approvals', label: '资源目录审批' },
       { key: 'catalog.subscriptions', label: '资源申请订阅' },
@@ -186,7 +184,9 @@ function resolveFromRoute() {
       activeNav.value = `model.${leaf}`
     }
   } else if (mapped === 'catalog') {
-    const sub = String(route.query.cSub || 'resources')
+    // 治理侧不维护「数据资源分类」（分类在归集·指标与目录体系构建）
+    let sub = String(route.query.cSub || 'resources')
+    if (sub === 'classify') sub = 'resources'
     activeNav.value = `catalog.${sub}`
   } else {
     activeNav.value = defaultNavForTab(mapped)
@@ -340,9 +340,8 @@ onMounted(() => { resolveFromRoute() })
         />
 
         <CatalogResourceView v-else-if="tab === 'catalog' && catalogSub === 'resources'" catalog-origin="GOVERNANCE" />
-        <CatalogClassifyView v-else-if="tab === 'catalog' && catalogSub === 'classify'" catalog-origin="GOVERNANCE" />
         <CatalogRegisterPublishView v-else-if="tab === 'catalog' && catalogSub === 'publish'" catalog-origin="GOVERNANCE" />
-        <CatalogApprovalView v-else-if="tab === 'catalog' && catalogSub === 'approvals'" />
+        <CatalogApprovalView v-else-if="tab === 'catalog' && catalogSub === 'approvals'" catalog-origin="GOVERNANCE" />
         <CatalogSubscriptionView v-else-if="tab === 'catalog' && catalogSub === 'subscriptions'" />
         <CatalogPortalView v-else-if="tab === 'catalog' && catalogSub === 'portal'" />
 

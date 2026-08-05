@@ -1,9 +1,13 @@
 package com.chengde.smartcity.masterdata.service;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.chengde.smartcity.common.exception.BusinessException;
 import com.chengde.smartcity.exchange.entity.BizCatalogItem;
+import com.chengde.smartcity.exchange.entity.IngDataSource;
 import com.chengde.smartcity.exchange.mapper.BizCatalogItemMapper;
+import com.chengde.smartcity.exchange.mapper.IngDataSourceMapper;
+import com.chengde.smartcity.integration.jdbc.JdbcProbeService;
 import com.chengde.smartcity.masterdata.entity.GovCatalogApproval;
 import com.chengde.smartcity.masterdata.entity.GovCatalogCategory;
 import com.chengde.smartcity.masterdata.entity.GovCatalogResource;
@@ -26,7 +30,9 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
+import java.util.stream.Collectors;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
@@ -36,7 +42,9 @@ import org.springframework.transaction.annotation.Transactional;
 public class CatalogResourceService {
 
     private static final Logger log = LoggerFactory.getLogger(CatalogResourceService.class);
-    private static final Set<String> ACTION_TYPES = Set.of("PUBLISH", "OFFLINE", "UPDATE", "DELETE");
+    private static final Set<String> ACTION_TYPES = Set.of(
+            "PUBLISH", "OFFLINE", "UPDATE", "DELETE", "CREATE", "BIND", "UNBIND");
+    private static final Set<String> CATEGORY_ACTION_TYPES = Set.of("CAT_CREATE", "CAT_UPDATE", "CAT_DELETE");
     private static final ObjectMapper OM = new ObjectMapper();
     private static final String[] EXPORT_HEADERS = {
             "resourceCode", "resourceName", "resourceType", "categoryId", "providerOrg",
@@ -46,25 +54,42 @@ public class CatalogResourceService {
     /** 发布前质量分建议门槛（未评分不拦截，评分过低拦截） */
     private static final BigDecimal MIN_QUALITY_SCORE = new BigDecimal("60");
 
+    private static final long PLATFORM_ODS_ID = -1L;
+    private static final long PLATFORM_DWD_ID = -2L;
+    private static final long PLATFORM_DWS_ID = -3L;
+    private static final long PLATFORM_ADS_ID = -4L;
+
     private final GovCatalogResourceMapper resourceMapper;
     private final GovCatalogCategoryMapper categoryMapper;
     private final GovCatalogApprovalMapper approvalMapper;
     private final GovCatalogResourceVersionMapper versionMapper;
     private final GovMetadataRegistryMapper metadataRegistryMapper;
     private final BizCatalogItemMapper portalCatalogMapper;
+    private final CatalogCategoryService categoryService;
+    private final IngDataSourceMapper ingDataSourceMapper;
+    private final JdbcProbeService jdbcProbeService;
+    private final MetadataSubsystemService metadataSubsystemService;
 
     public CatalogResourceService(GovCatalogResourceMapper resourceMapper,
                                   GovCatalogCategoryMapper categoryMapper,
                                   GovCatalogApprovalMapper approvalMapper,
                                   GovCatalogResourceVersionMapper versionMapper,
                                   GovMetadataRegistryMapper metadataRegistryMapper,
-                                  BizCatalogItemMapper portalCatalogMapper) {
+                                  BizCatalogItemMapper portalCatalogMapper,
+                                  CatalogCategoryService categoryService,
+                                  IngDataSourceMapper ingDataSourceMapper,
+                                  JdbcProbeService jdbcProbeService,
+                                  MetadataSubsystemService metadataSubsystemService) {
         this.resourceMapper = resourceMapper;
         this.categoryMapper = categoryMapper;
         this.approvalMapper = approvalMapper;
         this.versionMapper = versionMapper;
         this.metadataRegistryMapper = metadataRegistryMapper;
         this.portalCatalogMapper = portalCatalogMapper;
+        this.categoryService = categoryService;
+        this.ingDataSourceMapper = ingDataSourceMapper;
+        this.jdbcProbeService = jdbcProbeService;
+        this.metadataSubsystemService = metadataSubsystemService;
     }
 
     public List<GovCatalogResource> list(Long categoryId, String resourceType, String publishStatus,
@@ -158,6 +183,246 @@ public class CatalogResourceService {
         return out;
     }
 
+    /**
+     * 编目库表挂载：可选数据源（按分类侧栏）。
+     * 分类：来源=登记外部源；原始库=ODS；治理库=DWD（不可编目）；主题/专题=DWS/ADS。
+     */
+    public List<Map<String, Object>> listBindSources(String categoryKey, String keyword) {
+        List<Map<String, Object>> raw = new ArrayList<>();
+        // 登记数据源（含未测通，便于新增后立刻可选）
+        List<IngDataSource> sources = ingDataSourceMapper.selectList(new LambdaQueryWrapper<IngDataSource>()
+                .orderByDesc(IngDataSource::getId)
+                .last("limit 300"));
+        for (IngDataSource ds : sources) {
+            Map<String, Object> row = new LinkedHashMap<>();
+            row.put("id", ds.getId());
+            row.put("sourceCode", ds.getSourceCode());
+            row.put("sourceName", ds.getSourceName());
+            row.put("sourceType", ds.getSourceType());
+            row.put("layerHint", "EXTERNAL");
+            row.put("platformLayer", false);
+            row.put("systemName", ds.getSystemName());
+            row.put("connStatus", ds.getConnStatus());
+            row.put("registerStatus", ds.getRegisterStatus());
+            try {
+                JdbcProbeService.ConnConfig conn = jdbcProbeService.parse(ds.getSourceType(), ds.getConnConfigJson());
+                row.put("databaseName", conn.database);
+            } catch (Exception ignored) {
+                row.put("databaseName", null);
+            }
+            raw.add(row);
+        }
+        // 平台分层库
+        raw.addAll(metadataSubsystemService.listCollectDataSources().stream()
+                .filter(s -> Boolean.TRUE.equals(s.get("platformLayer")))
+                .toList());
+
+        List<Map<String, Object>> out = new ArrayList<>();
+        String kw = keyword == null ? "" : keyword.trim().toLowerCase(Locale.ROOT);
+        for (Map<String, Object> src : raw) {
+            String layer = String.valueOf(src.getOrDefault("layerHint",
+                    src.getOrDefault("dataLayer", "EXTERNAL")));
+            String cat = bindCategoryOf(layer, src);
+            if (categoryKey != null && !categoryKey.isBlank() && !"ALL".equalsIgnoreCase(categoryKey)
+                    && !cat.equalsIgnoreCase(categoryKey)) {
+                continue;
+            }
+            String name = String.valueOf(src.getOrDefault("sourceName", ""));
+            String code = String.valueOf(src.getOrDefault("sourceCode", ""));
+            if (!kw.isEmpty()
+                    && !name.toLowerCase(Locale.ROOT).contains(kw)
+                    && !code.toLowerCase(Locale.ROOT).contains(kw)) {
+                continue;
+            }
+            Map<String, Object> row = new LinkedHashMap<>(src);
+            row.put("categoryKey", cat);
+            row.put("categoryName", bindCategoryLabel(cat));
+            row.put("catalogable", !"GOVERNANCE".equals(cat) && !"DWD".equalsIgnoreCase(layer));
+            row.put("providerOrg", src.getOrDefault("systemName", src.getOrDefault("ownerName", "")));
+            String conn = String.valueOf(src.getOrDefault("connStatus", ""));
+            row.put("versionLabel", "OK".equalsIgnoreCase(conn) ? "V1"
+                    : ("UNTESTED".equalsIgnoreCase(conn) ? "待采集" : statusOrDefault(conn, "待采集")));
+            out.add(row);
+        }
+        return out;
+    }
+
+    public List<Map<String, Object>> listBindTables(Long sourceId) {
+        if (sourceId == null) {
+            throw new BusinessException(400, "sourceId 必填");
+        }
+        List<String> names = listBindTableNames(sourceId);
+        List<Map<String, Object>> out = new ArrayList<>();
+        for (String name : names) {
+            Map<String, Object> row = new LinkedHashMap<>();
+            row.put("tableName", name);
+            row.put("sourceTable", name);
+            GovMetadataRegistry meta = findMetadataBySourceTable(sourceId, name);
+            if (meta != null) {
+                row.put("metadataEntryCode", meta.getEntryCode());
+                row.put("entryName", meta.getEntryName());
+                row.put("dataLayer", resolveLayer(meta));
+                row.put("catalogable", !DataLayerSupport.isProcessLayer(resolveLayer(meta)));
+            } else {
+                row.put("metadataEntryCode", null);
+                row.put("catalogable", !isPlatformDwd(sourceId));
+            }
+            out.add(row);
+        }
+        return out;
+    }
+
+    public Map<String, Object> describeBindTable(Long sourceId, String tableName) {
+        if (sourceId == null || tableName == null || tableName.isBlank()) {
+            throw new BusinessException(400, "sourceId 与 tableName 必填");
+        }
+        if (isPlatformDwd(sourceId)) {
+            throw new BusinessException(400, "过程层（治理库/DWD）不可编目进资源目录");
+        }
+        Map<String, Object> described = describeTableRaw(sourceId, tableName.trim());
+        GovMetadataRegistry meta = findMetadataBySourceTable(sourceId, tableName.trim());
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("sourceId", sourceId);
+        out.put("tableName", tableName.trim());
+        out.put("columns", described.get("columns"));
+        out.put("primaryKeys", described.getOrDefault("primaryKeys", List.of()));
+        if (meta != null) {
+            String layer = resolveLayer(meta);
+            if (DataLayerSupport.isProcessLayer(layer)) {
+                throw new BusinessException(400, "过程层（DWD）不可编目进资源目录");
+            }
+            out.put("metadataEntryCode", meta.getEntryCode());
+            out.put("entryName", meta.getEntryName());
+            out.put("dataLayer", layer);
+            out.put("sourcePathType", DataLayerSupport.sourcePathTypeForLayer(layer));
+            out.put("ownerName", meta.getOwnerName());
+            out.put("physicalTableName", meta.getPhysicalTableName());
+            out.put("catalogable", true);
+        } else {
+            out.put("metadataEntryCode", null);
+            out.put("catalogable", true);
+            out.put("physicalTableName", tableName.trim());
+            out.put("sourcePathType", isPlatformLayerId(sourceId)
+                    ? DataLayerSupport.sourcePathTypeForLayer(platformLayerDatabase(sourceId))
+                    : "DIRECT");
+        }
+        return out;
+    }
+
+    private List<String> listBindTableNames(Long sourceId) {
+        if (isPlatformLayerId(sourceId)) {
+            String database = platformLayerDatabase(sourceId);
+            List<String> names = new ArrayList<>();
+            // 复用采集侧探表，再只取表名
+            for (Map<String, Object> t : metadataSubsystemService.listCollectDataSourceTables(sourceId)) {
+                Object n = t.get("sourceTable");
+                if (n == null) n = t.get("tableName");
+                if (n != null && !String.valueOf(n).isBlank()) {
+                    names.add(String.valueOf(n));
+                }
+            }
+            if (!names.isEmpty() || database == null) {
+                return names;
+            }
+        }
+        IngDataSource ds = ingDataSourceMapper.selectById(sourceId);
+        if (ds == null) {
+            throw new BusinessException(404, "登记数据源不存在");
+        }
+        JdbcProbeService.ConnConfig conn = jdbcProbeService.parse(ds.getSourceType(), ds.getConnConfigJson());
+        return jdbcProbeService.listTableNames(conn);
+    }
+
+    private Map<String, Object> describeTableRaw(Long sourceId, String tableName) {
+        if (isPlatformLayerId(sourceId)) {
+            List<Map<String, Object>> tables = metadataSubsystemService.listCollectDataSourceTables(sourceId);
+            for (Map<String, Object> t : tables) {
+                Object n = t.get("sourceTable");
+                if (n == null) n = t.get("tableName");
+                if (tableName.equalsIgnoreCase(String.valueOf(n))) {
+                    return t;
+                }
+            }
+            throw new BusinessException(404, "分层库中未找到表 " + tableName);
+        }
+        IngDataSource ds = ingDataSourceMapper.selectById(sourceId);
+        if (ds == null) {
+            throw new BusinessException(404, "登记数据源不存在");
+        }
+        JdbcProbeService.ConnConfig conn = jdbcProbeService.parse(ds.getSourceType(), ds.getConnConfigJson());
+        return jdbcProbeService.describeTable(conn, tableName);
+    }
+
+    private GovMetadataRegistry findMetadataBySourceTable(Long sourceId, String tableName) {
+        if (tableName == null || tableName.isBlank()) {
+            return null;
+        }
+        LambdaQueryWrapper<GovMetadataRegistry> q = new LambdaQueryWrapper<GovMetadataRegistry>()
+                .ne(GovMetadataRegistry::getStatus, "OFFLINE")
+                .eq(GovMetadataRegistry::getEntryType, "TABLE")
+                .and(w -> w.eq(GovMetadataRegistry::getPhysicalTableName, tableName)
+                        .or().eq(GovMetadataRegistry::getEntryName, tableName))
+                .last("limit 20");
+        if (sourceId != null && sourceId > 0) {
+            q.eq(GovMetadataRegistry::getDataSourceId, sourceId);
+        }
+        List<GovMetadataRegistry> list = metadataRegistryMapper.selectList(q);
+        if (list.isEmpty() && sourceId != null && sourceId > 0) {
+            // 宽松：仅按表名匹配（平台分层或 dataSourceId 未回填时）
+            list = metadataRegistryMapper.selectList(new LambdaQueryWrapper<GovMetadataRegistry>()
+                    .ne(GovMetadataRegistry::getStatus, "OFFLINE")
+                    .eq(GovMetadataRegistry::getEntryType, "TABLE")
+                    .and(w -> w.eq(GovMetadataRegistry::getPhysicalTableName, tableName)
+                            .or().eq(GovMetadataRegistry::getEntryName, tableName))
+                    .last("limit 5"));
+        }
+        return list.isEmpty() ? null : list.get(0);
+    }
+
+    private static String bindCategoryOf(String layer, Map<String, Object> src) {
+        if (Boolean.TRUE.equals(src.get("platformLayer"))) {
+            String l = layer == null ? "" : layer.trim().toUpperCase(Locale.ROOT);
+            if ("ODS".equals(l)) return "ODS";
+            if ("DWD".equals(l)) return "GOVERNANCE";
+            if ("DWS".equals(l) || "ADS".equals(l)) return "THEME";
+            return "OTHER";
+        }
+        return "SOURCE";
+    }
+
+    private static String bindCategoryLabel(String cat) {
+        return switch (cat == null ? "" : cat.toUpperCase(Locale.ROOT)) {
+            case "SOURCE" -> "来源";
+            case "ODS" -> "原始库";
+            case "GOVERNANCE" -> "治理库";
+            case "THEME" -> "主题专题";
+            case "DICT" -> "字典";
+            default -> "其他";
+        };
+    }
+
+    private static String statusOrDefault(Object v, String def) {
+        return v == null || String.valueOf(v).isBlank() ? def : String.valueOf(v);
+    }
+
+    private static boolean isPlatformLayerId(Long id) {
+        return id != null && (id == PLATFORM_ODS_ID || id == PLATFORM_DWD_ID
+                || id == PLATFORM_DWS_ID || id == PLATFORM_ADS_ID);
+    }
+
+    private static boolean isPlatformDwd(Long id) {
+        return id != null && id == PLATFORM_DWD_ID;
+    }
+
+    private static String platformLayerDatabase(Long id) {
+        if (id == null) return null;
+        if (id == PLATFORM_ODS_ID) return DataLayerSupport.ODS;
+        if (id == PLATFORM_DWD_ID) return DataLayerSupport.DWD;
+        if (id == PLATFORM_DWS_ID) return DataLayerSupport.DWS;
+        if (id == PLATFORM_ADS_ID) return DataLayerSupport.ADS;
+        return null;
+    }
+
     public GovCatalogResource get(Long id) {
         return require(id);
     }
@@ -167,7 +432,8 @@ public class CatalogResourceService {
         GovCatalogResource r = new GovCatalogResource();
         applyBody(r, body, true);
         enrichFromMetadata(r, true);
-        assertCatalogable(r, true);
+        assertCatalogable(r, false);
+        validateShareOpen(r);
         r.setPublishStatus("DRAFT");
         r.setApprovalStatus("DRAFT");
         r.setVersionNo(1);
@@ -179,8 +445,67 @@ public class CatalogResourceService {
         r.setCreatedAt(LocalDateTime.now());
         r.setUpdatedAt(LocalDateTime.now());
         resourceMapper.insert(r);
-        log.info("catalog resource created id={} code={}", r.getId(), r.getResourceCode());
+        // 编目新增不进审批：先到「目录注册发布」挂载/发布，点发布后再生成 PUBLISH 审批
+        log.info("catalog resource created id={} code={}, awaiting register-publish",
+                r.getId(), r.getResourceCode());
         return r.getId();
+    }
+
+    /**
+     * 批量新增：从已登记元数据（库表等）抽取核心字段生成标准资源目录。
+     * 逐条独立落库（本方法不加总事务），单条失败不影响其它条。
+     * body: entryCodes[], catalogOrigin?, shareType?, updateCycle?, resourceFormat?
+     */
+    public Map<String, Object> batchCreateFromMetadata(UserPrincipal operator, Map<String, Object> body) {
+        Object raw = body.get("entryCodes");
+        if (!(raw instanceof List<?> list) || list.isEmpty()) {
+            throw new BusinessException(400, "entryCodes 不能为空");
+        }
+        String catalogOrigin = str(body.get("catalogOrigin"), "GOVERNANCE");
+        String shareType = str(body.get("shareType"), "OPEN");
+        String updateCycle = str(body.get("updateCycle"), "DAILY");
+        String resourceFormat = str(body.get("resourceFormat"), "DATABASE");
+        int created = 0;
+        int skipped = 0;
+        List<String> errors = new ArrayList<>();
+        for (Object item : list) {
+            String entryCode = item == null ? "" : String.valueOf(item).trim();
+            if (entryCode.isEmpty()) {
+                skipped++;
+                continue;
+            }
+            try {
+                Long exist = resourceMapper.selectCount(new LambdaQueryWrapper<GovCatalogResource>()
+                        .eq(GovCatalogResource::getMetadataEntryCode, entryCode)
+                        .eq(GovCatalogResource::getCatalogOrigin, catalogOrigin.toUpperCase(Locale.ROOT)));
+                if (exist != null && exist > 0) {
+                    skipped++;
+                    errors.add(entryCode + "：该来源下已编目，已跳过");
+                    continue;
+                }
+                Map<String, Object> one = new LinkedHashMap<>();
+                one.put("metadataEntryCode", entryCode);
+                one.put("catalogOrigin", catalogOrigin);
+                one.put("shareType", shareType);
+                one.put("updateCycle", updateCycle);
+                one.put("resourceFormat", resourceFormat);
+                one.put("resourceType", "DATA");
+                create(operator, one);
+                created++;
+            } catch (BusinessException ex) {
+                skipped++;
+                errors.add(entryCode + "：" + ex.getMessage());
+            } catch (Exception ex) {
+                skipped++;
+                errors.add(entryCode + "：" + (ex.getMessage() == null ? "失败" : ex.getMessage()));
+                log.warn("batchCreateFromMetadata failed entry={}", entryCode, ex);
+            }
+        }
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("created", created);
+        result.put("skipped", skipped);
+        result.put("errors", errors);
+        return result;
     }
 
     @Transactional
@@ -195,6 +520,7 @@ public class CatalogResourceService {
         applyBody(r, body, false);
         enrichFromMetadata(r, false);
         assertCatalogable(r, false);
+        validateShareOpen(r);
         if (operator != null) {
             r.setUpdatedBy(operator.getUsername());
         }
@@ -207,12 +533,12 @@ public class CatalogResourceService {
         GovCatalogResource r = require(id);
         if (!"DRAFT".equalsIgnoreCase(r.getPublishStatus())
                 && !"OFFLINE".equalsIgnoreCase(r.getPublishStatus())) {
-            throw new BusinessException(400, "仅草稿或已下线资源可删除");
+            throw new BusinessException(400, "仅草稿或已下线资源可提交删除审批");
         }
         if ("PENDING".equalsIgnoreCase(r.getApprovalStatus())) {
             throw new BusinessException(400, "审批中不可删除");
         }
-        resourceMapper.deleteById(id);
+        submit(operator, id, Map.of("actionType", "DELETE", "comment", "提交编目删除审批"));
     }
 
     @Transactional
@@ -233,35 +559,31 @@ public class CatalogResourceService {
         }
         String actionType = str(body.get("actionType"), "PUBLISH").toUpperCase(Locale.ROOT);
         if (!ACTION_TYPES.contains(actionType)) {
-            throw new BusinessException(400, "actionType 须为 PUBLISH/OFFLINE/UPDATE/DELETE");
+            throw new BusinessException(400, "actionType 须为 PUBLISH/OFFLINE/UPDATE/DELETE/CREATE/BIND/UNBIND");
         }
         if ("OFFLINE".equals(actionType)) {
             if (!"PUBLISHED".equalsIgnoreCase(r.getPublishStatus())) {
                 throw new BusinessException(400, "仅已发布资源可提交下线审批");
             }
-        } else {
+        } else if ("DELETE".equals(actionType)) {
+            if (!"DRAFT".equalsIgnoreCase(r.getPublishStatus())
+                    && !"OFFLINE".equalsIgnoreCase(r.getPublishStatus())) {
+                throw new BusinessException(400, "仅草稿或已下线资源可提交删除审批");
+            }
+        } else if (!"BIND".equals(actionType) && !"UNBIND".equals(actionType)) {
             if ("PUBLISHED".equalsIgnoreCase(r.getPublishStatus())) {
                 throw new BusinessException(400, "已发布资源请走下线审批");
             }
             if ("PUBLISH".equals(actionType)) {
-                assertCatalogable(r, true);
+                assertCatalogable(r, false);
                 assertQualityGate(r);
                 if (r.getCategoryId() == null || r.getCategoryId() <= 0) {
                     throw new BusinessException(400, "发布前请先在「目录注册发布」将资源关联到分类");
                 }
             }
         }
-        GovCatalogApproval a = new GovCatalogApproval();
-        a.setResourceId(id);
-        a.setActionType(actionType);
-        a.setStatus("PENDING");
-        a.setSubmitComment(str(body.get("comment"), null));
-        if (operator != null) {
-            a.setSubmittedBy(operator.getUsername());
-        }
-        a.setSubmittedAt(LocalDateTime.now());
-        approvalMapper.insert(a);
-
+        GovCatalogApproval a = insertApproval(operator, id, r.getCategoryId(), r.getCatalogOrigin(),
+                actionType, str(body.get("comment"), null), null);
         r.setApprovalStatus("PENDING");
         touch(r, operator);
         resourceMapper.updateById(r);
@@ -282,15 +604,42 @@ public class CatalogResourceService {
         a.setReviewedAt(LocalDateTime.now());
         approvalMapper.updateById(a);
 
+        String action = a.getActionType() == null ? "" : a.getActionType().toUpperCase(Locale.ROOT);
+        if (CATEGORY_ACTION_TYPES.contains(action)) {
+            applyCategoryApproval(operator, a, action);
+            return a;
+        }
+
         GovCatalogResource r = require(a.getResourceId());
+        if ("DELETE".equals(action)) {
+            offlinePortal(r);
+            resourceMapper.deleteById(r.getId());
+            return a;
+        }
+        if ("BIND".equals(action)) {
+            applyBindFromApproval(operator, a, r);
+            r.setApprovalStatus("APPROVED");
+            touch(r, operator);
+            resourceMapper.updateById(r);
+            return a;
+        }
+        if ("UNBIND".equals(action)) {
+            applyUnbindImmediate(operator, r);
+            r.setApprovalStatus("APPROVED");
+            touch(r, operator);
+            resourceMapper.updateById(r);
+            return a;
+        }
         r.setApprovalStatus("APPROVED");
-        if ("PUBLISH".equalsIgnoreCase(a.getActionType())) {
+        if ("PUBLISH".equals(action)) {
             r.setPublishStatus("PUBLISHED");
             snapshotOnPublish(r, operator, "审批发布 v");
             syncPortal(r);
-        } else if ("OFFLINE".equalsIgnoreCase(a.getActionType())) {
+        } else if ("OFFLINE".equals(action)) {
             r.setPublishStatus("OFFLINE");
             offlinePortal(r);
+        } else if ("CREATE".equals(action) || "UPDATE".equals(action)) {
+            // 编目新增/变更通过后仍为草稿，待注册挂载后再走发布审批
         }
         touch(r, operator);
         resourceMapper.updateById(r);
@@ -315,10 +664,16 @@ public class CatalogResourceService {
         a.setReviewedAt(LocalDateTime.now());
         approvalMapper.updateById(a);
 
-        GovCatalogResource r = require(a.getResourceId());
-        r.setApprovalStatus("REJECTED");
-        touch(r, operator);
-        resourceMapper.updateById(r);
+        String action = a.getActionType() == null ? "" : a.getActionType().toUpperCase(Locale.ROOT);
+        if (CATEGORY_ACTION_TYPES.contains(action)) {
+            return a;
+        }
+        if (a.getResourceId() != null) {
+            GovCatalogResource r = require(a.getResourceId());
+            r.setApprovalStatus("REJECTED");
+            touch(r, operator);
+            resourceMapper.updateById(r);
+        }
         return a;
     }
 
@@ -335,10 +690,16 @@ public class CatalogResourceService {
         }
         approvalMapper.updateById(a);
 
-        GovCatalogResource r = require(a.getResourceId());
-        r.setApprovalStatus("WITHDRAWN");
-        touch(r, operator);
-        resourceMapper.updateById(r);
+        String action = a.getActionType() == null ? "" : a.getActionType().toUpperCase(Locale.ROOT);
+        if (CATEGORY_ACTION_TYPES.contains(action)) {
+            return a;
+        }
+        if (a.getResourceId() != null) {
+            GovCatalogResource r = require(a.getResourceId());
+            r.setApprovalStatus("WITHDRAWN");
+            touch(r, operator);
+            resourceMapper.updateById(r);
+        }
         return a;
     }
 
@@ -406,18 +767,47 @@ public class CatalogResourceService {
             throw new BusinessException(400, "resourceIds 不能为空");
         }
         int n = 0;
+        List<String> errors = new ArrayList<>();
         for (Long rid : resourceIds) {
-            GovCatalogResource r = require(rid);
-            if ("PUBLISHED".equalsIgnoreCase(r.getPublishStatus())) {
-                throw new BusinessException(400, "已发布资源「" + r.getResourceName() + "」不可改挂分类，请先下线");
+            if (rid == null) {
+                continue;
             }
-            r.setCategoryId(categoryId);
-            r.setCategoryPath(cat.getCategoryPath());
-            touch(r, operator);
-            resourceMapper.updateById(r);
-            n++;
+            try {
+                GovCatalogResource r = require(rid);
+                if ("PUBLISHED".equalsIgnoreCase(r.getPublishStatus())) {
+                    errors.add("「" + r.getResourceName() + "」已发布，不可改挂分类，请先下线");
+                    continue;
+                }
+                if (hasBlockingPendingApproval(rid, r)) {
+                    errors.add("「" + r.getResourceName() + "」已有发布/下线等待审批，不可改挂分类");
+                    continue;
+                }
+                if (r.getCategoryId() != null && r.getCategoryId() > 0) {
+                    errors.add("「" + r.getResourceName() + "」已关联分类，请先解除");
+                    continue;
+                }
+                // 关联分类立即生效，不走审批；仅「发布」才进入目录审批
+                withdrawPendingBindUnbind(operator, rid);
+                applyBindImmediate(operator, r, categoryId, cat.getCategoryPath());
+                if ("PENDING".equalsIgnoreCase(r.getApprovalStatus())) {
+                    r.setApprovalStatus("DRAFT");
+                }
+                touch(r, operator);
+                resourceMapper.updateById(r);
+                n++;
+            } catch (BusinessException ex) {
+                errors.add(ex.getMessage());
+            }
         }
-        return Map.of("bound", n, "categoryId", categoryId);
+        if (n == 0 && !errors.isEmpty()) {
+            throw new BusinessException(400, String.join("；", errors));
+        }
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("submitted", n);
+        result.put("bound", n);
+        result.put("categoryId", categoryId);
+        result.put("errors", errors);
+        return result;
     }
 
     @Transactional
@@ -426,21 +816,89 @@ public class CatalogResourceService {
             throw new BusinessException(400, "resourceIds 不能为空");
         }
         int n = 0;
+        List<String> errors = new ArrayList<>();
         for (Long rid : resourceIds) {
-            GovCatalogResource r = require(rid);
-            if ("PUBLISHED".equalsIgnoreCase(r.getPublishStatus())) {
-                throw new BusinessException(400, "已发布资源「" + r.getResourceName() + "」不可解绑，请先下线");
+            if (rid == null) {
+                continue;
             }
-            r.setCategoryId(null);
-            r.setCategoryPath(null);
-            touch(r, operator);
-            resourceMapper.updateById(r);
-            n++;
+            try {
+                GovCatalogResource r = require(rid);
+                if ("PUBLISHED".equalsIgnoreCase(r.getPublishStatus())) {
+                    errors.add("「" + r.getResourceName() + "」已发布，不可解绑，请先下线");
+                    continue;
+                }
+                if (hasBlockingPendingApproval(rid, r)) {
+                    errors.add("「" + r.getResourceName() + "」已有发布/下线等待审批，不可解绑");
+                    continue;
+                }
+                if (r.getCategoryId() == null || r.getCategoryId() <= 0) {
+                    errors.add("「" + r.getResourceName() + "」未关联分类");
+                    continue;
+                }
+                // 解除关联立即生效，不走审批
+                withdrawPendingBindUnbind(operator, rid);
+                applyUnbindImmediate(operator, r);
+                if ("PENDING".equalsIgnoreCase(r.getApprovalStatus())) {
+                    r.setApprovalStatus("DRAFT");
+                }
+                touch(r, operator);
+                resourceMapper.updateById(r);
+                n++;
+            } catch (BusinessException ex) {
+                errors.add(ex.getMessage());
+            }
         }
-        return Map.of("unbound", n);
+        if (n == 0 && !errors.isEmpty()) {
+            throw new BusinessException(400, String.join("；", errors));
+        }
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("submitted", n);
+        result.put("unbound", n);
+        result.put("errors", errors);
+        return result;
+    }
+
+    /** 是否存在会阻塞改挂/解绑的待审（发布/下线/删除/变更等，不含 BIND/UNBIND） */
+    private boolean hasBlockingPendingApproval(Long resourceId, GovCatalogResource r) {
+        if (!"PENDING".equalsIgnoreCase(r.getApprovalStatus())) {
+            return false;
+        }
+        Long cnt = approvalMapper.selectCount(new LambdaQueryWrapper<GovCatalogApproval>()
+                .eq(GovCatalogApproval::getResourceId, resourceId)
+                .eq(GovCatalogApproval::getStatus, "PENDING")
+                .notIn(GovCatalogApproval::getActionType, "BIND", "UNBIND"));
+        return cnt != null && cnt > 0;
+    }
+
+    /** 撤回历史遗留的关联/解绑待审单（流程已改为即时生效） */
+    private void withdrawPendingBindUnbind(UserPrincipal operator, Long resourceId) {
+        List<GovCatalogApproval> pending = approvalMapper.selectList(new LambdaQueryWrapper<GovCatalogApproval>()
+                .eq(GovCatalogApproval::getResourceId, resourceId)
+                .eq(GovCatalogApproval::getStatus, "PENDING")
+                .in(GovCatalogApproval::getActionType, "BIND", "UNBIND"));
+        for (GovCatalogApproval a : pending) {
+            a.setStatus("WITHDRAWN");
+            a.setReviewComment("关联/解绑已改为即时生效，自动撤回历史待审");
+            a.setReviewedAt(LocalDateTime.now());
+            if (operator != null) {
+                a.setReviewedBy(operator.getUsername());
+            }
+            approvalMapper.updateById(a);
+        }
     }
 
     public List<Map<String, Object>> listApprovals(Long resourceId, String status) {
+        return listApprovals(resourceId, status, null, null);
+    }
+
+    public List<Map<String, Object>> listApprovals(Long resourceId, String status, String catalogOrigin) {
+        return listApprovals(resourceId, status, catalogOrigin, null);
+    }
+
+    /**
+     * @param scope RESOURCE=资源目录审批；CATEGORY=资源分类审批；空=全部（仍排除 BIND/UNBIND）
+     */
+    public List<Map<String, Object>> listApprovals(Long resourceId, String status, String catalogOrigin, String scope) {
         LambdaQueryWrapper<GovCatalogApproval> q = new LambdaQueryWrapper<GovCatalogApproval>()
                 .orderByDesc(GovCatalogApproval::getId);
         if (resourceId != null) {
@@ -449,12 +907,25 @@ public class CatalogResourceService {
         if (status != null && !status.isBlank()) {
             q.eq(GovCatalogApproval::getStatus, status);
         }
+        if (catalogOrigin != null && !catalogOrigin.isBlank()) {
+            q.eq(GovCatalogApproval::getCatalogOrigin, catalogOrigin.trim().toUpperCase(Locale.ROOT));
+        }
+        // 关联/解绑已改为即时生效，不再展示历史 BIND/UNBIND 审批
+        q.notIn(GovCatalogApproval::getActionType, "BIND", "UNBIND");
+        String scopeKey = scope == null ? "" : scope.trim().toUpperCase(Locale.ROOT);
+        if ("CATEGORY".equals(scopeKey)) {
+            q.in(GovCatalogApproval::getActionType, "CAT_CREATE", "CAT_UPDATE", "CAT_DELETE");
+        } else if ("RESOURCE".equals(scopeKey)) {
+            q.notIn(GovCatalogApproval::getActionType, "CAT_CREATE", "CAT_UPDATE", "CAT_DELETE");
+        }
         List<GovCatalogApproval> rows = approvalMapper.selectList(q);
         List<Map<String, Object>> out = new ArrayList<>();
         for (GovCatalogApproval a : rows) {
             Map<String, Object> m = new LinkedHashMap<>();
             m.put("id", a.getId());
             m.put("resourceId", a.getResourceId());
+            m.put("categoryId", a.getCategoryId());
+            m.put("catalogOrigin", a.getCatalogOrigin());
             m.put("actionType", a.getActionType());
             m.put("status", a.getStatus());
             m.put("submitComment", a.getSubmitComment());
@@ -463,12 +934,35 @@ public class CatalogResourceService {
             m.put("submittedAt", a.getSubmittedAt());
             m.put("reviewedBy", a.getReviewedBy());
             m.put("reviewedAt", a.getReviewedAt());
-            GovCatalogResource r = resourceMapper.selectById(a.getResourceId());
-            if (r != null) {
-                m.put("resourceCode", r.getResourceCode());
-                m.put("resourceName", r.getResourceName());
-                m.put("resourceType", r.getResourceType());
-                m.put("publishStatus", r.getPublishStatus());
+            m.put("payloadJson", a.getPayloadJson());
+            if (a.getResourceId() != null) {
+                GovCatalogResource r = resourceMapper.selectById(a.getResourceId());
+                if (r != null) {
+                    m.put("resourceCode", r.getResourceCode());
+                    m.put("resourceName", r.getResourceName());
+                    m.put("resourceType", r.getResourceType());
+                    m.put("publishStatus", r.getPublishStatus());
+                }
+            }
+            if (a.getCategoryId() != null) {
+                GovCatalogCategory cat = categoryMapper.selectById(a.getCategoryId());
+                if (cat != null) {
+                    m.put("categoryName", cat.getCategoryName());
+                    m.put("categoryCode", cat.getCategoryCode());
+                }
+            }
+            Map<String, Object> payload = parsePayload(a.getPayloadJson());
+            if (m.get("categoryName") == null && payload.get("categoryName") != null) {
+                m.put("categoryName", payload.get("categoryName"));
+            }
+            if (m.get("categoryCode") == null && payload.get("categoryCode") != null) {
+                m.put("categoryCode", payload.get("categoryCode"));
+            }
+            if (m.get("resourceName") == null && payload.get("categoryName") != null) {
+                m.put("resourceName", String.valueOf(payload.get("categoryName")));
+            }
+            if (m.get("resourceCode") == null && payload.get("categoryCode") != null) {
+                m.put("resourceCode", String.valueOf(payload.get("categoryCode")));
             }
             out.add(m);
         }
@@ -797,6 +1291,12 @@ public class CatalogResourceService {
                     throw new BusinessException(400, "分类不存在");
                 }
                 r.setCategoryPath(cat.getCategoryPath());
+                // 信息资源分类即基础资源目录下一级 → 同步基础库名称
+                String bodyBase = body.containsKey("baseCatalogName")
+                        ? str(body.get("baseCatalogName"), null) : null;
+                if (bodyBase == null || bodyBase.isBlank()) {
+                    r.setBaseCatalogName(cat.getCategoryName());
+                }
             } else if (body.containsKey("categoryPath")) {
                 r.setCategoryPath(str(body.get("categoryPath"), null));
             }
@@ -812,6 +1312,64 @@ public class CatalogResourceService {
         if (body.containsKey("shareType") || creating) {
             r.setShareType(str(body.get("shareType"), creating ? "OPEN" : r.getShareType()));
         }
+        if (body.containsKey("shareCondition") || creating) {
+            r.setShareCondition(str(body.get("shareCondition"), creating ? null : r.getShareCondition()));
+        }
+        if (body.containsKey("notShareReason") || creating) {
+            r.setNotShareReason(str(body.get("notShareReason"), creating ? null : r.getNotShareReason()));
+        }
+        if (body.containsKey("openType") || creating) {
+            r.setOpenType(str(body.get("openType"), creating ? "SOCIAL_OPEN" : r.getOpenType()));
+        }
+        if (body.containsKey("openCondition") || creating) {
+            r.setOpenCondition(str(body.get("openCondition"), creating ? null : r.getOpenCondition()));
+        }
+        if (body.containsKey("notOpenReason") || creating) {
+            r.setNotOpenReason(str(body.get("notOpenReason"), creating ? null : r.getNotOpenReason()));
+        }
+        if (body.containsKey("contactName") || creating) {
+            r.setContactName(str(body.get("contactName"), creating ? null : r.getContactName()));
+        }
+        if (body.containsKey("contactPhone") || creating) {
+            r.setContactPhone(str(body.get("contactPhone"), creating ? null : r.getContactPhone()));
+        }
+        if (body.containsKey("contactEmail") || creating) {
+            r.setContactEmail(str(body.get("contactEmail"), creating ? null : r.getContactEmail()));
+        }
+        if (body.containsKey("themeName") || creating) {
+            r.setThemeName(str(body.get("themeName"), creating ? null : r.getThemeName()));
+        }
+        if (body.containsKey("baseCatalogName") || creating) {
+            r.setBaseCatalogName(str(body.get("baseCatalogName"), creating ? null : r.getBaseCatalogName()));
+        }
+        if (body.containsKey("tags") || creating) {
+            Object tagsRaw = body.get("tags");
+            if (tagsRaw instanceof List<?> list) {
+                String joined = list.stream()
+                        .filter(Objects::nonNull)
+                        .map(Object::toString)
+                        .map(String::trim)
+                        .filter(s -> !s.isEmpty())
+                        .collect(Collectors.joining(","));
+                r.setTags(joined.isEmpty() ? null : joined);
+            } else {
+                r.setTags(str(tagsRaw, creating ? null : r.getTags()));
+            }
+        }
+        if (body.containsKey("extJson") || creating) {
+            Object ext = body.get("extJson");
+            if (ext == null) {
+                r.setExtJson(creating ? null : r.getExtJson());
+            } else if (ext instanceof String s) {
+                r.setExtJson(s.isBlank() ? null : s);
+            } else {
+                try {
+                    r.setExtJson(OM.writeValueAsString(ext));
+                } catch (Exception e) {
+                    throw new BusinessException(400, "extJson 无法序列化");
+                }
+            }
+        }
         if (body.containsKey("updateCycle") || creating) {
             r.setUpdateCycle(str(body.get("updateCycle"), creating ? "DAILY" : r.getUpdateCycle()));
         }
@@ -820,6 +1378,42 @@ public class CatalogResourceService {
         }
         if (body.containsKey("secretFlag")) {
             r.setSecretFlag(intVal(body.get("secretFlag"), 0));
+        }
+    }
+
+    private void validateShareOpen(GovCatalogResource r) {
+        String share = r.getShareType() == null ? "" : r.getShareType().trim().toUpperCase(Locale.ROOT);
+        if ("CONDITIONAL".equals(share)) {
+            if (r.getShareCondition() == null || r.getShareCondition().isBlank()) {
+                throw new BusinessException(400, "有条件共享须填写共享条件");
+            }
+        } else if ("NOT_SHARE".equals(share)) {
+            if (r.getNotShareReason() == null || r.getNotShareReason().isBlank()) {
+                throw new BusinessException(400, "不予共享须填写不共享理由");
+            }
+        }
+        String open = r.getOpenType() == null ? "" : r.getOpenType().trim().toUpperCase(Locale.ROOT);
+        if ("NOT_OPEN".equals(open)) {
+            if (r.getNotOpenReason() == null || r.getNotOpenReason().isBlank()) {
+                throw new BusinessException(400, "不对社会开放须填写不开放理由");
+            }
+        } else if ("SOCIAL_OPEN".equals(open) || "OPEN".equals(open)) {
+            if (r.getOpenCondition() == null || r.getOpenCondition().isBlank()) {
+                r.setOpenCondition("无条件开放");
+            }
+        }
+        String format = r.getResourceFormat() == null ? "" : r.getResourceFormat().trim().toUpperCase(Locale.ROOT);
+        if ("API".equals(format)) {
+            String ext = r.getExtJson();
+            if (ext == null || ext.isBlank()) {
+                throw new BusinessException(400, "接口资源须填写接口关联信息");
+            }
+        }
+        if ("FILE".equals(format)) {
+            String ext = r.getExtJson();
+            if (ext == null || ext.isBlank()) {
+                throw new BusinessException(400, "文件资源须填写文件关联信息");
+            }
         }
     }
 
@@ -941,7 +1535,9 @@ public class CatalogResourceService {
         item.setCatalogKind("SERVICE".equalsIgnoreCase(r.getResourceType()) ? "SERVICE" : "DATA");
         item.setCatalogOrigin(r.getCatalogOrigin() == null ? "GOVERNANCE" : r.getCatalogOrigin());
         item.setGovResourceId(r.getId());
-        item.setThemeName(r.getCategoryPath());
+        // 主题：主题资源目录下一级；库：信息资源分类（基础资源目录下一级）；部门：提供方组织机构
+        applyPortalTheme(item, r);
+        applyPortalBase(item, r);
         item.setProviderOrg(r.getProviderOrg());
         item.setShareModes(mapShareModes(r.getResourceFormat(), r.getShareType()));
         item.setResourceCount(1);
@@ -955,6 +1551,147 @@ public class CatalogResourceService {
             portalCatalogMapper.updateById(item);
         }
         r.setPortalCatalogId(item.getId());
+    }
+
+    /**
+     * 门户主题字段：来自资源上的 themeName（主题资源目录下一级），
+     * 尽量回填为分类表中的 category_code，便于门户按主题聚合。
+     */
+    private void applyPortalTheme(BizCatalogItem item, GovCatalogResource r) {
+        String themeName = r.getThemeName() == null ? null : r.getThemeName().trim();
+        if (themeName == null || themeName.isEmpty()) {
+            item.setThemeCode(null);
+            item.setThemeName(null);
+            return;
+        }
+        GovCatalogCategory matched = findThemeCategoryByName(themeName, r.getCatalogOrigin());
+        if (matched != null) {
+            item.setThemeCode(matched.getCategoryCode());
+            item.setThemeName(matched.getCategoryName());
+            return;
+        }
+        item.setThemeCode("THEME_" + Integer.toHexString(themeName.hashCode()));
+        item.setThemeName(themeName);
+    }
+
+    /**
+     * 门户基础库字段：来自信息资源分类 categoryId（基础资源目录下一级）或 baseCatalogName。
+     */
+    private void applyPortalBase(BizCatalogItem item, GovCatalogResource r) {
+        if (r.getCategoryId() != null) {
+            GovCatalogCategory cat = categoryMapper.selectById(r.getCategoryId());
+            if (cat != null) {
+                item.setBaseCatalogCode(cat.getCategoryCode());
+                item.setBaseCatalogName(cat.getCategoryName());
+                return;
+            }
+        }
+        String baseName = r.getBaseCatalogName() == null ? null : r.getBaseCatalogName().trim();
+        if (baseName == null || baseName.isEmpty()) {
+            item.setBaseCatalogCode(null);
+            item.setBaseCatalogName(null);
+            return;
+        }
+        GovCatalogCategory matched = findBaseCategoryByName(baseName, r.getCatalogOrigin());
+        if (matched != null) {
+            item.setBaseCatalogCode(matched.getCategoryCode());
+            item.setBaseCatalogName(matched.getCategoryName());
+            return;
+        }
+        item.setBaseCatalogCode("BASE_" + Integer.toHexString(baseName.hashCode()));
+        item.setBaseCatalogName(baseName);
+    }
+
+    private GovCatalogCategory findBaseCategoryByName(String baseName, String catalogOrigin) {
+        LambdaQueryWrapper<GovCatalogCategory> q = new LambdaQueryWrapper<GovCatalogCategory>()
+                .eq(GovCatalogCategory::getCategoryName, baseName)
+                .and(w -> w.isNull(GovCatalogCategory::getStatus)
+                        .or().ne(GovCatalogCategory::getStatus, "OFFLINE"));
+        if (catalogOrigin != null && !catalogOrigin.isBlank()) {
+            q.eq(GovCatalogCategory::getCatalogOrigin, catalogOrigin.trim().toUpperCase(Locale.ROOT));
+        }
+        List<GovCatalogCategory> list = categoryMapper.selectList(q);
+        for (GovCatalogCategory c : list) {
+            if (isUnderBaseRoot(c)) {
+                return c;
+            }
+        }
+        if (catalogOrigin != null && !catalogOrigin.isBlank()) {
+            return findBaseCategoryByName(baseName, null);
+        }
+        return list.isEmpty() ? null : list.get(0);
+    }
+
+    private boolean isUnderBaseRoot(GovCatalogCategory c) {
+        if (c == null) {
+            return false;
+        }
+        String path = c.getCategoryPath();
+        if (path != null && path.contains("基础资源目录")) {
+            return true;
+        }
+        Long parentId = c.getParentId();
+        int guard = 0;
+        while (parentId != null && parentId > 0 && guard++ < 8) {
+            GovCatalogCategory p = categoryMapper.selectById(parentId);
+            if (p == null) {
+                break;
+            }
+            if ("基础资源目录".equals(p.getCategoryName())
+                    || (p.getCategoryCode() != null && p.getCategoryCode().toUpperCase(Locale.ROOT).endsWith("_BASE"))) {
+                return true;
+            }
+            parentId = p.getParentId();
+        }
+        return false;
+    }
+
+    private GovCatalogCategory findThemeCategoryByName(String themeName, String catalogOrigin) {
+        LambdaQueryWrapper<GovCatalogCategory> q = new LambdaQueryWrapper<GovCatalogCategory>()
+                .eq(GovCatalogCategory::getCategoryName, themeName)
+                .and(w -> w.isNull(GovCatalogCategory::getStatus)
+                        .or().ne(GovCatalogCategory::getStatus, "OFFLINE"));
+        if (catalogOrigin != null && !catalogOrigin.isBlank()) {
+            q.eq(GovCatalogCategory::getCatalogOrigin, catalogOrigin.trim().toUpperCase(Locale.ROOT));
+        }
+        List<GovCatalogCategory> list = categoryMapper.selectList(q);
+        for (GovCatalogCategory c : list) {
+            if (isUnderThemeRoot(c)) {
+                return c;
+            }
+        }
+        if (catalogOrigin != null && !catalogOrigin.isBlank() && !list.isEmpty()) {
+            // 名称命中但未挂到主题根时仍可用（历史脏数据）
+            return list.get(0);
+        }
+        if (catalogOrigin != null && !catalogOrigin.isBlank()) {
+            return findThemeCategoryByName(themeName, null);
+        }
+        return list.isEmpty() ? null : list.get(0);
+    }
+
+    private boolean isUnderThemeRoot(GovCatalogCategory c) {
+        if (c == null) {
+            return false;
+        }
+        String path = c.getCategoryPath();
+        if (path != null && path.contains("主题资源目录")) {
+            return true;
+        }
+        Long parentId = c.getParentId();
+        int guard = 0;
+        while (parentId != null && parentId > 0 && guard++ < 8) {
+            GovCatalogCategory p = categoryMapper.selectById(parentId);
+            if (p == null) {
+                break;
+            }
+            if ("主题资源目录".equals(p.getCategoryName())
+                    || (p.getCategoryCode() != null && p.getCategoryCode().toUpperCase(Locale.ROOT).endsWith("_THEME"))) {
+                return true;
+            }
+            parentId = p.getParentId();
+        }
+        return false;
     }
 
     private void offlinePortal(GovCatalogResource r) {
@@ -985,6 +1722,110 @@ public class CatalogResourceService {
             return "FILE";
         }
         return "TABLE,FILE,API";
+    }
+
+    private GovCatalogApproval insertApproval(UserPrincipal operator, Long resourceId, Long categoryId,
+                                              String catalogOrigin, String actionType, String comment,
+                                              Map<String, Object> payload) {
+        GovCatalogApproval a = new GovCatalogApproval();
+        a.setResourceId(resourceId);
+        a.setCategoryId(categoryId);
+        a.setCatalogOrigin(catalogOrigin == null ? null : catalogOrigin.toUpperCase(Locale.ROOT));
+        a.setActionType(actionType);
+        a.setStatus("PENDING");
+        a.setSubmitComment(comment);
+        if (operator != null) {
+            a.setSubmittedBy(operator.getUsername());
+        }
+        a.setSubmittedAt(LocalDateTime.now());
+        if (payload != null) {
+            try {
+                a.setPayloadJson(OM.writeValueAsString(payload));
+            } catch (Exception e) {
+                throw new BusinessException(500, "审批载荷序列化失败");
+            }
+        }
+        approvalMapper.insert(a);
+        return a;
+    }
+
+    private void applyCategoryApproval(UserPrincipal operator, GovCatalogApproval a, String action) {
+        Map<String, Object> payload = parsePayload(a.getPayloadJson());
+        if ("CAT_CREATE".equals(action)) {
+            Long newId = categoryService.applyCreate(operator, payload);
+            a.setCategoryId(newId);
+            approvalMapper.updateById(a);
+        } else if ("CAT_UPDATE".equals(action)) {
+            Long cid = a.getCategoryId() != null ? a.getCategoryId() : longVal(payload.get("categoryId"), null);
+            if (cid == null) {
+                throw new BusinessException(400, "分类编辑审批缺少 categoryId");
+            }
+            categoryService.applyUpdate(operator, cid, payload);
+        } else if ("CAT_DELETE".equals(action)) {
+            Long cid = a.getCategoryId() != null ? a.getCategoryId() : longVal(payload.get("categoryId"), null);
+            if (cid == null) {
+                throw new BusinessException(400, "分类删除审批缺少 categoryId");
+            }
+            categoryService.applyDelete(operator, cid);
+        }
+    }
+
+    private void applyBindFromApproval(UserPrincipal operator, GovCatalogApproval a, GovCatalogResource r) {
+        Map<String, Object> payload = parsePayload(a.getPayloadJson());
+        Long categoryId = a.getCategoryId() != null ? a.getCategoryId() : longVal(payload.get("categoryId"), null);
+        if (categoryId == null) {
+            throw new BusinessException(400, "关联审批缺少 categoryId");
+        }
+        GovCatalogCategory cat = categoryMapper.selectById(categoryId);
+        if (cat == null) {
+            throw new BusinessException(400, "分类不存在");
+        }
+        String path = str(payload.get("categoryPath"), cat.getCategoryPath());
+        applyBindImmediate(operator, r, categoryId, path);
+    }
+
+    private void applyBindImmediate(UserPrincipal operator, GovCatalogResource r, Long categoryId, String categoryPath) {
+        GovCatalogCategory cat = categoryMapper.selectById(categoryId);
+        String baseName = cat != null ? cat.getCategoryName() : null;
+        LambdaUpdateWrapper<GovCatalogResource> uw = new LambdaUpdateWrapper<GovCatalogResource>()
+                .eq(GovCatalogResource::getId, r.getId())
+                .set(GovCatalogResource::getCategoryId, categoryId)
+                .set(GovCatalogResource::getCategoryPath, categoryPath)
+                .set(GovCatalogResource::getBaseCatalogName, baseName)
+                .set(GovCatalogResource::getUpdatedAt, LocalDateTime.now());
+        if (operator != null) {
+            uw.set(GovCatalogResource::getUpdatedBy, operator.getUsername());
+        }
+        resourceMapper.update(null, uw);
+        r.setCategoryId(categoryId);
+        r.setCategoryPath(categoryPath);
+        r.setBaseCatalogName(baseName);
+    }
+
+    private void applyUnbindImmediate(UserPrincipal operator, GovCatalogResource r) {
+        LambdaUpdateWrapper<GovCatalogResource> uw = new LambdaUpdateWrapper<GovCatalogResource>()
+                .eq(GovCatalogResource::getId, r.getId())
+                .set(GovCatalogResource::getCategoryId, null)
+                .set(GovCatalogResource::getCategoryPath, null)
+                .set(GovCatalogResource::getUpdatedAt, LocalDateTime.now());
+        if (operator != null) {
+            uw.set(GovCatalogResource::getUpdatedBy, operator.getUsername());
+        }
+        resourceMapper.update(null, uw);
+        r.setCategoryId(null);
+        r.setCategoryPath(null);
+    }
+
+    private Map<String, Object> parsePayload(String json) {
+        if (json == null || json.isBlank()) {
+            return Map.of();
+        }
+        try {
+            return OM.readValue(json, new TypeReference<Map<String, Object>>() {});
+        } catch (Exception e) {
+            log.warn("parse approval payload failed: {}", e.getMessage());
+            return Map.of();
+        }
     }
 
     private GovCatalogResource require(Long id) {

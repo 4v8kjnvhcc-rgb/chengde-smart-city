@@ -118,6 +118,24 @@ public class JdbcProbeService {
         }
     }
 
+    /** 仅列出表名（编目选表用，避免全库拉列信息过慢）。 */
+    public List<String> listTableNames(ConnConfig c) {
+        try (Connection conn = open(c)) {
+            List<String> names = new ArrayList<>();
+            DatabaseMetaData md = conn.getMetaData();
+            try (ResultSet rs = md.getTables(c.database, null, "%", new String[]{"TABLE"})) {
+                while (rs.next()) {
+                    names.add(rs.getString("TABLE_NAME"));
+                }
+            }
+            return names;
+        } catch (BusinessException be) {
+            throw be;
+        } catch (Exception e) {
+            throw new BusinessException(502, "探库失败：" + rootMessage(e));
+        }
+    }
+
     /** 列出所有表及基本信息（含行数与主键，供登记勾选）。 */
     public List<Map<String, Object>> listTables(ConnConfig c) {
         try (Connection conn = open(c)) {

@@ -13,7 +13,18 @@ import com.chengde.smartcity.exchange.mapper.BizPortalSituationMapper;
 import com.chengde.smartcity.exchange.mapper.BizPortalSubscriptionMapper;
 import com.chengde.smartcity.integration.config.IntegrationProperties;
 import com.chengde.smartcity.integration.storage.StorageIntegrationClient;
+import com.chengde.smartcity.masterdata.entity.GovCatalogCategory;
+import com.chengde.smartcity.masterdata.entity.GovCatalogResource;
+import com.chengde.smartcity.masterdata.mapper.GovCatalogCategoryMapper;
+import com.chengde.smartcity.masterdata.mapper.GovCatalogResourceMapper;
+import com.chengde.smartcity.masterdata.service.CatalogSubscriptionService;
 import com.chengde.smartcity.security.UserPrincipal;
+import com.chengde.smartcity.system.entity.SysOrg;
+import com.chengde.smartcity.system.mapper.SysOrgMapper;
+import com.fasterxml.jackson.core.type.TypeReference;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import java.time.LocalDateTime;
+import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.HashMap;
@@ -35,33 +46,47 @@ public class PortalService {
 
     private static final Logger log = LoggerFactory.getLogger(PortalService.class);
     private static final String ES_INDEX = "smartcity_catalog";
+    private static final ObjectMapper OM = new ObjectMapper();
+    private static final DateTimeFormatter DT_FMT = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
 
     private final BizCatalogItemMapper catalogMapper;
     private final BizPortalSubscriptionMapper subscriptionMapper;
     private final BizPortalSituationMapper situationMapper;
     private final BizDemandSupplyTaskMapper supplyTaskMapper;
+    private final GovCatalogResourceMapper govResourceMapper;
+    private final GovCatalogCategoryMapper govCategoryMapper;
+    private final SysOrgMapper orgMapper;
     private final AuditService auditService;
     private final IntegrationProperties integrationProperties;
     private final StorageIntegrationClient storageClient;
+    private final CatalogSubscriptionService catalogSubscriptionService;
 
     public PortalService(BizCatalogItemMapper catalogMapper,
                          BizPortalSubscriptionMapper subscriptionMapper,
                          BizPortalSituationMapper situationMapper,
                          BizDemandSupplyTaskMapper supplyTaskMapper,
+                         GovCatalogResourceMapper govResourceMapper,
+                         GovCatalogCategoryMapper govCategoryMapper,
+                         SysOrgMapper orgMapper,
                          AuditService auditService,
                          IntegrationProperties integrationProperties,
-                         StorageIntegrationClient storageClient) {
+                         StorageIntegrationClient storageClient,
+                         CatalogSubscriptionService catalogSubscriptionService) {
         this.catalogMapper = catalogMapper;
         this.subscriptionMapper = subscriptionMapper;
         this.situationMapper = situationMapper;
         this.supplyTaskMapper = supplyTaskMapper;
+        this.govResourceMapper = govResourceMapper;
+        this.govCategoryMapper = govCategoryMapper;
+        this.orgMapper = orgMapper;
         this.auditService = auditService;
         this.integrationProperties = integrationProperties;
         this.storageClient = storageClient;
+        this.catalogSubscriptionService = catalogSubscriptionService;
     }
 
     public Map<String, Object> home(String keyword) {
-        List<BizCatalogItem> published = publishedCatalogs(keyword, null, null, null, null);
+        List<BizCatalogItem> published = publishedCatalogs(keyword, null, null, null, null, null);
         long openResourceTotal = published.stream().filter(c -> "DATA".equalsIgnoreCase(nz(c.getCatalogKind(), "DATA"))).count();
         long apiServiceTotal = published.stream().filter(c ->
                 "SERVICE".equalsIgnoreCase(nz(c.getCatalogKind(), ""))
@@ -125,6 +150,7 @@ public class PortalService {
         out.put("searchKeyword", keyword == null ? "" : keyword);
         out.put("hotKeywords", buildHotKeywords(published));
         out.put("themes", buildThemes(published));
+        out.put("baseLibraries", buildBaseLibraries(published));
         out.put("providers", buildProviders(published));
         out.put("latestResources", latest);
         out.put("latestApplications", latestApplications);
@@ -142,7 +168,7 @@ public class PortalService {
                 return enrichEsHits(esHits, themeCode, providerOrg, catalogKind, shareMode);
             }
         }
-        return publishedCatalogs(keyword, themeCode, providerOrg, catalogKind, shareMode).stream()
+        return publishedCatalogs(keyword, themeCode, null, providerOrg, catalogKind, shareMode).stream()
                 .map(c -> {
                     Map<String, Object> row = catalogView(c);
                     row.put("source", "database");
@@ -153,29 +179,149 @@ public class PortalService {
 
     public List<Map<String, Object>> catalogBrowse(String keyword, String themeCode, String providerOrg,
                                                    String catalogKind, String shareMode) {
-        return search(keyword, themeCode, providerOrg, catalogKind, shareMode);
+        return catalogBrowse(keyword, themeCode, null, providerOrg, catalogKind, shareMode,
+                null, null, null, null, null);
+    }
+
+    public List<Map<String, Object>> catalogBrowse(String keyword, String themeCode, String providerOrg,
+                                                   String catalogKind, String shareMode,
+                                                   String shareAttr, String openAttr, String resourceType,
+                                                   String sortBy, String sortDir) {
+        return catalogBrowse(keyword, themeCode, null, providerOrg, catalogKind, shareMode,
+                shareAttr, openAttr, resourceType, sortBy, sortDir);
+    }
+
+    public List<Map<String, Object>> catalogBrowse(String keyword, String themeCode, String baseCode,
+                                                   String providerOrg, String catalogKind, String shareMode,
+                                                   String shareAttr, String openAttr, String resourceType,
+                                                   String sortBy, String sortDir) {
+        String mode = !blank(resourceType) ? resourceType : shareMode;
+        List<Map<String, Object>> rows = publishedCatalogs(keyword, themeCode, baseCode, providerOrg, catalogKind, mode).stream()
+                .map(this::catalogView)
+                .collect(Collectors.toCollection(ArrayList::new));
+        enrichShareOpenStats(rows);
+        if (!blank(shareAttr)) {
+            String want = shareAttr.trim().toUpperCase(Locale.ROOT);
+            rows = rows.stream()
+                    .filter(r -> want.equalsIgnoreCase(String.valueOf(r.getOrDefault("shareAttr", ""))))
+                    .collect(Collectors.toCollection(ArrayList::new));
+        }
+        if (!blank(openAttr)) {
+            String want = openAttr.trim().toUpperCase(Locale.ROOT);
+            rows = rows.stream()
+                    .filter(r -> want.equalsIgnoreCase(String.valueOf(r.getOrDefault("openAttr", ""))))
+                    .collect(Collectors.toCollection(ArrayList::new));
+        }
+        sortCatalogRows(rows, sortBy, sortDir);
+        return rows;
+    }
+
+    public Map<String, Object> catalogDetail(Long id) {
+        BizCatalogItem catalog = catalogMapper.selectById(id);
+        if (catalog == null || !"PUBLISHED".equals(catalog.getPublishStatus())) {
+            throw new BusinessException(404, "资源不存在或未发布");
+        }
+        Map<String, Object> row = catalogView(catalog);
+        enrichShareOpenStats(List.of(row));
+        GovCatalogResource gov = catalog.getGovResourceId() == null
+                ? null : govResourceMapper.selectById(catalog.getGovResourceId());
+        String resourceType = resolveResourceType(catalog, gov);
+        row.put("resourceType", resourceType);
+        row.put("resourceTypeLabel", resourceTypeLabel(resourceType));
+        if (gov != null) {
+            row.put("updatedAt", formatDt(gov.getUpdatedAt() != null ? gov.getUpdatedAt() : catalog.getPublishedAt()));
+            row.put("updateCycle", gov.getUpdateCycle());
+            row.put("physicalTableName", gov.getPhysicalTableName());
+            Map<String, Object> ext = parseExtJson(gov.getExtJson());
+            if (ext != null) {
+                if (ext.get("tables") != null) {
+                    row.put("tables", ext.get("tables"));
+                }
+                if (ext.get("apis") != null) {
+                    row.put("apis", ext.get("apis"));
+                }
+                if (ext.get("files") != null) {
+                    row.put("files", ext.get("files"));
+                }
+                if (ext.get("resourceType") != null) {
+                    row.put("resourceType", String.valueOf(ext.get("resourceType")).toUpperCase(Locale.ROOT));
+                    row.put("resourceTypeLabel", resourceTypeLabel(String.valueOf(row.get("resourceType"))));
+                }
+            }
+            if ("TABLE".equals(row.get("resourceType")) && row.get("tables") == null
+                    && !blank(gov.getPhysicalTableName())) {
+                row.put("tables", List.of(Map.of(
+                        "tableName", gov.getPhysicalTableName(),
+                        "catalogCode", nz(catalog.getCatalogCode(), ""),
+                        "summary", nz(gov.getDescription(), ""),
+                        "columns", List.of()
+                )));
+            }
+        } else {
+            row.put("updatedAt", formatDt(catalog.getPublishedAt()));
+        }
+        // 访问量 +1（详情打开）
+        int score = catalog.getHotScore() == null ? 0 : catalog.getHotScore();
+        catalog.setHotScore(score + 1);
+        catalogMapper.updateById(catalog);
+        row.put("visitCount", score + 1);
+        return row;
     }
 
     public List<Map<String, Object>> listSubscriptions(String status) {
+        return listSubscriptions(null, status, null);
+    }
+
+    /**
+     * @param scope mine=我的申请；pending=待我审批（资源提供方为本机构）；空=全部（兼容）
+     */
+    public List<Map<String, Object>> listSubscriptions(UserPrincipal operator, String status, String scope) {
         LambdaQueryWrapper<BizPortalSubscription> q = new LambdaQueryWrapper<BizPortalSubscription>()
                 .orderByDesc(BizPortalSubscription::getId);
         if (status != null && !status.isBlank()) {
             q.eq(BizPortalSubscription::getStatus, status);
         }
         List<BizPortalSubscription> list = subscriptionMapper.selectList(q);
+        String myOrg = resolveOrgName(operator);
+        String username = operator == null ? null : operator.getUsername();
+        boolean admin = operator != null && operator.isSystemAdmin();
+
         List<Map<String, Object>> out = new ArrayList<>();
         for (BizPortalSubscription sub : list) {
+            BizCatalogItem cat = catalogMapper.selectById(sub.getCatalogId());
+            String providerOrg = cat == null ? null : cat.getProviderOrg();
+
+            if ("mine".equalsIgnoreCase(nz(scope, ""))) {
+                if (username == null || !username.equals(sub.getCreatedBy())) {
+                    continue;
+                }
+            } else if ("pending".equalsIgnoreCase(nz(scope, ""))) {
+                if (!"PENDING".equalsIgnoreCase(sub.getStatus())) {
+                    continue;
+                }
+                if (!admin) {
+                    if (blank(myOrg) || blank(providerOrg) || !myOrg.equals(providerOrg)) {
+                        continue;
+                    }
+                    // 本部门自己提的申请不算「待我审批」
+                    if (username != null && username.equals(sub.getCreatedBy())) {
+                        continue;
+                    }
+                }
+            }
+
             Map<String, Object> row = new LinkedHashMap<>();
             row.put("id", sub.getId());
             row.put("catalogId", sub.getCatalogId());
             row.put("applicantOrg", sub.getApplicantOrg());
             row.put("resourceType", sub.getResourceType());
             row.put("purpose", sub.getPurpose());
+            row.put("applyPayload", parseJsonSafe(sub.getApplyPayload()));
             row.put("status", sub.getStatus());
             row.put("approverNote", sub.getApproverNote());
             row.put("createdBy", sub.getCreatedBy());
             row.put("createdAt", sub.getCreatedAt());
-            BizCatalogItem cat = catalogMapper.selectById(sub.getCatalogId());
+            row.put("providerOrg", providerOrg);
             if (cat != null) {
                 row.put("catalogTitle", cat.getTitle());
                 row.put("catalogCode", cat.getCatalogCode());
@@ -208,17 +354,76 @@ public class PortalService {
         if (!Set.of("TABLE", "FILE", "API").contains(resourceType)) {
             throw new BusinessException(400, "resourceType 须为 TABLE/FILE/API");
         }
+        String purpose = str(body.get("purpose"), str(body.get("scene"), ""));
+        if (purpose.length() > 500) {
+            purpose = purpose.substring(0, 500);
+        }
+        String payloadJson = null;
+        try {
+            Map<String, Object> payload = new LinkedHashMap<>(body);
+            payload.remove("catalogId");
+            payloadJson = OM.writeValueAsString(payload);
+        } catch (Exception e) {
+            log.warn("serialize apply payload failed: {}", e.getMessage());
+        }
+
         BizPortalSubscription sub = new BizPortalSubscription();
         sub.setCatalogId(catalogId);
-        sub.setApplicantOrg(str(body.get("applicantOrg"), "机构" + operator.getOrgId()));
+        sub.setApplicantOrg(str(body.get("applicantOrg"), resolveOrgName(operator)));
         sub.setResourceType(resourceType);
-        sub.setPurpose(str(body.get("purpose"), ""));
+        sub.setPurpose(purpose);
+        sub.setApplyPayload(payloadJson);
         sub.setStatus("PENDING");
         sub.setCreatedBy(operator.getUsername());
         subscriptionMapper.insert(sub);
+
+        // 同步到数据融合治理平台「资源申请订阅」
+        if (catalog.getGovResourceId() != null) {
+            try {
+                Map<String, Object> govBody = new LinkedHashMap<>();
+                govBody.put("resourceId", catalog.getGovResourceId());
+                govBody.put("shareMode", toGovShareMode(resourceType));
+                govBody.put("applicantOrg", sub.getApplicantOrg());
+                govBody.put("purpose", purpose);
+                govBody.put("applyPayload", payloadJson);
+                catalogSubscriptionService.create(operator, govBody);
+            } catch (BusinessException ex) {
+                // 已有待审等业务冲突：门户记录仍保留，治理侧跳过
+                log.warn("sync gov subscription skipped: {}", ex.getMessage());
+            }
+        }
+
         auditService.log(operator.getUserId(), operator.getUsername(), operator.getOrgId(),
                 "PORTAL_SUBSCRIBE", "biz_portal_subscription", String.valueOf(sub.getId()), catalog.getTitle());
         return sub.getId();
+    }
+
+    private String toGovShareMode(String resourceType) {
+        return switch (resourceType) {
+            case "FILE" -> "FILE_SYNC";
+            case "API" -> "API";
+            default -> "DB_SYNC";
+        };
+    }
+
+    private String resolveOrgName(UserPrincipal operator) {
+        if (operator == null || operator.getOrgId() == null) {
+            return null;
+        }
+        SysOrg org = orgMapper.selectById(operator.getOrgId());
+        return org == null ? null : org.getOrgName();
+    }
+
+    @SuppressWarnings("unchecked")
+    private Object parseJsonSafe(String json) {
+        if (blank(json)) {
+            return null;
+        }
+        try {
+            return OM.readValue(json, new TypeReference<Map<String, Object>>() {});
+        } catch (Exception e) {
+            return json;
+        }
     }
 
     @Transactional
@@ -256,6 +461,28 @@ public class PortalService {
         return out;
     }
 
+    @Transactional
+    public void cancelSubscription(UserPrincipal operator, Long id) {
+        BizPortalSubscription sub = subscriptionMapper.selectById(id);
+        if (sub == null) {
+            throw new BusinessException(404, "订阅申请不存在");
+        }
+        boolean admin = operator != null && operator.isSystemAdmin();
+        if (!admin && (operator == null || !Objects.equals(operator.getUsername(), sub.getCreatedBy()))) {
+            throw new BusinessException(403, "仅申请人可取消订阅");
+        }
+        if (!"PENDING".equalsIgnoreCase(sub.getStatus()) && !"APPROVED".equalsIgnoreCase(sub.getStatus())) {
+            throw new BusinessException(400, "当前状态不可取消");
+        }
+        sub.setStatus("CANCELLED");
+        sub.setApproverNote("用户取消订阅");
+        subscriptionMapper.updateById(sub);
+        if (operator != null) {
+            auditService.log(operator.getUserId(), operator.getUsername(), operator.getOrgId(),
+                    "PORTAL_SUB_CANCEL", "biz_portal_subscription", String.valueOf(id), "CANCELLED");
+        }
+    }
+
     public List<BizPortalSituation> listSituations() {
         return situationMapper.selectList(new LambdaQueryWrapper<BizPortalSituation>()
                 .orderByAsc(BizPortalSituation::getSortOrder));
@@ -263,7 +490,7 @@ public class PortalService {
 
     @Transactional
     public Map<String, Object> syncSearchIndex(UserPrincipal operator) {
-        List<BizCatalogItem> items = publishedCatalogs(null, null, null, null, null);
+        List<BizCatalogItem> items = publishedCatalogs(null, null, null, null, null, null);
         int indexed = 0;
         for (BizCatalogItem item : items) {
             storageClient.indexCatalog(String.valueOf(item.getId()), item.getCatalogCode(),
@@ -297,8 +524,8 @@ public class PortalService {
         };
     }
 
-    private List<BizCatalogItem> publishedCatalogs(String keyword, String themeCode, String providerOrg,
-                                                   String catalogKind, String shareMode) {
+    private List<BizCatalogItem> publishedCatalogs(String keyword, String themeCode, String baseCode,
+                                                   String providerOrg, String catalogKind, String shareMode) {
         LambdaQueryWrapper<BizCatalogItem> q = new LambdaQueryWrapper<BizCatalogItem>()
                 .eq(BizCatalogItem::getPublishStatus, "PUBLISHED")
                 .isNotNull(BizCatalogItem::getGovResourceId)
@@ -309,21 +536,149 @@ public class PortalService {
                     .or().like(BizCatalogItem::getDescription, keyword)
                     .or().like(BizCatalogItem::getCatalogCode, keyword)
                     .or().like(BizCatalogItem::getThemeName, keyword)
+                    .or().like(BizCatalogItem::getBaseCatalogName, keyword)
                     .or().like(BizCatalogItem::getProviderOrg, keyword));
         }
-        if (!blank(themeCode)) {
-            q.eq(BizCatalogItem::getThemeCode, themeCode);
-        }
-        if (!blank(providerOrg)) {
-            q.eq(BizCatalogItem::getProviderOrg, providerOrg);
-        }
+        // themeCode / baseCode / providerOrg 在 enrich 后再过滤
         if (!blank(catalogKind)) {
             q.eq(BizCatalogItem::getCatalogKind, catalogKind.toUpperCase(Locale.ROOT));
         }
         if (!blank(shareMode)) {
             q.like(BizCatalogItem::getShareModes, shareMode.toUpperCase(Locale.ROOT));
         }
-        return catalogMapper.selectList(q);
+        List<BizCatalogItem> list = catalogMapper.selectList(q);
+        enrichPortalFieldsFromGov(list);
+        if (!blank(themeCode)) {
+            list = list.stream()
+                    .filter(c -> themeCode.equalsIgnoreCase(nz(c.getThemeCode(), ""))
+                            || themeCode.equals(nz(c.getThemeName(), "")))
+                    .toList();
+        }
+        if (!blank(baseCode)) {
+            list = list.stream()
+                    .filter(c -> baseCode.equalsIgnoreCase(nz(c.getBaseCatalogCode(), ""))
+                            || baseCode.equals(nz(c.getBaseCatalogName(), "")))
+                    .toList();
+        }
+        if (!blank(providerOrg)) {
+            list = list.stream()
+                    .filter(c -> providerOrg.equals(nz(c.getProviderOrg(), "")))
+                    .toList();
+        }
+        return list;
+    }
+
+    /**
+     * 用统一编目表回填主题（主题资源目录）、基础库（信息资源分类）与提供方（组织机构），
+     * 兼容历史 sync 把 themeName 写成分类路径、未写 themeCode 的脏数据。
+     */
+    private void enrichPortalFieldsFromGov(List<BizCatalogItem> items) {
+        if (items == null || items.isEmpty()) {
+            return;
+        }
+        Set<Long> govIds = items.stream()
+                .map(BizCatalogItem::getGovResourceId)
+                .filter(Objects::nonNull)
+                .collect(Collectors.toCollection(LinkedHashSet::new));
+        if (govIds.isEmpty()) {
+            return;
+        }
+        List<GovCatalogResource> govs = govResourceMapper.selectBatchIds(govIds);
+        Map<Long, GovCatalogResource> byId = govs.stream()
+                .collect(Collectors.toMap(GovCatalogResource::getId, g -> g, (a, b) -> a));
+        Map<String, String> themeCodeCache = new HashMap<>();
+        Map<Long, GovCatalogCategory> catCache = new HashMap<>();
+        for (BizCatalogItem c : items) {
+            GovCatalogResource g = c.getGovResourceId() == null ? null : byId.get(c.getGovResourceId());
+            if (g == null) {
+                continue;
+            }
+            String themeName = blank(g.getThemeName()) ? null : g.getThemeName().trim();
+            if (themeName != null) {
+                c.setThemeName(themeName);
+                String code = themeCodeCache.computeIfAbsent(themeName + "|" + nz(g.getCatalogOrigin(), ""),
+                        k -> resolveThemeCode(themeName, g.getCatalogOrigin()));
+                c.setThemeCode(code);
+            } else if (looksLikeCategoryPath(c.getThemeName())) {
+                c.setThemeCode(null);
+                c.setThemeName(null);
+            }
+            if (!blank(g.getProviderOrg())) {
+                c.setProviderOrg(g.getProviderOrg().trim());
+            }
+            // 基础库：优先 categoryId，其次 baseCatalogName
+            if (blank(c.getBaseCatalogName()) || blank(c.getBaseCatalogCode())) {
+                if (g.getCategoryId() != null) {
+                    GovCatalogCategory cat = catCache.computeIfAbsent(g.getCategoryId(),
+                            id -> govCategoryMapper.selectById(id));
+                    if (cat != null) {
+                        c.setBaseCatalogCode(cat.getCategoryCode());
+                        c.setBaseCatalogName(cat.getCategoryName());
+                    }
+                } else if (!blank(g.getBaseCatalogName())) {
+                    c.setBaseCatalogName(g.getBaseCatalogName().trim());
+                    if (blank(c.getBaseCatalogCode())) {
+                        c.setBaseCatalogCode(resolveBaseCode(g.getBaseCatalogName().trim(), g.getCatalogOrigin()));
+                    }
+                }
+            }
+        }
+    }
+
+    private String resolveBaseCode(String baseName, String catalogOrigin) {
+        LambdaQueryWrapper<GovCatalogCategory> q = new LambdaQueryWrapper<GovCatalogCategory>()
+                .eq(GovCatalogCategory::getCategoryName, baseName)
+                .and(w -> w.isNull(GovCatalogCategory::getStatus)
+                        .or().ne(GovCatalogCategory::getStatus, "OFFLINE"));
+        if (!blank(catalogOrigin)) {
+            q.eq(GovCatalogCategory::getCatalogOrigin, catalogOrigin.trim().toUpperCase(Locale.ROOT));
+        }
+        List<GovCatalogCategory> list = govCategoryMapper.selectList(q);
+        for (GovCatalogCategory cat : list) {
+            String path = cat.getCategoryPath();
+            String code = cat.getCategoryCode();
+            if ((path != null && path.contains("基础资源目录"))
+                    || (code != null && code.toUpperCase(Locale.ROOT).contains("BASE"))) {
+                return cat.getCategoryCode();
+            }
+        }
+        if (!list.isEmpty()) {
+            return list.get(0).getCategoryCode();
+        }
+        return "BASE_" + Integer.toHexString(baseName.hashCode());
+    }
+
+    private String resolveThemeCode(String themeName, String catalogOrigin) {
+        LambdaQueryWrapper<GovCatalogCategory> q = new LambdaQueryWrapper<GovCatalogCategory>()
+                .eq(GovCatalogCategory::getCategoryName, themeName)
+                .and(w -> w.isNull(GovCatalogCategory::getStatus)
+                        .or().ne(GovCatalogCategory::getStatus, "OFFLINE"));
+        if (!blank(catalogOrigin)) {
+            q.eq(GovCatalogCategory::getCatalogOrigin, catalogOrigin.trim().toUpperCase(Locale.ROOT));
+        }
+        List<GovCatalogCategory> list = govCategoryMapper.selectList(q);
+        for (GovCatalogCategory cat : list) {
+            String path = cat.getCategoryPath();
+            String code = cat.getCategoryCode();
+            if ((path != null && path.contains("主题资源目录"))
+                    || (code != null && code.toUpperCase(Locale.ROOT).contains("THEME"))) {
+                return cat.getCategoryCode();
+            }
+        }
+        if (!list.isEmpty()) {
+            return list.get(0).getCategoryCode();
+        }
+        return "THEME_" + Integer.toHexString(themeName.hashCode());
+    }
+
+    private boolean looksLikeCategoryPath(String themeName) {
+        if (blank(themeName)) {
+            return false;
+        }
+        return themeName.contains("/")
+                && (themeName.startsWith("基础资源目录")
+                || themeName.startsWith("部门资源目录")
+                || themeName.startsWith("主题资源目录"));
     }
 
     private List<Map<String, Object>> enrichEsHits(List<Map<String, Object>> esHits,
@@ -377,15 +732,214 @@ public class PortalService {
         row.put("govResourceId", c.getGovResourceId());
         row.put("themeCode", c.getThemeCode());
         row.put("themeName", c.getThemeName());
+        row.put("baseCatalogCode", c.getBaseCatalogCode());
+        row.put("baseCatalogName", c.getBaseCatalogName());
         row.put("providerOrg", c.getProviderOrg());
         row.put("shareModes", c.getShareModes());
         row.put("resourceCount", c.getResourceCount() == null ? 0 : c.getResourceCount());
         row.put("hotScore", c.getHotScore() == null ? 0 : c.getHotScore());
+        row.put("visitCount", c.getHotScore() == null ? 0 : c.getHotScore());
+        row.put("applyCount", 0);
         row.put("publishedAt", c.getPublishedAt());
+        row.put("updatedAt", formatDt(c.getUpdatedAt() != null ? c.getUpdatedAt() : c.getPublishedAt()));
         row.put("publishStatus", c.getPublishStatus());
         row.put("source", "database");
+        row.put("resourceType", resolveResourceType(c, null));
+        row.put("resourceTypeLabel", resourceTypeLabel(String.valueOf(row.get("resourceType"))));
+        row.put("shareAttr", "CONDITIONAL");
+        row.put("openAttr", "SOCIAL_OPEN");
         row.put("previewItems", previewItems(c));
         return row;
+    }
+
+    private void enrichShareOpenStats(List<Map<String, Object>> rows) {
+        if (rows == null || rows.isEmpty()) {
+            return;
+        }
+        Set<Long> govIds = new LinkedHashSet<>();
+        Set<Long> catalogIds = new LinkedHashSet<>();
+        for (Map<String, Object> row : rows) {
+            Object gid = row.get("govResourceId");
+            if (gid != null) {
+                try {
+                    govIds.add(Long.valueOf(String.valueOf(gid)));
+                } catch (NumberFormatException ignored) {
+                    // skip
+                }
+            }
+            Object cid = row.get("id");
+            if (cid != null) {
+                try {
+                    catalogIds.add(Long.valueOf(String.valueOf(cid)));
+                } catch (NumberFormatException ignored) {
+                    // skip
+                }
+            }
+        }
+        Map<Long, GovCatalogResource> govById = new HashMap<>();
+        if (!govIds.isEmpty()) {
+            for (GovCatalogResource g : govResourceMapper.selectBatchIds(govIds)) {
+                govById.put(g.getId(), g);
+            }
+        }
+        Map<Long, Integer> applyByCatalog = new HashMap<>();
+        if (!catalogIds.isEmpty()) {
+            List<BizPortalSubscription> subs = subscriptionMapper.selectList(new LambdaQueryWrapper<BizPortalSubscription>()
+                    .in(BizPortalSubscription::getCatalogId, catalogIds));
+            for (BizPortalSubscription sub : subs) {
+                if (sub.getCatalogId() == null) {
+                    continue;
+                }
+                applyByCatalog.merge(sub.getCatalogId(), 1, Integer::sum);
+            }
+        }
+        for (Map<String, Object> row : rows) {
+            Long govId = null;
+            Long catalogId = null;
+            try {
+                if (row.get("govResourceId") != null) {
+                    govId = Long.valueOf(String.valueOf(row.get("govResourceId")));
+                }
+                if (row.get("id") != null) {
+                    catalogId = Long.valueOf(String.valueOf(row.get("id")));
+                }
+            } catch (NumberFormatException ignored) {
+                // skip
+            }
+            GovCatalogResource gov = govId == null ? null : govById.get(govId);
+            if (gov != null) {
+                String shareAttr = blank(gov.getShareType()) ? "CONDITIONAL" : gov.getShareType().trim().toUpperCase(Locale.ROOT);
+                if ("OPEN".equals(shareAttr)) {
+                    shareAttr = "UNCONDITIONAL";
+                }
+                String openAttr = blank(gov.getOpenType()) ? "SOCIAL_OPEN" : gov.getOpenType().trim().toUpperCase(Locale.ROOT);
+                row.put("shareAttr", shareAttr);
+                row.put("openAttr", openAttr);
+                if (gov.getUpdatedAt() != null) {
+                    row.put("updatedAt", formatDt(gov.getUpdatedAt()));
+                }
+                String rt = resolveResourceType(null, gov);
+                if (row.get("shareModes") != null) {
+                    rt = resolveResourceTypeFromModes(String.valueOf(row.get("shareModes")), gov);
+                }
+                row.put("resourceType", rt);
+                row.put("resourceTypeLabel", resourceTypeLabel(rt));
+            } else {
+                String modes = String.valueOf(row.getOrDefault("shareModes", ""));
+                String rt = resolveResourceTypeFromModes(modes, null);
+                row.put("resourceType", rt);
+                row.put("resourceTypeLabel", resourceTypeLabel(rt));
+            }
+            int apply = catalogId == null ? 0 : applyByCatalog.getOrDefault(catalogId, 0);
+            // 演示资源补默认申请量（尚无订阅记录时）
+            if (apply == 0 && row.get("catalogCode") != null) {
+                apply = switch (String.valueOf(row.get("catalogCode"))) {
+                    case "13080000230006" -> 8;
+                    case "13080000050007" -> 12;
+                    case "13080000990001" -> 5;
+                    default -> 0;
+                };
+            }
+            row.put("applyCount", apply);
+            Object visit = row.get("visitCount");
+            if (visit == null) {
+                row.put("visitCount", row.getOrDefault("hotScore", 0));
+            }
+        }
+    }
+
+    private void sortCatalogRows(List<Map<String, Object>> rows, String sortBy, String sortDir) {
+        if (rows == null || rows.isEmpty()) {
+            return;
+        }
+        String by = blank(sortBy) ? "applyCount" : sortBy.trim();
+        boolean asc = "asc".equalsIgnoreCase(nz(sortDir, "desc"));
+        Comparator<Map<String, Object>> cmp;
+        if ("hotScore".equalsIgnoreCase(by)) {
+            cmp = Comparator.comparingInt(r -> toInt(r.get("hotScore")));
+        } else if ("visitCount".equalsIgnoreCase(by)) {
+            cmp = Comparator.comparingInt(r -> toInt(r.get("visitCount")));
+        } else if ("updatedAt".equalsIgnoreCase(by) || "updateTime".equalsIgnoreCase(by)) {
+            cmp = Comparator.comparing(r -> String.valueOf(r.getOrDefault("updatedAt", "")),
+                    Comparator.nullsLast(String::compareTo));
+        } else {
+            cmp = Comparator.comparingInt(r -> toInt(r.get("applyCount")));
+        }
+        if (!asc) {
+            cmp = cmp.reversed();
+        }
+        rows.sort(cmp);
+    }
+
+    private String resolveResourceType(BizCatalogItem c, GovCatalogResource gov) {
+        if (gov != null) {
+            String fmt = nz(gov.getResourceFormat(), "").toUpperCase(Locale.ROOT);
+            if (fmt.contains("API") || "SERVICE".equalsIgnoreCase(nz(gov.getResourceType(), ""))) {
+                return "API";
+            }
+            if (fmt.contains("FILE") || fmt.contains("FTP") || fmt.contains("XLS") || fmt.contains("CSV")) {
+                return "FILE";
+            }
+            if (!blank(gov.getPhysicalTableName()) || fmt.contains("DATABASE") || fmt.contains("TABLE")) {
+                return "TABLE";
+            }
+        }
+        if (c != null) {
+            return resolveResourceTypeFromModes(c.getShareModes(), gov);
+        }
+        return "TABLE";
+    }
+
+    private String resolveResourceTypeFromModes(String shareModes, GovCatalogResource gov) {
+        String modes = nz(shareModes, "").toUpperCase(Locale.ROOT);
+        if (modes.contains("API")) {
+            return "API";
+        }
+        if (modes.contains("FILE")) {
+            return "FILE";
+        }
+        if (modes.contains("TABLE") || modes.contains("DB")) {
+            return "TABLE";
+        }
+        return resolveResourceType(null, gov);
+    }
+
+    private String resourceTypeLabel(String type) {
+        return switch (nz(type, "TABLE").toUpperCase(Locale.ROOT)) {
+            case "API" -> "接口";
+            case "FILE" -> "文件";
+            default -> "库表";
+        };
+    }
+
+    private Map<String, Object> parseExtJson(String json) {
+        if (blank(json)) {
+            return null;
+        }
+        try {
+            return OM.readValue(json, new TypeReference<Map<String, Object>>() {});
+        } catch (Exception e) {
+            log.warn("parse ext_json failed: {}", e.getMessage());
+            return null;
+        }
+    }
+
+    private String formatDt(LocalDateTime dt) {
+        return dt == null ? "" : DT_FMT.format(dt);
+    }
+
+    private int toInt(Object v) {
+        if (v == null) {
+            return 0;
+        }
+        if (v instanceof Number n) {
+            return n.intValue();
+        }
+        try {
+            return Integer.parseInt(String.valueOf(v));
+        } catch (NumberFormatException e) {
+            return 0;
+        }
     }
 
     private List<Map<String, String>> previewItems(BizCatalogItem c) {
@@ -423,52 +977,217 @@ public class PortalService {
         return set.stream().limit(10).collect(Collectors.toList());
     }
 
-    private List<Map<String, Object>> buildThemes(List<BizCatalogItem> published) {
+    /**
+     * 基础库图标条：列出「基础资源目录」下一级（人口库/法人库等），无资源也显示，计数为 0。
+     * 计数按信息资源分类（baseCatalog*）聚合，不与主题混用。
+     */
+    private List<Map<String, Object>> buildBaseLibraries(List<BizCatalogItem> published) {
         Map<String, Map<String, Object>> map = new LinkedHashMap<>();
+        Map<String, String> nameToKey = new HashMap<>();
+
+        for (GovCatalogCategory cat : listBaseL1Categories()) {
+            String code = nz(cat.getCategoryCode(), "BASE_" + cat.getId());
+            String name = nz(cat.getCategoryName(), code);
+            map.put(code, newFacet(code, name,
+                    "/exchange/analysis-portal/dept?section=subscribe&baseCode=" + code));
+            nameToKey.put(name, code);
+        }
+
         for (BizCatalogItem c : published) {
-            if (blank(c.getThemeCode())) continue;
-            map.computeIfAbsent(c.getThemeCode(), code -> {
-                Map<String, Object> m = new LinkedHashMap<>();
-                m.put("code", code);
-                m.put("name", nz(c.getThemeName(), code));
-                m.put("route", "/exchange/application?system=portal&section=catalog&themeCode=" + code);
-                m.put("count", 0);
-                m.put("apiCount", 0);
-                m.put("dataCount", 0);
-                return m;
-            });
-            Map<String, Object> m = map.get(c.getThemeCode());
-            m.put("count", ((Number) m.get("count")).intValue() + 1);
-            if (isApiResource(c)) {
-                m.put("apiCount", ((Number) m.get("apiCount")).intValue() + 1);
-            } else {
-                m.put("dataCount", ((Number) m.get("dataCount")).intValue() + 1);
+            if (blank(c.getBaseCatalogName()) && blank(c.getBaseCatalogCode())) {
+                continue;
+            }
+            String name = !blank(c.getBaseCatalogName()) ? c.getBaseCatalogName() : c.getBaseCatalogCode();
+            String code = !blank(c.getBaseCatalogCode()) ? c.getBaseCatalogCode() : null;
+            String key = null;
+            if (code != null && map.containsKey(code)) {
+                key = code;
+            } else if (name != null && nameToKey.containsKey(name)) {
+                key = nameToKey.get(name);
+            } else if (code != null) {
+                key = code;
+                map.putIfAbsent(key, newFacet(code, name,
+                        "/exchange/analysis-portal/dept?section=subscribe&baseCode=" + code));
+                if (name != null) {
+                    nameToKey.putIfAbsent(name, key);
+                }
+            } else if (name != null) {
+                key = "NAME:" + name;
+                map.putIfAbsent(key, newFacet(name, name,
+                        "/exchange/analysis-portal/dept?section=subscribe&baseCode=" + name));
+                nameToKey.putIfAbsent(name, key);
+            }
+            if (key != null) {
+                bumpFacet(map.get(key), c);
             }
         }
         return new ArrayList<>(map.values());
     }
 
-    private List<Map<String, Object>> buildProviders(List<BizCatalogItem> published) {
+    /**
+     * 主题卡片：先列出「主题资源目录」下一级全部分类（无资源也显示，计数为 0），
+     * 再叠加审批通过已发布资源的接口数/库表数。
+     */
+    private List<Map<String, Object>> buildThemes(List<BizCatalogItem> published) {
         Map<String, Map<String, Object>> map = new LinkedHashMap<>();
+        Map<String, String> nameToKey = new HashMap<>();
+
+        for (GovCatalogCategory cat : listThemeL1Categories()) {
+            String code = nz(cat.getCategoryCode(), "THEME_" + cat.getId());
+            String name = nz(cat.getCategoryName(), code);
+            map.put(code, newFacet(code, name,
+                    "/exchange/analysis-portal/dept?section=catalog&themeCode=" + code));
+            nameToKey.put(name, code);
+        }
+
         for (BizCatalogItem c : published) {
-            if (blank(c.getProviderOrg())) continue;
-            map.computeIfAbsent(c.getProviderOrg(), name -> {
-                Map<String, Object> m = new LinkedHashMap<>();
-                m.put("name", name);
-                m.put("count", 0);
-                m.put("apiCount", 0);
-                m.put("dataCount", 0);
-                return m;
-            });
-            Map<String, Object> m = map.get(c.getProviderOrg());
-            m.put("count", ((Number) m.get("count")).intValue() + 1);
-            if (isApiResource(c)) {
-                m.put("apiCount", ((Number) m.get("apiCount")).intValue() + 1);
-            } else {
-                m.put("dataCount", ((Number) m.get("dataCount")).intValue() + 1);
+            if (blank(c.getThemeName()) && blank(c.getThemeCode())) {
+                continue;
             }
+            if (looksLikeCategoryPath(c.getThemeName())) {
+                continue;
+            }
+            String name = !blank(c.getThemeName()) ? c.getThemeName() : c.getThemeCode();
+            String code = !blank(c.getThemeCode()) ? c.getThemeCode() : null;
+            String key;
+            if (code != null && map.containsKey(code)) {
+                key = code;
+            } else if (name != null && nameToKey.containsKey(name)) {
+                key = nameToKey.get(name);
+            } else if (code != null) {
+                key = code;
+                map.putIfAbsent(key, newFacet(code, name,
+                        "/exchange/analysis-portal/dept?section=catalog&themeCode=" + code));
+                if (name != null) {
+                    nameToKey.putIfAbsent(name, key);
+                }
+            } else {
+                key = "NAME:" + name;
+                map.putIfAbsent(key, newFacet(name, name,
+                        "/exchange/analysis-portal/dept?section=catalog&themeCode=" + name));
+                nameToKey.putIfAbsent(name, key);
+            }
+            bumpFacet(map.get(key), c);
         }
         return new ArrayList<>(map.values());
+    }
+
+    /**
+     * 部门卡片：先列出组织机构全量（无资源也显示，计数为 0），
+     * 再叠加审批通过已发布资源的接口数/库表数。
+     */
+    private List<Map<String, Object>> buildProviders(List<BizCatalogItem> published) {
+        Map<String, Map<String, Object>> map = new LinkedHashMap<>();
+
+        List<SysOrg> orgs = orgMapper.selectList(new LambdaQueryWrapper<SysOrg>()
+                .orderByAsc(SysOrg::getSortOrder)
+                .orderByAsc(SysOrg::getId));
+        for (SysOrg org : orgs) {
+            if (org.getStatus() != null && org.getStatus() == 0) {
+                continue;
+            }
+            String name = org.getOrgName();
+            if (blank(name)) {
+                continue;
+            }
+            map.putIfAbsent(name, newFacet(name, name,
+                    "/exchange/analysis-portal/dept?section=catalog&providerOrg=" + name));
+        }
+
+        for (BizCatalogItem c : published) {
+            if (blank(c.getProviderOrg())) {
+                continue;
+            }
+            String name = c.getProviderOrg().trim();
+            map.putIfAbsent(name, newFacet(name, name,
+                    "/exchange/analysis-portal/dept?section=catalog&providerOrg=" + name));
+            bumpFacet(map.get(name), c);
+        }
+        return new ArrayList<>(map.values());
+    }
+
+    private List<GovCatalogCategory> listThemeL1Categories() {
+        return listRootL1Categories("主题资源目录", "_THEME");
+    }
+
+    private List<GovCatalogCategory> listBaseL1Categories() {
+        return listRootL1Categories("基础资源目录", "_BASE");
+    }
+
+    private List<GovCatalogCategory> listRootL1Categories(String rootName, String codeSuffix) {
+        List<GovCatalogCategory> all = govCategoryMapper.selectList(new LambdaQueryWrapper<GovCatalogCategory>()
+                .and(w -> w.isNull(GovCatalogCategory::getStatus)
+                        .or().ne(GovCatalogCategory::getStatus, "OFFLINE"))
+                .orderByAsc(GovCatalogCategory::getSortOrder)
+                .orderByAsc(GovCatalogCategory::getId));
+
+        Set<Long> rootIds = new LinkedHashSet<>();
+        for (GovCatalogCategory c : all) {
+            boolean isRoot = c.getParentId() == null || c.getParentId() == 0L;
+            if (!isRoot) {
+                continue;
+            }
+            String name = nz(c.getCategoryName(), "");
+            String code = nz(c.getCategoryCode(), "").toUpperCase(Locale.ROOT);
+            if (rootName.equals(name) || code.endsWith(codeSuffix)) {
+                rootIds.add(c.getId());
+            }
+        }
+
+        List<GovCatalogCategory> l1 = new ArrayList<>();
+        Set<String> seenNames = new LinkedHashSet<>();
+        for (GovCatalogCategory c : all) {
+            if (c.getParentId() == null || !rootIds.contains(c.getParentId())) {
+                continue;
+            }
+            String name = nz(c.getCategoryName(), "");
+            if (name.isEmpty() || !seenNames.add(name)) {
+                continue;
+            }
+            l1.add(c);
+        }
+
+        if (l1.isEmpty()) {
+            String prefix = rootName + "/";
+            for (GovCatalogCategory c : all) {
+                String path = nz(c.getCategoryPath(), "");
+                if (!path.startsWith(prefix)) {
+                    continue;
+                }
+                String rest = path.substring(prefix.length());
+                if (rest.isEmpty() || rest.contains("/")) {
+                    continue;
+                }
+                if (c.getCategoryName() == null || !seenNames.add(c.getCategoryName())) {
+                    continue;
+                }
+                l1.add(c);
+            }
+        }
+        return l1;
+    }
+
+    private Map<String, Object> newFacet(String code, String name, String route) {
+        Map<String, Object> m = new LinkedHashMap<>();
+        m.put("code", code);
+        m.put("name", name);
+        m.put("route", route);
+        m.put("count", 0);
+        m.put("apiCount", 0);
+        m.put("dataCount", 0);
+        return m;
+    }
+
+    private void bumpFacet(Map<String, Object> m, BizCatalogItem c) {
+        if (m == null) {
+            return;
+        }
+        m.put("count", ((Number) m.get("count")).intValue() + 1);
+        if (isApiResource(c)) {
+            m.put("apiCount", ((Number) m.get("apiCount")).intValue() + 1);
+        } else {
+            m.put("dataCount", ((Number) m.get("dataCount")).intValue() + 1);
+        }
     }
 
     private boolean isApiResource(BizCatalogItem c) {

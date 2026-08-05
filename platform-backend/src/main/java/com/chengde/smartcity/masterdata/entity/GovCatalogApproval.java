@@ -10,6 +10,8 @@ public class GovCatalogApproval {
     @TableId(type = IdType.AUTO)
     private Long id;
     private Long resourceId;
+    private Long categoryId;
+    private String catalogOrigin;
     private String actionType;
     private String status;
     private String submitComment;
@@ -18,11 +20,16 @@ public class GovCatalogApproval {
     private LocalDateTime submittedAt;
     private String reviewedBy;
     private LocalDateTime reviewedAt;
+    private String payloadJson;
 
     public Long getId() { return id; }
     public void setId(Long id) { this.id = id; }
     public Long getResourceId() { return resourceId; }
     public void setResourceId(Long resourceId) { this.resourceId = resourceId; }
+    public Long getCategoryId() { return categoryId; }
+    public void setCategoryId(Long categoryId) { this.categoryId = categoryId; }
+    public String getCatalogOrigin() { return catalogOrigin; }
+    public void setCatalogOrigin(String catalogOrigin) { this.catalogOrigin = catalogOrigin; }
     public String getActionType() { return actionType; }
     public void setActionType(String actionType) { this.actionType = actionType; }
     public String getStatus() { return status; }
@@ -39,4 +46,6 @@ public class GovCatalogApproval {
     public void setReviewedBy(String reviewedBy) { this.reviewedBy = reviewedBy; }
     public LocalDateTime getReviewedAt() { return reviewedAt; }
     public void setReviewedAt(LocalDateTime reviewedAt) { this.reviewedAt = reviewedAt; }
+    public String getPayloadJson() { return payloadJson; }
+    public void setPayloadJson(String payloadJson) { this.payloadJson = payloadJson; }
 }

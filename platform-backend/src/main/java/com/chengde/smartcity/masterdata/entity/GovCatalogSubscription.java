@@ -14,6 +14,7 @@ public class GovCatalogSubscription {
     private String applicantUser;
     private String shareMode;
     private String purpose;
+    private String applyPayload;
     private String status;
     private String reviewComment;
     private String reviewedBy;
@@ -35,6 +36,8 @@ public class GovCatalogSubscription {
     public void setShareMode(String shareMode) { this.shareMode = shareMode; }
     public String getPurpose() { return purpose; }
     public void setPurpose(String purpose) { this.purpose = purpose; }
+    public String getApplyPayload() { return applyPayload; }
+    public void setApplyPayload(String applyPayload) { this.applyPayload = applyPayload; }
     public String getStatus() { return status; }
     public void setStatus(String status) { this.status = status; }
     public String getReviewComment() { return reviewComment; }

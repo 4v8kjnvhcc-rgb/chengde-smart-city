@@ -24,6 +24,18 @@ public class GovCatalogResource {
     private String providerOrg;
     private String resourceFormat;
     private String shareType;
+    private String shareCondition;
+    private String notShareReason;
+    private String openType;
+    private String openCondition;
+    private String notOpenReason;
+    private String contactName;
+    private String contactPhone;
+    private String contactEmail;
+    private String themeName;
+    private String baseCatalogName;
+    private String tags;
+    private String extJson;
     private String updateCycle;
     private String description;
     private Integer secretFlag;
@@ -67,6 +79,30 @@ public class GovCatalogResource {
     public void setResourceFormat(String resourceFormat) { this.resourceFormat = resourceFormat; }
     public String getShareType() { return shareType; }
     public void setShareType(String shareType) { this.shareType = shareType; }
+    public String getShareCondition() { return shareCondition; }
+    public void setShareCondition(String shareCondition) { this.shareCondition = shareCondition; }
+    public String getNotShareReason() { return notShareReason; }
+    public void setNotShareReason(String notShareReason) { this.notShareReason = notShareReason; }
+    public String getOpenType() { return openType; }
+    public void setOpenType(String openType) { this.openType = openType; }
+    public String getOpenCondition() { return openCondition; }
+    public void setOpenCondition(String openCondition) { this.openCondition = openCondition; }
+    public String getNotOpenReason() { return notOpenReason; }
+    public void setNotOpenReason(String notOpenReason) { this.notOpenReason = notOpenReason; }
+    public String getContactName() { return contactName; }
+    public void setContactName(String contactName) { this.contactName = contactName; }
+    public String getContactPhone() { return contactPhone; }
+    public void setContactPhone(String contactPhone) { this.contactPhone = contactPhone; }
+    public String getContactEmail() { return contactEmail; }
+    public void setContactEmail(String contactEmail) { this.contactEmail = contactEmail; }
+    public String getThemeName() { return themeName; }
+    public void setThemeName(String themeName) { this.themeName = themeName; }
+    public String getBaseCatalogName() { return baseCatalogName; }
+    public void setBaseCatalogName(String baseCatalogName) { this.baseCatalogName = baseCatalogName; }
+    public String getTags() { return tags; }
+    public void setTags(String tags) { this.tags = tags; }
+    public String getExtJson() { return extJson; }
+    public void setExtJson(String extJson) { this.extJson = extJson; }
     public String getUpdateCycle() { return updateCycle; }
     public void setUpdateCycle(String updateCycle) { this.updateCycle = updateCycle; }
     public String getDescription() { return description; }

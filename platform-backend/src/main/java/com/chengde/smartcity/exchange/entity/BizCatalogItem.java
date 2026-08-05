@@ -18,6 +18,9 @@ public class BizCatalogItem {
     private Long govResourceId;
     private String themeCode;
     private String themeName;
+    /** 基础资源目录（信息资源分类 / 六库） */
+    private String baseCatalogCode;
+    private String baseCatalogName;
     private String providerOrg;
     private String shareModes;
     private Integer resourceCount;
@@ -46,6 +49,10 @@ public class BizCatalogItem {
     public void setThemeCode(String themeCode) { this.themeCode = themeCode; }
     public String getThemeName() { return themeName; }
     public void setThemeName(String themeName) { this.themeName = themeName; }
+    public String getBaseCatalogCode() { return baseCatalogCode; }
+    public void setBaseCatalogCode(String baseCatalogCode) { this.baseCatalogCode = baseCatalogCode; }
+    public String getBaseCatalogName() { return baseCatalogName; }
+    public void setBaseCatalogName(String baseCatalogName) { this.baseCatalogName = baseCatalogName; }
     public String getProviderOrg() { return providerOrg; }
     public void setProviderOrg(String providerOrg) { this.providerOrg = providerOrg; }
     public String getShareModes() { return shareModes; }

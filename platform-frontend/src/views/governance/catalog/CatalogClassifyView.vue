@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref } from 'vue'
+import { computed, onActivated, onMounted, reactive, ref } from 'vue'
 import api from '@/api/http'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import PageCard from '@/components/common/PageCard.vue'
@@ -7,6 +7,11 @@ import PageCard from '@/components/common/PageCard.vue'
 const props = withDefaults(defineProps<{ catalogOrigin?: 'INGEST' | 'GOVERNANCE' }>(), {
   catalogOrigin: 'GOVERNANCE',
 })
+
+const pageTitle = computed(() => '数据资源分类')
+const approvalEntryName = computed(() =>
+  props.catalogOrigin === 'INGEST' ? '数据资源目录审批' : '资源目录审批',
+)
 
 interface CategoryRow {
   id: number
@@ -42,6 +47,10 @@ interface TreeNode {
   children?: TreeNode[]
 }
 
+interface TableTreeRow extends CategoryRow {
+  children?: TableTreeRow[]
+}
+
 const treeData = computed<TreeNode[]>(() => {
   const map = new Map<number, TreeNode & { parentId: number; sort: number }>()
   for (const r of rows.value) {
@@ -66,27 +75,79 @@ const treeData = computed<TreeNode[]>(() => {
   return roots
 })
 
-const parentOptions = computed(() => {
-  const opts: { id: number; label: string }[] = [{ id: 0, label: '（顶级目录）' }]
-  const walk = (nodes: TreeNode[], depth: number) => {
-    for (const n of nodes) {
-      if (editingId.value != null && n.id === editingId.value) continue
-      opts.push({ id: n.id, label: `${'　'.repeat(depth)}${n.label}` })
-      if (n.children?.length) walk(n.children, depth + 1)
-    }
+/** 表格树数据：点击上级展开下级 */
+const tableTreeData = computed<TableTreeRow[]>(() => {
+  const q = keyword.value.trim().toLowerCase()
+  const map = new Map<number, TableTreeRow & { parentId: number; sort: number }>()
+  for (const r of rows.value) {
+    map.set(r.id, {
+      ...r,
+      parentId: r.parentId || 0,
+      sort: r.sortOrder ?? 0,
+      children: [],
+    })
   }
-  walk(treeData.value, 0)
-  return opts
+  const roots: Array<TableTreeRow & { parentId: number; sort: number }> = []
+  for (const n of map.values()) {
+    if (!n.parentId || !map.has(n.parentId)) roots.push(n)
+    else map.get(n.parentId)!.children!.push(n)
+  }
+  const sortRec = (list: TableTreeRow[]) => {
+    list.sort(
+      (a, b) =>
+        ((a as TableTreeRow & { sort?: number }).sort ?? 0) -
+          ((b as TableTreeRow & { sort?: number }).sort ?? 0) || a.id - b.id,
+    )
+    list.forEach((c) => {
+      if (c.children?.length) sortRec(c.children)
+      else delete c.children
+    })
+  }
+  sortRec(roots)
+
+  if (!q) return roots
+
+  const matchSelf = (r: CategoryRow) =>
+    r.categoryName.toLowerCase().includes(q) ||
+    (r.categoryCode || '').toLowerCase().includes(q) ||
+    (r.categoryPath || '').toLowerCase().includes(q)
+
+  const filterTree = (nodes: TableTreeRow[]): TableTreeRow[] => {
+    const out: TableTreeRow[] = []
+    for (const n of nodes) {
+      const kids = n.children?.length ? filterTree(n.children) : []
+      if (matchSelf(n) || kids.length) {
+        out.push({ ...n, children: kids.length ? kids : undefined })
+      }
+    }
+    return out
+  }
+  return filterTree(roots)
 })
 
-const tableRows = computed(() => {
-  const q = keyword.value.trim().toLowerCase()
-  if (!q) return rows.value
-  return rows.value.filter(
-    (r) =>
-      r.categoryName.toLowerCase().includes(q) ||
-      (r.categoryCode || '').toLowerCase().includes(q),
-  )
+const expandAllOnSearch = computed(() => !!keyword.value.trim())
+
+/** 树选择器数据：编辑时排除自身及子孙，避免环 */
+const parentTreeSelectData = computed(() => {
+  const blocked = new Set<number>()
+  if (editingId.value != null) {
+    const collect = (id: number) => {
+      blocked.add(id)
+      for (const r of rows.value) {
+        if ((r.parentId || 0) === id) collect(r.id)
+      }
+    }
+    collect(editingId.value)
+  }
+  const build = (nodes: TreeNode[]): TreeNode[] =>
+    nodes
+      .filter((n) => !blocked.has(n.id))
+      .map((n) => ({
+        id: n.id,
+        label: n.label,
+        children: n.children?.length ? build(n.children) : undefined,
+      }))
+  return [{ id: 0, label: '（顶级目录）', children: build(treeData.value) }]
 })
 
 async function load() {
@@ -106,7 +167,7 @@ function openCreate(parentId = 0) {
   Object.assign(form, {
     categoryName: '',
     categoryCode: `CAT_${Date.now().toString().slice(-8)}`,
-    parentId,
+    parentId: parentId || 0,
     secretFlag: 0,
     description: '',
     sortOrder: 0,
@@ -139,22 +200,26 @@ async function save() {
   const body = {
     categoryName: form.categoryName.trim(),
     categoryCode: form.categoryCode.trim(),
-    parentId: form.parentId || 0,
+    parentId: form.parentId ?? 0,
     secretFlag: form.secretFlag,
     description: form.description,
     sortOrder: form.sortOrder,
     catalogOrigin: props.catalogOrigin,
     status: 'ACTIVE',
   }
-  if (editingId.value != null) {
-    await api.put(`/governance/catalog/categories/${editingId.value}`, body)
-    ElMessage.success('已更新')
-  } else {
-    await api.post('/governance/catalog/categories', body)
-    ElMessage.success('已新增')
+  try {
+    if (editingId.value != null) {
+      await api.put(`/governance/catalog/categories/${editingId.value}`, body)
+      ElMessage.success('已提交分类编辑审批，请到「' + approvalEntryName.value + '」处理')
+    } else {
+      await api.post('/governance/catalog/categories', body)
+      ElMessage.success('已提交分类新增审批，通过后才会出现在分类树中')
+    }
+    dialogVisible.value = false
+    await load()
+  } catch (e: unknown) {
+    ElMessage.error((e as Error)?.message || '提交失败')
   }
-  dialogVisible.value = false
-  await load()
 }
 
 async function remove(row: CategoryRow) {
@@ -163,58 +228,98 @@ async function remove(row: CategoryRow) {
     '删除分类',
     { type: 'warning' },
   )
-  await api.delete(`/governance/catalog/categories/${row.id}`)
-  ElMessage.success('已删除')
-  await load()
+  try {
+    await api.delete(`/governance/catalog/categories/${row.id}`)
+    ElMessage.success('已提交分类删除审批')
+    await load()
+  } catch (e: unknown) {
+    ElMessage.error((e as Error)?.message || '删除失败')
+  }
 }
 
 onMounted(load)
+
+onActivated(() => {
+  void load()
+})
 </script>
 
 <template>
   <div class="classify-page">
-    <PageCard title="数据资源分类">
+    <PageCard :title="pageTitle">
       <p class="hint">
-        按类/项/目/细目维护资源目录树；涉密分类从编目源头控制可见性。删除分类会自动解除资源关联。
+        按类/项/目/细目维护多级资源目录树。可先建「基础资源目录 / 部门资源目录 / 主题资源目录」等顶级分类，再在其下新增下级。
+        分类的新增、编辑、删除须经「{{ approvalEntryName }}」通过后生效。
       </p>
       <div class="toolbar">
-        <el-input v-model="keyword" clearable placeholder="按分类名称/代码模糊查询" style="width: 260px" @keyup.enter="load" />
+        <el-input
+          v-model="keyword"
+          clearable
+          placeholder="按分类名称/代码/路径模糊查询"
+          style="width: 280px"
+          @keyup.enter="load"
+        />
         <el-button type="primary" @click="load">查询</el-button>
         <el-button type="primary" @click="openCreate(0)">新增资源分类</el-button>
       </div>
-      <div class="layout">
-        <el-tree :data="treeData" node-key="id" default-expand-all class="tree" />
-        <el-table v-loading="loading" :data="tableRows" stripe border height="480">
-          <el-table-column prop="categoryCode" label="分类代码" width="140" />
-          <el-table-column prop="categoryName" label="资源目录名称" min-width="160" />
-          <el-table-column prop="categoryPath" label="路径" min-width="180" show-overflow-tooltip />
-          <el-table-column label="是否涉密" width="90">
-            <template #default="{ row }">{{ row.secretFlag === 1 ? '是' : '否' }}</template>
-          </el-table-column>
-          <el-table-column prop="description" label="描述" min-width="140" show-overflow-tooltip />
-          <el-table-column label="操作" width="200" fixed="right">
-            <template #default="{ row }">
-              <el-button link type="primary" @click="openCreate(row.id)">下级</el-button>
-              <el-button link type="primary" @click="openEdit(row)">编辑</el-button>
-              <el-button link type="danger" @click="remove(row)">删除</el-button>
-            </template>
-          </el-table-column>
-        </el-table>
-      </div>
+      <el-table
+        :key="expandAllOnSearch ? `search:${keyword}` : 'tree'"
+        v-loading="loading"
+        :data="tableTreeData"
+        row-key="id"
+        border
+        stripe
+        height="520"
+        :tree-props="{ children: 'children' }"
+        :default-expand-all="expandAllOnSearch"
+      >
+        <el-table-column prop="categoryName" label="资源目录名称" min-width="220" show-overflow-tooltip />
+        <el-table-column prop="categoryCode" label="分类代码" width="140" />
+        <el-table-column prop="categoryPath" label="路径" min-width="200" show-overflow-tooltip />
+        <el-table-column label="是否涉密" width="90">
+          <template #default="{ row }">{{ row.secretFlag === 1 ? '是' : '否' }}</template>
+        </el-table-column>
+        <el-table-column prop="description" label="描述" min-width="120" show-overflow-tooltip />
+        <el-table-column label="操作" width="240" fixed="right">
+          <template #default="{ row }">
+            <el-button link type="primary" @click="openCreate(row.id)">新增下级</el-button>
+            <el-button link type="primary" @click="openEdit(row)">编辑</el-button>
+            <el-button link type="danger" @click="remove(row)">删除</el-button>
+          </template>
+        </el-table-column>
+      </el-table>
     </PageCard>
 
-    <el-dialog v-model="dialogVisible" :title="editingId ? '编辑资源分类' : '新增资源分类'" width="520px">
+    <el-dialog
+      v-model="dialogVisible"
+      :title="editingId == null ? '新增资源分类' : '编辑资源分类'"
+      width="520px"
+      append-to-body
+      teleported
+      destroy-on-close
+      align-center
+      :z-index="3200"
+    >
       <el-form label-width="110px">
         <el-form-item label="资源目录名称" required>
-          <el-input v-model="form.categoryName" />
+          <el-input v-model="form.categoryName" placeholder="请输入资源目录名称" />
         </el-form-item>
         <el-form-item label="所属资源目录" required>
-          <el-select v-model="form.parentId" style="width: 100%">
-            <el-option v-for="o in parentOptions" :key="o.id" :label="o.label" :value="o.id" />
-          </el-select>
+          <el-tree-select
+            v-model="form.parentId"
+            :data="parentTreeSelectData"
+            check-strictly
+            filterable
+            default-expand-all
+            :render-after-expand="false"
+            node-key="id"
+            :props="{ label: 'label', children: 'children', value: 'id' }"
+            style="width: 100%"
+            placeholder="请选择上级目录（可挂到基础/部门/主题等已生效分类下）"
+          />
         </el-form-item>
         <el-form-item label="分类代码" required>
-          <el-input v-model="form.categoryCode" />
+          <el-input v-model="form.categoryCode" placeholder="分类代码" />
         </el-form-item>
         <el-form-item label="是否涉密" required>
           <el-radio-group v-model="form.secretFlag">
@@ -223,12 +328,12 @@ onMounted(load)
           </el-radio-group>
         </el-form-item>
         <el-form-item label="描述">
-          <el-input v-model="form.description" type="textarea" :rows="3" />
+          <el-input v-model="form.description" type="textarea" :rows="3" placeholder="选填" />
         </el-form-item>
       </el-form>
       <template #footer>
         <el-button @click="dialogVisible = false">取消</el-button>
-        <el-button type="primary" @click="save">保存</el-button>
+        <el-button type="primary" @click="save">提交审批</el-button>
       </template>
     </el-dialog>
   </div>
@@ -237,9 +342,4 @@ onMounted(load)
 <style scoped>
 .hint { margin: 0 0 12px; color: var(--el-text-color-secondary); font-size: 13px; }
 .toolbar { display: flex; gap: 8px; margin-bottom: 12px; flex-wrap: wrap; }
-.layout { display: grid; grid-template-columns: 240px 1fr; gap: 12px; }
-.tree { border: 1px solid var(--el-border-color); border-radius: 6px; padding: 8px; max-height: 480px; overflow: auto; }
-@media (max-width: 960px) {
-  .layout { grid-template-columns: 1fr; }
-}
 </style>

@@ -1,0 +1,419 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>部门数据共享门户 · 共享资源原型</title>
+  <style>
+    :root {
+      --nav: #0b3a7a;
+      --primary: #1677ff;
+      --bg: #f0f2f5;
+      --border: #e5e7eb;
+      --text: #1f2d3d;
+      --muted: #909399;
+      --ok: #18a058;
+      --danger: #d03050;
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; font-family: "Microsoft YaHei", "PingFang SC", sans-serif; background: var(--bg); color: var(--text); }
+    .top {
+      height: 56px; background: linear-gradient(90deg, #0b3a7a, #1251a8);
+      color: #fff; display: flex; align-items: center; justify-content: space-between; padding: 0 24px;
+    }
+    .brand { font-weight: 700; font-size: 16px; }
+    .nav a { color: #e8f4ff; text-decoration: none; margin: 0 14px; font-size: 14px; padding-bottom: 4px; }
+    .nav a.active { border-bottom: 2px solid #ffd666; color: #fff; }
+    .top-right { display: flex; align-items: center; gap: 12px; font-size: 13px; }
+    .btn-ghost {
+      border: 1px solid rgba(255,255,255,.35); background: rgba(255,255,255,.08);
+      color: #e8f4ff; height: 30px; padding: 0 12px; border-radius: 4px; cursor: pointer;
+    }
+    .layout { display: flex; max-width: 1280px; margin: 16px auto; gap: 12px; padding: 0 12px 40px; }
+    .side {
+      width: 220px; background: #fff; border-radius: 8px; padding: 14px; box-shadow: 0 1px 4px rgba(0,0,0,.04);
+      flex-shrink: 0;
+    }
+    .side h3 { margin: 0 0 10px; font-size: 15px; }
+    .side-item {
+      display: flex; align-items: center; gap: 8px; padding: 8px 10px; border-radius: 6px;
+      cursor: pointer; font-size: 13px; color: #303133;
+    }
+    .side-item.active { background: #e8f3ff; color: var(--primary); border-left: 3px solid var(--primary); }
+    .dept { display: flex; justify-content: space-between; padding: 6px 10px; font-size: 12px; color: #606266; }
+    .main { flex: 1; background: #fff; border-radius: 8px; padding: 16px 18px; box-shadow: 0 1px 4px rgba(0,0,0,.04); min-width: 0; }
+    .page-title { font-size: 18px; font-weight: 700; margin: 0 0 12px; }
+    .hint { font-size: 12px; color: var(--muted); margin: -6px 0 12px; }
+    .filters { border: 1px solid var(--border); border-radius: 6px; padding: 10px 12px; margin-bottom: 12px; }
+    .filter-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; margin: 6px 0; font-size: 13px; }
+    .filter-row > span { color: #606266; min-width: 64px; }
+    .chip {
+      border: none; background: transparent; padding: 4px 10px; border-radius: 4px; cursor: pointer; color: #303133;
+    }
+    .chip.on { background: var(--primary); color: #fff; }
+    .toolbar { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; margin-bottom: 12px; font-size: 13px; }
+    .toolbar .grow { flex: 1; }
+    .sort a { color: #606266; margin-right: 10px; text-decoration: none; }
+    .sort a.on { color: var(--primary); font-weight: 600; }
+    input[type=search] {
+      height: 32px; border: 1px solid #dcdfe6; border-radius: 4px; padding: 0 10px; width: 180px;
+    }
+    .view-toggle button {
+      height: 32px; padding: 0 12px; border: 1px solid #dcdfe6; background: #fff; cursor: pointer;
+    }
+    .view-toggle button.on { background: var(--primary); color: #fff; border-color: var(--primary); }
+    .card {
+      border-bottom: 1px solid var(--border); padding: 14px 4px 16px; cursor: pointer;
+    }
+    .card:hover { background: #fafcff; }
+    .card-top { display: flex; justify-content: space-between; gap: 12px; align-items: flex-start; }
+    .card-title { color: var(--primary); font-size: 16px; font-weight: 700; margin: 0; }
+    .tag {
+      display: inline-block; font-size: 12px; padding: 1px 6px; border-radius: 3px;
+      background: #e8f3ff; color: var(--primary); margin-left: 8px; font-weight: 500;
+    }
+    .meta { margin-top: 10px; display: grid; grid-template-columns: 1fr 1fr; gap: 6px 16px; font-size: 13px; color: #606266; }
+    .ok { color: var(--ok); }
+    .warn { color: #c27a00; }
+    .stats { display: flex; align-items: center; gap: 14px; color: var(--muted); font-size: 12px; white-space: nowrap; }
+    .btn-primary {
+      background: var(--primary); color: #fff; border: none; height: 30px; padding: 0 14px;
+      border-radius: 4px; cursor: pointer;
+    }
+    .btn-outline {
+      background: #fff; color: #303133; border: 1px solid #dcdfe6; height: 30px; padding: 0 14px;
+      border-radius: 4px; cursor: pointer;
+    }
+    .actions-bar { display: flex; justify-content: flex-end; gap: 10px; margin-top: 20px; padding-top: 12px; border-top: 1px solid var(--border); }
+    .back { color: var(--primary); cursor: pointer; font-size: 13px; margin-bottom: 10px; display: inline-block; }
+    .section { margin-top: 18px; }
+    .section h4 { margin: 0 0 10px; font-size: 15px; border-left: 3px solid var(--primary); padding-left: 8px; }
+    .info-grid {
+      display: grid; grid-template-columns: 1fr 1fr; gap: 8px 20px; font-size: 13px;
+      background: #fafafa; border: 1px solid var(--border); border-radius: 6px; padding: 12px;
+    }
+    .info-grid b { color: #606266; font-weight: 500; margin-right: 6px; }
+    .split { display: flex; gap: 12px; margin-top: 10px; }
+    .subside {
+      width: 160px; border: 1px solid var(--border); border-radius: 6px; padding: 8px; background: #fafafa; flex-shrink: 0;
+    }
+    .subside .label { font-size: 12px; color: var(--muted); margin-bottom: 6px; }
+    .subside .item {
+      padding: 8px; border-radius: 4px; font-size: 13px; cursor: pointer; word-break: break-all;
+    }
+    .subside .item.on { background: #e8f3ff; color: var(--primary); }
+    .submain { flex: 1; min-width: 0; }
+    table.data { width: 100%; border-collapse: collapse; font-size: 12px; }
+    table.data th, table.data td { border: 1px solid #ebeef5; padding: 8px; text-align: left; }
+    table.data th { background: #f5f7fa; color: #606266; font-weight: 600; }
+    pre.example {
+      background: #1e1e1e; color: #d4d4d4; padding: 12px; border-radius: 6px; font-size: 12px; overflow: auto;
+    }
+    .table-view { width: 100%; border-collapse: collapse; font-size: 13px; }
+    .table-view th, .table-view td { border-bottom: 1px solid #ebeef5; padding: 10px 8px; text-align: left; }
+    .table-view th { background: #f5f7fa; color: #606266; }
+    .link { color: var(--primary); cursor: pointer; margin-right: 8px; }
+    .hidden { display: none; }
+  </style>
+</head>
+<body>
+  <header class="top">
+    <div class="brand">部门数据共享门户</div>
+    <nav class="nav">
+      <a href="#">首页</a>
+      <a class="active" href="#">共享资源</a>
+      <a href="#">资源订阅申请</a>
+      <a href="#">我的空间</a>
+    </nav>
+    <div class="top-right">
+      <button class="btn-ghost" type="button">返回总览</button>
+      <span>超级管理员</span>
+    </div>
+  </header>
+
+  <div id="list-page" class="layout">
+    <aside class="side">
+      <h3>目录</h3>
+      <div class="side-item active">全部</div>
+      <div class="side-item">主题 <span style="margin-left:auto;color:#909399;font-size:12px">目录数</span></div>
+      <div class="side-item">部门 <span style="margin-left:auto;color:#909399;font-size:12px">目录数</span></div>
+      <div style="margin-top:8px;border-top:1px solid #eee;padding-top:8px">
+        <div class="dept"><span>测试-高新区民政局</span><b>1</b></div>
+        <div class="dept"><span>测试-高新区行政审批…</span><b>1</b></div>
+        <div class="dept"><span>社会事务部</span><b>1</b></div>
+      </div>
+    </aside>
+    <section class="main">
+      <h2 class="page-title">全部</h2>
+      <p class="hint">点击资源名称进入详情（库表 / 接口 / 文件）；右上可切换表格 / 卡片视图</p>
+      <div class="filters">
+        <div class="filter-row">
+          <span>共享属性</span>
+          <button class="chip on" type="button">全部</button>
+          <button class="chip" type="button">有条件共享</button>
+          <button class="chip" type="button">无条件共享</button>
+          <button class="chip" type="button">不予共享</button>
+        </div>
+        <div class="filter-row">
+          <span>开放属性</span>
+          <button class="chip on" type="button">全部</button>
+          <button class="chip" type="button">可对社会开放</button>
+          <button class="chip" type="button">不可对社会开放</button>
+          <button class="chip" type="button">部分对社会开放</button>
+        </div>
+      </div>
+      <div class="toolbar">
+        <div class="sort">
+          排序方式
+          <a class="on" href="#">申请量</a>
+          <a href="#">访问量</a>
+          <a href="#">更新时间</a>
+        </div>
+        <div class="grow">共 <b id="total">3</b> 条</div>
+        <input type="search" placeholder="关键词" />
+        <div class="view-toggle">
+          <button id="btn-table" type="button" onclick="setView('table')">表格</button>
+          <button id="btn-card" class="on" type="button" onclick="setView('card')">卡片</button>
+        </div>
+      </div>
+      <div id="card-list"></div>
+      <div id="table-list" class="hidden"></div>
+    </section>
+  </div>
+
+  <div id="detail-page" class="layout hidden">
+    <section class="main" style="width:100%">
+      <span class="back" onclick="showList()">← 返回共享资源</span>
+      <div id="detail-body"></div>
+    </section>
+  </div>
+
+  <script>
+    let DATA = { resources: [] };
+    let viewMode = 'card';
+
+    async function boot() {
+      try {
+        const res = await fetch('./portal-share-test-data.json');
+        DATA = await res.json();
+      } catch (e) {
+        console.error(e);
+        alert('无法加载 portal-share-test-data.json，请用本地静态服务打开本目录（勿直接 file://）');
+        return;
+      }
+      document.getElementById('total').textContent = DATA.resources.length;
+      renderList();
+    }
+
+    function setView(mode) {
+      viewMode = mode;
+      document.getElementById('btn-card').classList.toggle('on', mode === 'card');
+      document.getElementById('btn-table').classList.toggle('on', mode === 'table');
+      document.getElementById('card-list').classList.toggle('hidden', mode !== 'card');
+      document.getElementById('table-list').classList.toggle('hidden', mode !== 'table');
+    }
+
+    function openAttrClass(label) {
+      if (label && label.includes('不可')) return 'warn';
+      if (label && label.includes('部分')) return 'warn';
+      return 'ok';
+    }
+
+    function renderList() {
+      const cards = DATA.resources.map((r) => `
+        <div class="card" onclick="openDetail('${r.id}')">
+          <div class="card-top">
+            <div>
+              <p class="card-title">${r.title}<span class="tag">${r.resourceTypeLabel}</span></p>
+              <div class="meta">
+                <div>数据来源：${r.providerOrg}</div>
+                <div>共享属性：<span class="ok">✓ ${r.shareAttrLabel}</span></div>
+                <div>开放属性：<span class="${openAttrClass(r.openAttrLabel)}">${r.openAttrLabel.includes('不可') ? '✕' : '✓'} ${r.openAttrLabel}</span></div>
+                <div>更新时间：${r.updatedAt}</div>
+              </div>
+            </div>
+            <div class="stats">
+              <span>申请量 ${r.applyCount}</span>
+              <span>访问量 ${r.visitCount}</span>
+              <button class="btn-primary" type="button" onclick="event.stopPropagation(); alert('原型：资源申请')">申请</button>
+            </div>
+          </div>
+        </div>`).join('');
+      document.getElementById('card-list').innerHTML = cards;
+
+      const rows = DATA.resources.map((r) => `
+        <tr>
+          <td><a class="link" onclick="openDetail('${r.id}')">${r.title}</a> <span class="tag">${r.resourceTypeLabel}</span></td>
+          <td>${r.providerOrg}</td>
+          <td>${r.shareAttrLabel}</td>
+          <td>${r.openAttrLabel}</td>
+          <td>${r.applyCount}</td>
+          <td>${r.visitCount}</td>
+          <td>${r.updatedAt}</td>
+          <td><a class="link" onclick="openDetail('${r.id}')">预览</a><a class="link" onclick="alert('原型：资源申请')">申请</a></td>
+        </tr>`).join('');
+      document.getElementById('table-list').innerHTML = `
+        <table class="table-view">
+          <thead>
+            <tr>
+              <th>资源名称</th><th>数据来源</th><th>共享属性</th><th>开放属性</th>
+              <th>申请量</th><th>访问量</th><th>更新时间</th><th>操作</th>
+            </tr>
+          </thead>
+          <tbody>${rows}</tbody>
+        </table>`;
+    }
+
+    function showList() {
+      document.getElementById('list-page').classList.remove('hidden');
+      document.getElementById('detail-page').classList.add('hidden');
+    }
+
+    function openDetail(id) {
+      const r = DATA.resources.find((x) => x.id === id);
+      if (!r) return;
+      let body = `
+        <h2 class="page-title">${r.title} <span class="tag">${r.resourceTypeLabel}</span></h2>
+        <div class="section">
+          <h4>基本信息</h4>
+          <div class="info-grid">
+            <div><b>数据来源</b>${r.providerOrg}</div>
+            <div><b>共享属性</b><span class="ok">✓ ${r.shareAttrLabel}</span></div>
+            <div><b>开放属性</b><span class="${openAttrClass(r.openAttrLabel)}">${r.openAttrLabel}</span></div>
+            <div><b>更新时间</b>${r.updatedAt}</div>
+          </div>
+        </div>`;
+
+      if (r.resourceType === 'TABLE') {
+        const t = r.tables[0];
+        const cols = t.columns.map((c) => `
+          <tr>
+            <td>${c.name}</td><td>${c.comment}</td><td>${c.type}</td><td>${c.length}</td>
+            <td>${c.pk ? '是' : '否'}</td><td>${c.nullable ? '是' : '否'}</td><td>${c.sensitivity}</td>
+          </tr>`).join('');
+        body += `
+          <div class="section">
+            <h4>库表信息</h4>
+            <div class="split">
+              <div class="subside">
+                <div class="label">库表</div>
+                <div class="item on">${t.tableName}</div>
+              </div>
+              <div class="submain">
+                <div class="info-grid">
+                  <div><b>数据表名称</b>${t.tableName}</div>
+                  <div><b>目录 Code</b>${t.catalogCode}</div>
+                  <div><b>数据项摘要</b>${t.summary}</div>
+                </div>
+                <p style="margin:12px 0 6px;font-size:13px;font-weight:600">数据项</p>
+                <table class="data">
+                  <thead>
+                    <tr>
+                      <th>字段名称</th><th>字段描述</th><th>字段类型</th><th>字段长度</th>
+                      <th>是否主键</th><th>是否非空</th><th>数据敏感级别</th>
+                    </tr>
+                  </thead>
+                  <tbody>${cols}</tbody>
+                </table>
+              </div>
+            </div>
+          </div>`;
+      } else if (r.resourceType === 'API') {
+        const a = r.apis[0];
+        const req = a.requestParams.map((p) => `
+          <tr><td>${p.name}</td><td>${p.required ? '是' : '否'}</td><td>${p.dataType}</td><td>${p.comment}</td></tr>`).join('');
+        const resp = a.responseParams.map((p) => `
+          <tr><td>${p.name}</td><td>${p.required ? '是' : '否'}</td><td>${p.dataType}</td><td>${p.comment}</td></tr>`).join('');
+        body += `
+          <div class="section">
+            <h4>接口</h4>
+            <div class="split">
+              <div class="subside">
+                <div class="label">接口</div>
+                <div class="item on">${a.apiName}</div>
+              </div>
+              <div class="submain">
+                <div class="info-grid">
+                  <div><b>接口名称</b>${a.apiName}</div>
+                  <div><b>接口编码</b>${a.apiCode}</div>
+                  <div><b>目录编码</b>${a.catalogCode}</div>
+                  <div><b>版本</b>${a.version}</div>
+                  <div><b>接口目标地址</b>${a.targetAddressHint}</div>
+                  <div><b>接口请求路径</b>${a.requestPath}</div>
+                  <div><b>服务请求方法</b>${a.httpMethod}</div>
+                  <div><b>注册时间</b>${a.registeredAt}</div>
+                  <div><b>资源描述</b>${a.description || '-'}</div>
+                  <div><b>失效时间</b>${a.expireAt}</div>
+                </div>
+                <p style="margin:14px 0 6px;font-size:13px"><b>请求方式</b> ${a.requestPath}</p>
+                <p style="margin:10px 0 6px;font-size:13px;font-weight:600">请求参数</p>
+                <table class="data">
+                  <thead><tr><th>参数名称</th><th>是否必填</th><th>参数数据类型</th><th>参数描述</th></tr></thead>
+                  <tbody>${req}</tbody>
+                </table>
+                <p style="margin:10px 0 6px;font-size:13px;font-weight:600">响应参数</p>
+                <table class="data">
+                  <thead><tr><th>参数名称</th><th>是否必填</th><th>参数数据类型</th><th>参数描述</th></tr></thead>
+                  <tbody>${resp}</tbody>
+                </table>
+                <p style="margin:10px 0 6px;font-size:13px;font-weight:600">成功响应示例</p>
+                <pre class="example">${JSON.stringify(a.successExample, null, 2)}</pre>
+              </div>
+            </div>
+          </div>`;
+      } else if (r.resourceType === 'FILE') {
+        const f0 = r.files[0];
+        const list = r.files.map((f) => `
+          <tr>
+            <td>${f.fileName}</td><td>${f.format}</td><td>${f.size}</td>
+            <td>${f.registeredAt}</td><td>${f.description}</td>
+          </tr>`).join('');
+        const side = r.files.map((f, i) => `
+          <div class="item ${i === 0 ? 'on' : ''}">${f.fileName}</div>`).join('');
+        body += `
+          <div class="section">
+            <h4>文件信息</h4>
+            <div class="split">
+              <div class="subside">
+                <div class="label">文件</div>
+                ${side}
+              </div>
+              <div class="submain">
+                <div class="info-grid">
+                  <div><b>文件名称</b>${f0.fileName}</div>
+                  <div><b>文件编码</b>${f0.fileCode}</div>
+                  <div><b>目录编码</b>${f0.catalogCode}</div>
+                  <div><b>文件格式</b>${f0.format}</div>
+                  <div><b>文件大小</b>${f0.size}</div>
+                  <div><b>更新周期</b>${f0.updateCycle}</div>
+                  <div><b>存放方式</b>${f0.storage}</div>
+                  <div><b>文件地址</b>${f0.addressHint}</div>
+                  <div><b>注册时间</b>${f0.registeredAt}</div>
+                  <div><b>资源描述</b>${f0.description}</div>
+                </div>
+                <p style="margin:12px 0 6px;font-size:13px;font-weight:600">文件清单</p>
+                <table class="data">
+                  <thead><tr><th>文件名</th><th>格式</th><th>大小</th><th>更新日期</th><th>说明</th></tr></thead>
+                  <tbody>${list}</tbody>
+                </table>
+              </div>
+            </div>
+          </div>`;
+      }
+
+      body += `
+        <div class="actions-bar">
+          <button class="btn-outline" type="button" onclick="alert('原型：订阅')">订阅</button>
+          <button class="btn-primary" type="button" onclick="alert('原型：资源申请')">资源申请</button>
+        </div>`;
+
+      document.getElementById('detail-body').innerHTML = body;
+      document.getElementById('list-page').classList.add('hidden');
+      document.getElementById('detail-page').classList.remove('hidden');
+      window.scrollTo(0, 0);
+    }
+
+    boot();
+  </script>
+</body>
+</html>
