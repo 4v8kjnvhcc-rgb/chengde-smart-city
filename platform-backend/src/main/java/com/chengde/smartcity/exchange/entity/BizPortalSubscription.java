@@ -13,6 +13,7 @@ public class BizPortalSubscription {
     private String applicantOrg;
     private String resourceType;
     private String purpose;
+    private String applyPayload;
     private String status;
     private String approverNote;
     private String createdBy;
@@ -29,6 +30,8 @@ public class BizPortalSubscription {
     public void setResourceType(String resourceType) { this.resourceType = resourceType; }
     public String getPurpose() { return purpose; }
     public void setPurpose(String purpose) { this.purpose = purpose; }
+    public String getApplyPayload() { return applyPayload; }
+    public void setApplyPayload(String applyPayload) { this.applyPayload = applyPayload; }
     public String getStatus() { return status; }
     public void setStatus(String status) { this.status = status; }
     public String getApproverNote() { return approverNote; }

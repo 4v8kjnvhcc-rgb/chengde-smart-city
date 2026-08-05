@@ -20,18 +20,44 @@ import {
   type IngestionSystem,
   type RegisterMenuMeta,
 } from './ingestion-nav'
+import IngestionLandingView from './IngestionLandingView.vue'
 import api from '@/api/http'
 
 const route = useRoute()
 const router = useRouter()
 const auth = useAuthStore()
 
-const system = ref<IngestionSystem>('register')
-const module = ref('m039')
+/** 无 system 参数 → 归集平台选择页；有 system → 单系统独占（页内不可切换） */
+const showLanding = computed(() => {
+  const s = route.query.system
+  return s === undefined || s === null || String(s).trim() === ''
+})
+
+function bootFromRoute(): { system: IngestionSystem; module: string } {
+  const q = route.query as Record<string, unknown>
+  if (showLanding.value) {
+    return { system: 'register', module: DEFAULT_MODULE.register }
+  }
+  const resolved = resolveIngestionNav(q)
+  const opts = { isSystemAdmin: auth.isSystemAdmin, permissions: auth.permissions }
+  return {
+    system: resolved.system,
+    module:
+      resolved.system === 'collect'
+        ? normalizeCollectModuleKey(resolved.module, opts)
+        : resolved.module,
+  }
+}
+
+/** 首屏即按 URL 落系统，避免先闪「数据资产登记管理」再切到采集汇聚 */
+const boot = bootFromRoute()
+const system = ref<IngestionSystem>(boot.system)
+const module = ref(boot.module)
 
 const moduleComponents: Record<string, ReturnType<typeof defineAsyncComponent>> = {
   m039: defineAsyncComponent(() => import('./register/GuideView.vue')),
   m040: defineAsyncComponent(() => import('./register/ProjectSystemView.vue')),
+  'project-system-mgmt': defineAsyncComponent(() => import('./register/ProjectSystemManageView.vue')),
   m041: defineAsyncComponent(() => import('./register/DataSourceModelView.vue')),
   m042: defineAsyncComponent(() => import('./register/DictRegisterView.vue')),
   m043: defineAsyncComponent(() => import('./register/TagRegisterView.vue')),
@@ -53,11 +79,9 @@ const moduleComponents: Record<string, ReturnType<typeof defineAsyncComponent>> 
   'catalog.classify': defineAsyncComponent(() => import('@/views/governance/catalog/CatalogClassifyView.vue')),
   'catalog.publish': defineAsyncComponent(() => import('@/views/governance/catalog/CatalogRegisterPublishView.vue')),
   'catalog.approvals': defineAsyncComponent(() => import('@/views/governance/catalog/CatalogApprovalView.vue')),
-  // 与数据融合治理 · 数据质量管理系统同组件，双入口保留
   'quality.rule-config': defineAsyncComponent(() => import('@/views/governance/quality/QualityRuleConfigView.vue')),
   'quality.monitor': defineAsyncComponent(() => import('@/views/governance/quality/QualityMonitorView.vue')),
   'quality.assess': defineAsyncComponent(() => import('@/views/governance/quality/QualityAssessView.vue')),
-  // 数据资产管理
   'asset.classify': defineAsyncComponent(() => import('./collect/AssetClassifyView.vue')),
   'asset.mask': defineAsyncComponent(() => import('./collect/AssetMaskView.vue')),
   'asset.tag': defineAsyncComponent(() => import('./collect/AssetTagManageView.vue')),
@@ -79,8 +103,6 @@ const permOpts = computed(() => ({
 
 const allowedRegister = computed(() => filterIngestionModules(REGISTER_MODULES, permOpts.value))
 const allowedCollect = computed(() => filterIngestionModules(COLLECT_MODULES, permOpts.value))
-const canRegister = computed(() => allowedRegister.value.length > 0)
-const canCollect = computed(() => allowedCollect.value.length > 0)
 
 const navItems = computed(() => {
   if (system.value === 'register') return buildRegisterNavItems(permOpts.value, registerMenuMeta.value)
@@ -91,6 +113,11 @@ const activeComponent = computed(() => {
   return moduleComponents[module.value]
 })
 const pageTitle = computed(() => `大数据归集平台 · ${systemTitle(system.value)} · ${moduleTitle(module.value)}`)
+const pageDesc = computed(() =>
+  system.value === 'register'
+    ? '数据资产登记管理（切换系统请返回总览后重新进入）'
+    : '数据资源采集汇聚（切换系统请返回总览后重新进入）',
+)
 
 function isRegisterModuleAllowed(moduleKey: string, allowed: typeof allowedRegister.value): boolean {
   if (allowed.some((m) => m.key === moduleKey)) return true
@@ -110,20 +137,11 @@ function firstAllowedModule(sys: IngestionSystem): string {
   return sys === 'collect' ? normalizeCollectModuleKey(key, permOpts.value) : key
 }
 
+/** 单系统独占：无子模块权限时不踢到另一系统 */
 function ensureAllowedModule() {
+  if (showLanding.value) return
   const allowed = system.value === 'register' ? allowedRegister.value : allowedCollect.value
-  if (!allowed.length) {
-    if (system.value === 'register' && canCollect.value) {
-      system.value = 'collect'
-      module.value = firstAllowedModule('collect')
-      pushQuery()
-    } else if (system.value === 'collect' && canRegister.value) {
-      system.value = 'register'
-      module.value = firstAllowedModule('register')
-      pushQuery()
-    }
-    return
-  }
+  if (!allowed.length) return
   const ok =
     system.value === 'collect'
       ? isCollectModuleAllowed(module.value, allowed, permOpts.value)
@@ -141,6 +159,9 @@ function syncFromRoute() {
     router.replace({ path: '/exchange/application', query: { system: sys } })
     return
   }
+  // 无 system → 选择页，禁止默认写成 register
+  if (showLanding.value) return
+
   const resolved = resolveIngestionNav(route.query as Record<string, unknown>)
   system.value = resolved.system
   module.value =
@@ -153,14 +174,6 @@ function syncFromRoute() {
 function pushQuery() {
   const q: Record<string, string> = { system: system.value, module: module.value }
   router.replace({ query: { ...route.query, ...q, tab: undefined } })
-}
-
-function onSystemChange(next: IngestionSystem) {
-  if (next === 'register' && !canRegister.value) return
-  if (next === 'collect' && !canCollect.value) return
-  system.value = next
-  module.value = firstAllowedModule(next)
-  pushQuery()
 }
 
 function onModuleChange(key: string) {
@@ -187,15 +200,18 @@ async function refreshRegisterMenuMeta() {
 watch(() => [route.query.system, route.query.module, route.query.tab], syncFromRoute)
 watch(() => auth.permissions.slice(), ensureAllowedModule)
 onMounted(async () => {
-  // 进入 Hub 时刷新权限，避免角色改菜单后仍用登录时缓存的全量侧栏
+  // 先按路由对齐，再异步拉权限；避免 await 期间一直停在默认 register
+  syncFromRoute()
+  window.addEventListener('register-menus-changed', refreshRegisterMenuMeta)
   try {
     await auth.fetchProfile()
   } catch {
     /* 保持现有会话权限 */
   }
-  await refreshRegisterMenuMeta()
-  window.addEventListener('register-menus-changed', refreshRegisterMenuMeta)
-  syncFromRoute()
+  if (system.value === 'register') {
+    await refreshRegisterMenuMeta()
+  }
+  ensureAllowedModule()
 })
 
 onUnmounted(() => {
@@ -204,24 +220,19 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <div class="ingestion-hub">
-    <PageHeader :title="pageTitle" description="数据资产登记管理与数据资源采集汇聚">
+  <IngestionLandingView v-if="showLanding" />
+  <div v-else class="ingestion-hub" :key="system">
+    <PageHeader :title="pageTitle" :description="pageDesc">
       <button type="button" class="hub-back" @click="router.push('/dashboard')">
         返回总览
       </button>
     </PageHeader>
-    <div class="ingestion-system-bar">
-      <el-radio-group :model-value="system" @change="onSystemChange">
-        <el-radio-button v-if="canRegister" value="register">数据资产登记管理</el-radio-button>
-        <el-radio-button v-if="canCollect" value="collect">数据资源采集汇聚</el-radio-button>
-      </el-radio-group>
-    </div>
     <HubSideLayout :model-value="module" :items="navItems" @update:model-value="onModuleChange">
-      <el-empty v-if="!navItems.length" description="当前角色未授权任何归集子模块" />
+      <el-empty v-if="!navItems.length" description="当前角色未授权该系统下的子模块" />
       <keep-alive v-else :max="12">
         <component
           :is="activeComponent"
-          :key="module"
+          :key="`${system}:${module}`"
           :module="module"
           :catalog-origin="module.startsWith('catalog') ? 'INGEST' : undefined"
         />
@@ -259,12 +270,5 @@ onUnmounted(() => {
   color: #0d47a1;
   background: #e8f0fb;
   border-color: #9bb8e0;
-}
-.ingestion-system-bar {
-  display: flex;
-  align-items: center;
-  margin-bottom: 12px;
-  flex-wrap: wrap;
-  gap: 8px;
 }
 </style>

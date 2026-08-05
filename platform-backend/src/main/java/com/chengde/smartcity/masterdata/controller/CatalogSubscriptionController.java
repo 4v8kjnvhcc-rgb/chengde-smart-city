@@ -37,8 +37,8 @@ public class CatalogSubscriptionController {
 
     @GetMapping("/pending")
     @PreAuthorize("isAuthenticated()")
-    public ApiResponse<List<Map<String, Object>>> pending() {
-        return ApiResponse.ok(service.listPending());
+    public ApiResponse<List<Map<String, Object>>> pending(@AuthenticationPrincipal UserPrincipal principal) {
+        return ApiResponse.ok(service.listPending(principal));
     }
 
     @GetMapping("/{id}")

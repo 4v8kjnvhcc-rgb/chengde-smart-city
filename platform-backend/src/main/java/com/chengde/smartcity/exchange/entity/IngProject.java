@@ -13,6 +13,7 @@ public class IngProject {
     private String projectCode;
     private String projectName;
     private Long boundOrgId;
+    private Long clusterAccountId;
     private String systemName;
     private String status;
     private String registerStatus;
@@ -24,6 +25,10 @@ public class IngProject {
     @TableField(exist = false)
     private String boundOrgName;
 
+    /** 列表展示用：绑定集群名称（非表字段） */
+    @TableField(exist = false)
+    private String clusterAccountName;
+
     public Long getId() { return id; }
     public void setId(Long id) { this.id = id; }
     public String getProjectCode() { return projectCode; }
@@ -32,6 +37,8 @@ public class IngProject {
     public void setProjectName(String projectName) { this.projectName = projectName; }
     public Long getBoundOrgId() { return boundOrgId; }
     public void setBoundOrgId(Long boundOrgId) { this.boundOrgId = boundOrgId; }
+    public Long getClusterAccountId() { return clusterAccountId; }
+    public void setClusterAccountId(Long clusterAccountId) { this.clusterAccountId = clusterAccountId; }
     public String getSystemName() { return systemName; }
     public void setSystemName(String systemName) { this.systemName = systemName; }
     public String getStatus() { return status; }
@@ -46,4 +53,6 @@ public class IngProject {
     public void setCreatedAt(LocalDateTime createdAt) { this.createdAt = createdAt; }
     public String getBoundOrgName() { return boundOrgName; }
     public void setBoundOrgName(String boundOrgName) { this.boundOrgName = boundOrgName; }
+    public String getClusterAccountName() { return clusterAccountName; }
+    public void setClusterAccountName(String clusterAccountName) { this.clusterAccountName = clusterAccountName; }
 }

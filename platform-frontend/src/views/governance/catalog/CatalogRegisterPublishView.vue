@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref } from 'vue'
+import { computed, onActivated, onMounted, reactive, ref } from 'vue'
 import api from '@/api/http'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import PageCard from '@/components/common/PageCard.vue'
@@ -8,6 +8,18 @@ import { statusLabel, statusTagType } from '@/utils/status-label'
 const props = withDefaults(defineProps<{ catalogOrigin?: 'INGEST' | 'GOVERNANCE' }>(), {
   catalogOrigin: 'GOVERNANCE',
 })
+
+/** 治理侧分类树取自归集「指标与目录体系构建」；归集侧不变 */
+const categoryDataOrigin = computed(() =>
+  props.catalogOrigin === 'GOVERNANCE' ? 'INGEST' : props.catalogOrigin,
+)
+
+const pageTitle = computed(() =>
+  props.catalogOrigin === 'INGEST' ? '资源目录注册发布' : '目录注册发布',
+)
+const approvalEntryName = computed(() =>
+  props.catalogOrigin === 'INGEST' ? '数据资源目录审批' : '资源目录审批',
+)
 
 interface CategoryNode {
   id: number
@@ -32,56 +44,100 @@ interface CatalogRes {
   providerOrg?: string
 }
 
-const treeData = ref<CategoryNode[]>([])
-const selectedCategoryId = ref<number | null>(null)
-const boundRows = ref<CatalogRes[]>([])
-const unboundRows = ref<CatalogRes[]>([])
+const categoryOptions = ref<{ id: number; label: string }[]>([])
+/** 筛选「分类下已关联资源」列表 */
+const filterCategoryId = ref<number | undefined>()
+const boundAll = ref<CatalogRes[]>([])
+const unboundAll = ref<CatalogRes[]>([])
 const selectedBound = ref<CatalogRes[]>([])
 const selectedUnbound = ref<CatalogRes[]>([])
 const loading = ref(false)
-const catDialog = ref(false)
-const catForm = reactive({
-  categoryName: '',
-  categoryCode: '',
-  parentId: undefined as number | undefined,
+const publishingId = ref<number | null>(null)
+const bindDialogVisible = ref(false)
+const bindCategoryId = ref<number | undefined>()
+const bindSubmitting = ref(false)
+
+const query = reactive({
+  resourceName: '',
+  categoryPath: '',
 })
 
-const flatCategories = computed(() => {
-  const out: { id: number; label: string }[] = []
-  const walk = (nodes: CategoryNode[], prefix = '') => {
-    for (const n of nodes) {
-      const label = prefix ? `${prefix} / ${n.categoryName}` : n.categoryName
-      out.push({ id: n.id, label })
-      if (n.children?.length) walk(n.children, label)
+const filterCategoryLabel = computed(() => {
+  if (filterCategoryId.value == null) return ''
+  return categoryOptions.value.find((c) => c.id === filterCategoryId.value)?.label || ''
+})
+
+function matchCategoryPath(row: CatalogRes) {
+  const kw = query.categoryPath.trim().toLowerCase()
+  if (!kw) return true
+  return (row.categoryPath || '').toLowerCase().includes(kw)
+}
+
+const boundRows = computed(() => boundAll.value.filter(matchCategoryPath))
+
+const unboundRows = computed(() => unboundAll.value)
+
+async function loadCategoryOptions() {
+  try {
+    const [treeRes, listRes] = await Promise.all([
+      api.get('/governance/catalog/categories/tree', { params: { catalogOrigin: categoryDataOrigin.value } }),
+      api.get('/governance/catalog/categories', { params: { catalogOrigin: categoryDataOrigin.value } }),
+    ])
+    const treeData = (treeRes.data || []) as CategoryNode[]
+    const rows = (listRes.data || []) as Array<{
+      id: number
+      categoryName?: string
+      categoryPath?: string
+      categoryCode?: string
+    }>
+    if (rows.length) {
+      categoryOptions.value = rows.map((r) => ({
+        id: r.id,
+        label: r.categoryPath || r.categoryName || r.categoryCode || String(r.id),
+      }))
+    } else {
+      const out: { id: number; label: string }[] = []
+      const walk = (nodes: CategoryNode[], prefix = '') => {
+        for (const n of nodes) {
+          const label = prefix ? `${prefix} / ${n.categoryName}` : n.categoryName
+          out.push({ id: n.id, label })
+          if (n.children?.length) walk(n.children, label)
+        }
+      }
+      walk(treeData)
+      categoryOptions.value = out
     }
+  } catch {
+    categoryOptions.value = []
   }
-  walk(treeData.value)
-  return out
-})
-
-async function loadTree() {
-  const res = await api.get('/governance/catalog/categories/tree', {
-    params: { catalogOrigin: props.catalogOrigin },
-  })
-  treeData.value = res.data || []
 }
 
 async function loadBound() {
-  if (selectedCategoryId.value == null) {
-    boundRows.value = []
+  const keyword = query.resourceName.trim() || undefined
+  if (filterCategoryId.value != null) {
+    const res = await api.get('/governance/catalog/resources-mgmt', {
+      params: {
+        categoryId: filterCategoryId.value,
+        catalogOrigin: props.catalogOrigin,
+        keyword,
+      },
+    })
+    boundAll.value = res.data || []
     return
   }
   const res = await api.get('/governance/catalog/resources-mgmt', {
-    params: { categoryId: selectedCategoryId.value, catalogOrigin: props.catalogOrigin },
+    params: { catalogOrigin: props.catalogOrigin, keyword },
   })
-  boundRows.value = res.data || []
+  const all = (res.data || []) as CatalogRes[]
+  boundAll.value = all.filter((r) => r.categoryId != null && Number(r.categoryId) > 0)
 }
 
 async function loadUnbound() {
+  const keyword = query.resourceName.trim() || undefined
   const res = await api.get('/governance/catalog/resources-mgmt', {
-    params: { unboundOnly: true, catalogOrigin: props.catalogOrigin },
+    params: { unboundOnly: true, catalogOrigin: props.catalogOrigin, keyword },
   })
-  unboundRows.value = res.data || []
+  unboundAll.value = res.data || []
 }
 
 async function refreshLists() {
@@ -93,70 +149,59 @@ async function refreshLists() {
   }
 }
 
-function onTreeClick(data: CategoryNode) {
-  selectedCategoryId.value = data.id
+function resetQuery() {
+  query.resourceName = ''
+  query.categoryPath = ''
+  filterCategoryId.value = undefined
+  void refreshLists()
+}
+
+function onFilterCategoryChange() {
+  selectedBound.value = []
   void loadBound()
 }
 
-function openCreateCategory(parentId?: number) {
-  catForm.categoryName = ''
-  catForm.categoryCode = ''
-  catForm.parentId = parentId
-  catDialog.value = true
-}
-
-async function saveCategory() {
-  if (!catForm.categoryName.trim()) {
-    ElMessage.warning('请填写分类名称')
+function openBindDialog() {
+  if (!selectedUnbound.value.length) {
+    ElMessage.warning('请勾选未挂载资源')
     return
   }
-  await api.post('/governance/catalog/categories', {
-    categoryName: catForm.categoryName,
-    categoryCode: catForm.categoryCode || undefined,
-    parentId: catForm.parentId || 0,
-    catalogOrigin: props.catalogOrigin,
-  })
-  ElMessage.success('分类已创建')
-  catDialog.value = false
-  await loadTree()
+  bindCategoryId.value = filterCategoryId.value
+  bindDialogVisible.value = true
 }
 
-async function renameCategory(node: CategoryNode) {
-  const { value } = await ElMessageBox.prompt('新分类名称', '重命名分类', {
-    inputValue: node.categoryName,
-    inputPattern: /\S+/,
-    inputErrorMessage: '名称不能为空',
-  })
-  await api.put(`/governance/catalog/categories/${node.id}`, { categoryName: value })
-  ElMessage.success('已更新')
-  await loadTree()
-}
-
-async function removeCategory(node: CategoryNode) {
-  await ElMessageBox.confirm(`确认删除分类「${node.categoryName}」？`, '删除分类', { type: 'warning' })
-  await api.delete(`/governance/catalog/categories/${node.id}`)
-  ElMessage.success('已删除')
-  if (selectedCategoryId.value === node.id) selectedCategoryId.value = null
-  await loadTree()
-  await refreshLists()
-}
-
-async function bindSelected() {
-  if (selectedCategoryId.value == null) {
-    ElMessage.warning('请先选择左侧分类')
+async function confirmBind() {
+  if (!bindCategoryId.value) {
+    ElMessage.warning('请选择数据资源分类')
     return
   }
   if (!selectedUnbound.value.length) {
     ElMessage.warning('请勾选未挂载资源')
     return
   }
-  await api.post('/governance/catalog/resources-mgmt/bind-category', {
-    categoryId: selectedCategoryId.value,
-    resourceIds: selectedUnbound.value.map((r) => r.id),
-  })
-  ElMessage.success('已关联到分类')
-  selectedUnbound.value = []
-  await refreshLists()
+  bindSubmitting.value = true
+  try {
+    const res = await api.post<{ submitted?: number; bound?: number; errors?: string[] }>(
+      '/governance/catalog/resources-mgmt/bind-category',
+      {
+        categoryId: bindCategoryId.value,
+        resourceIds: selectedUnbound.value.map((r) => r.id),
+      },
+    )
+    const d = res.data || {}
+    ElMessage.success(`已关联 ${d.bound ?? d.submitted ?? 0} 条到所选分类，可在「分类下已关联资源」中发布`)
+    if (d.errors?.length) {
+      ElMessage.warning(d.errors.slice(0, 3).join('；'))
+    }
+    bindDialogVisible.value = false
+    selectedUnbound.value = []
+    filterCategoryId.value = bindCategoryId.value
+    await refreshLists()
+  } catch (e: unknown) {
+    ElMessage.error((e as Error)?.message || '关联失败')
+  } finally {
+    bindSubmitting.value = false
+  }
 }
 
 async function unbindSelected() {
@@ -164,171 +209,258 @@ async function unbindSelected() {
     ElMessage.warning('请勾选已挂载资源')
     return
   }
-  await api.post('/governance/catalog/resources-mgmt/unbind-category', {
-    resourceIds: selectedBound.value.map((r) => r.id),
-  })
-  ElMessage.success('已解除关联')
-  selectedBound.value = []
-  await refreshLists()
+  const published = selectedBound.value.filter((r) => r.publishStatus === 'PUBLISHED')
+  if (published.length && published.length === selectedBound.value.length) {
+    ElMessage.warning('已发布资源不可解绑，请先下线后再解除关联')
+    return
+  }
+  await ElMessageBox.confirm(
+    `确认解除关联 ${selectedBound.value.length} 条？解除后将移至「未挂载资源（可关联）」。`,
+    '批量解除关联',
+    { type: 'warning' },
+  )
+  try {
+    const res = await api.post<{ submitted?: number; unbound?: number; errors?: string[] }>(
+      '/governance/catalog/resources-mgmt/unbind-category',
+      {
+        resourceIds: selectedBound.value.map((r) => r.id),
+      },
+    )
+    const d = res.data || {}
+    ElMessage.success(`已解除关联 ${d.unbound ?? d.submitted ?? 0} 条，已移至未挂载`)
+    if (d.errors?.length) {
+      ElMessage.warning(d.errors.slice(0, 3).join('；'))
+    }
+    selectedBound.value = []
+    await refreshLists()
+  } catch (e: unknown) {
+    ElMessage.error((e as Error)?.message || '解除关联失败')
+  }
 }
 
-onMounted(async () => {
+async function publishOne(row: CatalogRes) {
+  if (!row.categoryId) {
+    ElMessage.warning('请先关联到分类后再发布')
+    return
+  }
+  if (row.publishStatus === 'PUBLISHED') {
+    ElMessage.warning('已发布')
+    return
+  }
+  if (row.approvalStatus === 'PENDING') {
+    ElMessage.warning('审批中，请勿重复提交')
+    return
+  }
+  await ElMessageBox.confirm(
+    `确认提交「${row.resourceName}」发布审批？通过后生效，可在「${approvalEntryName.value}」查看。`,
+    '提交发布',
+    { type: 'info' },
+  )
+  publishingId.value = row.id
   try {
-    await loadTree()
-    await loadUnbound()
+    await api.post(`/governance/catalog/resources-mgmt/${row.id}/submit`, {
+      actionType: 'PUBLISH',
+      comment: '目录注册发布：提交发布审批',
+    })
+    ElMessage.success(`已提交发布审批，请到「${approvalEntryName.value}」处理`)
+    await refreshLists()
+  } catch (e: unknown) {
+    ElMessage.error((e as Error)?.message || '提交发布失败')
+  } finally {
+    publishingId.value = null
+  }
+}
+
+async function bootstrap() {
+  try {
+    await loadCategoryOptions()
+    await refreshLists()
   } catch {
     ElMessage.error('加载目录注册数据失败')
   }
+}
+
+onMounted(() => {
+  void bootstrap()
+})
+
+onActivated(() => {
+  void bootstrap()
 })
 </script>
 
 <template>
-  <PageCard title="目录注册发布">
+  <PageCard :title="pageTitle">
     <el-alert
       type="info"
       :closable="false"
       show-icon
-      title="将「资源目录编制」产出的未挂载资源关联到分类，形成可提交审批的标准目录。已发布资源须先下线再改挂。"
+      :title="`编目时已选「信息资源分类」的进入「分类下已关联资源」；未选分类的进入「未挂载资源」。关联/解除分类立即生效；在已关联列表点「发布」后才进入「${approvalEntryName}」。`"
       style="margin-bottom: 12px"
     />
-    <div class="reg-layout">
-      <aside class="reg-tree">
-        <div class="tree-toolbar">
-          <span>资源分类</span>
-          <el-button link type="primary" @click="openCreateCategory()">新建</el-button>
-        </div>
-        <el-tree
-          :data="treeData"
-          node-key="id"
-          :props="{ label: 'categoryName', children: 'children' }"
-          highlight-current
-          default-expand-all
-          @node-click="onTreeClick"
-        >
-          <template #default="{ data }">
-            <span class="tree-node">
-              <span>{{ data.categoryName }}</span>
-              <span class="tree-acts" @click.stop>
-                <el-button link size="small" @click="openCreateCategory(data.id)">子类</el-button>
-                <el-button link size="small" @click="renameCategory(data)">改</el-button>
-                <el-button link size="small" type="danger" @click="removeCategory(data)">删</el-button>
-              </span>
-            </span>
-          </template>
-        </el-tree>
-      </aside>
-      <main class="reg-main" v-loading="loading">
-        <h4>分类下已关联资源</h4>
-        <el-form inline class="portal-inline-form portal-inline-form--block">
-          <el-form-item class="portal-form-actions">
-            <el-button type="danger" plain :disabled="!selectedBound.length" @click="unbindSelected">批量解除关联</el-button>
-            <el-button @click="refreshLists">刷新</el-button>
-          </el-form-item>
-        </el-form>
-        <el-table
-          :data="boundRows"
-          stripe
-          size="small"
-          @selection-change="(rows: CatalogRes[]) => (selectedBound = rows)"
-        >
-          <el-table-column type="selection" width="42" />
-          <el-table-column prop="resourceCode" label="编码" width="130" />
-          <el-table-column prop="resourceName" label="名称" min-width="140" />
-          <el-table-column prop="metadataEntryCode" label="元数据" width="140" show-overflow-tooltip />
-          <el-table-column label="发布" width="90">
-            <template #default="{ row }">
-              <el-tag size="small" :type="statusTagType(row.publishStatus)">{{ statusLabel(row.publishStatus) }}</el-tag>
-            </template>
-          </el-table-column>
-        </el-table>
-        <el-empty v-if="!boundRows.length" :description="selectedCategoryId ? '该分类暂无关联资源' : '请选择左侧分类'" />
 
-        <h4 style="margin-top: 20px">未挂载资源（可关联）</h4>
-        <el-form inline class="portal-inline-form portal-inline-form--block">
-          <el-form-item class="portal-form-actions">
-            <el-button type="primary" :disabled="!selectedUnbound.length || selectedCategoryId == null" @click="bindSelected">
-              关联到当前分类
-            </el-button>
-          </el-form-item>
-        </el-form>
-        <el-table
-          :data="unboundRows"
-          stripe
-          size="small"
-          @selection-change="(rows: CatalogRes[]) => (selectedUnbound = rows)"
+    <el-form inline class="portal-inline-form portal-inline-form--block">
+      <el-form-item label="名称" class="portal-field-lg">
+        <el-input
+          v-model="query.resourceName"
+          clearable
+          placeholder="资源名称/编码"
+          @keyup.enter="refreshLists"
+        />
+      </el-form-item>
+      <el-form-item label="分类路径" class="portal-field-xl">
+        <el-input
+          v-model="query.categoryPath"
+          clearable
+          placeholder="筛选已关联资源的分类路径"
+          @keyup.enter="refreshLists"
+        />
+      </el-form-item>
+      <el-form-item label="分类筛选" class="portal-field-xl">
+        <el-select
+          v-model="filterCategoryId"
+          clearable
+          filterable
+          placeholder="已关联列表按分类筛选"
+          @change="onFilterCategoryChange"
         >
-          <el-table-column type="selection" width="42" />
-          <el-table-column prop="resourceCode" label="编码" width="130" />
-          <el-table-column prop="resourceName" label="名称" min-width="140" />
-          <el-table-column prop="metadataEntryCode" label="元数据" width="140" show-overflow-tooltip />
-          <el-table-column label="来源" width="90">
-            <template #default="{ row }">
-              {{ row.sourcePathType === 'PROCESSED' ? '加工' : row.sourcePathType === 'DIRECT' ? '直通' : '—' }}
-            </template>
-          </el-table-column>
-        </el-table>
-      </main>
+          <el-option v-for="c in categoryOptions" :key="c.id" :label="c.label" :value="c.id" />
+        </el-select>
+      </el-form-item>
+      <el-form-item class="portal-form-actions">
+        <el-button type="primary" @click="refreshLists">查询</el-button>
+        <el-button @click="resetQuery">重置</el-button>
+      </el-form-item>
+    </el-form>
+
+    <div v-loading="loading" class="reg-main">
+      <h4>
+        分类下已关联资源
+        <span v-if="filterCategoryLabel" class="sub">（{{ filterCategoryLabel }}）</span>
+        <span v-else class="sub">（全部已挂载）</span>
+      </h4>
+      <el-form inline class="portal-inline-form portal-inline-form--block">
+        <el-form-item class="portal-form-actions">
+          <el-button type="danger" plain :disabled="!selectedBound.length" @click="unbindSelected">
+            批量解除关联
+          </el-button>
+        </el-form-item>
+      </el-form>
+      <el-table
+        :data="boundRows"
+        stripe
+        size="small"
+        @selection-change="(rows: CatalogRes[]) => (selectedBound = rows)"
+      >
+        <el-table-column type="selection" width="42" />
+        <el-table-column prop="resourceCode" label="编码" width="130" />
+        <el-table-column prop="resourceName" label="名称" min-width="140" />
+        <el-table-column prop="categoryPath" label="分类路径" min-width="140" show-overflow-tooltip>
+          <template #default="{ row }">{{ row.categoryPath || '—' }}</template>
+        </el-table-column>
+        <el-table-column prop="providerOrg" label="提供方" width="110" show-overflow-tooltip />
+        <el-table-column prop="metadataEntryCode" label="元数据" width="140" show-overflow-tooltip>
+          <template #default="{ row }">{{ row.metadataEntryCode || '—' }}</template>
+        </el-table-column>
+        <el-table-column label="发布" width="90">
+          <template #default="{ row }">
+            <el-tag size="small" :type="statusTagType(row.publishStatus)">{{ statusLabel(row.publishStatus) }}</el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column label="审核" width="90">
+          <template #default="{ row }">
+            <el-tag size="small" :type="statusTagType(row.approvalStatus)">{{ statusLabel(row.approvalStatus) }}</el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column label="操作" width="100" fixed="right">
+          <template #default="{ row }">
+            <el-button
+              v-if="row.publishStatus !== 'PUBLISHED' && row.approvalStatus !== 'PENDING'"
+              link
+              type="primary"
+              :loading="publishingId === row.id"
+              @click="publishOne(row)"
+            >
+              发布
+            </el-button>
+            <span v-else-if="row.approvalStatus === 'PENDING'" class="muted">审批中</span>
+            <span v-else class="muted">—</span>
+          </template>
+        </el-table-column>
+      </el-table>
+      <el-empty v-if="!boundRows.length" description="暂无已关联资源（编目时选择分类或在此关联后可见）" />
+
+      <h4 style="margin-top: 24px">未挂载资源（可关联）</h4>
+      <el-form inline class="portal-inline-form portal-inline-form--block">
+        <el-form-item class="portal-form-actions">
+          <el-button type="primary" :disabled="!selectedUnbound.length" @click="openBindDialog">
+            关联分类
+          </el-button>
+        </el-form-item>
+      </el-form>
+      <el-table
+        :data="unboundRows"
+        stripe
+        size="small"
+        @selection-change="(rows: CatalogRes[]) => (selectedUnbound = rows)"
+      >
+        <el-table-column type="selection" width="42" />
+        <el-table-column prop="resourceCode" label="编码" width="130" />
+        <el-table-column prop="resourceName" label="名称" min-width="140" />
+        <el-table-column prop="providerOrg" label="提供方" width="110" show-overflow-tooltip />
+        <el-table-column prop="metadataEntryCode" label="元数据" width="140" show-overflow-tooltip>
+          <template #default="{ row }">{{ row.metadataEntryCode || '—' }}</template>
+        </el-table-column>
+        <el-table-column label="来源" width="90">
+          <template #default="{ row }">
+            {{ row.sourcePathType === 'PROCESSED' ? '加工' : row.sourcePathType === 'DIRECT' ? '直通' : '—' }}
+          </template>
+        </el-table-column>
+        <el-table-column label="审核" width="90">
+          <template #default="{ row }">
+            <el-tag size="small" :type="statusTagType(row.approvalStatus)">{{ statusLabel(row.approvalStatus) }}</el-tag>
+          </template>
+        </el-table-column>
+      </el-table>
+      <el-empty v-if="!unboundRows.length" description="暂无未挂载资源" />
     </div>
 
-    <el-dialog v-model="catDialog" title="新建分类" width="420px" destroy-on-close>
-      <el-form label-width="90px">
-        <el-form-item label="上级分类">
-          <el-select v-model="catForm.parentId" clearable filterable style="width: 100%" placeholder="无（根分类）">
-            <el-option v-for="c in flatCategories" :key="c.id" :label="c.label" :value="c.id" />
+    <el-dialog v-model="bindDialogVisible" title="关联分类" width="480px" destroy-on-close append-to-body>
+      <el-alert
+        type="info"
+        :closable="false"
+        show-icon
+        :title="`已选 ${selectedUnbound.length} 条未挂载资源，请选择要挂载的数据资源分类。`"
+        style="margin-bottom: 12px"
+      />
+      <el-form label-width="110px">
+        <el-form-item label="数据资源分类" required>
+          <el-select v-model="bindCategoryId" filterable placeholder="请选择分类" style="width: 100%">
+            <el-option v-for="c in categoryOptions" :key="c.id" :label="c.label" :value="c.id" />
           </el-select>
-        </el-form-item>
-        <el-form-item label="分类名称" required>
-          <el-input v-model="catForm.categoryName" />
-        </el-form-item>
-        <el-form-item label="分类编码">
-          <el-input v-model="catForm.categoryCode" placeholder="可空，自动生成" />
         </el-form-item>
       </el-form>
       <template #footer>
-        <el-button @click="catDialog = false">取消</el-button>
-        <el-button type="primary" @click="saveCategory">保存</el-button>
+        <el-button @click="bindDialogVisible = false">取消</el-button>
+        <el-button type="primary" :loading="bindSubmitting" @click="confirmBind">确定</el-button>
       </template>
     </el-dialog>
   </PageCard>
 </template>
 
 <style scoped>
-.reg-layout {
-  display: flex;
-  gap: 16px;
-  min-height: 480px;
-}
-.reg-tree {
-  width: 260px;
-  flex-shrink: 0;
-  border-right: 1px solid var(--el-border-color-lighter);
-  padding-right: 12px;
-}
-.tree-toolbar {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: 8px;
-  font-weight: 600;
-}
-.tree-node {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  width: 100%;
-  padding-right: 4px;
-  gap: 4px;
-}
-.tree-acts {
-  opacity: 0.75;
-  flex-shrink: 0;
-}
-.reg-main {
-  flex: 1;
-  min-width: 0;
-}
 .reg-main h4 {
   margin: 0 0 8px;
   font-size: 14px;
+}
+.reg-main h4 .sub {
+  font-weight: 400;
+  font-size: 12px;
+  color: var(--el-text-color-secondary);
+  margin-left: 6px;
+}
+.muted {
+  color: var(--el-text-color-secondary);
+  font-size: 12px;
 }
 </style>

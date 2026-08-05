@@ -307,6 +307,16 @@ router.beforeEach(async (to) => {
     }
   }
 
+  // 进入总览前先就绪门户树，避免 Dashboard 首帧白屏
+  if (to.path === '/dashboard' || to.path === '/') {
+    try {
+      const { loadPortalNav } = await import('@/utils/portal-nav-cache')
+      await loadPortalNav()
+    } catch {
+      /* Dashboard 内再处理错误态 */
+    }
+  }
+
   if (auth.isSystemAdmin) return true
 
   if (!profileOk && !auth.menus.length) {

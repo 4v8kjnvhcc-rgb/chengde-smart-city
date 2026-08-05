@@ -36,7 +36,12 @@ const sidebarMenus = computed(() => sidebarContext.value?.menus ?? [])
     <el-container class="portal-main-wrap" :class="{ 'portal-main-wrap--hub': isHubPage }">
       <AppHeader v-if="!hideAppHeader" :show-back-hub="!isHubPage" :hub-theme="isHubPage" />
       <el-main class="portal-main" :class="mainClasses">
-        <router-view />
+        <router-view v-slot="{ Component }">
+          <!-- 总览页保活：返回总览时不销毁重建，避免白屏闪一下 -->
+          <keep-alive :include="['DashboardView']">
+            <component :is="Component" />
+          </keep-alive>
+        </router-view>
       </el-main>
     </el-container>
   </el-container>

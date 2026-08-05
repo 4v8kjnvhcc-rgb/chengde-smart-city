@@ -48,17 +48,33 @@ public class PortalController {
     public ApiResponse<List<Map<String, Object>>> catalog(
             @RequestParam(required = false) String keyword,
             @RequestParam(required = false) String themeCode,
+            @RequestParam(required = false) String baseCode,
             @RequestParam(required = false) String providerOrg,
             @RequestParam(required = false) String catalogKind,
-            @RequestParam(required = false) String shareMode) {
-        return ApiResponse.ok(service.catalogBrowse(keyword, themeCode, providerOrg, catalogKind, shareMode));
+            @RequestParam(required = false) String shareMode,
+            @RequestParam(required = false) String shareAttr,
+            @RequestParam(required = false) String openAttr,
+            @RequestParam(required = false) String resourceType,
+            @RequestParam(required = false) String sortBy,
+            @RequestParam(required = false) String sortDir) {
+        return ApiResponse.ok(service.catalogBrowse(
+                keyword, themeCode, baseCode, providerOrg, catalogKind, shareMode,
+                shareAttr, openAttr, resourceType, sortBy, sortDir));
+    }
+
+    @GetMapping("/catalog/{id}")
+    @PreAuthorize("isAuthenticated()")
+    public ApiResponse<Map<String, Object>> catalogDetail(@PathVariable Long id) {
+        return ApiResponse.ok(service.catalogDetail(id));
     }
 
     @GetMapping("/subscriptions")
     @PreAuthorize("isAuthenticated()")
     public ApiResponse<List<Map<String, Object>>> subscriptions(
-            @RequestParam(required = false) String status) {
-        return ApiResponse.ok(service.listSubscriptions(status));
+            @AuthenticationPrincipal UserPrincipal principal,
+            @RequestParam(required = false) String status,
+            @RequestParam(required = false) String scope) {
+        return ApiResponse.ok(service.listSubscriptions(principal, status, scope));
     }
 
     @PostMapping("/subscriptions")
@@ -74,6 +90,14 @@ public class PortalController {
                                                                @PathVariable Long id,
                                                                @RequestBody Map<String, Object> body) {
         return ApiResponse.ok(service.reviewSubscription(principal, id, body));
+    }
+
+    @PostMapping("/subscriptions/{id}/cancel")
+    @PreAuthorize("isAuthenticated()")
+    public ApiResponse<Void> cancelSubscription(@AuthenticationPrincipal UserPrincipal principal,
+                                                @PathVariable Long id) {
+        service.cancelSubscription(principal, id);
+        return ApiResponse.ok(null);
     }
 
     @GetMapping("/situations")

@@ -18,6 +18,9 @@ const STATUS_ZH: Record<string, string> = {
   ARCHIVE: '归档',
   PENDING_ARCHIVE: '待审核',
   PENDING_REVIEW: '待审核',
+  CAT_CREATE: '分类新增',
+  CAT_UPDATE: '分类编辑',
+  CAT_DELETE: '分类删除',
   METADATA: '元数据',
   // 监控/预检
   OK: '正常',
@@ -196,6 +199,10 @@ const STATUS_ZH: Record<string, string> = {
   PROCESSED: '加工共享',
   CONDITIONAL: '有条件共享',
   NOT_SHARE: '不予共享',
+  SOCIAL_OPEN: '可对社会开放',
+  NOT_OPEN: '不可对社会开放',
+  PARTIAL_OPEN: '部分对社会开放',
+  UNCONDITIONAL: '无条件共享',
   RESTRICTED: '受限共享',
   NEED_COLLECT: '需采集',
   AUTHORIZE_EXISTING: '授权现有',
@@ -230,8 +237,6 @@ const STATUS_ZH: Record<string, string> = {
   WEEKLY: '每周',
   MONTHLY: '每月',
   YEARLY: '每年',
-  // 共享属性（目录 OPEN 与通用 OPEN 语义不同，展示侧优先用本地 SHARE 映射）
-  UNCONDITIONAL: '无条件共享',
   // 质量检查 / 问题类型
   NULL_CHECK: '空值检查',
   UNIQUENESS: '唯一性',

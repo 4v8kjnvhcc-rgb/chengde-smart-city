@@ -61,11 +61,13 @@ export const SUPPLY_MODULES: ApplicationModuleMeta[] = [
 ]
 
 export const SUPPLY_MAIN_SECTIONS = [
+  { key: 'home', label: '首页', mCode: '' },
   { key: 'demand', label: '数据需求管理', mCode: 'M020' },
-  { key: 'analysis', label: '数据需求预审', mCode: 'M021' },
-  { key: 'confirm', label: '数据需求审核', mCode: 'M022' },
+  { key: 'analysis', label: '数据需求分析', mCode: 'M021' },
+  { key: 'confirm', label: '数据需求确认', mCode: 'M022' },
   { key: 'supply', label: '数据供给查看', mCode: 'M023' },
-  { key: 'manifest-center', label: '数据清单中心', mCode: 'M024' },
+  { key: 'supervise', label: '业务督办', mCode: 'M021' },
+  { key: 'manifest-center', label: '清单中心', mCode: 'M024' },
 ] as const
 
 /** 清单中心：目录清单 / 供需清单 / 异议清单 */
@@ -287,7 +289,7 @@ export function resolveApplicationApp(query: Record<string, unknown>): {
       section = DOMAIN_STAT_TOPICS.some((t) => t.key === section) ? section : 'domain'
     }
   }
-  if (app === 'supply' && !section) section = 'demand'
+  if (app === 'supply' && !section) section = 'home'
 
   return { app, section }
 }
@@ -307,7 +309,7 @@ export function resolveApplicationNav(query: Record<string, unknown>): {
   }
   if (r.app === 'stats-base') return { system: 'stats', module: 'stats', section: r.section || 'base' }
   if (r.app === 'stats-domain') return { system: 'stats', module: 'stats', section: r.section || 'domain' }
-  if (r.app === 'supply') return { system: 'supply', module: 'supply-flow', section: r.section || 'demand' }
+  if (r.app === 'supply') return { system: 'supply', module: 'supply-flow', section: r.section || 'home' }
   if (r.app === 'assessment') return { system: 'assessment', module: 'execution', section: '' }
   return { system: 'portal', module: 'portal-home', section: 'home' }
 }

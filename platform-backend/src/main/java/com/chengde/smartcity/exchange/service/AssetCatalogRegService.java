@@ -40,12 +40,17 @@ public class AssetCatalogRegService {
     private static final Logger log = LoggerFactory.getLogger(AssetCatalogRegService.class);
 
     public static final String STATUS_DRAFT = "DRAFT";
+    public static final String STATUS_PENDING_REVIEW = "PENDING_REVIEW";
+    /** @deprecated 历史状态，等同待审核 */
     public static final String STATUS_PENDING_ARCHIVE = "PENDING_ARCHIVE";
     public static final String STATUS_REJECTED = "REJECTED";
+    public static final String STATUS_APPROVED = "APPROVED";
+    /** @deprecated 历史状态，等同审核通过 */
     public static final String STATUS_ARCHIVED = "ARCHIVED";
 
     private static final Set<String> EDITABLE = Set.of(STATUS_DRAFT, STATUS_REJECTED);
-    private static final Set<String> REPORTABLE = Set.of(STATUS_DRAFT, STATUS_REJECTED);
+    private static final Set<String> SUBMITTABLE = Set.of(STATUS_DRAFT, STATUS_REJECTED);
+    private static final Set<String> AUDITABLE = Set.of(STATUS_PENDING_REVIEW, STATUS_PENDING_ARCHIVE);
 
     private final IngAssetCatalogRegMapper catalogMapper;
     private final IngProjectMapper projectMapper;
@@ -155,7 +160,14 @@ public class AssetCatalogRegService {
             q.like(IngAssetCatalogReg::getProjectName, projectName.trim());
         }
         if (status != null && !status.isBlank()) {
-            q.eq(IngAssetCatalogReg::getStatus, status.trim().toUpperCase(Locale.ROOT));
+            String st = status.trim().toUpperCase(Locale.ROOT);
+            if ("PENDING_REVIEW".equals(st) || "PENDING".equals(st)) {
+                q.in(IngAssetCatalogReg::getStatus, STATUS_PENDING_REVIEW, STATUS_PENDING_ARCHIVE, "PENDING");
+            } else if ("APPROVED".equals(st)) {
+                q.in(IngAssetCatalogReg::getStatus, STATUS_APPROVED, STATUS_ARCHIVED);
+            } else {
+                q.eq(IngAssetCatalogReg::getStatus, st);
+            }
         }
         return catalogMapper.selectList(q);
     }
@@ -200,55 +212,67 @@ public class AssetCatalogRegService {
     @Transactional
     public void delete(UserPrincipal operator, Long id) {
         IngAssetCatalogReg e = get(id);
-        if (!STATUS_DRAFT.equals(norm(e.getStatus()))) {
-            throw new BusinessException(400, "仅草稿状态可删除");
+        String st = norm(e.getStatus());
+        boolean approved = STATUS_APPROVED.equals(st) || STATUS_ARCHIVED.equals(st);
+        if (approved) {
+            if (operator == null || !operator.isSystemAdmin()) {
+                throw new BusinessException(403, "审核通过的资产目录仅超级管理员可删除");
+            }
+        } else if (!STATUS_DRAFT.equals(st) && !STATUS_REJECTED.equals(st)) {
+            throw new BusinessException(400, "仅草稿、驳回待提交可删除；审核通过仅超级管理员可删");
         }
         catalogMapper.deleteById(id);
-        log.info("asset catalog reg deleted id={} by={}", id, operator.getUsername());
+        log.info("asset catalog reg deleted id={} status={} by={}", id, st, operator.getUsername());
     }
 
+    /** 提交审核（兼容旧 /report 接口） */
     @Transactional
     public void report(UserPrincipal operator, Long id) {
         IngAssetCatalogReg e = get(id);
-        if (!REPORTABLE.contains(norm(e.getStatus()))) {
-            throw new BusinessException(400, "仅草稿或已驳回状态可上报");
+        if (!SUBMITTABLE.contains(norm(e.getStatus()))) {
+            throw new BusinessException(400, "仅草稿或驳回待提交可提交审核");
         }
         if (blank(e.getAssetName()) || e.getProjectId() == null || e.getSourceId() == null || e.getTableId() == null) {
-            throw new BusinessException(400, "上报前请完善资产名称、项目、数据源与数据表");
+            throw new BusinessException(400, "提交前请完善资产名称、项目、数据源与数据表");
         }
-        e.setStatus(STATUS_PENDING_ARCHIVE);
+        e.setStatus(STATUS_PENDING_REVIEW);
         e.setRejectReason(null);
         e.setReportedAt(LocalDateTime.now());
         e.setUpdatedAt(LocalDateTime.now());
         catalogMapper.updateById(e);
-        log.info("asset catalog reg reported id={} by={}", id, operator.getUsername());
+        log.info("asset catalog reg submitted id={} by={}", id, operator.getUsername());
     }
 
     @Transactional
     public void reject(UserPrincipal operator, Long id, Map<String, Object> body) {
         IngAssetCatalogReg e = get(id);
-        if (!STATUS_PENDING_ARCHIVE.equals(norm(e.getStatus()))) {
-            throw new BusinessException(400, "仅待归档状态可驳回");
+        if (!AUDITABLE.contains(norm(e.getStatus()))) {
+            throw new BusinessException(400, "仅待审核状态可驳回");
         }
         String reason = str(body != null ? body.get("reason") : null, "");
+        if (reason.isBlank()) {
+            throw new BusinessException(400, "驳回须填写原因");
+        }
         e.setStatus(STATUS_REJECTED);
-        e.setRejectReason(reason.isBlank() ? null : reason.trim());
+        e.setRejectReason(reason.trim());
         e.setUpdatedAt(LocalDateTime.now());
         catalogMapper.updateById(e);
         log.info("asset catalog reg rejected id={} by={}", id, operator.getUsername());
     }
 
+    /** 审核通过（兼容旧 /archive 接口） */
     @Transactional
     public void archive(UserPrincipal operator, Long id) {
         IngAssetCatalogReg e = get(id);
-        if (!STATUS_PENDING_ARCHIVE.equals(norm(e.getStatus()))) {
-            throw new BusinessException(400, "仅待归档状态可归档");
+        if (!AUDITABLE.contains(norm(e.getStatus()))) {
+            throw new BusinessException(400, "仅待审核状态可审核通过");
         }
-        e.setStatus(STATUS_ARCHIVED);
+        e.setStatus(STATUS_APPROVED);
+        e.setRejectReason(null);
         e.setArchivedAt(LocalDateTime.now());
         e.setUpdatedAt(LocalDateTime.now());
         catalogMapper.updateById(e);
-        log.info("asset catalog reg archived id={} by={}", id, operator.getUsername());
+        log.info("asset catalog reg approved id={} by={}", id, operator.getUsername());
     }
 
     public Map<String, Object> upload(UserPrincipal operator, MultipartFile file, String kind) {

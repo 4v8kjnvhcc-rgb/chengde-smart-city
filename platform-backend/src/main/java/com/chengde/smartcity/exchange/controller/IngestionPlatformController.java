@@ -125,6 +125,12 @@ public class IngestionPlatformController {
         return ApiResponse.ok(service.listProjects(principal));
     }
 
+    @GetMapping("/cluster-accounts/options")
+    @PreAuthorize("isAuthenticated()")
+    public ApiResponse<List<Map<String, Object>>> clusterAccountOptions() {
+        return ApiResponse.ok(service.listClusterAccountOptions());
+    }
+
     @PostMapping("/projects")
     public ApiResponse<Long> createProject(@AuthenticationPrincipal UserPrincipal principal,
                                            @RequestBody Map<String, Object> body) {

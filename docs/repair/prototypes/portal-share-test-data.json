@@ -1,0 +1,121 @@
+{
+  "description": "部门数据共享门户 · 共享资源测试数据（库表 / 接口 / 文件各 1 条，均可点开详情）",
+  "total": 3,
+  "resources": [
+    {
+      "id": "RES-TABLE-001",
+      "resourceType": "TABLE",
+      "resourceTypeLabel": "库表",
+      "title": "测试KB042001test_popu_RC",
+      "catalogCode": "13080000230006",
+      "providerOrg": "测试-高新区民政局",
+      "shareAttr": "CONDITIONAL",
+      "shareAttrLabel": "有条件共享",
+      "openAttr": "OPEN",
+      "openAttrLabel": "可对社会开放",
+      "updatedAt": "2026-04-21 11:58:26",
+      "applyCount": 8,
+      "visitCount": 45,
+      "description": "人口主题库表资源，审批通过后可申请库表同步",
+      "tables": [
+        {
+          "tableName": "cd_population",
+          "catalogCode": "13080000230006",
+          "summary": "ys_encryption",
+          "columns": [
+            { "name": "health_status", "comment": "身体状况", "type": "VARCHAR", "length": 100, "pk": false, "nullable": false, "sensitivity": 1 },
+            { "name": "client_ip", "comment": "最后更新人IP", "type": "VARCHAR", "length": 46, "pk": false, "nullable": false, "sensitivity": 1 },
+            { "name": "six_special_groups", "comment": "六类人群", "type": "VARCHAR", "length": 255, "pk": false, "nullable": false, "sensitivity": 1 },
+            { "name": "created_by_person_id", "comment": "创建人ID", "type": "INT", "length": 10, "pk": false, "nullable": false, "sensitivity": 1 },
+            { "name": "management_type", "comment": "管理类型", "type": "VARCHAR", "length": 255, "pk": false, "nullable": false, "sensitivity": 1 }
+          ]
+        }
+      ]
+    },
+    {
+      "id": "RES-API-001",
+      "resourceType": "API",
+      "resourceTypeLabel": "接口",
+      "title": "测试数据目录API",
+      "catalogCode": "13080000050007",
+      "providerOrg": "测试-高新区行政审批服务管理局",
+      "shareAttr": "CONDITIONAL",
+      "shareAttrLabel": "有条件共享",
+      "openAttr": "OPEN",
+      "openAttrLabel": "可对社会开放",
+      "updatedAt": "2026-04-14 05:41:44",
+      "applyCount": 12,
+      "visitCount": 67,
+      "description": "目录查询类接口，申请通过后由服务总线封装转发并签发 token",
+      "apis": [
+        {
+          "apiName": "测试API",
+          "apiCode": "13080000050007_001",
+          "catalogCode": "13080000050007",
+          "version": "V1.0",
+          "targetAddressHint": "资源申请通过后前往个人中心查看",
+          "requestPath": "http://127.0.0.1/sjgxjh/glzy/sso",
+          "httpMethod": "POST",
+          "registeredAt": "2026-04-14 05:37:20",
+          "description": "",
+          "expireAt": "2026-04-16 00:00:00",
+          "requestParams": [
+            { "name": "name", "required": true, "dataType": "String", "comment": "姓名" }
+          ],
+          "responseParams": [
+            { "name": "state", "required": true, "dataType": "String", "comment": "状态" },
+            { "name": "id_card", "required": true, "dataType": "String", "comment": "身份证号" },
+            { "name": "name", "required": true, "dataType": "String", "comment": "姓名" }
+          ],
+          "successExample": {
+            "state": "ok",
+            "id_card": "1308***********",
+            "name": "张三"
+          }
+        }
+      ]
+    },
+    {
+      "id": "RES-FILE-001",
+      "resourceType": "FILE",
+      "resourceTypeLabel": "文件",
+      "title": "社会救助证明材料包",
+      "catalogCode": "13080000990001",
+      "providerOrg": "社会事务部",
+      "shareAttr": "CONDITIONAL",
+      "shareAttrLabel": "有条件共享",
+      "openAttr": "PARTIAL",
+      "openAttrLabel": "部分对社会开放",
+      "updatedAt": "2026-04-20 14:22:08",
+      "applyCount": 5,
+      "visitCount": 28,
+      "description": "社会救助证明批量导出清单及附件说明，申请通过后可在个人中心查看 FTP 地址",
+      "files": [
+        {
+          "fileName": "救助证明清单.xlsx",
+          "fileCode": "13080000990001_F01",
+          "catalogCode": "13080000990001",
+          "format": "XLSX",
+          "size": "2.4 MB",
+          "updateCycle": "按月",
+          "storage": "FTP",
+          "addressHint": "资源申请通过后前往个人中心查看 FTP 地址",
+          "registeredAt": "2026-04-18 10:05:33",
+          "description": "社会救助证明批量导出清单及字段说明"
+        },
+        {
+          "fileName": "附件说明.pdf",
+          "fileCode": "13080000990001_F02",
+          "catalogCode": "13080000990001",
+          "format": "PDF",
+          "size": "356 KB",
+          "updateCycle": "按月",
+          "storage": "FTP",
+          "addressHint": "资源申请通过后前往个人中心查看 FTP 地址",
+          "registeredAt": "2026-04-18 10:06:01",
+          "description": "字段与使用说明"
+        }
+      ]
+    }
+  ]
+}

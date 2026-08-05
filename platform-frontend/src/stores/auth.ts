@@ -102,6 +102,12 @@ export const useAuthStore = defineStore('auth', {
       localStorage.removeItem('refreshToken')
       localStorage.removeItem('username')
       localStorage.removeItem('user')
+      try {
+        const { clearPortalNavCache } = await import('@/utils/portal-nav-cache')
+        clearPortalNavCache()
+      } catch {
+        /* ignore */
+      }
     },
     hasPermission(code: string) {
       return Array.isArray(this.permissions) && this.permissions.includes(code)

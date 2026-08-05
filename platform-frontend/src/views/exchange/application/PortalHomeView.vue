@@ -3,9 +3,13 @@ import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import api from '@/api/http'
 import { ElMessage } from 'element-plus'
-import PageCard from '@/components/common/PageCard.vue'
 import { useAuthStore } from '@/stores/auth'
 import { DEPT_PORTAL_BRAND } from './application-nav'
+import ShareCatalogPanel from './ShareCatalogPanel.vue'
+import type { CatalogRow as ShareCatalogRow } from './ShareCatalogPanel.vue'
+import SubscribeApplyPanel from './SubscribeApplyPanel.vue'
+import PortalPagination from '@/components/common/PortalPagination.vue'
+import { statusLabel } from '@/utils/status-label'
 
 interface CatalogRow {
   id: number | string
@@ -31,6 +35,7 @@ interface HomeData {
   publishedCount?: number
   hotKeywords: string[]
   themes: { code: string; name: string; count?: number; apiCount?: number; dataCount?: number }[]
+  baseLibraries?: { code: string; name: string; count?: number; apiCount?: number; dataCount?: number }[]
   providers: { name: string; count: number; apiCount?: number; dataCount?: number }[]
   latestResources: CatalogRow[]
   latestApplications?: { id: number; catalogTitle?: string; applicantOrg?: string; status?: string; createdAt?: string }[]
@@ -47,6 +52,10 @@ interface Subscription {
   purpose: string
   status: string
   approverNote?: string
+  applyPayload?: Record<string, unknown> | string | null
+  createdBy?: string
+  createdAt?: string
+  providerOrg?: string
   taskId?: number
   taskType?: string
   taskStatus?: string
@@ -67,9 +76,10 @@ const catalogKind = ref<'DATA' | 'SERVICE' | ''>('')
 const catalogView = ref<'table' | 'card'>('table')
 const catalogRows = ref<CatalogRow[]>([])
 const subscriptions = ref<Subscription[]>([])
-const objections = ref<Record<string, unknown>[]>([])
+const pendingSubsList = ref<Subscription[]>([])
 const catalogOptions = ref<CatalogRow[]>([])
 const preview = reactive<{ visible: boolean; row: CatalogRow | null }>({ visible: false, row: null })
+const shareCatalogRef = ref<{ loadCatalog: () => Promise<void>; openDetail?: (row: ShareCatalogRow) => void } | null>(null)
 
 const subForm = reactive({
   catalogId: undefined as number | undefined,
@@ -78,6 +88,11 @@ const subForm = reactive({
   purpose: '',
 })
 const reviewNote = ref('')
+const subDetail = reactive<{ visible: boolean; row: Subscription | null; mode: 'mine' | 'pending' }>({
+  visible: false,
+  row: null,
+  mode: 'mine',
+})
 
 const shareLabel = (m?: string) => {
   if (!m) return '-'
@@ -128,15 +143,12 @@ async function loadCatalog() {
 }
 
 async function loadSubscriptions() {
-  subscriptions.value = (await api.get('/exchange/portal/subscriptions')).data
-}
-
-async function loadObjections() {
-  try {
-    objections.value = (await api.get('/exchange/supply/objections')).data
-  } catch {
-    objections.value = []
-  }
+  const [mineRes, pendingRes] = await Promise.all([
+    api.get('/exchange/portal/subscriptions', { params: { scope: 'mine' } }),
+    api.get('/exchange/portal/subscriptions', { params: { scope: 'pending' } }),
+  ])
+  subscriptions.value = mineRes.data || []
+  pendingSubsList.value = pendingRes.data || []
 }
 
 const shareBrowseMode = ref<'theme' | 'dept'>('theme')
@@ -148,10 +160,18 @@ const hotTables = computed(() =>
   (home.value?.hotResources || []).filter((r) => r.catalogKind !== 'SERVICE' && !String(r.shareModes || '').includes('API')).slice(0, 5),
 )
 
-function formatDate(v?: string) {
-  if (!v) return ''
-  return String(v).slice(0, 10)
-}
+const themeApiTotal = computed(() =>
+  (home.value?.themes || []).reduce((s, t) => s + (t.apiCount || 0), 0),
+)
+const themeDataTotal = computed(() =>
+  (home.value?.themes || []).reduce((s, t) => s + (t.dataCount ?? t.count ?? 0), 0),
+)
+const deptApiTotal = computed(() =>
+  (home.value?.providers || []).reduce((s, p) => s + (p.apiCount || 0), 0),
+)
+const deptDataTotal = computed(() =>
+  (home.value?.providers || []).reduce((s, p) => s + (p.dataCount ?? p.count ?? 0), 0),
+)
 
 async function loadTab() {
   loading.value = true
@@ -161,14 +181,9 @@ async function loadTab() {
     } else if (portalTab.value === 'catalog') {
       await Promise.all([ensureHomeFacets(), loadCatalog()])
     } else if (portalTab.value === 'subscribe') {
-      await Promise.all([
-        loadSubscriptions(),
-        catalogOptions.value.length ? Promise.resolve() : loadHome().then(() => loadCatalog().then(() => {
-          catalogOptions.value = catalogRows.value.length ? catalogRows.value : catalogOptions.value
-        })),
-      ])
+      await ensureHomeFacets()
     } else if (portalTab.value === 'myspace') {
-      await Promise.all([loadSubscriptions(), loadObjections()])
+      await loadSubscriptions()
     }
   } catch (e: unknown) {
     ElMessage.error((e as Error)?.message || '加载失败')
@@ -209,13 +224,12 @@ function openPreview(row: CatalogRow) {
 }
 
 function applyFromCatalog(row: CatalogRow) {
-  subForm.catalogId = Number(row.id)
-  if (row.catalogKind === 'SERVICE') subForm.resourceType = 'API'
-  else if (row.shareModes?.includes('TABLE')) subForm.resourceType = 'TABLE'
-  else if (row.shareModes?.includes('FILE')) subForm.resourceType = 'FILE'
-  else subForm.resourceType = 'API'
   preview.visible = false
-  setTab('subscribe')
+  setTab('catalog')
+  // 留在共享资源页打开详情申请，不跳转订阅 Tab
+  setTimeout(() => {
+    shareCatalogRef.value?.openDetail?.(row as unknown as ShareCatalogRow)
+  }, 80)
 }
 
 async function submitSubscription() {
@@ -233,11 +247,73 @@ async function reviewSub(id: number, action: 'APPROVE' | 'REJECT') {
   })
   ElMessage.success(action === 'APPROVE' ? `已通过${res.data?.taskId ? `，任务 #${res.data.taskId}` : ''}` : '已驳回')
   reviewNote.value = ''
+  subDetail.visible = false
   await loadSubscriptions()
 }
 
-const pendingSubs = computed(() => subscriptions.value.filter((s) => s.status === 'PENDING'))
+function openSubDetail(row: Subscription, mode: 'mine' | 'pending') {
+  subDetail.row = row
+  subDetail.mode = mode
+  subDetail.visible = true
+}
+
+function payloadEntries(row: Subscription | null): { label: string; value: string }[] {
+  if (!row) return []
+  const base: { label: string; value: string }[] = [
+    { label: '资源名称', value: String(row.catalogTitle || row.catalogId || '—') },
+    { label: '资源编码', value: String(row.catalogCode || '—') },
+    { label: '共享方式', value: shareLabel(row.resourceType) },
+    { label: '申请单位', value: row.applicantOrg || '—' },
+    { label: '提供方', value: row.providerOrg || '—' },
+    { label: '用途/场景', value: row.purpose || '—' },
+    { label: '状态', value: statusLabel(row.status) },
+    { label: '申请人', value: row.createdBy || '—' },
+    { label: '申请时间', value: row.createdAt ? String(row.createdAt).replace('T', ' ').slice(0, 19) : '—' },
+  ]
+  if (row.approverNote) base.push({ label: '审批意见', value: row.approverNote })
+  if (row.taskId) base.push({ label: '交换任务', value: `#${row.taskId} ${row.taskStatus || ''}` })
+
+  const p = row.applyPayload
+  const obj = typeof p === 'string' ? (() => { try { return JSON.parse(p) as Record<string, unknown> } catch { return null } })() : p
+  if (obj && typeof obj === 'object') {
+    const map: Record<string, string> = {
+      contactName: '联系人',
+      contactPhone: '联系电话',
+      contactEmail: '联系邮箱',
+      scene: '使用办事场景',
+      systemName: '应用系统名称',
+      timeRange: '使用时间范围',
+      callFreq: '接口调用频次',
+      peakFreq: '接口峰值频率',
+      useDays: '接口使用期限(天)',
+      useScope: '使用范围说明',
+      dataDesc: '数据描述',
+      applyBasis: '申请依据',
+      techReq: '其他技术需求',
+    }
+    for (const [k, label] of Object.entries(map)) {
+      if (obj[k] != null && String(obj[k]).trim() !== '') {
+        base.push({ label, value: String(obj[k]) })
+      }
+    }
+  }
+  return base
+}
+
+const pendingSubs = computed(() => pendingSubsList.value)
 const mySubs = computed(() => subscriptions.value)
+const myspacePage = ref(1)
+const myspacePageSize = ref(10)
+const pendingPage = ref(1)
+const pendingPageSize = ref(10)
+const pagedMySubs = computed(() => {
+  const start = (myspacePage.value - 1) * myspacePageSize.value
+  return mySubs.value.slice(start, start + myspacePageSize.value)
+})
+const pagedPendingSubs = computed(() => {
+  const start = (pendingPage.value - 1) * pendingPageSize.value
+  return pendingSubs.value.slice(start, start + pendingPageSize.value)
+})
 
 // themeTree reserved for future grouping
 
@@ -289,19 +365,20 @@ onMounted(() => {
 
       <section class="panel">
         <div class="panel__head">
-          <h2>共享资源 <span class="panel__en">RESOURCES</span></h2>
+          <h2>共享资源</h2>
           <div class="seg">
             <button type="button" :class="{ 'is-on': shareBrowseMode === 'theme' }" @click="shareBrowseMode = 'theme'">主题</button>
             <button type="button" :class="{ 'is-on': shareBrowseMode === 'dept' }" @click="shareBrowseMode = 'dept'">部门</button>
           </div>
         </div>
 
+        <!-- 主题：审批通过且选择了「主题资源目录」的资源 -->
         <div v-if="shareBrowseMode === 'theme'" class="theme-grid">
           <button type="button" class="theme-hero" @click="setTab('catalog')">
             <div class="theme-hero__title">主题信息资源</div>
             <div class="theme-hero__metrics">
-              <div><span>接口总量</span><b class="c-cyan">{{ home?.apiServiceTotal || 0 }}</b></div>
-              <div><span>数据资源</span><b class="c-amber">{{ home?.openResourceTotal || 0 }}</b></div>
+              <div><span>接口总数</span><b class="c-cyan">{{ themeApiTotal || home?.apiServiceTotal || 0 }}</b></div>
+              <div><span>数据库表</span><b class="c-amber">{{ themeDataTotal || home?.openResourceTotal || 0 }}</b></div>
             </div>
           </button>
           <button
@@ -317,12 +394,21 @@ onMounted(() => {
               <span class="theme-card__chev">›</span>
             </div>
             <div class="theme-card__nums">
-              <span>接口数 <b class="c-green">{{ t.apiCount || 0 }}</b></span>
-              <span>数据资源数 <b class="c-amber">{{ t.dataCount ?? t.count ?? 0 }}</b></span>
+              <span>接口数 <b class="c-green">{{ t.apiCount ?? 0 }}</b></span>
+              <span>数据库表数 <b class="c-amber">{{ t.dataCount ?? t.count ?? 0 }}</b></span>
             </div>
           </button>
+          <div v-if="!(home?.themes?.length)" class="theme-empty">暂无主题资源目录，请先在「数据资源分类」维护主题分类</div>
         </div>
-        <div v-else class="theme-grid theme-grid--dept">
+        <!-- 部门：审批通过且选择了组织机构（提供方）的资源 -->
+        <div v-else class="theme-grid">
+          <button type="button" class="theme-hero" @click="setTab('catalog')">
+            <div class="theme-hero__title">部门信息资源</div>
+            <div class="theme-hero__metrics">
+              <div><span>接口总数</span><b class="c-cyan">{{ deptApiTotal || home?.apiServiceTotal || 0 }}</b></div>
+              <div><span>数据库表</span><b class="c-amber">{{ deptDataTotal || home?.openResourceTotal || 0 }}</b></div>
+            </div>
+          </button>
           <button
             v-for="p in home?.providers || []"
             :key="p.name"
@@ -336,92 +422,57 @@ onMounted(() => {
               <span class="theme-card__chev">›</span>
             </div>
             <div class="theme-card__nums">
-              <span>接口数 <b class="c-green">{{ p.apiCount || 0 }}</b></span>
-              <span>数据资源数 <b class="c-amber">{{ p.dataCount ?? p.count }}</b></span>
+              <span>接口数 <b class="c-green">{{ p.apiCount ?? 0 }}</b></span>
+              <span>数据库表数 <b class="c-amber">{{ p.dataCount ?? p.count ?? 0 }}</b></span>
             </div>
           </button>
+          <div v-if="!(home?.providers?.length)" class="theme-empty">暂无组织机构，请先在「组织与账号」维护部门</div>
         </div>
       </section>
 
       <section class="panel">
         <div class="panel__head">
-          <h2>共享动态 <span class="panel__en">DYNAMIC</span></h2>
+          <h2>资源动态</h2>
         </div>
         <div class="dual">
           <div class="dual__col">
-            <div class="dual__caption">
-              <h3>资源发布动态</h3>
-              <button type="button" class="more" @click="setTab('catalog')">更多</button>
-            </div>
-            <ul class="feed-list">
-              <li v-for="r in (home?.latestResources || []).slice(0, 6)" :key="String(r.id)">
-                <button type="button" @click="openPreview(r)">
-                  <span class="feed-list__dot" />
-                  <span class="feed-list__title">{{ r.title }}</span>
-                  <span class="feed-list__date">{{ formatDate(r.publishedAt) }}</span>
-                </button>
-              </li>
-              <li v-if="!(home?.latestResources?.length)" class="empty">暂无发布动态</li>
-            </ul>
-          </div>
-          <div class="dual__col">
-            <div class="dual__caption">
-              <h3>资源申请动态</h3>
-              <button type="button" class="more" @click="setTab('subscribe')">更多</button>
-            </div>
-            <ul class="feed-list">
-              <li v-for="a in (home?.latestApplications || []).slice(0, 6)" :key="a.id">
-                <button type="button" @click="setTab('subscribe')">
-                  <span class="feed-list__dot feed-list__dot--amber" />
-                  <span class="feed-list__title">{{ a.applicantOrg || '申请单位' }} · {{ a.catalogTitle }}</span>
-                  <span class="feed-list__date">{{ formatDate(a.createdAt) }}</span>
-                </button>
-              </li>
-              <li v-if="!(home?.latestApplications?.length)" class="empty">暂无申请动态</li>
-            </ul>
-          </div>
-        </div>
-      </section>
-
-      <section class="panel">
-        <div class="panel__head">
-          <h2>热门资源 <span class="panel__en">RESOURCES</span></h2>
-        </div>
-        <div class="dual">
-          <div class="dual__col">
-            <div class="dual__caption">
-              <h3>热门接口 TOP 5</h3>
-              <button type="button" class="more" @click="catalogKind='SERVICE'; setTab('catalog')">更多</button>
+            <div class="dual__caption dual__caption--blue">
+              <div>
+                <h3>热门接口</h3>
+              </div>
+              <button type="button" class="more more--light" @click="catalogKind='SERVICE'; setTab('catalog')">更多</button>
             </div>
             <ul class="res-list">
-              <li v-for="r in (hotApis.length ? hotApis : (home?.hotResources || []).slice(0, 5))" :key="String(r.id)">
+              <li v-for="r in (hotApis.length ? hotApis : (home?.hotResources || []).slice(0, 5))" :key="'api-' + String(r.id)">
                 <button type="button" @click="openPreview(r)">
                   <span class="res-list__main">
                     <span class="res-list__title">{{ r.title }}</span>
-                    <span class="res-list__meta">{{ r.providerOrg || '—' }}</span>
+                    <span class="res-list__meta">来源: {{ r.providerOrg || '—' }}</span>
                   </span>
-                  <span class="res-list__views">访问量 {{ r.hotScore || 0 }}</span>
+                  <span class="res-list__views">访问量: {{ r.hotScore || 0 }}次</span>
                 </button>
               </li>
-              <li v-if="!(home?.hotResources?.length)" class="empty">暂无热门接口</li>
+              <li v-if="!(hotApis.length || home?.hotResources?.length)" class="empty">暂无热门接口</li>
             </ul>
           </div>
           <div class="dual__col">
-            <div class="dual__caption">
-              <h3>热门库表 TOP 5</h3>
-              <button type="button" class="more" @click="catalogKind='DATA'; setTab('catalog')">更多</button>
+            <div class="dual__caption dual__caption--blue">
+              <div>
+                <h3>热门库表</h3>
+              </div>
+              <button type="button" class="more more--light" @click="catalogKind='DATA'; setTab('catalog')">更多</button>
             </div>
             <ul class="res-list">
-              <li v-for="r in (hotTables.length ? hotTables : (home?.latestResources || []).slice(0, 5))" :key="String(r.id)">
+              <li v-for="r in (hotTables.length ? hotTables : (home?.latestResources || []).slice(0, 5))" :key="'tbl-' + String(r.id)">
                 <button type="button" @click="openPreview(r)">
                   <span class="res-list__main">
                     <span class="res-list__title">{{ r.title }}</span>
-                    <span class="res-list__meta">{{ r.providerOrg || '—' }}</span>
+                    <span class="res-list__meta">来源: {{ r.providerOrg || '—' }}</span>
                   </span>
-                  <span class="res-list__views">访问量 {{ r.hotScore || 0 }}</span>
+                  <span class="res-list__views">访问量: {{ r.hotScore || 0 }}次</span>
                 </button>
               </li>
-              <li v-if="!(home?.latestResources?.length || hotTables.length)" class="empty">暂无热门库表</li>
+              <li v-if="!(hotTables.length || home?.latestResources?.length)" class="empty">暂无热门库表</li>
             </ul>
           </div>
         </div>
@@ -429,7 +480,7 @@ onMounted(() => {
 
       <section class="panel panel--info">
         <div class="panel__head">
-          <h2>信息专区 <span class="panel__en">INFORMATION</span></h2>
+          <h2>信息管理办法专区</h2>
         </div>
         <div class="info-grid">
           <div class="info-banner" @click="setTab('myspace')">
@@ -438,18 +489,19 @@ onMounted(() => {
           </div>
           <div class="info-side">
             <div class="dual__col info-block">
+              <div class="dual__caption"><h3>政策法规</h3></div>
+              <ul class="feed-list">
+                <li><span class="feed-list__static"><span>政务数据共享条例</span><em>2026-02-28</em></span></li>
+                <li><span class="feed-list__static"><span>公共数据资源管理办法</span><em>2026-03-12</em></span></li>
+                <li><span class="feed-list__static"><span>承德市数据共享交换实施细则</span><em>2026-03-12</em></span></li>
+              </ul>
+            </div>
+            <div class="dual__col info-block">
               <div class="dual__caption"><h3>工作动态</h3></div>
               <ul class="feed-list">
                 <li><span class="feed-list__static"><span>数据共享门户上线试运行</span><em>2026-07-01</em></span></li>
                 <li><span class="feed-list__static"><span>全市政务数据归集进度通报</span><em>2026-06-18</em></span></li>
-              </ul>
-            </div>
-            <div class="dual__col info-block">
-              <div class="dual__caption"><h3>政策法规</h3></div>
-              <ul class="feed-list">
-                <li><span class="feed-list__static"><span>政务数据共享条例</span><em>2026-03-12</em></span></li>
-                <li><span class="feed-list__static"><span>公共数据资源管理办法</span><em>2026-03-12</em></span></li>
-                <li><span class="feed-list__static"><span>承德市数据共享交换实施细则</span><em>2026-03-12</em></span></li>
+                <li><span class="feed-list__static"><span>关于公示高新区数据资源目录建设规划的通知</span><em>2026-02-28</em></span></li>
               </ul>
             </div>
           </div>
@@ -464,188 +516,151 @@ onMounted(() => {
 
     <!-- 共享资源 / 其他业务区 -->
     <div v-else class="portal-body">
-      <PageCard v-if="portalTab === 'catalog'" title="共享资源 · 资源目录">
-        <el-row :gutter="16">
-          <el-col :span="6">
-            <div class="filter-panel">
-              <h4>主题领域</h4>
-              <el-check-tag
-                v-for="t in home?.themes || []"
-                :key="t.code"
-                :checked="filterTheme === t.code"
-                style="margin:0 6px 6px 0"
-                @change="filterTheme = filterTheme === t.code ? '' : t.code; loadCatalog()"
-              >{{ t.name }}</el-check-tag>
-              <h4>数据提供方</h4>
-              <el-check-tag
-                v-for="p in home?.providers || []"
-                :key="p.name"
-                :checked="filterProvider === p.name"
-                style="margin:0 6px 6px 0"
-                @change="filterProvider = filterProvider === p.name ? '' : p.name; loadCatalog()"
-              >{{ p.name }}</el-check-tag>
-              <h4>共享方式</h4>
-              <el-radio-group v-model="filterShareMode" size="small" @change="loadCatalog">
-                <el-radio-button value="">全部</el-radio-button>
-                <el-radio-button value="TABLE">库表</el-radio-button>
-                <el-radio-button value="FILE">文件</el-radio-button>
-                <el-radio-button value="API">API</el-radio-button>
-              </el-radio-group>
-              <h4>目录类型</h4>
-              <el-radio-group v-model="catalogKind" size="small" @change="loadCatalog">
-                <el-radio-button value="">全部</el-radio-button>
-                <el-radio-button value="DATA">数据目录</el-radio-button>
-                <el-radio-button value="SERVICE">服务目录</el-radio-button>
-              </el-radio-group>
-            </div>
-          </el-col>
-          <el-col :span="18">
-            <div class="toolbar">
-              <el-input v-model="searchQ" clearable placeholder="关键词" style="max-width:240px" @keyup.enter="loadCatalog" />
-              <el-button type="primary" @click="loadCatalog">检索</el-button>
-              <el-radio-group v-model="catalogView" size="small">
-                <el-radio-button value="table">表格</el-radio-button>
-                <el-radio-button value="card">卡片</el-radio-button>
-              </el-radio-group>
-            </div>
-            <el-empty v-if="!catalogRows.length" description="没有找到您需要的资源" />
-            <el-table v-else-if="catalogView === 'table'" :data="catalogRows" stripe size="small">
-              <el-table-column prop="title" label="资源名称" min-width="140" />
-              <el-table-column prop="providerOrg" label="提供方" width="110" />
-              <el-table-column label="共享方式" min-width="120">
-                <template #default="{ row }">{{ shareLabel(row.shareModes) }}</template>
-              </el-table-column>
-              <el-table-column prop="resourceCount" label="挂接" width="70" />
-              <el-table-column label="操作" width="140">
-                <template #default="{ row }">
-                  <el-button link type="primary" @click="openPreview(row)">预览</el-button>
-                  <el-button link type="success" @click="applyFromCatalog(row)">申请</el-button>
-                </template>
-              </el-table-column>
-            </el-table>
-            <el-row v-else :gutter="12">
-              <el-col v-for="c in catalogRows" :key="String(c.id)" :span="8">
-                <el-card shadow="hover" class="res-card">
-                  <div class="card-code">{{ c.catalogCode }} · {{ kindLabel(c.catalogKind) }}</div>
-                  <div class="card-title">{{ c.title }}</div>
-                  <div class="card-desc">{{ c.description }}</div>
-                  <el-button size="small" type="primary" @click="applyFromCatalog(c)">申请</el-button>
-                </el-card>
-              </el-col>
-            </el-row>
-          </el-col>
-        </el-row>
-      </PageCard>
+      <div v-if="portalTab === 'catalog'" class="catalog-shell">
+        <ShareCatalogPanel
+          ref="shareCatalogRef"
+          :themes="home?.themes || []"
+          :providers="home?.providers || []"
+          @submitted="loadSubscriptions"
+        />
+      </div>
 
-      <template v-else-if="portalTab === 'subscribe'">
-        <PageCard>
-          <template #header>
-            <div class="subscribe-head">
-              <span class="subscribe-head__title">资源订阅申请</span>
-            </div>
-          </template>
-          <el-form inline class="portal-inline-form portal-inline-form--block">
-            <el-form-item label="资源" class="portal-field-xl">
-              <el-select v-model="subForm.catalogId" filterable placeholder="选择资源目录">
-                <el-option
-                  v-for="c in (catalogOptions.length ? catalogOptions : catalogRows)"
-                  :key="String(c.id)"
-                  :label="`${c.catalogCode} ${c.title}`"
-                  :value="Number(c.id)"
-                />
-              </el-select>
-            </el-form-item>
-            <el-form-item label="共享方式" class="portal-field-md">
-              <el-select v-model="subForm.resourceType">
-                <el-option label="库表同步" value="TABLE" />
-                <el-option label="文件同步" value="FILE" />
-                <el-option label="API 服务" value="API" />
-              </el-select>
-            </el-form-item>
-            <el-form-item label="申请单位" class="portal-field-md"><el-input v-model="subForm.applicantOrg" /></el-form-item>
-            <el-form-item label="用途" class="portal-field-lg"><el-input v-model="subForm.purpose" /></el-form-item>
-            <el-form-item class="portal-form-actions">
-              <el-button type="primary" @click="submitSubscription">提交申请</el-button>
-            </el-form-item>
-          </el-form>
-          <el-input v-model="reviewNote" placeholder="审批意见" style="max-width:360px;margin-bottom:12px" />
-          <el-table :data="subscriptions" stripe size="small">
-            <el-table-column prop="id" label="ID" width="70" />
-            <el-table-column label="资源" min-width="140">
-              <template #default="{ row }">{{ row.catalogTitle || row.catalogId }}</template>
-            </el-table-column>
-            <el-table-column label="方式" width="100">
-              <template #default="{ row }">{{ shareLabel(row.resourceType) }}</template>
-            </el-table-column>
-            <el-table-column label="状态" width="100">
-              <template #default="{ row }"><el-tag :type="$statusTagType(row.status)">{{ $statusLabel(row.status) }}</el-tag></template>
-            </el-table-column>
-            <el-table-column label="任务" width="120">
-              <template #default="{ row }">
-                <span v-if="row.taskId">#{{ row.taskId }} {{ $statusLabel(row.taskStatus) }}</span>
-                <span v-else>—</span>
-              </template>
-            </el-table-column>
-            <el-table-column label="操作" width="140">
-              <template #default="{ row }">
-                <template v-if="row.status === 'PENDING'">
-                  <el-button link type="success" @click="reviewSub(row.id, 'APPROVE')">通过</el-button>
-                  <el-button link type="danger" @click="reviewSub(row.id, 'REJECT')">驳回</el-button>
-                </template>
-              </template>
-            </el-table-column>
-          </el-table>
-        </PageCard>
-      </template>
+      <div v-else-if="portalTab === 'subscribe'" class="catalog-shell">
+        <SubscribeApplyPanel
+          :themes="home?.themes || []"
+          :base-libraries="home?.baseLibraries || []"
+          :applicant-org="subForm.applicantOrg"
+          @submitted="loadSubscriptions"
+        />
+      </div>
 
-      <PageCard v-else-if="portalTab === 'myspace'" title="我的空间">
-        <el-tabs>
-          <el-tab-pane label="我的申请/订阅" name="subs">
-            <el-table :data="mySubs" stripe size="small">
-              <el-table-column prop="id" label="ID" width="70" />
-              <el-table-column label="资源" min-width="140">
-                <template #default="{ row }">{{ row.catalogTitle || row.catalogId }}</template>
-              </el-table-column>
-              <el-table-column label="状态" width="100">
-          <template #default="{ row }">{{ $statusLabel(row.status) }}</template>
-        </el-table-column>
-              <el-table-column label="交换任务" width="140">
+      <div v-else-if="portalTab === 'myspace'" class="myspace">
+        <header class="myspace__hero">
+          <div>
+            <h1>我的空间</h1>
+            <p>查看我的申请进度与待办审批</p>
+          </div>
+          <div class="myspace__stats">
+            <div class="myspace-stat">
+              <b>{{ mySubs.length }}</b>
+              <span>我的申请</span>
+            </div>
+            <div class="myspace-stat">
+              <b>{{ pendingSubs.length }}</b>
+              <span>待我审批</span>
+            </div>
+          </div>
+        </header>
+
+        <div class="myspace__grid">
+          <section class="myspace-card myspace-card--wide">
+            <div class="myspace-card__head">
+              <h2>我的申请</h2>
+              <span class="myspace-hint">仅可查看，点击行查看详情</span>
+            </div>
+            <el-table
+              :data="pagedMySubs"
+              stripe
+              class="clickable-table"
+              @row-click="(row: Subscription) => openSubDetail(row, 'mine')"
+            >
+              <el-table-column prop="id" label="编号" width="80" />
+              <el-table-column label="资源" min-width="180">
                 <template #default="{ row }">
-                  <span v-if="row.taskId">#{{ row.taskId }} / {{ $statusLabel(row.taskStatus) }}</span>
-                  <span v-else>—</span>
+                  <button type="button" class="link-title" @click.stop="openSubDetail(row, 'mine')">
+                    {{ row.catalogTitle || row.catalogId }}
+                  </button>
+                </template>
+              </el-table-column>
+              <el-table-column label="共享方式" width="110">
+                <template #default="{ row }">{{ shareLabel(row.resourceType) }}</template>
+              </el-table-column>
+              <el-table-column label="申请单位" width="140" prop="applicantOrg" />
+              <el-table-column label="状态" width="110">
+                <template #default="{ row }">
+                  <el-tag :type="$statusTagType(row.status)" size="small">{{ $statusLabel(row.status) }}</el-tag>
+                </template>
+              </el-table-column>
+              <el-table-column label="申请时间" width="170">
+                <template #default="{ row }">
+                  {{ row.createdAt ? String(row.createdAt).replace('T', ' ').slice(0, 19) : '—' }}
                 </template>
               </el-table-column>
             </el-table>
-          </el-tab-pane>
-          <el-tab-pane label="待我审批" name="pending">
-            <el-table :data="pendingSubs" stripe size="small">
-              <el-table-column prop="applicantOrg" label="申请单位" width="120" />
-              <el-table-column label="资源" min-width="140">
-                <template #default="{ row }">{{ row.catalogTitle || row.catalogId }}</template>
-              </el-table-column>
-              <el-table-column label="操作" width="140">
+            <PortalPagination
+              v-if="mySubs.length"
+              v-model:page="myspacePage"
+              v-model:page-size="myspacePageSize"
+              :total="mySubs.length"
+            />
+          </section>
+
+          <section class="myspace-card myspace-card--wide">
+            <div class="myspace-card__head">
+              <h2>待我审批</h2>
+              <span class="myspace-badge" v-if="pendingSubs.length">{{ pendingSubs.length }}</span>
+            </div>
+            <el-empty v-if="!pendingSubs.length" description="暂无待审批申请" :image-size="72" />
+            <el-table
+              v-else
+              :data="pagedPendingSubs"
+              stripe
+              class="clickable-table"
+              @row-click="(row: Subscription) => openSubDetail(row, 'pending')"
+            >
+              <el-table-column label="资源" min-width="180">
                 <template #default="{ row }">
-                  <el-button link type="success" @click="reviewSub(row.id, 'APPROVE')">通过</el-button>
-                  <el-button link type="danger" @click="reviewSub(row.id, 'REJECT')">驳回</el-button>
+                  <button type="button" class="link-title" @click.stop="openSubDetail(row, 'pending')">
+                    {{ row.catalogTitle || row.catalogId }}
+                  </button>
+                </template>
+              </el-table-column>
+              <el-table-column prop="applicantOrg" label="申请单位" width="160" />
+              <el-table-column label="共享方式" width="110">
+                <template #default="{ row }">{{ shareLabel(row.resourceType) }}</template>
+              </el-table-column>
+              <el-table-column prop="purpose" label="用途" min-width="140" show-overflow-tooltip />
+              <el-table-column label="申请时间" width="170">
+                <template #default="{ row }">
+                  {{ row.createdAt ? String(row.createdAt).replace('T', ' ').slice(0, 19) : '—' }}
+                </template>
+              </el-table-column>
+              <el-table-column label="操作" width="120" fixed="right">
+                <template #default="{ row }">
+                  <el-button link type="primary" @click.stop="openSubDetail(row, 'pending')">审核</el-button>
                 </template>
               </el-table-column>
             </el-table>
-          </el-tab-pane>
-          <el-tab-pane label="异议" name="obj">
-            <el-table :data="objections" stripe size="small">
-              <el-table-column prop="catalogId" label="目录ID" width="90" />
-              <el-table-column label="类型" width="100">
-                <template #default="{ row }">{{ $statusLabel(row.objectionType) }}</template>
-              </el-table-column>
-              <el-table-column prop="content" label="内容" min-width="200" />
-              <el-table-column label="状态" width="100">
-          <template #default="{ row }">{{ $statusLabel(row.status) }}</template>
-        </el-table-column>
-            </el-table>
-          </el-tab-pane>
-        </el-tabs>
-      </PageCard>
+            <PortalPagination
+              v-if="pendingSubs.length"
+              v-model:page="pendingPage"
+              v-model:page-size="pendingPageSize"
+              :total="pendingSubs.length"
+            />
+          </section>
+        </div>
+      </div>
     </div>
+
+    <el-drawer v-model="subDetail.visible" :title="subDetail.mode === 'mine' ? '申请详情' : '审批详情'" size="520px">
+      <template v-if="subDetail.row">
+        <el-descriptions :column="1" border size="small">
+          <el-descriptions-item v-for="(it, i) in payloadEntries(subDetail.row)" :key="i" :label="it.label">
+            {{ it.value }}
+          </el-descriptions-item>
+        </el-descriptions>
+        <div v-if="subDetail.mode === 'pending' && subDetail.row.status === 'PENDING'" class="sub-detail-ops">
+          <el-input
+            v-model="reviewNote"
+            placeholder="审批意见（驳回时建议填写）"
+            clearable
+            style="margin-bottom: 12px"
+          />
+          <el-button type="success" @click="reviewSub(subDetail.row.id, 'APPROVE')">通过</el-button>
+          <el-button type="danger" @click="reviewSub(subDetail.row.id, 'REJECT')">驳回</el-button>
+        </div>
+      </template>
+    </el-drawer>
 
     <el-drawer v-model="preview.visible" title="资源预览" size="420px">
       <template v-if="preview.row">
@@ -663,6 +678,119 @@ onMounted(() => {
 <style scoped>
 .portal-home { background: #f3f6fb; min-height: 100%; }
 .portal-body { max-width: 1280px; margin: 0 auto; padding: 16px 20px 28px; }
+.catalog-shell { max-width: 1280px; margin: 0 auto; padding: 12px 16px 28px; background: transparent; }
+
+.myspace {
+  max-width: 1280px;
+  margin: 0 auto;
+  padding: 12px 16px 32px;
+}
+.myspace__hero {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  flex-wrap: wrap;
+  padding: 22px 24px;
+  margin-bottom: 16px;
+  border-radius: 10px;
+  background: linear-gradient(105deg, #eef5ff 0%, #f7fbff 55%, #e8f3ff 100%);
+  border: 1px solid #e8edf5;
+}
+.myspace__hero h1 {
+  margin: 0 0 6px;
+  font-size: 24px;
+  font-weight: 700;
+  color: #1f2d3d;
+}
+.myspace__hero p {
+  margin: 0;
+  font-size: 13px;
+  color: #909399;
+}
+.myspace__stats {
+  display: flex;
+  gap: 28px;
+}
+.myspace-stat {
+  text-align: center;
+  min-width: 72px;
+}
+.myspace-stat b {
+  display: block;
+  font-size: 28px;
+  font-weight: 700;
+  color: #1677ff;
+  line-height: 1.1;
+}
+.myspace-stat span {
+  font-size: 12px;
+  color: #909399;
+}
+.myspace__grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 14px;
+}
+.myspace-card {
+  background: #fff;
+  border: 1px solid #e8edf5;
+  border-radius: 10px;
+  padding: 16px 18px 18px;
+  box-shadow: 0 1px 4px rgba(15, 40, 80, 0.04);
+  min-height: auto;
+}
+.myspace-card--wide {
+  grid-column: auto;
+  min-height: auto;
+}
+.myspace-card__head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 14px;
+  flex-wrap: wrap;
+}
+.myspace-card__head h2 {
+  margin: 0;
+  font-size: 17px;
+  font-weight: 700;
+  color: #1f2d3d;
+  padding-left: 10px;
+  border-left: 3px solid #1677ff;
+}
+.myspace-hint { font-size: 12px; color: #909399; }
+.myspace-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 22px;
+  height: 22px;
+  padding: 0 7px;
+  border-radius: 999px;
+  background: #1677ff;
+  color: #fff;
+  font-size: 12px;
+  font-weight: 600;
+}
+.link-title {
+  border: 0;
+  background: transparent;
+  color: #1677ff;
+  cursor: pointer;
+  padding: 0;
+  font-size: 13px;
+  text-align: left;
+}
+.link-title:hover { text-decoration: underline; }
+.clickable-table :deep(tbody tr) { cursor: pointer; }
+.sub-detail-ops { margin-top: 16px; }
+.muted { color: #c0c4cc; }
+
+@media (max-width: 960px) {
+  .myspace__grid { grid-template-columns: 1fr; }
+}
 
 .hero {
   position: relative;
@@ -835,6 +963,16 @@ onMounted(() => {
 .theme-grid--dept {
   grid-template-columns: repeat(4, 1fr);
 }
+.theme-empty {
+  grid-column: 1 / -1;
+  padding: 28px 16px;
+  text-align: center;
+  color: #9ca3af;
+  font-size: 13px;
+  background: #fff;
+  border: 1px dashed #dbe3f0;
+  border-radius: 10px;
+}
 .theme-hero {
   grid-row: span 2;
   min-height: 220px;
@@ -932,6 +1070,20 @@ onMounted(() => {
   background: #eef5ff;
   border-bottom: 1px solid #dde7f5;
 }
+.dual__caption--blue {
+  background: linear-gradient(90deg, #0d47a1, #1976d2);
+  border-bottom: 0;
+  color: #fff;
+}
+.dual__caption--blue h3 { color: #fff; }
+.dual__en {
+  display: block;
+  margin-top: 2px;
+  font-size: 11px;
+  opacity: 0.75;
+  letter-spacing: 0.04em;
+}
+.more--light { color: rgba(255,255,255,0.92); }
 .dual__caption h3 {
   margin: 0;
   font-size: 15px;

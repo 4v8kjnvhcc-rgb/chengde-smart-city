@@ -1,6 +1,5 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from 'vue'
-import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import api from '@/api/http'
 import { useAuthStore } from '@/stores/auth'
@@ -13,23 +12,40 @@ import { ingestionApi, useIngestionLoading, type Project } from '../useIngestion
 import { ingestionRegisterCache } from '../ingestion-register-cache'
 import ProjectSystemDetailView from './ProjectSystemDetailView.vue'
 import {
-  approveRegister,
-  canAuditRegister,
   canEditRegister,
   canSubmitRegister,
-  loadRegisterLogs,
   registerStatusZh,
-  rejectRegister,
   submitRegister,
   useRegisterWorkflowRole,
 } from './register-workflow'
 
-const router = useRouter()
+function isApprovedRegister(status?: string | null) {
+  const s = String(status || '').toUpperCase()
+  return s === 'APPROVED' || s === 'ARCHIVED'
+}
+
 const auth = useAuthStore()
 const { loading, loadError, withLoad } = useIngestionLoading()
 const projects = ref<Project[]>([])
 const selectedIds = ref<number[]>([])
 const orgs = ref<Array<{ id: number; orgName: string }>>([])
+const clusterOptions = ref<Array<{ id: number; clusterCode: string; clusterName: string; accountName: string }>>([])
+
+interface GrantUser {
+  id: number
+  username: string
+  displayName: string
+  orgId?: number
+}
+
+interface ProjectGrantRow {
+  id: number
+  projectId: number
+  projectName?: string
+  granteeId?: number
+  granteeName?: string
+  perm?: string
+}
 
 const detailProjectId = ref<number | null>(null)
 
@@ -39,6 +55,7 @@ const projectSaving = ref(false)
 const editingProjectId = ref<number | null>(null)
 const projectForm = reactive({
   boundOrgId: undefined as number | undefined,
+  clusterAccountId: undefined as number | undefined,
   projectName: '',
   systemName: '',
   sourceName: '',
@@ -76,14 +93,17 @@ const detailProject = computed(() =>
 /** 有登记菜单即可操作页内全部按钮（角色不再拆按钮权限） */
 const canDeleteProject = computed(() => true)
 const canCreateProject = computed(() => true)
-const { canSubmit, canAudit } = useRegisterWorkflowRole()
+const { canSubmit } = useRegisterWorkflowRole()
 
-const viewDialog = ref(false)
-const viewLogs = ref<Record<string, unknown>[]>([])
-const viewRow = ref<Project | null>(null)
-const auditRejectVisible = ref(false)
-const auditRejectReason = ref('')
-const auditTarget = ref<Project | null>(null)
+const projectGrantVisible = ref(false)
+const projectGrantSaving = ref(false)
+const grantUsers = ref<GrantUser[]>([])
+const projectGrants = ref<ProjectGrantRow[]>([])
+const projectGrantForm = reactive({
+  projectId: 0,
+  projectName: '',
+  userId: undefined as number | undefined,
+})
 
 const selectedProject = computed(() => {
   if (selectedIds.value.length !== 1) return null
@@ -92,6 +112,7 @@ const selectedProject = computed(() => {
 
 function resetProjectForm() {
   projectForm.boundOrgId = auth.user?.orgId
+  projectForm.clusterAccountId = undefined
   projectForm.projectName = ''
   projectForm.systemName = ''
   projectForm.sourceName = ''
@@ -113,6 +134,14 @@ async function ensureOrgsLoaded() {
   }
 }
 
+async function ensureClustersLoaded() {
+  try {
+    clusterOptions.value = (await ingestionApi.clusterAccountOptions()).data || []
+  } catch {
+    clusterOptions.value = []
+  }
+}
+
 async function reload() {
   await withLoad(async () => {
     const p = await ingestionApi.projects()
@@ -129,7 +158,7 @@ async function reload() {
 async function openCreateProject() {
   projectDialogMode.value = 'create'
   resetProjectForm()
-  await ensureOrgsLoaded()
+  await Promise.all([ensureOrgsLoaded(), ensureClustersLoaded()])
   projectDialog.value = true
 }
 
@@ -148,8 +177,9 @@ async function openEditProject(row?: Project | null) {
   resetProjectForm()
   editingProjectId.value = target.id
   projectForm.boundOrgId = target.boundOrgId
+  projectForm.clusterAccountId = target.clusterAccountId ?? undefined
   projectForm.projectName = target.projectName || ''
-  await ensureOrgsLoaded()
+  await Promise.all([ensureOrgsLoaded(), ensureClustersLoaded()])
   projectDialog.value = true
 }
 
@@ -195,6 +225,7 @@ async function submitProjectDialog() {
       const projectId = Number((await ingestionApi.createProject({
         projectName: projectForm.projectName.trim(),
         systemName: projectForm.systemName.trim(),
+        clusterAccountId: projectForm.clusterAccountId ?? null,
         ...boundOrgPayload,
       })).data)
       const systemId = Number((await ingestionApi.createSystem({
@@ -221,6 +252,7 @@ async function submitProjectDialog() {
     } else if (editingProjectId.value) {
       await ingestionApi.updateProject(editingProjectId.value, {
         projectName: projectForm.projectName.trim(),
+        clusterAccountId: projectForm.clusterAccountId ?? null,
         ...boundOrgPayload,
       })
       ElMessage.success('项目已更新')
@@ -234,56 +266,136 @@ async function submitProjectDialog() {
   }
 }
 
-async function deleteProject(row?: Project | null) {
-  const target = row || selectedProject.value
-  if (!target) {
-    ElMessage.warning('请先选中要删除的项目')
-    return
-  }
-  if (isOtherProject(target.projectCode)) {
+async function deleteOneProject(row: Project) {
+  if (isOtherProject(row.projectCode)) {
     ElMessage.warning('「其他」为系统初始化项目，不可删除')
     return
   }
-  await ElMessageBox.confirm(`确定删除项目「${target.projectName}」？若该项目下仍有系统将无法删除。`, '删除确认', { type: 'warning' })
-  await ingestionApi.deleteProject(target.id)
-  ElMessage.success('项目已删除')
-  if (detailProjectId.value === target.id) detailProjectId.value = null
-  selectedIds.value = selectedIds.value.filter((id) => id !== target.id)
-  await reload()
+  if (isApprovedRegister(row.registerStatus) && !auth.isSystemAdmin) {
+    ElMessage.warning('审核通过的项目仅超级管理员可删除')
+    return
+  }
+  try {
+    const list = (await ingestionApi.systems(row.id)).data || []
+    if (list.length > 0) {
+      await ElMessageBox.alert(
+        `该项目下已关联 ${list.length} 个系统，无法删除，请先删除系统后再删项目。`,
+        '删除校验',
+        { type: 'warning', confirmButtonText: '知道了' },
+      )
+      return
+    }
+  } catch (e: unknown) {
+    ElMessage.error(e instanceof Error ? e.message : '校验系统关联失败')
+    return
+  }
+  const tip = isApprovedRegister(row.registerStatus)
+    ? `该项目已审核通过，确认以超级管理员身份删除「${row.projectName}」？`
+    : `确定删除项目「${row.projectName}」？`
+  await ElMessageBox.confirm(tip, '删除确认', { type: 'warning' })
+  try {
+    await ingestionApi.deleteProject(row.id)
+    ElMessage.success('项目已删除')
+    selectedIds.value = selectedIds.value.filter((id) => id !== row.id)
+    await reload()
+  } catch (e: unknown) {
+    ElMessage.error(e instanceof Error ? e.message : '删除失败')
+  }
 }
 
-async function openView(row: Project) {
-  viewRow.value = row
-  viewLogs.value = await loadRegisterLogs('PROJECT', row.id)
-  viewDialog.value = true
+function canShowProjectDelete(row: Project) {
+  if (isOtherProject(row.projectCode)) return false
+  if (isApprovedRegister(row.registerStatus)) return !!auth.isSystemAdmin
+  return !!canDeleteProject.value
+}
+
+async function batchDeleteProjects() {
+  const ids = selectedIds.value.slice()
+  if (!ids.length) {
+    ElMessage.warning('请先勾选要删除的项目')
+    return
+  }
+  const targets = projects.value.filter((p) => ids.includes(p.id))
+  const blockedOther = targets.filter((p) => isOtherProject(p.projectCode))
+  let candidates = targets.filter((p) => !isOtherProject(p.projectCode))
+
+  if (!auth.isSystemAdmin) {
+    const approved = candidates.filter((p) => isApprovedRegister(p.registerStatus))
+    if (approved.length) {
+      await ElMessageBox.alert(
+        `以下项目已审核通过，仅超级管理员可删除：${approved.map((p) => p.projectName).join('、')}`,
+        '无法删除',
+        { type: 'warning' },
+      )
+      candidates = candidates.filter((p) => !isApprovedRegister(p.registerStatus))
+    }
+  }
+
+  if (!candidates.length) {
+    ElMessage.warning(
+      blockedOther.length ? '「其他」为系统初始化项目，不可删除' : '没有可删除的项目',
+    )
+    return
+  }
+
+  const withSystems: string[] = []
+  const deletable: Project[] = []
+  for (const p of candidates) {
+    try {
+      const list = (await ingestionApi.systems(p.id)).data || []
+      if (list.length > 0) {
+        withSystems.push(`${p.projectName}（${list.length} 个系统）`)
+      } else {
+        deletable.push(p)
+      }
+    } catch {
+      deletable.push(p)
+    }
+  }
+
+  if (withSystems.length) {
+    await ElMessageBox.alert(
+      `以下项目下已关联系统，无法删除，请先删除系统后再删项目：\n${withSystems.join('\n')}`,
+      '删除校验',
+      { type: 'warning', confirmButtonText: '知道了' },
+    )
+  }
+
+  if (!deletable.length) {
+    return
+  }
+
+  const names = deletable.map((p) => p.projectName).join('、')
+  const tip =
+    blockedOther.length > 0
+      ? `将删除 ${deletable.length} 个项目（已排除「其他」及不可删项）：${names}`
+      : `确定删除 ${deletable.length} 个项目：${names}？`
+  try {
+    await ElMessageBox.confirm(tip, '批量删除确认', { type: 'warning' })
+  } catch {
+    return
+  }
+
+  let ok = 0
+  const errors: string[] = []
+  for (const p of deletable) {
+    try {
+      await ingestionApi.deleteProject(p.id)
+      ok += 1
+      if (detailProjectId.value === p.id) detailProjectId.value = null
+    } catch (e: unknown) {
+      errors.push(`${p.projectName}：${e instanceof Error ? e.message : '删除失败'}`)
+    }
+  }
+  selectedIds.value = []
+  if (ok) ElMessage.success(`已删除 ${ok} 个项目`)
+  if (errors.length) ElMessage.error(errors.slice(0, 3).join('；'))
+  await reload()
 }
 
 async function doSubmit(row: Project) {
   await submitRegister('PROJECT', row.id)
   ElMessage.success('已提交审核')
-  await reload()
-}
-
-async function doApprove(row: Project) {
-  await approveRegister('PROJECT', row.id)
-  ElMessage.success('审核通过')
-  await reload()
-}
-
-function openReject(row: Project) {
-  auditTarget.value = row
-  auditRejectReason.value = ''
-  auditRejectVisible.value = true
-}
-
-async function doReject() {
-  if (!auditTarget.value || !auditRejectReason.value.trim()) {
-    ElMessage.warning('请填写驳回原因')
-    return
-  }
-  await rejectRegister('PROJECT', auditTarget.value.id, auditRejectReason.value.trim())
-  ElMessage.success('已驳回')
-  auditRejectVisible.value = false
   await reload()
 }
 
@@ -293,19 +405,85 @@ function openDetail(row: Project) {
   detailProjectId.value = row.id
 }
 
-/** 跳转访问控制 · 项目授权，并带上当前项目 */
-function openUserGrant(row: Project) {
+async function loadGrantUsers() {
+  try {
+    const res = await api.get('/system/users', { params: { page: 1, size: 500 } })
+    const records = (res.data?.records || res.data || []) as GrantUser[]
+    grantUsers.value = records.filter((u) => u && u.id != null)
+  } catch {
+    grantUsers.value = []
+  }
+}
+
+async function loadProjectGrants(projectId: number) {
+  try {
+    const res = await api.get('/system/access/project-grants', { params: { projectId } })
+    const rows = (res.data || []) as Array<ProjectGrantRow & { granteeType?: string }>
+    projectGrants.value = rows.filter((g) => {
+      const t = String(g.granteeType || 'USER').toUpperCase()
+      return t === 'USER'
+    })
+  } catch {
+    projectGrants.value = []
+  }
+}
+
+async function openProjectGrant(row: Project) {
   setActiveProjectId(row.id)
   selectedIds.value = [row.id]
-  void router.push({
-    path: '/exchange/ingestion',
-    query: {
-      system: 'register',
-      module: 'm048',
-      accessTab: 'resource',
-      projectId: String(row.id),
-    },
-  })
+  projectGrantForm.projectId = row.id
+  projectGrantForm.projectName = row.projectName
+  projectGrantForm.userId = undefined
+  await Promise.all([loadGrantUsers(), loadProjectGrants(row.id)])
+  projectGrantVisible.value = true
+}
+
+async function submitProjectGrant() {
+  if (!projectGrantForm.userId) {
+    ElMessage.warning('请选择用户')
+    return
+  }
+  projectGrantSaving.value = true
+  try {
+    await api.post('/system/access/project-grants', {
+      projectId: projectGrantForm.projectId,
+      granteeType: 'USER',
+      granteeId: projectGrantForm.userId,
+      perm: 'VIEW',
+    })
+    ElMessage.success('项目授权成功')
+    projectGrantForm.userId = undefined
+    await loadProjectGrants(projectGrantForm.projectId)
+  } catch (e: unknown) {
+    ElMessage.error(e instanceof Error ? e.message : '项目授权失败')
+  } finally {
+    projectGrantSaving.value = false
+  }
+}
+
+async function revokeProjectGrant(row: ProjectGrantRow) {
+  try {
+    await ElMessageBox.confirm(
+      `确认取消用户「${row.granteeName || row.granteeId}」对本项目的授权？`,
+      '取消授权',
+      { type: 'warning' },
+    )
+    await api.delete(`/system/access/project-grants/${row.id}`)
+    ElMessage.success('已取消授权')
+    await loadProjectGrants(projectGrantForm.projectId)
+  } catch (e: unknown) {
+    if (e !== 'cancel' && e !== 'close') {
+      ElMessage.error(e instanceof Error ? e.message : '取消失败')
+    }
+  }
+}
+
+function permLabel(perm?: string) {
+  const p = String(perm || '').toUpperCase()
+  if (p === 'ADMIN') return '管理'
+  if (p === 'EDIT') return '编辑'
+  if (p === 'VIEW' || p === 'ACCESS' || p === 'READ') return '查看'
+  return perm || '—'
 }
 
 function backToList() {
@@ -334,6 +512,7 @@ onMounted(reload)
     <ProjectSystemDetailView
       v-if="detailProject"
       :project="detailProject"
+      :readonly="isApprovedRegister(detailProject.registerStatus)"
       @back="backToList"
       @changed="reload"
     />
@@ -352,20 +531,13 @@ onMounted(reload)
             <div class="project-actions">
               <el-button v-if="canCreateProject" type="primary" @click="openCreateProject">新建项目</el-button>
               <el-button
-                v-if="canCreateProject"
-                :disabled="!selectedProject"
-                @click="openEditProject()"
-              >
-                {{ isOtherProject(selectedProject?.projectCode) ? '维护系统' : '编辑项目' }}
-              </el-button>
-              <el-button
                 v-if="canDeleteProject"
                 type="danger"
                 plain
-                :disabled="!selectedProject || isOtherProject(selectedProject?.projectCode)"
-                @click="deleteProject()"
+                :disabled="!selectedIds.length"
+                @click="batchDeleteProjects"
               >
-                删除项目
+                批量删除
               </el-button>
             </div>
           </el-form-item>
@@ -384,14 +556,16 @@ onMounted(reload)
           <el-table-column label="部门" min-width="140" show-overflow-tooltip>
             <template #default="{ row }">{{ row.boundOrgName || currentDeptName }}</template>
           </el-table-column>
+          <el-table-column label="绑定集群" min-width="140" show-overflow-tooltip>
+            <template #default="{ row }">{{ row.clusterAccountName || '—' }}</template>
+          </el-table-column>
           <el-table-column label="状态" width="110">
             <template #default="{ row }">
               <el-tag size="small">{{ registerStatusZh(row.registerStatus) }}</el-tag>
             </template>
           </el-table-column>
-          <el-table-column label="操作" width="280" fixed="right">
+          <el-table-column label="操作" width="340" fixed="right">
             <template #default="{ row }">
-              <el-button link type="primary" @click="openView(row)">查看</el-button>
               <el-button
                 v-if="canEditRegister(row.registerStatus) && canCreateProject"
                 link
@@ -408,16 +582,13 @@ onMounted(reload)
               >
                 提交
               </el-button>
-              <template v-if="canAudit && canAuditRegister(row.registerStatus)">
-                <el-button link type="success" @click="doApprove(row)">审核</el-button>
-                <el-button link type="warning" @click="openReject(row)">驳回</el-button>
-              </template>
+              <el-button link type="primary" @click="openProjectGrant(row)">项目权限</el-button>
               <el-button link type="primary" @click="openDetail(row)">详情</el-button>
               <el-button
-                v-if="canDeleteProject && !isOtherProject(row.projectCode)"
+                v-if="canShowProjectDelete(row)"
                 link
                 type="danger"
-                @click="deleteProject(row)"
+                @click="deleteOneProject(row)"
               >
                 删除
               </el-button>
@@ -450,6 +621,22 @@ onMounted(reload)
         </el-form-item>
         <el-form-item label="项目名称" required>
           <el-input v-model="projectForm.projectName" placeholder="如：公安人口库归集" />
+        </el-form-item>
+        <el-form-item label="绑定集群账号">
+          <el-select
+            v-model="projectForm.clusterAccountId"
+            clearable
+            filterable
+            placeholder="可选，一个项目仅绑定一个集群"
+            style="width:100%"
+          >
+            <el-option
+              v-for="c in clusterOptions"
+              :key="c.id"
+              :label="`${c.clusterName}（${c.clusterCode} / ${c.accountName}）`"
+              :value="c.id"
+            />
+          </el-select>
         </el-form-item>
         <template v-if="projectDialogMode === 'create'">
           <el-form-item label="系统名称" required>
@@ -489,36 +676,53 @@ onMounted(reload)
       </template>
     </el-dialog>
 
-    <el-dialog v-model="viewDialog" title="查看项目（基本信息与审核记录）" width="640px" destroy-on-close>
-      <el-descriptions v-if="viewRow" :column="1" border size="small">
-        <el-descriptions-item label="项目名称">{{ viewRow.projectName }}</el-descriptions-item>
-        <el-descriptions-item label="状态">{{ registerStatusZh(viewRow.registerStatus) }}</el-descriptions-item>
-        <el-descriptions-item v-if="viewRow.rejectReason" label="驳回原因">{{ viewRow.rejectReason }}</el-descriptions-item>
-        <el-descriptions-item label="部门">{{ viewRow.boundOrgName || currentDeptName }}</el-descriptions-item>
-      </el-descriptions>
-      <h4 style="margin:16px 0 8px">提交 / 审核记录</h4>
-      <el-table :data="viewLogs" size="small" stripe max-height="280">
-        <el-table-column prop="action" label="动作" width="100" />
-        <el-table-column label="状态变更" min-width="160">
-          <template #default="{ row }">
-            {{ registerStatusZh(row.fromStatus as string) }} → {{ registerStatusZh(row.toStatus as string) }}
-          </template>
-        </el-table-column>
-        <el-table-column prop="commentText" label="说明" min-width="140" show-overflow-tooltip />
-        <el-table-column prop="operatorName" label="操作人" width="100" />
-        <el-table-column prop="createdAt" label="时间" width="170" />
-      </el-table>
-    </el-dialog>
-
-    <el-dialog v-model="auditRejectVisible" title="驳回" width="420px" destroy-on-close>
+    <el-dialog
+      v-model="projectGrantVisible"
+      title="项目授权"
+      width="560px"
+      destroy-on-close
+    >
       <el-form label-position="top">
-        <el-form-item label="驳回原因" required>
-          <el-input v-model="auditRejectReason" type="textarea" :rows="3" placeholder="必填" />
+        <el-form-item label="项目">
+          <el-input :model-value="projectGrantForm.projectName" disabled />
+        </el-form-item>
+        <el-form-item label="选择用户" required>
+          <el-select
+            v-model="projectGrantForm.userId"
+            filterable
+            clearable
+            placeholder="请选择要授权的用户"
+            style="width: 100%"
+          >
+            <el-option
+              v-for="u in grantUsers"
+              :key="u.id"
+              :label="`${u.displayName || '-'}（${u.username}）`"
+              :value="u.id"
+            />
+          </el-select>
         </el-form-item>
       </el-form>
+
+      <h4 class="grant-subtitle">已授权用户</h4>
+      <el-table :data="projectGrants" size="small" stripe max-height="240">
+        <el-table-column label="用户" min-width="160" show-overflow-tooltip>
+          <template #default="{ row }">{{ row.granteeName || row.granteeId }}</template>
+        </el-table-column>
+        <el-table-column label="权限" width="90">
+          <template #default="{ row }">{{ permLabel(row.perm) }}</template>
+        </el-table-column>
+        <el-table-column label="操作" width="90">
+          <template #default="{ row }">
+            <el-button link type="danger" @click="revokeProjectGrant(row)">取消</el-button>
+          </template>
+        </el-table-column>
+      </el-table>
+      <el-empty v-if="!projectGrants.length" description="暂无用户授权" :image-size="40" />
+
       <template #footer>
-        <el-button @click="auditRejectVisible = false">取消</el-button>
-        <el-button type="danger" @click="doReject">确认驳回</el-button>
+        <el-button @click="projectGrantVisible = false">关闭</el-button>
+        <el-button type="primary" :loading="projectGrantSaving" @click="submitProjectGrant">确认</el-button>
       </template>
     </el-dialog>
   </div>
@@ -539,5 +743,11 @@ onMounted(reload)
   font-size: 12px;
   color: #909399;
   line-height: 1.4;
+}
+.grant-subtitle {
+  margin: 8px 0 10px;
+  font-size: 14px;
+  font-weight: 600;
+  color: #303133;
 }
 </style>

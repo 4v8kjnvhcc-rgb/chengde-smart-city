@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref } from 'vue'
+import { computed, onActivated, onMounted, reactive, ref } from 'vue'
 import api from '@/api/http'
 import { ElMessage } from 'element-plus'
 import PageCard from '@/components/common/PageCard.vue'
@@ -100,6 +100,9 @@ async function submitSubscribe() {
 }
 
 onMounted(load)
+onActivated(() => {
+  void load()
+})
 </script>
 
 <template>
@@ -108,7 +111,7 @@ onMounted(load)
       type="info"
       :closable="false"
       show-icon
-      title="仅展示已审批发布的可共享资源（直通源或加工主题/专题）。过程层数据不会出现在此。"
+      title="仅展示已审批发布的可共享资源（直通源或加工主题/专题）。归集「指标与目录体系构建」与治理「数据目录管理系统」审批发布后的资源都会汇聚到此；过程层数据不会出现在此。"
       style="margin-bottom: 12px"
     />
     <el-form inline class="portal-inline-form portal-inline-form--block">

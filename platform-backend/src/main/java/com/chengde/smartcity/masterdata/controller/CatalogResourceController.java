@@ -57,11 +57,34 @@ public class CatalogResourceController {
         return ApiResponse.ok(service.listEligibleMetadata(keyword));
     }
 
+    @GetMapping("/bind-sources")
+    @PreAuthorize("isAuthenticated()")
+    public ApiResponse<List<Map<String, Object>>> bindSources(
+            @RequestParam(required = false) String categoryKey,
+            @RequestParam(required = false) String keyword) {
+        return ApiResponse.ok(service.listBindSources(categoryKey, keyword));
+    }
+
+    @GetMapping("/bind-sources/{sourceId}/tables")
+    @PreAuthorize("isAuthenticated()")
+    public ApiResponse<List<Map<String, Object>>> bindTables(@PathVariable Long sourceId) {
+        return ApiResponse.ok(service.listBindTables(sourceId));
+    }
+
+    @GetMapping("/bind-sources/{sourceId}/table-columns")
+    @PreAuthorize("isAuthenticated()")
+    public ApiResponse<Map<String, Object>> bindTableColumns(@PathVariable Long sourceId,
+                                                             @RequestParam String tableName) {
+        return ApiResponse.ok(service.describeBindTable(sourceId, tableName));
+    }
+
     @GetMapping("/approvals")
     @PreAuthorize("isAuthenticated()")
     public ApiResponse<List<Map<String, Object>>> approvals(@RequestParam(required = false) Long resourceId,
-                                                            @RequestParam(required = false) String status) {
-        return ApiResponse.ok(service.listApprovals(resourceId, status));
+                                                            @RequestParam(required = false) String status,
+                                                            @RequestParam(required = false) String catalogOrigin,
+                                                            @RequestParam(required = false) String scope) {
+        return ApiResponse.ok(service.listApprovals(resourceId, status, catalogOrigin, scope));
     }
 
     @GetMapping("/{id}/versions")
@@ -109,6 +132,14 @@ public class CatalogResourceController {
     public ApiResponse<Long> create(@AuthenticationPrincipal UserPrincipal principal,
                                     @RequestBody Map<String, Object> body) {
         return ApiResponse.ok(service.create(principal, body));
+    }
+
+    /** 批量新增：从已登记库表/元数据抽取核心元数据生成资源目录 */
+    @PostMapping("/batch-from-metadata")
+    @PreAuthorize("isAuthenticated()")
+    public ApiResponse<Map<String, Object>> batchFromMetadata(@AuthenticationPrincipal UserPrincipal principal,
+                                                              @RequestBody Map<String, Object> body) {
+        return ApiResponse.ok(service.batchCreateFromMetadata(principal, body));
     }
 
     @PutMapping("/{id}")

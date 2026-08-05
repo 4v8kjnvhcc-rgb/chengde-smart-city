@@ -9,6 +9,7 @@ import {
   type DataTable,
   type Project,
 } from '../useIngestionHub'
+import { loadRegisterLogs, registerStatusZh } from './register-workflow'
 
 const props = defineProps<{
   modelValue: boolean
@@ -36,6 +37,8 @@ const columns = ref<DataColumn[]>([])
 const tagOptions = ref<{ id: number; tagName: string }[]>([])
 const orgOptions = ref<Array<{ id: number; orgCode?: string; orgName: string; parentId?: number; label: string }>>([])
 const contactOptions = ref<Array<{ phone: string; displayName: string; label: string }>>([])
+const auditLogs = ref<Record<string, unknown>[]>([])
+const auditLogsLoading = ref(false)
 
 /** 机构下拉：选中值用 orgId（number）或自定义名称（string） */
 const orgSelectValue = ref<number | string | null>(null)
@@ -122,6 +125,32 @@ function resetForm() {
   tables.value = []
   columns.value = []
   contactOptions.value = []
+  auditLogs.value = []
+}
+
+function formatLogTime(v?: unknown) {
+  if (v == null || v === '') return '—'
+  return String(v).replace('T', ' ').slice(0, 19)
+}
+
+function actionZh(action?: unknown) {
+  const a = String(action || '').toUpperCase()
+  if (a === 'CREATE') return '创建'
+  if (a === 'SUBMIT') return '提交'
+  if (a === 'APPROVE') return '审核通过'
+  if (a === 'REJECT') return '审核驳回'
+  return String(action || '—')
+}
+
+async function loadAuditLogs(id: number) {
+  auditLogsLoading.value = true
+  try {
+    auditLogs.value = await loadRegisterLogs('CATALOG_REG', id)
+  } catch {
+    auditLogs.value = []
+  } finally {
+    auditLogsLoading.value = false
+  }
 }
 
 function fillFromRecord(row: AssetCatalogReg) {
@@ -227,6 +256,9 @@ async function openInit() {
     if (form.projectId) await loadSources(form.projectId)
     if (form.sourceId) await loadTables(form.sourceId)
     if (form.tableId) await loadColumns(form.tableId)
+    if (props.mode === 'view') {
+      await loadAuditLogs(props.recordId)
+    }
   } finally {
     loadingDetail.value = false
   }
@@ -737,6 +769,39 @@ async function save() {
             </el-col>
           </el-row>
         </el-form>
+      </section>
+
+      <section v-if="readonly" class="form-section">
+        <div class="section-head">
+          <h4>提交 / 审核记录</h4>
+          <p>含提交、通过、驳回等操作流水</p>
+        </div>
+        <el-table
+          v-loading="auditLogsLoading"
+          :data="auditLogs"
+          stripe
+          size="small"
+          empty-text="暂无提交/审核记录"
+        >
+          <el-table-column label="操作" width="100">
+            <template #default="{ row }">{{ actionZh(row.action) }}</template>
+          </el-table-column>
+          <el-table-column label="原状态" width="110">
+            <template #default="{ row }">{{ registerStatusZh(row.fromStatus as string) }}</template>
+          </el-table-column>
+          <el-table-column label="新状态" width="110">
+            <template #default="{ row }">{{ registerStatusZh(row.toStatus as string) }}</template>
+          </el-table-column>
+          <el-table-column label="操作人" width="120" show-overflow-tooltip>
+            <template #default="{ row }">{{ row.operatorName || '—' }}</template>
+          </el-table-column>
+          <el-table-column label="说明" min-width="140" show-overflow-tooltip>
+            <template #default="{ row }">{{ row.commentText || '—' }}</template>
+          </el-table-column>
+          <el-table-column label="时间" width="170">
+            <template #default="{ row }">{{ formatLogTime(row.createdAt) }}</template>
+          </el-table-column>
+        </el-table>
       </section>
     </div>
     <template #footer>
