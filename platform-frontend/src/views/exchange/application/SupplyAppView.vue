@@ -2,7 +2,8 @@
 import { computed, defineAsyncComponent, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import api from '@/api/http'
-import UserAccountMenu from '@/components/layout/UserAccountMenu.vue'
+import PageHeader from '@/components/common/PageHeader.vue'
+import HubSideLayout from '@/components/common/HubSideLayout.vue'
 import { SUPPLY_MAIN_SECTIONS } from './application-nav'
 
 const router = useRouter()
@@ -10,13 +11,12 @@ const route = useRoute()
 const SupplyDemandView = defineAsyncComponent(() => import('./SupplyDemandView.vue'))
 
 const section = ref('home')
-const collapsed = ref(false)
 const kpi = ref({ preAudit: 0, confirm: 0, objection: 0, catalog: 0, supplyManifest: 0, objectionTotal: 0 })
 
-const navItems = SUPPLY_MAIN_SECTIONS
+const navItems = SUPPLY_MAIN_SECTIONS.map((s) => ({ key: s.key, label: s.label }))
 
-const SECTION_BANNER: Record<string, string> = {
-  home: '数据供需对接系统',
+const SECTION_LABEL: Record<string, string> = {
+  home: '首页',
   demand: '数据需求管理',
   analysis: '数据需求分析',
   confirm: '数据需求确认',
@@ -25,7 +25,10 @@ const SECTION_BANNER: Record<string, string> = {
   'manifest-center': '清单中心',
 }
 
-const bannerTitle = computed(() => SECTION_BANNER[section.value] || SECTION_BANNER.home)
+const pageTitle = computed(
+  () => `大数据归集平台 · 数据供需对接系统 · ${SECTION_LABEL[section.value] || '首页'}`,
+)
+const pageDesc = '数据供需对接系统（切换系统请返回总览后重新进入）'
 
 const FLOW_STEPS = [
   { title: '需求填报', tone: 'blue', go: 'demand' },
@@ -91,49 +94,16 @@ onMounted(() => {
 </script>
 
 <template>
-  <div class="sd-shell" :class="{ 'is-collapsed': collapsed }">
-    <aside class="sd-side">
-      <div class="sd-brand">
-        <span class="sd-brand__mark">供</span>
-        <div v-if="!collapsed" class="sd-brand__text">
-          <b>数据供需对接系统</b>
-        </div>
-      </div>
-      <nav class="sd-nav" aria-label="供需导航">
-        <button
-          v-for="item in navItems"
-          :key="item.key"
-          type="button"
-          class="sd-nav__item"
-          :class="{ 'is-on': section === item.key }"
-          :title="item.label"
-          @click="goSection(item.key)"
-        >
-          <span class="sd-nav__ico" :data-k="item.key" />
-          <span v-if="!collapsed" class="sd-nav__lab">{{ item.label }}</span>
-        </button>
-      </nav>
-      <button type="button" class="sd-collapse" @click="collapsed = !collapsed">
-        <span class="sd-collapse__chev" :class="{ 'is-flip': collapsed }" />
-        <span v-if="!collapsed">收起</span>
-        <span v-else>展开</span>
+  <div class="supply-hub">
+    <PageHeader :title="pageTitle" :description="pageDesc">
+      <button type="button" class="hub-back" @click="router.push('/dashboard')">
+        返回总览
       </button>
-    </aside>
+    </PageHeader>
 
-    <div class="sd-main">
-      <section class="sd-banner">
-        <div class="sd-banner__copy">
-          <h1>{{ bannerTitle }}</h1>
-        </div>
-        <div class="sd-banner__actions">
-          <button type="button" class="sd-banner__btn sd-banner__btn--ghost" @click="router.push('/dashboard')">返回总览</button>
-          <UserAccountMenu tone="onDark" />
-        </div>
-        <div class="sd-banner__art" aria-hidden="true" />
-      </section>
-
-      <main class="sd-body">
-        <template v-if="section === 'home'">
+    <HubSideLayout :model-value="section" :items="navItems" @update:model-value="goSection">
+      <template v-if="section === 'home'">
+        <div class="sd-home">
           <div class="flow-row">
             <button
               v-for="(step, idx) in FLOW_STEPS"
@@ -200,86 +170,62 @@ onMounted(() => {
               <button type="button" class="list-entry__btn" @click="goSection('manifest-center', { listGroup: '异议清单' })">查看详情</button>
             </div>
           </div>
-        </template>
+        </div>
+      </template>
 
-        <SupplyDemandView v-else mode="front" />
-      </main>
-
-    </div>
+      <SupplyDemandView v-else mode="front" />
+    </HubSideLayout>
   </div>
 </template>
 
 <style scoped>
-.sd-shell { display: flex; min-height: 100vh; background: #f5f7fa; }
-.sd-side {
-  width: 220px; background: #fff; border-right: 1px solid #e8edf5;
-  display: flex; flex-direction: column; flex-shrink: 0; transition: width 160ms ease;
+.supply-hub {
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
+  box-sizing: border-box;
+  padding: 20px;
+  background: var(--portal-bg, #f5f7fa);
 }
-.sd-shell.is-collapsed .sd-side { width: 72px; }
-.sd-brand {
-  display: flex; align-items: center; gap: 10px; padding: 16px 14px;
-  border-bottom: 1px solid #eef1f6;
+.supply-hub :deep(.page-header__title) {
+  font-size: 18px;
+  font-weight: 600;
+  color: #1f2937;
+  letter-spacing: 0.02em;
 }
-.sd-brand__mark {
-  width: 36px; height: 36px; border-radius: 50%; background: #1677ff; color: #fff;
-  display: grid; place-items: center; font-weight: 700; flex-shrink: 0;
+.supply-hub :deep(.page-header__desc) {
+  font-size: 13px;
+  color: #6b7280;
 }
-.sd-brand__text b { font-size: 14px; color: #1f2d3d; }
-.sd-nav { flex: 1; padding: 10px 8px; display: flex; flex-direction: column; gap: 4px; overflow: auto; }
-.sd-nav__item {
-  appearance: none; border: 0; background: transparent; display: flex; align-items: center;
-  gap: 10px; padding: 10px 12px; border-radius: 8px; color: #606266; cursor: pointer;
-  font-size: 13px; text-align: left;
+.supply-hub :deep(.hub-side-layout) {
+  /* flushMain 无全局顶栏：扣本页 padding + PageHeader 高度 */
+  height: calc(100vh - 40px - 72px);
+  max-height: calc(100vh - 40px - 72px);
+  flex: 1;
+  min-height: 320px;
 }
-.sd-nav__item:hover { background: #f5f9ff; color: #1677ff; }
-.sd-nav__item.is-on { background: #e8f3ff; color: #1677ff; font-weight: 600; }
-.sd-nav__ico {
-  width: 18px; height: 18px; border-radius: 4px; background: #d9e8ff; flex-shrink: 0;
-  position: relative;
+.hub-back {
+  appearance: none;
+  border: 1px solid #c5d4eb;
+  background: #f5f8fd;
+  color: #1d4f91;
+  font-size: 13px;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+  padding: 0 14px;
+  height: 32px;
+  border-radius: 4px;
+  cursor: pointer;
+  transition: color 150ms ease, background 150ms ease, border-color 150ms ease;
 }
-.sd-nav__item.is-on .sd-nav__ico { background: #1677ff; }
-.sd-nav__ico::after {
-  content: ''; position: absolute; inset: 4px; border-radius: 2px; background: rgba(255,255,255,.55);
+.hub-back:hover {
+  color: #0d47a1;
+  background: #e8f0fb;
+  border-color: #9bb8e0;
 }
-.sd-nav__lab { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.sd-collapse {
-  appearance: none; border: 0; border-top: 1px solid #eef1f6; background: #fff;
-  padding: 12px; color: #909399; cursor: pointer; font-size: 12px;
-  display: flex; align-items: center; justify-content: center; gap: 6px;
-}
-.sd-collapse__chev {
-  width: 0; height: 0; border-top: 5px solid transparent; border-bottom: 5px solid transparent;
-  border-right: 6px solid #909399;
-}
-.sd-collapse__chev.is-flip { transform: rotate(180deg); }
 
-.sd-main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
-.sd-banner {
-  position: relative; background: linear-gradient(115deg, #0a4ea8 0%, #1677ff 48%, #0d47a1 100%);
-  color: #fff; padding: 20px 24px; overflow: hidden; min-height: 100px;
-  display: flex; align-items: center; justify-content: space-between; gap: 16px;
-}
-.sd-banner__copy { position: relative; z-index: 1; }
-.sd-banner__copy h1 { margin: 0; font-size: 24px; font-weight: 700; letter-spacing: .5px; }
-.sd-banner__actions {
-  position: relative; z-index: 1; display: flex; align-items: center; gap: 8px; flex-shrink: 0;
-}
-.sd-banner__btn {
-  appearance: none; border: 1px solid rgba(255,255,255,.4); background: rgba(255,255,255,.14);
-  color: #fff; height: 30px; padding: 0 12px; border-radius: 4px; cursor: pointer; font-size: 12px;
-}
-.sd-banner__btn--ghost { background: transparent; }
-.sd-banner__art {
-  position: absolute; right: 180px; bottom: 0; width: 260px; height: 90px; opacity: .28;
-  background:
-    linear-gradient(90deg, transparent, rgba(255,255,255,.4)),
-    repeating-linear-gradient(90deg, transparent 0 16px, rgba(255,255,255,.55) 16px 18px);
-  clip-path: polygon(0 100%, 6% 58%, 14% 72%, 24% 42%, 36% 64%, 48% 30%, 60% 52%, 72% 22%, 84% 48%, 94% 18%, 100% 36%, 100% 100%);
-  pointer-events: none;
-}
-.sd-body { flex: 1; padding: 16px 18px 8px; }
-
-.flow-row { display: flex; flex-wrap: wrap; gap: 4px; align-items: stretch; margin-bottom: 14px; }
+.sd-home { display: flex; flex-direction: column; gap: 14px; }
+.flow-row { display: flex; flex-wrap: wrap; gap: 4px; align-items: stretch; }
 .flow-step-wrap {
   appearance: none; border: 0; background: transparent; display: flex; align-items: center;
   gap: 4px; padding: 0; cursor: pointer; text-align: left;
@@ -301,7 +247,7 @@ onMounted(() => {
 .flow-step__title { font-size: 13px; font-weight: 700; color: #1f2d3d; }
 .flow-chev { color: #c0c4cc; font-size: 18px; font-weight: 300; padding: 0 2px; }
 
-.kpi-row { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; margin-bottom: 14px; }
+.kpi-row { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; }
 .kpi-card {
   appearance: none; border: 1px solid #e8edf5; background: #fff; border-radius: 10px;
   padding: 16px 18px; text-align: left; cursor: pointer;
@@ -353,6 +299,5 @@ onMounted(() => {
 
 @media (max-width: 1100px) {
   .kpi-row, .list-entry-row { grid-template-columns: 1fr; }
-  .sd-banner__art { display: none; }
 }
 </style>
