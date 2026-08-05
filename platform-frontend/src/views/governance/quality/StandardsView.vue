@@ -3,6 +3,8 @@ import { onMounted, reactive, ref, watch } from 'vue'
 import api from '@/api/http'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import PageCard from '@/components/common/PageCard.vue'
+import PortalPagination from '@/components/common/PortalPagination.vue'
+import { useClientPager } from '@/composables/useClientPager'
 import { statusLabel, statusTagType } from '@/utils/status-label'
 import { ingestionApi, type DataSource } from '@/views/exchange/ingestion/useIngestionHub'
 
@@ -67,6 +69,13 @@ interface MappingRow {
 
 const activeTab = ref('element')
 const items = ref<StandardItem[]>([])
+const {
+  page: itemPage,
+  pageSize: itemPageSize,
+  paged: pagedItems,
+  total: itemTotal,
+  resetPage: resetItemPage,
+} = useClientPager(items)
 const loading = ref(false)
 const editMode = ref(false)
 const editingId = ref<number | null>(null)
@@ -96,6 +105,13 @@ const currentItemName = ref('')
 const codeItems = ref<StandardItem[]>([])
 const selectedCodeItemId = ref<number | undefined>()
 const codebookRows = ref<CodebookRow[]>([])
+const {
+  page: codebookPage,
+  pageSize: codebookPageSize,
+  paged: pagedCodebookRows,
+  total: codebookTotal,
+  resetPage: resetCodebookPage,
+} = useClientPager(codebookRows)
 const codebookLoading = ref(false)
 const codeForm = reactive({ itemCode: '', itemName: '', referenceStandard: '' })
 const codebookForm = reactive({ codeValue: '', codeName: '', codeDesc: '', sortOrder: 0 })
@@ -106,6 +122,13 @@ const fromDictVisible = ref(false)
 
 // ---- naming ----
 const namingRows = ref<NamingRow[]>([])
+const {
+  page: namingPage,
+  pageSize: namingPageSize,
+  paged: pagedNamingRows,
+  total: namingTotal,
+  resetPage: resetNamingPage,
+} = useClientPager(namingRows)
 const namingLoading = ref(false)
 const namingForm = reactive({
   namingType: 'TABLE',
@@ -140,6 +163,7 @@ async function load() {
       },
     })
     items.value = res.data || []
+    resetItemPage()
   } catch {
     ElMessage.error('加载数据元失败')
   } finally {
@@ -250,6 +274,7 @@ async function loadCodebook() {
   codebookLoading.value = true
   try {
     codebookRows.value = (await api.get(`/governance/standards/${selectedCodeItemId.value}/codebook`)).data || []
+    resetCodebookPage()
   } catch {
     ElMessage.error('加载码表失败')
   } finally {
@@ -339,6 +364,7 @@ async function loadNaming() {
   namingLoading.value = true
   try {
     namingRows.value = (await api.get('/governance/standards/naming')).data || []
+    resetNamingPage()
   } catch {
     ElMessage.error('加载命名规范失败')
   } finally {
@@ -461,7 +487,7 @@ onMounted(load)
             </el-form-item>
           </el-form>
 
-          <el-table v-loading="loading" :data="items" stripe size="small">
+          <el-table v-loading="loading" :data="pagedItems" stripe size="small">
             <el-table-column prop="itemCode" label="编码" width="140" />
             <el-table-column prop="itemName" label="名称" min-width="120" />
             <el-table-column prop="dataType" label="类型" width="90" />
@@ -483,6 +509,11 @@ onMounted(load)
               </template>
             </el-table-column>
           </el-table>
+          <PortalPagination
+            v-model:page="itemPage"
+            v-model:page-size="itemPageSize"
+            :total="itemTotal"
+          />
         </PageCard>
       </el-tab-pane>
 
@@ -521,7 +552,7 @@ onMounted(load)
 
           <el-input v-model="importJson" type="textarea" :rows="3" placeholder="导入/导出 JSON" style="margin-bottom:12px" />
 
-          <el-table v-loading="codebookLoading" :data="codebookRows" stripe size="small">
+          <el-table v-loading="codebookLoading" :data="pagedCodebookRows" stripe size="small">
             <el-table-column prop="codeValue" label="码值" width="120" />
             <el-table-column prop="codeName" label="名称" min-width="140" />
             <el-table-column prop="codeDesc" label="说明" min-width="160" />
@@ -532,6 +563,11 @@ onMounted(load)
               </template>
             </el-table-column>
           </el-table>
+          <PortalPagination
+            v-model:page="codebookPage"
+            v-model:page-size="codebookPageSize"
+            :total="codebookTotal"
+          />
         </PageCard>
       </el-tab-pane>
 
@@ -567,7 +603,7 @@ onMounted(load)
           </el-form>
           <el-alert v-if="validateResult" :title="validateResult" :type="validateResult.startsWith('通过') ? 'success' : 'warning'" show-icon :closable="false" style="margin-bottom:12px" />
 
-          <el-table v-loading="namingLoading" :data="namingRows" stripe size="small">
+          <el-table v-loading="namingLoading" :data="pagedNamingRows" stripe size="small">
             <el-table-column label="类型" width="90">
               <template #default="{ row }">{{ $statusLabel(row.namingType) }}</template>
             </el-table-column>
@@ -584,6 +620,11 @@ onMounted(load)
               </template>
             </el-table-column>
           </el-table>
+          <PortalPagination
+            v-model:page="namingPage"
+            v-model:page-size="namingPageSize"
+            :total="namingTotal"
+          />
         </PageCard>
       </el-tab-pane>
 

@@ -7,6 +7,8 @@ import { computed, onMounted, ref } from 'vue'
 import api from '@/api/http'
 import { ElMessage } from 'element-plus'
 import PageCard from '@/components/common/PageCard.vue'
+import PortalPagination from '@/components/common/PortalPagination.vue'
+import { useClientPager } from '@/composables/useClientPager'
 import { statusLabel, statusTagType } from '@/utils/status-label'
 
 interface RunRow {
@@ -54,6 +56,13 @@ const DIM_META: { key: string; label: string }[] = [
 
 const loading = ref(false)
 const runs = ref<RunRow[]>([])
+const {
+  page: runPage,
+  pageSize: runPageSize,
+  paged: pagedRuns,
+  total: runTotal,
+  resetPage: resetRunPage,
+} = useClientPager(runs)
 const issueByDim = ref<Record<string, { issueTotal: number; checkHits: number }>>({})
 
 const avgScore = computed(() => {
@@ -85,6 +94,7 @@ async function load() {
   try {
     const r = await api.get('/governance/quality/task-mgmt/runs')
     runs.value = (r.data || []).slice(0, 20)
+    resetRunPage()
     const bag: Record<string, { issueTotal: number; checkHits: number }> = {}
     for (const m of DIM_META) bag[m.key] = { issueTotal: 0, checkHits: 0 }
     // 近 3 次运行并行拉取问题做维度汇总（≤3）
@@ -149,7 +159,7 @@ onMounted(load)
     </el-table>
 
     <el-divider content-position="left">近期运行（评估样本）</el-divider>
-    <el-table :data="runs" stripe size="small">
+    <el-table :data="pagedRuns" stripe size="small">
       <el-table-column prop="id" label="运行ID" width="80" />
       <el-table-column prop="taskName" label="任务" min-width="140" show-overflow-tooltip />
       <el-table-column label="状态" width="100">
@@ -161,6 +171,11 @@ onMounted(load)
       <el-table-column prop="issueCount" label="问题数" width="80" />
       <el-table-column prop="startedAt" label="开始时间" width="170" />
     </el-table>
+    <PortalPagination
+      v-model:page="runPage"
+      v-model:page-size="runPageSize"
+      :total="runTotal"
+    />
     <el-empty v-if="!loading && !runs.length" description="暂无运行；请先在「质量规则配置」下配置并执行任务" />
   </PageCard>
 </template>

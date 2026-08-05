@@ -3,6 +3,8 @@ import { computed, onMounted, reactive, ref, watch } from 'vue'
 import api from '@/api/http'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import PageCard from '@/components/common/PageCard.vue'
+import PortalPagination from '@/components/common/PortalPagination.vue'
+import { useClientPager } from '@/composables/useClientPager'
 import { statusLabel, statusTagType } from '@/utils/status-label'
 import {
   catalogHintOfSourceId,
@@ -51,6 +53,13 @@ interface RuleOpt {
 }
 
 const tasks = ref<TaskRow[]>([])
+const {
+  page: taskPage,
+  pageSize: taskPageSize,
+  paged: pagedTasks,
+  total: taskTotal,
+  resetPage: resetTaskPage,
+} = useClientPager(tasks)
 const loading = ref(false)
 const drawer = ref(false)
 const sources = ref<QualitySourceOption[]>([])
@@ -87,6 +96,7 @@ async function loadTasks() {
   loading.value = true
   try {
     tasks.value = (await api.get('/governance/quality/task-mgmt')).data || []
+    resetTaskPage()
   } catch {
     ElMessage.error('加载任务失败')
   } finally {
@@ -300,7 +310,7 @@ onMounted(loadTasks)
       </el-form-item>
     </el-form>
 
-    <el-table v-loading="loading" :data="tasks" stripe size="small">
+    <el-table v-loading="loading" :data="pagedTasks" stripe size="small">
       <el-table-column prop="taskName" label="任务" min-width="140" />
       <el-table-column label="调度" width="100">
         <template #default="{ row }">{{ row.scheduleType === 'CRON' ? '定时' : '手动' }}</template>
@@ -322,6 +332,11 @@ onMounted(loadTasks)
         </template>
       </el-table-column>
     </el-table>
+    <PortalPagination
+      v-model:page="taskPage"
+      v-model:page-size="taskPageSize"
+      :total="taskTotal"
+    />
     <el-empty v-if="!loading && !tasks.length" description="暂无质量任务，请新建并添加稽核明细" />
 
     <el-drawer v-model="drawer" :title="form.id ? '配置质量任务' : '新建质量任务'" size="560px" destroy-on-close>

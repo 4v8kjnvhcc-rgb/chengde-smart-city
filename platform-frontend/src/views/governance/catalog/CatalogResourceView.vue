@@ -3,6 +3,8 @@ import { computed, nextTick, onActivated, onMounted, reactive, ref, watch } from
 import api from '@/api/http'
 import { ElMessage, ElMessageBox, type InputInstance } from 'element-plus'
 import PageCard from '@/components/common/PageCard.vue'
+import PortalPagination from '@/components/common/PortalPagination.vue'
+import { useClientPager } from '@/composables/useClientPager'
 import { statusLabel, statusTagType } from '@/utils/status-label'
 import { ingestionApi } from '@/views/exchange/ingestion/useIngestionHub'
 
@@ -218,6 +220,7 @@ const categoryRows = ref<
   }>
 >([])
 const resources = ref<CatalogRes[]>([])
+const { page, pageSize, paged: pagedResources, total: resourceTotal, resetPage } = useClientPager(resources)
 const loading = ref(false)
 const selectedRows = ref<CatalogRes[]>([])
 const query = reactive({
@@ -630,6 +633,7 @@ async function loadResources() {
       },
     })
     resources.value = res.data || []
+    resetPage()
   } catch {
     ElMessage.error('加载资源失败')
   } finally {
@@ -1620,7 +1624,7 @@ onActivated(async () => {
 
     <el-table
       v-loading="loading"
-      :data="resources"
+      :data="pagedResources"
       stripe
       size="small"
       @selection-change="(rows: CatalogRes[]) => (selectedRows = rows)"
@@ -1681,6 +1685,8 @@ onActivated(async () => {
         </template>
       </el-table-column>
     </el-table>
+
+    <PortalPagination v-model:page="page" v-model:page-size="pageSize" :total="resourceTotal" />
 
     <el-dialog
       v-model="dialogVisible"

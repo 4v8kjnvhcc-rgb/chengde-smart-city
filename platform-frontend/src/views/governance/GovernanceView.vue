@@ -4,6 +4,8 @@ import api from '@/api/http'
 import { ElMessage } from 'element-plus'
 import PageHeader from '@/components/common/PageHeader.vue'
 import PageCard from '@/components/common/PageCard.vue'
+import PortalPagination from '@/components/common/PortalPagination.vue'
+import { useClientPager } from '@/composables/useClientPager'
 
 interface Connector {
   id: number
@@ -34,6 +36,27 @@ interface Task {
 const connectors = ref<Connector[]>([])
 const rules = ref<Rule[]>([])
 const tasks = ref<Task[]>([])
+const {
+  page: connectorPage,
+  pageSize: connectorPageSize,
+  paged: pagedConnectors,
+  total: connectorTotal,
+  resetPage: resetConnectorPage,
+} = useClientPager(connectors)
+const {
+  page: rulePage,
+  pageSize: rulePageSize,
+  paged: pagedRules,
+  total: ruleTotal,
+  resetPage: resetRulePage,
+} = useClientPager(rules)
+const {
+  page: taskPage,
+  pageSize: taskPageSize,
+  paged: pagedTasks,
+  total: taskTotal,
+  resetPage: resetTaskPage,
+} = useClientPager(tasks)
 const integration = ref<Record<string, boolean>>({})
 const connectorForm = reactive({ connectorName: '', sourceType: 'MySQL' })
 const ruleForm = reactive({ ruleName: '', ruleType: 'COMPLETENESS' })
@@ -50,6 +73,9 @@ async function load() {
   rules.value = r.data
   tasks.value = t.data
   integration.value = h.data || {}
+  resetConnectorPage()
+  resetRulePage()
+  resetTaskPage()
 }
 
 async function createConnector() {
@@ -128,7 +154,7 @@ onMounted(load)
         </el-form-item>
         <el-button type="primary" @click="createConnector">新增</el-button>
       </el-form>
-      <el-table class="portal-table" :data="connectors" stripe>
+      <el-table class="portal-table" :data="pagedConnectors" stripe>
         <el-table-column prop="connectorCode" label="编码" min-width="140" />
         <el-table-column prop="connectorName" label="名称" min-width="160" />
         <el-table-column label="类型" width="100">
@@ -141,6 +167,11 @@ onMounted(load)
           </template>
         </el-table-column>
       </el-table>
+      <PortalPagination
+        v-model:page="connectorPage"
+        v-model:page-size="connectorPageSize"
+        :total="connectorTotal"
+      />
     </PageCard>
     <PageCard title="数据质量中心（M078/M079）">
       <el-form inline>
@@ -156,7 +187,7 @@ onMounted(load)
         </el-form-item>
         <el-button type="primary" @click="createRule">新增规则</el-button>
       </el-form>
-      <el-table class="portal-table" :data="rules" stripe>
+      <el-table class="portal-table" :data="pagedRules" stripe>
         <el-table-column prop="ruleCode" label="编码" min-width="120" />
         <el-table-column prop="ruleName" label="名称" min-width="160" />
         <el-table-column label="类型" width="140">
@@ -166,6 +197,11 @@ onMounted(load)
           <template #default="{ row }">{{ $statusLabel(row.status) }}</template>
         </el-table-column>
       </el-table>
+      <PortalPagination
+        v-model:page="rulePage"
+        v-model:page-size="rulePageSize"
+        :total="ruleTotal"
+      />
       <el-divider />
       <el-form inline>
         <el-form-item label="任务名">
@@ -178,7 +214,7 @@ onMounted(load)
         </el-form-item>
         <el-button type="primary" @click="createTask">创建任务</el-button>
       </el-form>
-      <el-table class="portal-table" :data="tasks" stripe>
+      <el-table class="portal-table" :data="pagedTasks" stripe>
         <el-table-column prop="taskName" label="任务" min-width="160" />
         <el-table-column label="状态" width="100">
           <template #default="{ row }">{{ $statusLabel(row.status) }}</template>
@@ -191,6 +227,11 @@ onMounted(load)
           </template>
         </el-table-column>
       </el-table>
+      <PortalPagination
+        v-model:page="taskPage"
+        v-model:page-size="taskPageSize"
+        :total="taskTotal"
+      />
     </PageCard>
   </div>
 </template>

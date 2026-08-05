@@ -4,6 +4,8 @@ import { useRoute, useRouter } from 'vue-router'
 import api from '@/api/http'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import PageCard from '@/components/common/PageCard.vue'
+import PortalPagination from '@/components/common/PortalPagination.vue'
+import { useClientPager } from '@/composables/useClientPager'
 import { statusLabel, statusTagType } from '@/utils/status-label'
 
 const props = withDefaults(defineProps<{
@@ -63,6 +65,13 @@ interface ProcessInfo {
 }
 
 const runs = ref<RunRow[]>([])
+const {
+  page: runPage,
+  pageSize: runPageSize,
+  paged: pagedRuns,
+  total: runTotal,
+  resetPage: resetRunPage,
+} = useClientPager(runs)
 const logs = ref<NodeLog[]>([])
 const selectedRunId = ref<number | null>(null)
 const loading = ref(false)
@@ -170,6 +179,7 @@ async function loadRuns() {
     const params: Record<string, string | number> = { taskDomain: props.taskDomain }
     if (props.taskId) params.taskId = props.taskId
     runs.value = (await api.get('/governance/gov-tasks/runs', { params })).data || []
+    resetRunPage()
     if (runs.value.length) {
       const current = selectedRunId.value && runs.value.some(r => r.id === selectedRunId.value)
         ? selectedRunId.value
@@ -420,7 +430,7 @@ onUnmounted(clearPoll)
         <el-table
           v-loading="loading"
           class="monitor-table"
-          :data="runs"
+          :data="pagedRuns"
           stripe
           size="small"
           table-layout="fixed"
@@ -449,6 +459,11 @@ onUnmounted(clearPoll)
           <el-table-column prop="triggeredBy" label="触发" width="64" show-overflow-tooltip />
           <el-table-column prop="startedAt" label="开始时间" width="148" />
         </el-table>
+        <PortalPagination
+          v-model:page="runPage"
+          v-model:page-size="runPageSize"
+          :total="runTotal"
+        />
       </el-col>
       <el-col :span="9" class="monitor-col">
         <div class="section-title">

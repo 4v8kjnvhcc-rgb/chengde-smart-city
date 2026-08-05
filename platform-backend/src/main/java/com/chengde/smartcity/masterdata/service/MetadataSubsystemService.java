@@ -46,16 +46,19 @@ import java.sql.ResultSet;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.Collections;
+import java.util.Comparator;
 import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 import java.util.UUID;
 import java.util.stream.Collectors;
 import javax.sql.DataSource;
-import java.util.Locale;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -546,31 +549,206 @@ public class MetadataSubsystemService {
         return runMapper.selectList(q);
     }
 
-    public Map<String, Object> monitorOverview(String sourceKeyword, String status) {
-        List<GovMetaCollectTask> tasks = listTasks(status, null, null);
-        if (sourceKeyword != null && !sourceKeyword.isBlank()) {
-            String kw = sourceKeyword.trim();
-            tasks = tasks.stream().filter(t -> {
-                GovOmConnector c = connectorMapper.selectById(t.getConnectorId());
-                return (c != null && (c.getConnectorName().contains(kw) || c.getSourceType().contains(kw)))
-                        || t.getTaskName().contains(kw);
-            }).collect(Collectors.toList());
+    public List<Map<String, Object>> listRunsEnriched(Long taskId, String status, String keyword) {
+        List<GovMetaCollectRun> runs = listRuns(taskId, status, null);
+        String kw = keyword == null ? "" : keyword.trim();
+        List<Map<String, Object>> out = new ArrayList<>();
+        for (GovMetaCollectRun run : runs) {
+            GovMetaCollectTask task = taskMapper.selectById(run.getTaskId());
+            if (task == null || "DELETED".equals(task.getStatus())) {
+                continue;
+            }
+            GovOmConnector c = connectorMapper.selectById(task.getConnectorId());
+            if (!kw.isEmpty()) {
+                boolean hit = task.getTaskName() != null && task.getTaskName().contains(kw)
+                        || (c != null && c.getConnectorName() != null && c.getConnectorName().contains(kw))
+                        || (run.getSummary() != null && run.getSummary().contains(kw))
+                        || (run.getLogText() != null && run.getLogText().contains(kw));
+                if (!hit) continue;
+            }
+            out.add(enrichRunRow(run, task, c));
         }
+        return out;
+    }
+
+    public Map<String, Object> runDetail(Long runId) {
+        GovMetaCollectRun run = runMapper.selectById(runId);
+        if (run == null) {
+            throw new BusinessException(404, "运行记录不存在");
+        }
+        GovMetaCollectTask task = taskMapper.selectById(run.getTaskId());
+        GovOmConnector c = task == null ? null : connectorMapper.selectById(task.getConnectorId());
+        Map<String, Object> out = enrichRunRow(run, task, c);
+        out.put("diff", parseRunDiff(run));
+        out.put("metadataCount", listRunResults(runId).size());
+        out.put("logText", run.getLogText());
+        return out;
+    }
+
+    @Transactional
+    public Map<String, Object> stopTaskRunning(UserPrincipal operator, Long taskId) {
+        GovMetaCollectTask task = requireTask(taskId);
+        GovMetaCollectRun run = runMapper.selectOne(new LambdaQueryWrapper<GovMetaCollectRun>()
+                .eq(GovMetaCollectRun::getTaskId, taskId)
+                .eq(GovMetaCollectRun::getStatus, "RUNNING")
+                .orderByDesc(GovMetaCollectRun::getId)
+                .last("limit 1"));
+        if (run == null) {
+            if ("RUNNING".equals(task.getStatus())) {
+                task.setStatus("STOPPED");
+                task.setLastMessage("stopped without active run");
+                taskMapper.updateById(task);
+                return Map.of("taskId", taskId, "status", "STOPPED", "runId", 0L);
+            }
+            throw new BusinessException(400, "当前没有正在执行的采集任务");
+        }
+        return stopRun(operator, run.getId());
+    }
+
+    public Map<String, Object> monitorOverview(String sourceKeyword, String taskKeyword, Long sourceId,
+                                               String status, String runStatus) {
+        // status 兼容旧参数：优先按最近执行状态过滤
+        String execStatus = (runStatus != null && !runStatus.isBlank()) ? runStatus
+                : (status != null && !status.isBlank() ? status : null);
+        List<GovMetaCollectTask> tasks = listTasks(null, null, taskKeyword);
+        String sk = sourceKeyword == null ? "" : sourceKeyword.trim();
+        List<Map<String, Object>> allRows = new ArrayList<>();
         List<Map<String, Object>> rows = new ArrayList<>();
         for (GovMetaCollectTask t : tasks) {
             GovOmConnector c = connectorMapper.selectById(t.getConnectorId());
+            if (sourceId != null) {
+                if (t.getIngDataSourceId() == null || !sourceId.equals(t.getIngDataSourceId())) {
+                    continue;
+                }
+            }
+            if (!sk.isEmpty()) {
+                boolean hit = (c != null && (
+                        (c.getConnectorName() != null && c.getConnectorName().contains(sk))
+                                || (c.getSourceType() != null && c.getSourceType().contains(sk))))
+                        || (t.getTaskName() != null && t.getTaskName().contains(sk));
+                if (!hit) continue;
+            }
             GovMetaCollectRun last = runMapper.selectOne(new LambdaQueryWrapper<GovMetaCollectRun>()
                     .eq(GovMetaCollectRun::getTaskId, t.getId())
                     .orderByDesc(GovMetaCollectRun::getId)
                     .last("limit 1"));
+            String lastStatus = last != null ? last.getStatus()
+                    : ("RUNNING".equals(t.getStatus()) ? "RUNNING" : "IDLE");
+
             Map<String, Object> row = new LinkedHashMap<>();
             row.put("task", t);
             row.put("connectorName", c == null ? null : c.getConnectorName());
             row.put("sourceType", c == null ? null : c.getSourceType());
-            row.put("lastRun", last);
+            row.put("sourceId", t.getIngDataSourceId());
+            row.put("lastRun", last == null ? null : enrichRunRow(last, t, c));
+            row.put("execStatus", "RUNNING".equals(t.getStatus()) ? "RUNNING" : lastStatus);
+            row.put("canStop", "RUNNING".equals(t.getStatus())
+                    || (last != null && "RUNNING".equals(last.getStatus())));
+            allRows.add(row);
+
+            if (execStatus != null && !execStatus.isBlank()) {
+                if ("IDLE".equalsIgnoreCase(execStatus)) {
+                    if (last != null) continue;
+                } else if (last == null || !execStatus.equalsIgnoreCase(last.getStatus())) {
+                    if (!("RUNNING".equalsIgnoreCase(execStatus) && "RUNNING".equals(t.getStatus()))) {
+                        continue;
+                    }
+                }
+            }
             rows.add(row);
         }
-        return Map.of("items", rows, "omHealthy", openMetadataClient.isHealthy());
+        int running = 0, success = 0, failed = 0, stopped = 0, idle = 0;
+        for (Map<String, Object> row : allRows) {
+            String es = String.valueOf(row.get("execStatus"));
+            if ("RUNNING".equals(es)) running++;
+            else if ("SUCCESS".equals(es)) success++;
+            else if ("FAILED".equals(es)) failed++;
+            else if ("STOPPED".equals(es)) stopped++;
+            else idle++;
+        }
+        Map<String, Object> kpi = new LinkedHashMap<>();
+        kpi.put("total", allRows.size());
+        kpi.put("running", running);
+        kpi.put("success", success);
+        kpi.put("failed", failed);
+        kpi.put("stopped", stopped);
+        kpi.put("idle", idle);
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("items", rows);
+        out.put("kpi", kpi);
+        out.put("omHealthy", openMetadataClient.isHealthy());
+        out.put("refreshedAt", LocalDateTime.now().toString());
+        return out;
+    }
+
+    private Map<String, Object> enrichRunRow(GovMetaCollectRun run, GovMetaCollectTask task, GovOmConnector c) {
+        Map<String, Object> m = new LinkedHashMap<>();
+        m.put("id", run.getId());
+        m.put("taskId", run.getTaskId());
+        m.put("taskName", task == null ? null : task.getTaskName());
+        m.put("taskStatus", task == null ? null : task.getStatus());
+        m.put("connectorName", c == null ? null : c.getConnectorName());
+        m.put("sourceType", c == null ? null : c.getSourceType());
+        m.put("status", run.getStatus());
+        m.put("startedAt", run.getStartedAt());
+        m.put("endedAt", run.getEndedAt());
+        m.put("tableCount", run.getTableCount());
+        m.put("summary", run.getSummary());
+        m.put("logText", run.getLogText());
+        m.put("durationSeconds", calcDurationSeconds(run.getStartedAt(), run.getEndedAt()));
+        m.put("diff", parseRunDiffCompact(run));
+        return m;
+    }
+
+    private Long calcDurationSeconds(LocalDateTime start, LocalDateTime end) {
+        if (start == null) return null;
+        LocalDateTime to = end != null ? end : LocalDateTime.now();
+        return java.time.Duration.between(start, to).getSeconds();
+    }
+
+    @SuppressWarnings("unchecked")
+    private Map<String, Object> parseRunDiffCompact(GovMetaCollectRun run) {
+        if (run == null) return null;
+        String summary = run.getSummary();
+        if (summary != null && summary.trim().startsWith("{")) {
+            try {
+                return objectMapper.readValue(summary, new TypeReference<Map<String, Object>>() {});
+            } catch (Exception ignored) {
+            }
+        }
+        Map<String, Object> full = parseRunDiff(run);
+        return full == null ? null : compactRunDiff(full);
+    }
+
+    @SuppressWarnings("unchecked")
+    private Map<String, Object> parseRunDiff(GovMetaCollectRun run) {
+        if (run == null) return null;
+        String log = run.getLogText();
+        if (log != null) {
+            int idx = log.lastIndexOf("diff=");
+            if (idx >= 0) {
+                String json = log.substring(idx + 5).trim();
+                int nl = json.indexOf('\n');
+                if (nl > 0) json = json.substring(0, nl).trim();
+                try {
+                    return objectMapper.readValue(json, new TypeReference<Map<String, Object>>() {});
+                } catch (Exception ignored) {
+                }
+            }
+        }
+        String summary = run.getSummary();
+        if (summary != null && summary.trim().startsWith("{")) {
+            try {
+                return objectMapper.readValue(summary, new TypeReference<Map<String, Object>>() {});
+            } catch (Exception ignored) {
+            }
+        }
+        return null;
+    }
+
+    /** @deprecated 保留兼容；请用带任务名/数据源参数的重载 */
+    public Map<String, Object> monitorOverview(String sourceKeyword, String status) {
+        return monitorOverview(sourceKeyword, null, null, status, null);
     }
 
     @Transactional
@@ -644,6 +822,172 @@ public class MetadataSubsystemService {
         return versionMapper.selectList(q);
     }
 
+    /**
+     * 版本管理实体概览：同一实体的发布状态、版本数、最新/已发布版本。
+     */
+    public Map<String, Object> versionOverview(String keyword, String targetType, String publishStatus) {
+        String tt = targetType == null || targetType.isBlank() ? "ENTRY" : targetType.trim().toUpperCase(Locale.ROOT);
+        List<Map<String, Object>> items = new ArrayList<>();
+        int published = 0, draft = 0, offline = 0;
+        if ("MODEL".equals(tt)) {
+            List<GovMetaModel> models = listModels(null);
+            for (GovMetaModel m : models) {
+                if (keyword != null && !keyword.isBlank()) {
+                    String kw = keyword.trim();
+                    if (!nvl(m.getModelNameZh()).contains(kw) && !nvl(m.getModelCode()).contains(kw)) {
+                        continue;
+                    }
+                }
+                Map<String, Object> row = enrichVersionTarget("MODEL", m.getId(), m.getModelCode(), m.getModelNameZh(),
+                        m.getStatus(), null);
+                String ps = String.valueOf(row.get("publishStatus"));
+                if ("PUBLISHED".equals(ps)) published++;
+                else if ("OFFLINE".equals(ps)) offline++;
+                else draft++;
+                if (publishStatus != null && !publishStatus.isBlank() && !publishStatus.equalsIgnoreCase(ps)) {
+                    continue;
+                }
+                items.add(row);
+            }
+        } else {
+            LambdaQueryWrapper<GovMetadataRegistry> q = new LambdaQueryWrapper<GovMetadataRegistry>()
+                    .in(GovMetadataRegistry::getEntryType, List.of("TABLE", "SOURCE"))
+                    .orderByDesc(GovMetadataRegistry::getUpdatedAt)
+                    .orderByDesc(GovMetadataRegistry::getId);
+            if (keyword != null && !keyword.isBlank()) {
+                String kw = keyword.trim();
+                q.and(w -> w.like(GovMetadataRegistry::getEntryName, kw)
+                        .or().like(GovMetadataRegistry::getEntryCode, kw));
+            }
+            List<GovMetadataRegistry> entries = excludeControlPlaneEntries(registryMapper.selectList(q));
+            for (GovMetadataRegistry e : entries) {
+                Map<String, Object> row = enrichVersionTarget("ENTRY", e.getId(), e.getEntryCode(), e.getEntryName(),
+                        e.getStatus(), e.getChangeFlag());
+                row.put("entryType", e.getEntryType());
+                row.put("securityLevel", e.getSecurityLevel());
+                row.put("ownerName", e.getOwnerName());
+                row.put("updatedAt", e.getUpdatedAt());
+                String ps = String.valueOf(row.get("publishStatus"));
+                if ("PUBLISHED".equals(ps)) published++;
+                else if ("OFFLINE".equals(ps)) offline++;
+                else draft++;
+                if (publishStatus != null && !publishStatus.isBlank() && !publishStatus.equalsIgnoreCase(ps)) {
+                    continue;
+                }
+                items.add(row);
+            }
+        }
+        Map<String, Object> kpi = new LinkedHashMap<>();
+        kpi.put("total", published + draft + offline);
+        kpi.put("published", published);
+        kpi.put("draft", draft);
+        kpi.put("offline", offline);
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("kpi", kpi);
+        out.put("items", items);
+        out.put("targetType", tt);
+        return out;
+    }
+
+    public Map<String, Object> versionDetail(Long versionId) {
+        GovMetaVersion version = versionMapper.selectById(versionId);
+        if (version == null) {
+            throw new BusinessException(404, "版本不存在");
+        }
+        Map<String, Object> snap = parseSnapshot(version.getSnapshotJson());
+        Map<String, Object> basicInfo = new LinkedHashMap<>(snap);
+        basicInfo.remove("fields");
+        basicInfo.remove("relations");
+        basicInfo.remove("contentJson");
+
+        List<Map<String, Object>> fields = extractFieldAttrs(snap);
+        List<Map<String, Object>> relations = extractRelationsFromSnap(snap);
+        if (relations.isEmpty() && "ENTRY".equalsIgnoreCase(version.getTargetType())) {
+            Object code = snap.get("entryCode");
+            if (code != null) {
+                relations = listRelationsForEntryCode(String.valueOf(code));
+            }
+        }
+
+        List<Map<String, Object>> dataPreview = List.of();
+        String previewHint = null;
+        if ("ENTRY".equalsIgnoreCase(version.getTargetType())) {
+            try {
+                dataPreview = previewEntryRows(snap, 10);
+            } catch (Exception e) {
+                previewHint = "数据预览不可用: " + e.getMessage();
+            }
+            if (dataPreview.isEmpty() && previewHint == null) {
+                previewHint = "当前版本无可用物理表样例数据";
+            }
+        }
+
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("version", version);
+        out.put("basicInfo", basicInfo);
+        out.put("fields", fields);
+        out.put("relations", relations);
+        out.put("dataPreview", dataPreview);
+        out.put("previewHint", previewHint);
+        out.put("isPublishVersion", isPublishSummary(version.getChangeSummary()));
+        out.put("isOfflineVersion", isOfflineSummary(version.getChangeSummary()));
+        return out;
+    }
+
+    @Transactional
+    public Map<String, Object> publishVersionTarget(UserPrincipal operator, Map<String, Object> body) {
+        String targetType = required(body.get("targetType"), "targetType").toUpperCase(Locale.ROOT);
+        Long targetId = longVal(body.get("targetId"));
+        if (targetId == null) {
+            throw new BusinessException(400, "targetId required");
+        }
+        String description = str(body.get("description"), null);
+        if (description == null || description.isBlank()) {
+            description = "MODEL".equals(targetType) ? "发布元模型" : "发布元数据";
+        }
+        if ("MODEL".equals(targetType)) {
+            GovMetaModel m = requireModel(targetId);
+            m.setStatus("PUBLISHED");
+            m.setPublishedAt(LocalDateTime.now());
+            modelMapper.updateById(m);
+            snapshotVersion(operator, "MODEL", m.getId(), toJson(m), description);
+            auditService.log(operator.getUserId(), operator.getUsername(), operator.getOrgId(),
+                    "META_MODEL_PUBLISH", "gov_meta_model", String.valueOf(targetId), m.getModelCode());
+            return Map.of("targetType", "MODEL", "targetId", targetId, "status", "PUBLISHED");
+        }
+        if ("ENTRY".equals(targetType)) {
+            return publishEntry(operator, targetId, description);
+        }
+        throw new BusinessException(400, "不支持的目标类型: " + targetType);
+    }
+
+    @Transactional
+    public Map<String, Object> offlineVersionTarget(UserPrincipal operator, Map<String, Object> body) {
+        String targetType = required(body.get("targetType"), "targetType").toUpperCase(Locale.ROOT);
+        Long targetId = longVal(body.get("targetId"));
+        if (targetId == null) {
+            throw new BusinessException(400, "targetId required");
+        }
+        String description = str(body.get("description"), null);
+        if (description == null || description.isBlank()) {
+            description = "MODEL".equals(targetType) ? "下线元模型" : "下线元数据";
+        }
+        if ("MODEL".equals(targetType)) {
+            GovMetaModel m = requireModel(targetId);
+            m.setStatus("OFFLINE");
+            modelMapper.updateById(m);
+            snapshotVersion(operator, "MODEL", m.getId(), toJson(m), description);
+            auditService.log(operator.getUserId(), operator.getUsername(), operator.getOrgId(),
+                    "META_MODEL_OFFLINE", "gov_meta_model", String.valueOf(targetId), m.getModelCode());
+            return Map.of("targetType", "MODEL", "targetId", targetId, "status", "OFFLINE");
+        }
+        if ("ENTRY".equals(targetType)) {
+            offlineEntry(operator, targetId, description);
+            return Map.of("targetType", "ENTRY", "targetId", targetId, "status", "OFFLINE");
+        }
+        throw new BusinessException(400, "不支持的目标类型: " + targetType);
+    }
+
     public Map<String, Object> compareVersions(Long leftId, Long rightId) {
         GovMetaVersion left = versionMapper.selectById(leftId);
         GovMetaVersion right = versionMapper.selectById(rightId);
@@ -652,26 +996,20 @@ public class MetadataSubsystemService {
         }
         Map<String, Object> leftSnap = parseSnapshot(left.getSnapshotJson());
         Map<String, Object> rightSnap = parseSnapshot(right.getSnapshotJson());
-        List<Map<String, Object>> basicDiff = new ArrayList<>();
-        Set<String> keys = new HashSet<>();
-        keys.addAll(leftSnap.keySet());
-        keys.addAll(rightSnap.keySet());
-        for (String key : keys) {
-            if ("contentJson".equals(key)) continue;
-            String lv = nvl(String.valueOf(leftSnap.getOrDefault(key, "")));
-            String rv = nvl(String.valueOf(rightSnap.getOrDefault(key, "")));
-            if (!lv.equals(rv)) {
-                basicDiff.add(Map.of("field", key, "left", lv, "right", rv, "changeType", "changed"));
-            }
-        }
+        List<Map<String, Object>> basicDiff = buildBasicDiff(leftSnap, rightSnap);
         Map<String, Object> fieldDiff = diffContentJsonFields(
-                leftSnap.get("contentJson"), rightSnap.get("contentJson"));
+                fieldRawFromSnap(leftSnap), fieldRawFromSnap(rightSnap));
+        List<Map<String, Object>> attrDiff = buildAttrDiff(leftSnap, rightSnap);
         Map<String, Object> out = new LinkedHashMap<>();
         out.put("left", left);
         out.put("right", right);
-        out.put("sameSnapshot", String.valueOf(left.getSnapshotJson()).equals(String.valueOf(right.getSnapshotJson())));
+        out.put("sameSnapshot", basicDiff.isEmpty() && attrDiff.isEmpty()
+                && ((List<?>) fieldDiff.getOrDefault("added", List.of())).isEmpty()
+                && ((List<?>) fieldDiff.getOrDefault("removed", List.of())).isEmpty()
+                && ((List<?>) fieldDiff.getOrDefault("changed", List.of())).isEmpty());
         out.put("basicDiff", basicDiff);
         out.put("fieldDiff", fieldDiff);
+        out.put("attrDiff", attrDiff);
         return out;
     }
 
@@ -680,43 +1018,188 @@ public class MetadataSubsystemService {
     }
 
     public List<GovMetadataRegistry> searchCatalog(String keyword, String type, String tag, UserPrincipal operator) {
-        // 打开目录时回填已有 ODS 上传/汇聚资产，保证资产树可见
         try {
             syncOdsIngestAssetsToMetadata(operator);
         } catch (Exception e) {
             log.warn("目录检索前回填 ODS 资产失败: {}", e.getMessage());
         }
-        LambdaQueryWrapper<GovMetadataRegistry> q = new LambdaQueryWrapper<GovMetadataRegistry>()
+        List<GovMetadataRegistry> all = registryMapper.selectList(new LambdaQueryWrapper<GovMetadataRegistry>()
                 .ne(GovMetadataRegistry::getStatus, "OFFLINE")
                 .orderByAsc(GovMetadataRegistry::getEntryType)
-                .orderByAsc(GovMetadataRegistry::getEntryName);
-        if (keyword != null && !keyword.isBlank()) {
-            String kw = keyword.trim();
-            q.and(w -> w.like(GovMetadataRegistry::getEntryName, kw)
-                    .or().like(GovMetadataRegistry::getEntryCode, kw)
-                    .or().like(GovMetadataRegistry::getKeywords, kw)
-                    .or().like(GovMetadataRegistry::getTags, kw));
-        }
+                .orderByAsc(GovMetadataRegistry::getEntryName));
+        all = all.stream().filter(this::isPublishedForQuery).collect(Collectors.toList());
+        all = excludeControlPlaneEntries(all);
+        Map<String, GovMetadataRegistry> byCode = all.stream()
+                .filter(e -> e.getEntryCode() != null)
+                .collect(Collectors.toMap(GovMetadataRegistry::getEntryCode, e -> e, (a, b) -> a));
+
         if (tag != null && !tag.isBlank()) {
-            q.like(GovMetadataRegistry::getTags, tag.trim());
+            String tg = tag.trim();
+            all = all.stream().filter(e -> nvl(e.getTags()).contains(tg)).collect(Collectors.toList());
         }
-        List<GovMetadataRegistry> all = registryMapper.selectList(q);
+        if (keyword != null && !keyword.isBlank()) {
+            String kw = keyword.trim().toLowerCase(Locale.ROOT);
+            Set<String> keep = new HashSet<>();
+            for (GovMetadataRegistry e : all) {
+                if (catalogKeywordMatch(e, kw)) {
+                    keep.add(e.getEntryCode());
+                }
+            }
+            // 字段命中 → 保留父表；表命中 → 保留归属源
+            for (GovMetadataRegistry e : new ArrayList<>(all)) {
+                if (!keep.contains(e.getEntryCode())) continue;
+                if ("COLUMN".equalsIgnoreCase(e.getEntryType()) && e.getParentCode() != null) {
+                    keep.add(e.getParentCode());
+                    GovMetadataRegistry tbl = byCode.get(e.getParentCode());
+                    if (tbl != null && tbl.getParentCode() != null) {
+                        keep.add(tbl.getParentCode());
+                    }
+                }
+                if ("TABLE".equalsIgnoreCase(e.getEntryType()) && e.getParentCode() != null) {
+                    keep.add(e.getParentCode());
+                }
+            }
+            // 命中表时带上其字段，便于展开查看
+            for (GovMetadataRegistry e : all) {
+                if ("COLUMN".equalsIgnoreCase(e.getEntryType())
+                        && e.getParentCode() != null
+                        && keep.contains(e.getParentCode())) {
+                    keep.add(e.getEntryCode());
+                }
+            }
+            all = all.stream().filter(e -> e.getEntryCode() != null && keep.contains(e.getEntryCode()))
+                    .collect(Collectors.toList());
+        }
+
         String t = type == null ? "" : type.trim().toLowerCase();
         if ("source".equals(t)) {
-            return all.stream().filter(e -> isSourceType(e.getEntryType())).collect(Collectors.toList());
+            boolean narrow = (keyword != null && !keyword.isBlank()) || (tag != null && !tag.isBlank());
+            Set<String> hitCodes = all.stream()
+                    .map(GovMetadataRegistry::getEntryCode)
+                    .filter(Objects::nonNull)
+                    .collect(Collectors.toSet());
+            Set<String> include = new HashSet<>();
+            Set<String> sourceCodes = byCode.values().stream()
+                    .filter(e -> isSourceType(e.getEntryType()))
+                    .map(GovMetadataRegistry::getEntryCode)
+                    .filter(Objects::nonNull)
+                    .collect(Collectors.toSet());
+            if (!narrow) {
+                include.addAll(sourceCodes);
+            } else {
+                for (String code : hitCodes) {
+                    GovMetadataRegistry e = byCode.get(code);
+                    if (e == null) continue;
+                    if (isSourceType(e.getEntryType())) {
+                        include.add(code);
+                    } else if ("TABLE".equalsIgnoreCase(e.getEntryType()) && e.getParentCode() != null
+                            && sourceCodes.contains(e.getParentCode())) {
+                        include.add(code);
+                        include.add(e.getParentCode());
+                    } else if ("COLUMN".equalsIgnoreCase(e.getEntryType()) && e.getParentCode() != null) {
+                        GovMetadataRegistry tbl = byCode.get(e.getParentCode());
+                        if (tbl != null && tbl.getParentCode() != null && sourceCodes.contains(tbl.getParentCode())) {
+                            include.add(code);
+                            include.add(tbl.getEntryCode());
+                            include.add(tbl.getParentCode());
+                        }
+                    }
+                }
+            }
+            for (GovMetadataRegistry e : byCode.values()) {
+                if (!"TABLE".equalsIgnoreCase(e.getEntryType())) continue;
+                if (e.getParentCode() == null || !include.contains(e.getParentCode())) continue;
+                if (narrow && !include.contains(e.getEntryCode())) continue;
+                include.add(e.getEntryCode());
+            }
+            for (GovMetadataRegistry e : byCode.values()) {
+                if (!"COLUMN".equalsIgnoreCase(e.getEntryType())) continue;
+                if (e.getParentCode() != null && include.contains(e.getParentCode())) {
+                    if (!narrow || include.contains(e.getEntryCode()) || hitCodes.contains(e.getParentCode())) {
+                        include.add(e.getEntryCode());
+                    }
+                }
+            }
+            return byCode.values().stream()
+                    .filter(e -> e.getEntryCode() != null && include.contains(e.getEntryCode()))
+                    .sorted(Comparator.comparing((GovMetadataRegistry x) -> nvl(x.getEntryType()))
+                            .thenComparing(x -> nvl(x.getEntryName())))
+                    .collect(Collectors.toList());
         }
-        // 资产/全部：排除控制面 smart_city 系统表及其字段
-        List<GovMetadataRegistry> plane = excludeControlPlaneEntries(all);
         if ("asset".equals(t)) {
-            return plane.stream().filter(e -> isAssetType(e.getEntryType())).collect(Collectors.toList());
+            return all.stream()
+                    .filter(e -> isAssetType(e.getEntryType()) || isSourceType(e.getEntryType()))
+                    .collect(Collectors.toList());
         }
-        return plane;
+        return all;
+    }
+
+    /**
+     * 目录浏览：源目录（业务系统→数据源→库→表）/ 资产目录（分层→主题域→表）。
+     */
+    public Map<String, Object> catalogBrowse(String keyword, String tag, String catalogKind, UserPrincipal operator) {
+        String kind = catalogKind == null || catalogKind.isBlank() ? "asset" : catalogKind.trim().toLowerCase();
+        String type = "source".equals(kind) ? "source" : "asset";
+        List<GovMetadataRegistry> entries = searchCatalog(keyword, type, tag, operator);
+        List<Map<String, Object>> tree = "source".equals(kind)
+                ? buildSourceCatalogTree(entries)
+                : buildAssetCatalogTree(entries);
+        Set<String> tags = new LinkedHashSet<>();
+        Set<String> domains = new LinkedHashSet<>();
+        for (GovMetadataRegistry e : entries) {
+            if (e.getTags() != null) {
+                for (String part : e.getTags().split("[,，]")) {
+                    if (part != null && !part.isBlank()) tags.add(part.trim());
+                }
+            }
+            if (e.getBusinessDomain() != null && !e.getBusinessDomain().isBlank()) {
+                domains.add(e.getBusinessDomain().trim());
+            }
+        }
+        long tableCount = entries.stream().filter(e -> "TABLE".equalsIgnoreCase(e.getEntryType())).count();
+        long sourceCount = entries.stream().filter(e -> isSourceType(e.getEntryType())).count();
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("catalogKind", kind);
+        out.put("entries", entries);
+        out.put("tree", tree);
+        out.put("tags", new ArrayList<>(tags));
+        out.put("domains", new ArrayList<>(domains));
+        Map<String, Object> kpi = new LinkedHashMap<>();
+        kpi.put("entryCount", entries.size());
+        kpi.put("tableCount", tableCount);
+        kpi.put("sourceCount", sourceCount);
+        out.put("kpi", kpi);
+        return out;
+    }
+
+    public Map<String, Object> catalogEntryDetail(Long id) {
+        GovMetadataRegistry e = registryMapper.selectById(id);
+        if (e == null || "OFFLINE".equalsIgnoreCase(e.getStatus())) {
+            throw new BusinessException(404, "条目不存在或已下线");
+        }
+        List<GovMetadataRegistry> columns = List.of();
+        if ("TABLE".equalsIgnoreCase(e.getEntryType())) {
+            columns = registryMapper.selectList(new LambdaQueryWrapper<GovMetadataRegistry>()
+                    .eq(GovMetadataRegistry::getParentCode, e.getEntryCode())
+                    .eq(GovMetadataRegistry::getEntryType, "COLUMN")
+                    .ne(GovMetadataRegistry::getStatus, "OFFLINE")
+                    .orderByAsc(GovMetadataRegistry::getEntryCode));
+        }
+        List<GovMetaVersion> versions = listVersions("ENTRY", e.getId());
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("entry", e);
+        out.put("columns", columns);
+        out.put("versions", versions);
+        out.put("latestVersionNo", versions.isEmpty() ? null : versions.get(0).getVersionNo());
+        out.put("versionCount", versions.size());
+        return out;
     }
 
     public Map<String, Object> catalogViews() {
         List<GovMetadataRegistry> all = registryMapper.selectList(new LambdaQueryWrapper<GovMetadataRegistry>()
                 .ne(GovMetadataRegistry::getStatus, "OFFLINE")
                 .orderByAsc(GovMetadataRegistry::getId));
+        all = all.stream().filter(this::isPublishedForQuery).collect(Collectors.toList());
         List<GovMetadataRegistry> sources = all.stream()
                 .filter(e -> isSourceType(e.getEntryType()))
                 .collect(Collectors.toList());
@@ -741,6 +1224,11 @@ public class MetadataSubsystemService {
 
     @Transactional
     public void offlineEntry(UserPrincipal operator, Long id) {
+        offlineEntry(operator, id, "下线元数据");
+    }
+
+    @Transactional
+    public void offlineEntry(UserPrincipal operator, Long id, String description) {
         GovMetadataRegistry e = registryMapper.selectById(id);
         if (e == null) {
             throw new BusinessException(404, "条目不存在");
@@ -749,75 +1237,399 @@ public class MetadataSubsystemService {
         e.setChangeFlag("CHANGED");
         e.setUpdatedAt(LocalDateTime.now());
         registryMapper.updateById(e);
+        snapshotEntryVersion(operator, e, description == null || description.isBlank() ? "下线元数据" : description);
         insertChangeNotice(e, "目录条目下线", null);
         auditService.log(operator.getUserId(), operator.getUsername(), operator.getOrgId(),
                 "META_ENTRY_OFFLINE", "gov_metadata_registry", String.valueOf(id), e.getEntryCode());
     }
 
     public Map<String, Object> analyzeGraph(String relationType) {
+        return analyzeGraph(relationType, null);
+    }
+
+    public Map<String, Object> analyzeGraph(String relationType, String focusCode) {
         List<GovMetadataRegistry> entries = registryMapper.selectList(
                 new LambdaQueryWrapper<GovMetadataRegistry>().ne(GovMetadataRegistry::getStatus, "OFFLINE"));
-        List<Map<String, Object>> nodes = new ArrayList<>();
-        for (GovMetadataRegistry e : entries) {
-            nodes.add(Map.of("id", e.getEntryCode(), "label", e.getEntryName(), "type", e.getEntryType()));
-        }
+        Map<String, GovMetadataRegistry> byCode = entries.stream()
+                .filter(e -> e.getEntryCode() != null)
+                .collect(Collectors.toMap(GovMetadataRegistry::getEntryCode, e -> e, (a, b) -> a));
         LambdaQueryWrapper<GovMetaRelation> q = new LambdaQueryWrapper<GovMetaRelation>()
                 .eq(GovMetaRelation::getStatus, "ACTIVE");
         if (relationType != null && !relationType.isBlank()) {
-            q.eq(GovMetaRelation::getRelationType, relationType);
+            String rt = relationType.trim().toUpperCase(Locale.ROOT);
+            if ("ASSOC".equals(rt)) {
+                q.in(GovMetaRelation::getRelationType, List.of("ASSOC", "FK"));
+            } else {
+                q.eq(GovMetaRelation::getRelationType, rt);
+            }
         }
         List<GovMetaRelation> rels = relationMapper.selectList(q);
+        Set<String> used = new HashSet<>();
         List<Map<String, Object>> edges = new ArrayList<>();
         for (GovMetaRelation r : rels) {
-            edges.add(Map.of(
-                    "from", r.getFromCode(),
-                    "to", r.getToCode(),
-                    "label", r.getLabel() == null ? r.getRelationType() : r.getLabel(),
-                    "type", r.getRelationType()
-            ));
+            if (focusCode != null && !focusCode.isBlank()) {
+                String fc = focusCode.trim();
+                if (!fc.equals(r.getFromCode()) && !fc.equals(r.getToCode())) {
+                    continue;
+                }
+            }
+            used.add(r.getFromCode());
+            used.add(r.getToCode());
+            Map<String, Object> edge = new LinkedHashMap<>();
+            edge.put("id", r.getId());
+            edge.put("from", r.getFromCode());
+            edge.put("to", r.getToCode());
+            edge.put("label", r.getLabel() == null ? r.getRelationType() : r.getLabel());
+            edge.put("type", r.getRelationType());
+            edges.add(edge);
         }
+        List<Map<String, Object>> nodes = new ArrayList<>();
+        Set<String> nodeIds = used.isEmpty() && (focusCode == null || focusCode.isBlank())
+                ? byCode.keySet() : used;
+        if (focusCode != null && !focusCode.isBlank()) {
+            nodeIds = new HashSet<>(used);
+            nodeIds.add(focusCode.trim());
+        }
+        for (String code : nodeIds) {
+            GovMetadataRegistry e = byCode.get(code);
+            Map<String, Object> n = new LinkedHashMap<>();
+            n.put("id", code);
+            n.put("label", e == null ? code : e.getEntryName());
+            n.put("type", e == null ? "UNKNOWN" : e.getEntryType());
+            n.put("dataLayer", e == null ? null : e.getDataLayer());
+            nodes.add(n);
+        }
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("nodes", nodes);
+        out.put("edges", edges);
+        out.put("source", "local");
+        out.put("relationType", relationType);
+        out.put("focusCode", focusCode);
         if (edges.isEmpty() && integrationProperties.isEnabled() && openMetadataClient.isHealthy() && !entries.isEmpty()) {
             try {
                 String fqn = entries.get(0).getOmRef() != null ? entries.get(0).getOmRef() : entries.get(0).getEntryCode();
                 Map<String, Object> omLin = openMetadataClient.getLineage(fqn);
                 if (omLin != null && !omLin.isEmpty()) {
-                    return Map.of("nodes", nodes, "edges", edges, "omLineage", omLin, "source", "om+local");
+                    out.put("omLineage", omLin);
+                    out.put("source", "om+local");
                 }
             } catch (Exception ignored) {
             }
         }
-        return Map.of("nodes", nodes, "edges", edges, "source", "local");
+        return out;
+    }
+
+    public Map<String, Object> analyzeOverview() {
+        Long tableCount = registryMapper.selectCount(new LambdaQueryWrapper<GovMetadataRegistry>()
+                .eq(GovMetadataRegistry::getEntryType, "TABLE")
+                .ne(GovMetadataRegistry::getStatus, "OFFLINE"));
+        Long assocCount = relationMapper.selectCount(new LambdaQueryWrapper<GovMetaRelation>()
+                .eq(GovMetaRelation::getStatus, "ACTIVE")
+                .in(GovMetaRelation::getRelationType, List.of("ASSOC", "FK")));
+        Long lineageCount = relationMapper.selectCount(new LambdaQueryWrapper<GovMetaRelation>()
+                .eq(GovMetaRelation::getStatus, "ACTIVE")
+                .in(GovMetaRelation::getRelationType, List.of("LINEAGE", "COLUMN_LINEAGE")));
+        Long impactEdgeCount = relationMapper.selectCount(new LambdaQueryWrapper<GovMetaRelation>()
+                .eq(GovMetaRelation::getStatus, "ACTIVE")
+                .eq(GovMetaRelation::getRelationType, "IMPACT"));
+        Long colLineage = relationMapper.selectCount(new LambdaQueryWrapper<GovMetaRelation>()
+                .eq(GovMetaRelation::getStatus, "ACTIVE")
+                .eq(GovMetaRelation::getRelationType, "COLUMN_LINEAGE"));
+        Map<String, Object> kpi = new LinkedHashMap<>();
+        kpi.put("tableCount", tableCount == null ? 0 : tableCount.intValue());
+        kpi.put("assocCount", assocCount == null ? 0 : assocCount.intValue());
+        kpi.put("lineageCount", lineageCount == null ? 0 : lineageCount.intValue());
+        kpi.put("columnLineageCount", colLineage == null ? 0 : colLineage.intValue());
+        kpi.put("impactEdgeCount", impactEdgeCount == null ? 0 : impactEdgeCount.intValue());
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("kpi", kpi);
+        return out;
+    }
+
+    public List<Map<String, Object>> listAnalyzeTables(String keyword) {
+        LambdaQueryWrapper<GovMetadataRegistry> q = new LambdaQueryWrapper<GovMetadataRegistry>()
+                .eq(GovMetadataRegistry::getEntryType, "TABLE")
+                .ne(GovMetadataRegistry::getStatus, "OFFLINE")
+                .orderByAsc(GovMetadataRegistry::getEntryName);
+        if (keyword != null && !keyword.isBlank()) {
+            String kw = keyword.trim();
+            q.and(w -> w.like(GovMetadataRegistry::getEntryName, kw)
+                    .or().like(GovMetadataRegistry::getEntryCode, kw));
+        }
+        List<GovMetadataRegistry> tables = excludeControlPlaneEntries(registryMapper.selectList(q));
+        List<Map<String, Object>> out = new ArrayList<>();
+        for (GovMetadataRegistry e : tables) {
+            Map<String, Object> row = new LinkedHashMap<>();
+            row.put("id", e.getId());
+            row.put("entryCode", e.getEntryCode());
+            row.put("entryName", e.getEntryName());
+            row.put("entryType", e.getEntryType());
+            row.put("dataLayer", e.getDataLayer());
+            row.put("databaseName", e.getDatabaseName());
+            row.put("physicalTableName", e.getPhysicalTableName());
+            out.add(row);
+        }
+        return out;
+    }
+
+    /**
+     * 血缘分析：表级上下游递归；可下钻字段级血缘。
+     */
+    public Map<String, Object> analyzeLineage(String entryCode, String level) {
+        if (entryCode == null || entryCode.isBlank()) {
+            throw new BusinessException(400, "entryCode required");
+        }
+        String code = entryCode.trim();
+        String lv = level == null || level.isBlank() ? "TABLE" : level.trim().toUpperCase(Locale.ROOT);
+        List<GovMetaRelation> all = relationMapper.selectList(new LambdaQueryWrapper<GovMetaRelation>()
+                .eq(GovMetaRelation::getStatus, "ACTIVE")
+                .in(GovMetaRelation::getRelationType, List.of("LINEAGE", "FK", "ASSOC", "COLUMN_LINEAGE")));
+        List<GovMetaRelation> tableRels = all.stream()
+                .filter(r -> !"COLUMN_LINEAGE".equalsIgnoreCase(r.getRelationType()))
+                .collect(Collectors.toList());
+
+        Set<String> upVisited = new HashSet<>();
+        List<String> upstream = new ArrayList<>();
+        collectUpstream(code, tableRels, upVisited, upstream);
+
+        Set<String> downVisited = new HashSet<>();
+        List<String> downstream = new ArrayList<>();
+        collectDownstream(code, tableRels, downVisited, downstream);
+
+        Set<String> scope = new LinkedHashSet<>();
+        scope.add(code);
+        scope.addAll(upstream);
+        scope.addAll(downstream);
+
+        List<Map<String, Object>> nodes = new ArrayList<>();
+        for (String c : scope) {
+            nodes.add(nodeForCode(c, c.equals(code) ? "ROOT" : null));
+        }
+        List<Map<String, Object>> edges = new ArrayList<>();
+        for (GovMetaRelation r : tableRels) {
+            if (scope.contains(r.getFromCode()) && scope.contains(r.getToCode())) {
+                Map<String, Object> edge = new LinkedHashMap<>();
+                edge.put("id", r.getId());
+                edge.put("from", r.getFromCode());
+                edge.put("to", r.getToCode());
+                edge.put("label", r.getLabel() == null ? r.getRelationType() : r.getLabel());
+                edge.put("type", r.getRelationType());
+                edges.add(edge);
+            }
+        }
+
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("entryCode", code);
+        out.put("level", lv);
+        out.put("upstream", upstream);
+        out.put("downstream", downstream);
+        out.put("nodes", nodes);
+        out.put("edges", edges);
+        out.put("upstreamCount", upstream.size());
+        out.put("downstreamCount", downstream.size());
+
+        if ("COLUMN".equals(lv) || "FIELD".equals(lv)) {
+            Map<String, Object> fieldGraph = buildColumnLineageGraph(code, all, scope);
+            out.put("fieldNodes", fieldGraph.get("nodes"));
+            out.put("fieldEdges", fieldGraph.get("edges"));
+            out.put("fieldEdgeCount", fieldGraph.get("edgeCount"));
+        }
+        return out;
     }
 
     public Map<String, Object> analyzeImpactRecursive(String fromCode) {
+        return analyzeImpactRecursive(fromCode, null);
+    }
+
+    public Map<String, Object> analyzeImpactRecursive(String fromCode, Integer maxDepth) {
         if (fromCode == null || fromCode.isBlank()) {
             throw new BusinessException(400, "fromCode required");
         }
+        String code = fromCode.trim();
+        int depthLimit = maxDepth == null || maxDepth <= 0 ? 20 : Math.min(maxDepth, 50);
         List<GovMetaRelation> rels = relationMapper.selectList(new LambdaQueryWrapper<GovMetaRelation>()
-                .eq(GovMetaRelation::getStatus, "ACTIVE"));
-        Set<String> visited = new HashSet<>();
-        List<String> impacted = new ArrayList<>();
-        collectDownstream(fromCode.trim(), rels, visited, impacted);
+                .eq(GovMetaRelation::getStatus, "ACTIVE")
+                .in(GovMetaRelation::getRelationType, List.of("LINEAGE", "IMPACT", "FK", "ASSOC")));
+        Map<String, Integer> hopMap = new LinkedHashMap<>();
+        collectDownstreamWithDepth(code, rels, new HashSet<>(), hopMap, 0, depthLimit);
+        List<Map<String, Object>> impactedDetails = new ArrayList<>();
         List<Map<String, Object>> nodes = new ArrayList<>();
-        nodes.add(Map.of("id", fromCode, "label", fromCode, "type", "ROOT"));
-        for (String code : impacted) {
-            GovMetadataRegistry e = registryMapper.selectOne(new LambdaQueryWrapper<GovMetadataRegistry>()
-                    .eq(GovMetadataRegistry::getEntryCode, code).last("limit 1"));
-            nodes.add(Map.of(
-                    "id", code,
-                    "label", e == null ? code : e.getEntryName(),
-                    "type", e == null ? "UNKNOWN" : e.getEntryType()
-            ));
+        nodes.add(nodeForCode(code, "ROOT"));
+        for (Map.Entry<String, Integer> en : hopMap.entrySet()) {
+            GovMetadataRegistry e = findByCode(en.getKey());
+            Map<String, Object> detail = new LinkedHashMap<>();
+            detail.put("entryCode", en.getKey());
+            detail.put("entryName", e == null ? en.getKey() : e.getEntryName());
+            detail.put("entryType", e == null ? "UNKNOWN" : e.getEntryType());
+            detail.put("dataLayer", e == null ? null : e.getDataLayer());
+            detail.put("hop", en.getValue());
+            impactedDetails.add(detail);
+            Map<String, Object> n = nodeForCode(en.getKey(), null);
+            n.put("hop", en.getValue());
+            nodes.add(n);
         }
+        Set<String> visited = new HashSet<>();
+        visited.add(code);
+        visited.addAll(hopMap.keySet());
         List<Map<String, Object>> edges = new ArrayList<>();
         for (GovMetaRelation r : rels) {
             if (visited.contains(r.getFromCode()) && visited.contains(r.getToCode())) {
-                edges.add(Map.of("from", r.getFromCode(), "to", r.getToCode(),
-                        "label", r.getLabel() == null ? r.getRelationType() : r.getLabel(),
-                        "type", r.getRelationType()));
+                Map<String, Object> edge = new LinkedHashMap<>();
+                edge.put("id", r.getId());
+                edge.put("from", r.getFromCode());
+                edge.put("to", r.getToCode());
+                edge.put("label", r.getLabel() == null ? r.getRelationType() : r.getLabel());
+                edge.put("type", r.getRelationType());
+                edges.add(edge);
             }
         }
-        return Map.of("fromCode", fromCode, "impacted", impacted, "nodes", nodes, "edges", edges, "count", impacted.size());
+        String risk = hopMap.isEmpty() ? "LOW" : hopMap.size() <= 3 ? "MEDIUM" : "HIGH";
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("fromCode", code);
+        out.put("impacted", new ArrayList<>(hopMap.keySet()));
+        out.put("impactedDetails", impactedDetails);
+        out.put("nodes", nodes);
+        out.put("edges", edges);
+        out.put("count", hopMap.size());
+        out.put("maxHop", hopMap.values().stream().mapToInt(Integer::intValue).max().orElse(0));
+        out.put("riskLevel", risk);
+        out.put("offlineAssess", analyzeOfflineAssess(code));
+        return out;
+    }
+
+    public List<Map<String, Object>> listRelations(String relationType, String keyword) {
+        LambdaQueryWrapper<GovMetaRelation> q = new LambdaQueryWrapper<GovMetaRelation>()
+                .eq(GovMetaRelation::getStatus, "ACTIVE")
+                .orderByDesc(GovMetaRelation::getId);
+        if (relationType != null && !relationType.isBlank()) {
+            String rt = relationType.trim().toUpperCase(Locale.ROOT);
+            if ("ASSOC".equals(rt)) {
+                q.in(GovMetaRelation::getRelationType, List.of("ASSOC", "FK"));
+            } else {
+                q.eq(GovMetaRelation::getRelationType, rt);
+            }
+        }
+        if (keyword != null && !keyword.isBlank()) {
+            String kw = keyword.trim();
+            q.and(w -> w.like(GovMetaRelation::getFromCode, kw)
+                    .or().like(GovMetaRelation::getToCode, kw)
+                    .or().like(GovMetaRelation::getLabel, kw));
+        }
+        List<GovMetaRelation> rels = relationMapper.selectList(q.last("limit 500"));
+        List<Map<String, Object>> out = new ArrayList<>();
+        for (GovMetaRelation r : rels) {
+            Map<String, Object> row = new LinkedHashMap<>();
+            row.put("id", r.getId());
+            row.put("fromCode", r.getFromCode());
+            row.put("toCode", r.getToCode());
+            row.put("fromName", resolveName(r.getFromCode()));
+            row.put("toName", resolveName(r.getToCode()));
+            row.put("relationType", r.getRelationType());
+            row.put("label", r.getLabel());
+            row.put("createdAt", r.getCreatedAt());
+            out.add(row);
+        }
+        return out;
+    }
+
+    @Transactional
+    public void deleteRelation(UserPrincipal operator, Long id) {
+        GovMetaRelation r = relationMapper.selectById(id);
+        if (r == null) {
+            throw new BusinessException(404, "关系不存在");
+        }
+        r.setStatus("DELETED");
+        relationMapper.updateById(r);
+        auditService.log(operator.getUserId(), operator.getUsername(), operator.getOrgId(),
+                "META_RELATION_DELETE", "gov_meta_relation", String.valueOf(id), r.getRelationType());
+    }
+
+    @Transactional
+    public void updateRelation(UserPrincipal operator, Long id, Map<String, Object> body) {
+        GovMetaRelation r = relationMapper.selectById(id);
+        if (r == null || "DELETED".equalsIgnoreCase(r.getStatus())) {
+            throw new BusinessException(404, "关系不存在");
+        }
+        if (body.containsKey("label")) {
+            r.setLabel(str(body.get("label"), null));
+        }
+        if (body.containsKey("relationType")) {
+            r.setRelationType(str(body.get("relationType"), r.getRelationType()));
+        }
+        if (body.containsKey("fromCode")) {
+            r.setFromCode(required(body.get("fromCode"), "fromCode"));
+        }
+        if (body.containsKey("toCode")) {
+            r.setToCode(required(body.get("toCode"), "toCode"));
+        }
+        relationMapper.updateById(r);
+        auditService.log(operator.getUserId(), operator.getUsername(), operator.getOrgId(),
+                "META_RELATION_UPDATE", "gov_meta_relation", String.valueOf(id), r.getRelationType());
+    }
+
+    /**
+     * 自动解析血缘：补齐 SOURCE→TABLE，并按同名列生成字段级血缘。
+     */
+    @Transactional
+    public Map<String, Object> parseLineageAuto(UserPrincipal operator) {
+        int tableEdges = 0;
+        int fieldEdges = 0;
+        List<GovMetadataRegistry> tables = registryMapper.selectList(new LambdaQueryWrapper<GovMetadataRegistry>()
+                .eq(GovMetadataRegistry::getEntryType, "TABLE")
+                .ne(GovMetadataRegistry::getStatus, "OFFLINE"));
+        for (GovMetadataRegistry t : tables) {
+            if (t.getParentCode() == null || t.getParentCode().isBlank() || t.getEntryCode() == null) {
+                continue;
+            }
+            if (ensureRelation(t.getParentCode(), t.getEntryCode(), "LINEAGE", "自动解析：归属数据源")) {
+                tableEdges++;
+            }
+        }
+        // 分层推断：同物理名跨层 ODS→DWD→DWS→ADS
+        Map<String, List<GovMetadataRegistry>> byPhys = new HashMap<>();
+        for (GovMetadataRegistry t : tables) {
+            String key = nvl(t.getPhysicalTableName()).toLowerCase(Locale.ROOT);
+            if (key.isBlank()) {
+                key = nvl(t.getEntryName()).toLowerCase(Locale.ROOT);
+            }
+            if (key.isBlank()) continue;
+            // 去掉层前缀后分组
+            String norm = key.replaceFirst("^(ods_|dwd_|dws_|ads_)", "");
+            byPhys.computeIfAbsent(norm, k -> new ArrayList<>()).add(t);
+        }
+        List<String> layerOrder = List.of("ODS", "DWD", "DWS", "ADS");
+        for (List<GovMetadataRegistry> group : byPhys.values()) {
+            if (group.size() < 2) continue;
+            group.sort(Comparator.comparingInt(a -> layerOrder.indexOf(
+                    a.getDataLayer() == null ? "" : a.getDataLayer().toUpperCase(Locale.ROOT))));
+            for (int i = 0; i < group.size() - 1; i++) {
+                GovMetadataRegistry a = group.get(i);
+                GovMetadataRegistry b = group.get(i + 1);
+                if (a.getEntryCode() == null || b.getEntryCode() == null) continue;
+                String la = a.getDataLayer() == null ? "" : a.getDataLayer();
+                String lb = b.getDataLayer() == null ? "" : b.getDataLayer();
+                if (layerOrder.indexOf(la) < 0 || layerOrder.indexOf(lb) < 0) continue;
+                if (layerOrder.indexOf(la) >= layerOrder.indexOf(lb)) continue;
+                if (ensureRelation(a.getEntryCode(), b.getEntryCode(), "LINEAGE",
+                        "自动解析：分层 " + la + "→" + lb)) {
+                    tableEdges++;
+                }
+            }
+        }
+        // 已有表级血缘/外键 → 同名列字段血缘
+        List<GovMetaRelation> tableRels = relationMapper.selectList(new LambdaQueryWrapper<GovMetaRelation>()
+                .eq(GovMetaRelation::getStatus, "ACTIVE")
+                .in(GovMetaRelation::getRelationType, List.of("LINEAGE", "FK")));
+        for (GovMetaRelation r : tableRels) {
+            fieldEdges += linkSameNameColumns(r.getFromCode(), r.getToCode(), r.getRelationType(), r.getLabel());
+        }
+        auditService.log(operator.getUserId(), operator.getUsername(), operator.getOrgId(),
+                "META_PARSE_LINEAGE", "gov_meta_relation", "0",
+                "table=" + tableEdges + ",field=" + fieldEdges);
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("tableEdges", tableEdges);
+        out.put("fieldEdges", fieldEdges);
+        return out;
     }
 
     @Transactional
@@ -826,6 +1638,20 @@ public class MetadataSubsystemService {
         Long targetId = longVal(body.get("targetId"));
         if (targetId == null) {
             throw new BusinessException(400, "targetId required");
+        }
+        if ("ENTRY".equalsIgnoreCase(targetType)) {
+            GovMetadataRegistry e = registryMapper.selectById(targetId);
+            if (e == null) {
+                throw new BusinessException(404, "元数据条目不存在");
+            }
+            if (!isPublishedForQuery(e)) {
+                throw new BusinessException(400, "仅定版发布的元数据支持订阅");
+            }
+        } else if ("MODEL".equalsIgnoreCase(targetType)) {
+            GovMetaModel m = requireModel(targetId);
+            if (!"PUBLISHED".equals(m.getStatus())) {
+                throw new BusinessException(400, "仅已发布的元模型支持订阅");
+            }
         }
         GovMetaSubscription exist = subscriptionMapper.selectOne(new LambdaQueryWrapper<GovMetaSubscription>()
                 .eq(GovMetaSubscription::getUserId, operator.getUserId())
@@ -867,6 +1693,268 @@ public class MetadataSubsystemService {
             q.eq(GovMetaChangeNotice::getStatus, status);
         }
         return changeNoticeMapper.selectList(q);
+    }
+
+    public Map<String, Object> maintainOverview(String keyword, String entryType, Boolean needRepublishOnly) {
+        LambdaQueryWrapper<GovMetadataRegistry> q = new LambdaQueryWrapper<GovMetadataRegistry>()
+                .ne(GovMetadataRegistry::getStatus, "OFFLINE")
+                .orderByDesc(GovMetadataRegistry::getUpdatedAt)
+                .orderByDesc(GovMetadataRegistry::getId);
+        if (entryType != null && !entryType.isBlank()) {
+            q.eq(GovMetadataRegistry::getEntryType, entryType.trim());
+        } else {
+            q.in(GovMetadataRegistry::getEntryType, List.of("TABLE", "SOURCE", "COLUMN"));
+        }
+        if (keyword != null && !keyword.isBlank()) {
+            String kw = keyword.trim();
+            q.and(w -> w.like(GovMetadataRegistry::getEntryName, kw)
+                    .or().like(GovMetadataRegistry::getEntryCode, kw)
+                    .or().like(GovMetadataRegistry::getTags, kw)
+                    .or().like(GovMetadataRegistry::getKeywords, kw));
+        }
+        List<GovMetadataRegistry> entries = registryMapper.selectList(q);
+        List<Map<String, Object>> items = new ArrayList<>();
+        int needRepublish = 0, unreadNotice = 0, matchedHint = 0;
+        for (GovMetadataRegistry e : entries) {
+            Map<String, Object> row = enrichMaintainEntry(e);
+            boolean need = Boolean.TRUE.equals(row.get("needRepublish"));
+            if (need) needRepublish++;
+            if (Boolean.TRUE.equals(needRepublishOnly) && !need) {
+                continue;
+            }
+            items.add(row);
+        }
+        unreadNotice = (int) changeNoticeMapper.selectCount(new LambdaQueryWrapper<GovMetaChangeNotice>()
+                .eq(GovMetaChangeNotice::getStatus, "UNREAD"));
+        matchedHint = (int) entries.stream().filter(e -> e.getOmRef() != null && !e.getOmRef().isBlank()).count();
+        Map<String, Object> kpi = new LinkedHashMap<>();
+        kpi.put("total", entries.size());
+        kpi.put("needRepublish", needRepublish);
+        kpi.put("unreadNotice", unreadNotice);
+        kpi.put("standardLinked", matchedHint);
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("items", items);
+        out.put("kpi", kpi);
+        return out;
+    }
+
+    private Map<String, Object> enrichMaintainEntry(GovMetadataRegistry e) {
+        Map<String, Object> row = new LinkedHashMap<>();
+        row.put("entry", e);
+        GovMetaVersion latest = versionMapper.selectOne(new LambdaQueryWrapper<GovMetaVersion>()
+                .eq(GovMetaVersion::getTargetType, "ENTRY")
+                .eq(GovMetaVersion::getTargetId, e.getId())
+                .orderByDesc(GovMetaVersion::getVersionNo)
+                .last("limit 1"));
+        GovMetaVersion published = versionMapper.selectOne(new LambdaQueryWrapper<GovMetaVersion>()
+                .eq(GovMetaVersion::getTargetType, "ENTRY")
+                .eq(GovMetaVersion::getTargetId, e.getId())
+                .like(GovMetaVersion::getChangeSummary, "发布")
+                .orderByDesc(GovMetaVersion::getVersionNo)
+                .last("limit 1"));
+        row.put("latestVersionNo", latest == null ? null : latest.getVersionNo());
+        row.put("latestVersionId", latest == null ? null : latest.getId());
+        row.put("publishedVersionNo", published == null ? null : published.getVersionNo());
+        row.put("publishedVersionId", published == null ? null : published.getId());
+        boolean needRepublish = "CHANGED".equals(e.getChangeFlag()) || "NEW".equals(e.getChangeFlag());
+        row.put("needRepublish", needRepublish);
+        row.put("pendingFirstPublish", needRepublish && published == null);
+        row.put("standardCode", e.getOmRef());
+        return row;
+    }
+
+    @Transactional
+    public Map<String, Object> autoMaintainBatch(UserPrincipal operator, Map<String, Object> body) {
+        @SuppressWarnings("unchecked")
+        List<Object> rawIds = body.get("entryIds") instanceof List ? (List<Object>) body.get("entryIds") : List.of();
+        List<Long> ids = rawIds.stream().map(this::longVal).filter(Objects::nonNull).collect(Collectors.toList());
+        String entryType = str(body.get("entryType"), null);
+        LambdaQueryWrapper<GovMetadataRegistry> q = new LambdaQueryWrapper<GovMetadataRegistry>()
+                .ne(GovMetadataRegistry::getStatus, "OFFLINE");
+        if (!ids.isEmpty()) {
+            q.in(GovMetadataRegistry::getId, ids);
+        } else if (entryType != null && !entryType.isBlank()) {
+            q.eq(GovMetadataRegistry::getEntryType, entryType);
+        } else {
+            q.in(GovMetadataRegistry::getEntryType, List.of("COLUMN", "TABLE", "SOURCE"));
+        }
+        List<GovMetadataRegistry> targets = registryMapper.selectList(q.last("limit 500"));
+        int scanned = 0;
+        int matched = 0;
+        List<Map<String, Object>> details = new ArrayList<>();
+        for (GovMetadataRegistry e : targets) {
+            scanned++;
+            if (!applyStandardMatch(e)) {
+                continue;
+            }
+            e.setUpdatedAt(LocalDateTime.now());
+            registryMapper.updateById(e);
+            insertChangeNotice(e, "AUTO 标准匹配维护", "依据数据元标准自动补充元数据");
+            snapshotVersion(operator, "ENTRY", e.getId(), toJson(e), "AUTO 标准匹配维护");
+            matched++;
+            Map<String, Object> d = new LinkedHashMap<>();
+            d.put("entryId", e.getId());
+            d.put("entryName", e.getEntryName());
+            d.put("standardCode", e.getOmRef());
+            d.put("description", e.getDescription());
+            details.add(d);
+        }
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("scanned", scanned);
+        out.put("matched", matched);
+        out.put("details", details);
+        return out;
+    }
+
+    public List<Map<String, Object>> autoMatchPreview(Integer limit) {
+        int lim = limit == null || limit <= 0 ? 30 : Math.min(limit, 100);
+        List<GovMetadataRegistry> entries = registryMapper.selectList(new LambdaQueryWrapper<GovMetadataRegistry>()
+                .ne(GovMetadataRegistry::getStatus, "OFFLINE")
+                .in(GovMetadataRegistry::getEntryType, List.of("COLUMN", "TABLE"))
+                .orderByDesc(GovMetadataRegistry::getId)
+                .last("limit " + lim));
+        List<Map<String, Object>> out = new ArrayList<>();
+        for (GovMetadataRegistry e : entries) {
+            if (e.getEntryName() == null || e.getEntryName().isBlank()) continue;
+            GovStandardItem std = standardItemMapper.selectOne(new LambdaQueryWrapper<GovStandardItem>()
+                    .eq(GovStandardItem::getItemName, e.getEntryName().trim())
+                    .eq(GovStandardItem::getStatus, "ACTIVE")
+                    .last("limit 1"));
+            if (std == null) {
+                std = standardItemMapper.selectOne(new LambdaQueryWrapper<GovStandardItem>()
+                        .like(GovStandardItem::getItemName, e.getEntryName().trim())
+                        .eq(GovStandardItem::getStatus, "ACTIVE")
+                        .last("limit 1"));
+            }
+            if (std == null) continue;
+            Map<String, Object> row = new LinkedHashMap<>();
+            row.put("entryId", e.getId());
+            row.put("entryName", e.getEntryName());
+            row.put("entryType", e.getEntryType());
+            row.put("standardCode", std.getItemCode());
+            row.put("standardName", std.getItemName());
+            row.put("suggestedDescription", firstNonBlank(std.getBusinessDefinition(), std.getStandardRef()));
+            row.put("suggestedSecurity", mapSensitivity(nvl(std.getSensitivity()).isBlank() ? "INTERNAL" : std.getSensitivity()));
+            row.put("suggestedDomain", std.getCategory());
+            row.put("alreadyLinked", e.getOmRef() != null && e.getOmRef().equals(std.getItemCode()));
+            out.add(row);
+        }
+        return out;
+    }
+
+    @Transactional
+    public Map<String, Object> publishEntry(UserPrincipal operator, Long id) {
+        return publishEntry(operator, id, "发布元数据");
+    }
+
+    @Transactional
+    public Map<String, Object> publishEntry(UserPrincipal operator, Long id, String description) {
+        GovMetadataRegistry e = registryMapper.selectById(id);
+        if (e == null) {
+            throw new BusinessException(404, "条目不存在");
+        }
+        e.setChangeFlag("SYNCED");
+        e.setStatus("PUBLISHED");
+        e.setUpdatedAt(LocalDateTime.now());
+        registryMapper.updateById(e);
+        String summary = description == null || description.isBlank() ? "发布元数据" : description.trim();
+        if (!summary.contains("发布")) {
+            summary = "发布元数据：" + summary;
+        }
+        snapshotEntryVersion(operator, e, summary);
+        // 表定版时同步子字段可查询
+        if ("TABLE".equalsIgnoreCase(e.getEntryType()) && e.getEntryCode() != null) {
+            List<GovMetadataRegistry> cols = registryMapper.selectList(new LambdaQueryWrapper<GovMetadataRegistry>()
+                    .eq(GovMetadataRegistry::getParentCode, e.getEntryCode())
+                    .eq(GovMetadataRegistry::getEntryType, "COLUMN"));
+            for (GovMetadataRegistry c : cols) {
+                c.setStatus("PUBLISHED");
+                c.setChangeFlag("SYNCED");
+                c.setUpdatedAt(LocalDateTime.now());
+                registryMapper.updateById(c);
+            }
+        }
+        GovMetaChangeNotice notice = new GovMetaChangeNotice();
+        notice.setEntryId(e.getId());
+        notice.setEntryCode(e.getEntryCode());
+        notice.setTitle("元数据已发布");
+        notice.setDetail(e.getEntryName() + " 已发布为当前生效版本");
+        notice.setStatus("READ");
+        changeNoticeMapper.insert(notice);
+        auditService.log(operator.getUserId(), operator.getUsername(), operator.getOrgId(),
+                "META_ENTRY_PUBLISH", "gov_metadata_registry", String.valueOf(id), e.getEntryCode());
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("entryId", id);
+        out.put("changeFlag", e.getChangeFlag());
+        out.put("status", e.getStatus());
+        return out;
+    }
+
+    public Map<String, Object> compareWithPublished(Long entryId) {
+        GovMetadataRegistry e = registryMapper.selectById(entryId);
+        if (e == null) {
+            throw new BusinessException(404, "条目不存在");
+        }
+        GovMetaVersion published = versionMapper.selectOne(new LambdaQueryWrapper<GovMetaVersion>()
+                .eq(GovMetaVersion::getTargetType, "ENTRY")
+                .eq(GovMetaVersion::getTargetId, entryId)
+                .like(GovMetaVersion::getChangeSummary, "发布")
+                .orderByDesc(GovMetaVersion::getVersionNo)
+                .last("limit 1"));
+        GovMetaVersion latest = versionMapper.selectOne(new LambdaQueryWrapper<GovMetaVersion>()
+                .eq(GovMetaVersion::getTargetType, "ENTRY")
+                .eq(GovMetaVersion::getTargetId, entryId)
+                .orderByDesc(GovMetaVersion::getVersionNo)
+                .last("limit 1"));
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("entry", e);
+        out.put("published", published);
+        out.put("latest", latest);
+        if (published == null) {
+            out.put("sameSnapshot", false);
+            out.put("basicDiff", List.of(Map.of(
+                    "field", "publishStatus",
+                    "left", "未发布",
+                    "right", "当前草稿/最新",
+                    "changeType", "changed")));
+            out.put("fieldDiff", Map.of("added", List.of(), "removed", List.of(), "changed", List.of()));
+            return out;
+        }
+        // 用当前实体快照与已发布版本对比
+        Map<String, Object> leftSnap = parseSnapshot(published.getSnapshotJson());
+        Map<String, Object> rightSnap = parseSnapshot(toJson(e));
+        List<Map<String, Object>> basicDiff = new ArrayList<>();
+        Set<String> keys = new HashSet<>();
+        keys.addAll(leftSnap.keySet());
+        keys.addAll(rightSnap.keySet());
+        for (String key : keys) {
+            if ("contentJson".equals(key) || "updatedAt".equals(key) || "createdAt".equals(key)) continue;
+            String lv = nvl(String.valueOf(leftSnap.getOrDefault(key, "")));
+            String rv = nvl(String.valueOf(rightSnap.getOrDefault(key, "")));
+            if (!lv.equals(rv)) {
+                Map<String, Object> d = new LinkedHashMap<>();
+                d.put("field", key);
+                d.put("left", lv);
+                d.put("right", rv);
+                d.put("changeType", "changed");
+                basicDiff.add(d);
+            }
+        }
+        out.put("sameSnapshot", basicDiff.isEmpty());
+        out.put("basicDiff", basicDiff);
+        out.put("fieldDiff", diffContentJsonFields(leftSnap.get("contentJson"), rightSnap.get("contentJson")));
+        out.put("attrDiff", buildAttrDiff(leftSnap, rightSnap));
+        return out;
+    }
+
+    @Transactional
+    public void markNoticeRead(Long id) {
+        GovMetaChangeNotice n = changeNoticeMapper.selectById(id);
+        if (n == null) {
+            throw new BusinessException(404, "通知不存在");
+        }
+        n.setStatus("READ");
+        changeNoticeMapper.updateById(n);
     }
 
     /**
@@ -984,6 +2072,14 @@ public class MetadataSubsystemService {
                             r.setLabel(col + "->" + refCol);
                             r.setStatus("ACTIVE");
                             relationMapper.insert(r);
+                            count++;
+                        }
+                        // 字段级外键血缘
+                        String fromColCode = resolveColumnCode(fromCode, col);
+                        String toColCode = resolveColumnCode(toCode, refCol);
+                        if (fromColCode != null && toColCode != null
+                                && ensureRelation(fromColCode, toColCode, "COLUMN_LINEAGE",
+                                "FK " + col + "→" + refCol)) {
                             count++;
                         }
                     }
@@ -1282,25 +2378,81 @@ public class MetadataSubsystemService {
         return "COL_" + connectorId + "_" + tableName + "_" + columnName;
     }
 
-    private void applyStandardMatch(GovMetadataRegistry e) {
-        if (e.getEntryName() == null || e.getEntryName().isBlank()) return;
+    private boolean applyStandardMatch(GovMetadataRegistry e) {
+        if (e.getEntryName() == null || e.getEntryName().isBlank()) return false;
         GovStandardItem std = standardItemMapper.selectOne(new LambdaQueryWrapper<GovStandardItem>()
-                .like(GovStandardItem::getItemName, e.getEntryName())
+                .eq(GovStandardItem::getItemName, e.getEntryName().trim())
                 .eq(GovStandardItem::getStatus, "ACTIVE")
                 .last("limit 1"));
-        if (std != null) {
-            if (e.getDescription() == null || e.getDescription().isBlank()) {
-                e.setDescription("标准:" + std.getItemName() + " ref=" + nvl(std.getStandardRef()));
+        if (std == null) {
+            std = standardItemMapper.selectOne(new LambdaQueryWrapper<GovStandardItem>()
+                    .like(GovStandardItem::getItemName, e.getEntryName().trim())
+                    .eq(GovStandardItem::getStatus, "ACTIVE")
+                    .last("limit 1"));
+        }
+        if (std == null) {
+            return false;
+        }
+        boolean touched = false;
+        if (isBlank(e.getDescription())) {
+            String def = firstNonBlank(std.getBusinessDefinition(), std.getReferenceStandard(), std.getStandardRef());
+            if (def != null) {
+                e.setDescription("标准匹配：" + std.getItemName() + " · " + def);
+                touched = true;
             }
-            if (e.getOmRef() == null || e.getOmRef().isBlank()) {
-                e.setOmRef(std.getItemCode());
-            }
+        }
+        if (isBlank(e.getOmRef()) && !isBlank(std.getItemCode())) {
+            e.setOmRef(std.getItemCode());
+            touched = true;
+        }
+        if (isBlank(e.getSecurityLevel()) && !isBlank(std.getSensitivity())) {
+            e.setSecurityLevel(mapSensitivity(std.getSensitivity()));
+            touched = true;
+        }
+        if (isBlank(e.getBusinessDomain()) && !isBlank(std.getCategory())) {
+            e.setBusinessDomain(std.getCategory());
+            touched = true;
+        }
+        if (isBlank(e.getKeywords())) {
+            e.setKeywords(std.getItemName());
+            touched = true;
+        }
+        if (isBlank(e.getTags()) && !isBlank(std.getCategory())) {
+            e.setTags(std.getCategory());
+            touched = true;
+        } else if (!isBlank(std.getCategory()) && (e.getTags() == null || !e.getTags().contains(std.getCategory()))) {
+            e.setTags(normalizeTags((e.getTags() == null ? "" : e.getTags() + ",") + std.getCategory()));
+            touched = true;
+        }
+        if (touched) {
             e.setChangeFlag("CHANGED");
         }
+        return touched;
+    }
+
+    private boolean isBlank(String s) {
+        return s == null || s.isBlank();
+    }
+
+    private String firstNonBlank(String... vals) {
+        if (vals == null) return null;
+        for (String v : vals) {
+            if (v != null && !v.isBlank()) return v.trim();
+        }
+        return null;
+    }
+
+    private String mapSensitivity(String sensitivity) {
+        String s = sensitivity.trim().toUpperCase(Locale.ROOT);
+        if (s.contains("公开") || s.contains("PUBLIC") || s.contains("L1")) return "PUBLIC";
+        if (s.contains("内部") || s.contains("INTERNAL") || s.contains("L2")) return "INTERNAL";
+        if (s.contains("敏感") || s.contains("SENSITIVE") || s.contains("L3")) return "SENSITIVE";
+        if (s.contains("核心") || s.contains("SECRET") || s.contains("L4")) return "SECRET";
+        return "INTERNAL";
     }
 
     private void insertChangeNotice(GovMetadataRegistry e, String title, String detail) {
-        if (!"CHANGED".equals(e.getChangeFlag())) return;
+        if (!"CHANGED".equals(e.getChangeFlag()) && !"NEW".equals(e.getChangeFlag())) return;
         GovMetaChangeNotice notice = new GovMetaChangeNotice();
         notice.setEntryId(e.getId());
         notice.setEntryCode(e.getEntryCode());
@@ -1320,6 +2472,222 @@ public class MetadataSubsystemService {
         }
     }
 
+    private void collectUpstream(String code, List<GovMetaRelation> rels, Set<String> visited, List<String> upstream) {
+        if (!visited.add(code)) return;
+        for (GovMetaRelation r : rels) {
+            if (code.equals(r.getToCode()) && !visited.contains(r.getFromCode())) {
+                upstream.add(r.getFromCode());
+                collectUpstream(r.getFromCode(), rels, visited, upstream);
+            }
+        }
+    }
+
+    private void collectDownstreamWithDepth(String code, List<GovMetaRelation> rels, Set<String> visited,
+                                            Map<String, Integer> hopMap, int depth, int maxDepth) {
+        if (depth >= maxDepth) return;
+        if (!visited.add(code)) return;
+        for (GovMetaRelation r : rels) {
+            if (!code.equals(r.getFromCode())) continue;
+            String next = r.getToCode();
+            if (next == null || visited.contains(next)) continue;
+            int hop = depth + 1;
+            hopMap.merge(next, hop, Math::min);
+            collectDownstreamWithDepth(next, rels, visited, hopMap, hop, maxDepth);
+        }
+    }
+
+    private Map<String, Object> nodeForCode(String code, String typeOverride) {
+        GovMetadataRegistry e = findByCode(code);
+        Map<String, Object> n = new LinkedHashMap<>();
+        n.put("id", code);
+        n.put("label", e == null ? code : e.getEntryName());
+        if (typeOverride != null) {
+            n.put("type", typeOverride);
+        } else {
+            n.put("type", e == null ? "UNKNOWN" : e.getEntryType());
+        }
+        n.put("dataLayer", e == null ? null : e.getDataLayer());
+        n.put("entryType", e == null ? null : e.getEntryType());
+        return n;
+    }
+
+    private GovMetadataRegistry findByCode(String code) {
+        if (code == null || code.isBlank()) return null;
+        return registryMapper.selectOne(new LambdaQueryWrapper<GovMetadataRegistry>()
+                .eq(GovMetadataRegistry::getEntryCode, code).last("limit 1"));
+    }
+
+    private String resolveName(String code) {
+        GovMetadataRegistry e = findByCode(code);
+        return e == null ? code : e.getEntryName();
+    }
+
+    private boolean ensureRelation(String fromCode, String toCode, String type, String label) {
+        if (fromCode == null || toCode == null || fromCode.equals(toCode)) {
+            return false;
+        }
+        GovMetaRelation exist = relationMapper.selectOne(new LambdaQueryWrapper<GovMetaRelation>()
+                .eq(GovMetaRelation::getFromCode, fromCode)
+                .eq(GovMetaRelation::getToCode, toCode)
+                .eq(GovMetaRelation::getRelationType, type)
+                .eq(GovMetaRelation::getStatus, "ACTIVE")
+                .last("limit 1"));
+        if (exist != null) {
+            return false;
+        }
+        GovMetaRelation r = new GovMetaRelation();
+        r.setFromCode(fromCode);
+        r.setToCode(toCode);
+        r.setRelationType(type);
+        r.setLabel(label);
+        r.setStatus("ACTIVE");
+        relationMapper.insert(r);
+        return true;
+    }
+
+    private int linkSameNameColumns(String fromTableCode, String toTableCode, String edgeType, String fkLabel) {
+        int n = 0;
+        // FK 标签明确列映射时优先
+        if ("FK".equalsIgnoreCase(edgeType) && fkLabel != null && fkLabel.contains("->")) {
+            String[] parts = fkLabel.split("->", 2);
+            if (parts.length == 2) {
+                String fromCol = resolveColumnCode(fromTableCode, parts[0].trim());
+                String toCol = resolveColumnCode(toTableCode, parts[1].trim());
+                if (fromCol != null && toCol != null
+                        && ensureRelation(fromCol, toCol, "COLUMN_LINEAGE", "FK " + fkLabel)) {
+                    n++;
+                }
+                return n;
+            }
+        }
+        List<GovMetadataRegistry> fromCols = listColumnsOfTable(fromTableCode);
+        List<GovMetadataRegistry> toCols = listColumnsOfTable(toTableCode);
+        Map<String, GovMetadataRegistry> toByName = new HashMap<>();
+        for (GovMetadataRegistry c : toCols) {
+            if (c.getEntryName() != null) {
+                toByName.put(c.getEntryName().toLowerCase(Locale.ROOT), c);
+            }
+        }
+        for (GovMetadataRegistry fc : fromCols) {
+            if (fc.getEntryName() == null) continue;
+            GovMetadataRegistry tc = toByName.get(fc.getEntryName().toLowerCase(Locale.ROOT));
+            if (tc == null || fc.getEntryCode() == null || tc.getEntryCode() == null) continue;
+            if (ensureRelation(fc.getEntryCode(), tc.getEntryCode(), "COLUMN_LINEAGE",
+                    "同名列 " + fc.getEntryName())) {
+                n++;
+            }
+        }
+        return n;
+    }
+
+    private List<GovMetadataRegistry> listColumnsOfTable(String tableCode) {
+        if (tableCode == null || tableCode.isBlank()) return List.of();
+        return registryMapper.selectList(new LambdaQueryWrapper<GovMetadataRegistry>()
+                .eq(GovMetadataRegistry::getParentCode, tableCode)
+                .eq(GovMetadataRegistry::getEntryType, "COLUMN")
+                .ne(GovMetadataRegistry::getStatus, "OFFLINE"));
+    }
+
+    private String resolveColumnCode(String tableCode, String columnName) {
+        if (tableCode == null || columnName == null || columnName.isBlank()) return null;
+        List<GovMetadataRegistry> cols = listColumnsOfTable(tableCode);
+        for (GovMetadataRegistry c : cols) {
+            if (columnName.equalsIgnoreCase(c.getEntryName())) {
+                return c.getEntryCode();
+            }
+        }
+        // 回退：按编码后缀匹配
+        String suffix = "_" + columnName;
+        for (GovMetadataRegistry c : cols) {
+            if (c.getEntryCode() != null && c.getEntryCode().toUpperCase(Locale.ROOT)
+                    .endsWith(suffix.toUpperCase(Locale.ROOT))) {
+                return c.getEntryCode();
+            }
+        }
+        return null;
+    }
+
+    private Map<String, Object> buildColumnLineageGraph(String tableCode, List<GovMetaRelation> all,
+                                                        Set<String> tableScope) {
+        Set<String> colCodes = new LinkedHashSet<>();
+        Map<String, String> colTable = new HashMap<>();
+        for (String tc : tableScope) {
+            for (GovMetadataRegistry c : listColumnsOfTable(tc)) {
+                if (c.getEntryCode() != null) {
+                    colCodes.add(c.getEntryCode());
+                    colTable.put(c.getEntryCode(), tc);
+                }
+            }
+        }
+        List<Map<String, Object>> fieldEdges = new ArrayList<>();
+        Set<String> usedCols = new HashSet<>();
+        for (GovMetaRelation r : all) {
+            if (!"COLUMN_LINEAGE".equalsIgnoreCase(r.getRelationType())) continue;
+            if (!colCodes.contains(r.getFromCode()) && !colCodes.contains(r.getToCode())) continue;
+            // 聚焦：至少一端属于当前表，或两端都在范围内
+            boolean touchFocus = tableCode.equals(colTable.get(r.getFromCode()))
+                    || tableCode.equals(colTable.get(r.getToCode()));
+            boolean bothIn = colCodes.contains(r.getFromCode()) && colCodes.contains(r.getToCode());
+            if (!touchFocus && !bothIn) continue;
+            usedCols.add(r.getFromCode());
+            usedCols.add(r.getToCode());
+            Map<String, Object> edge = new LinkedHashMap<>();
+            edge.put("id", r.getId());
+            edge.put("from", r.getFromCode());
+            edge.put("to", r.getToCode());
+            edge.put("label", r.getLabel() == null ? "字段血缘" : r.getLabel());
+            edge.put("type", "COLUMN_LINEAGE");
+            edge.put("fromTable", colTable.get(r.getFromCode()));
+            edge.put("toTable", colTable.get(r.getToCode()));
+            fieldEdges.add(edge);
+        }
+        // 若无存量字段血缘，现场按同名列推导（不落库，仅展示）
+        if (fieldEdges.isEmpty()) {
+            for (GovMetaRelation r : all) {
+                if ("COLUMN_LINEAGE".equalsIgnoreCase(r.getRelationType())) continue;
+                if (!tableScope.contains(r.getFromCode()) || !tableScope.contains(r.getToCode())) continue;
+                List<GovMetadataRegistry> fromCols = listColumnsOfTable(r.getFromCode());
+                Map<String, GovMetadataRegistry> toByName = new HashMap<>();
+                for (GovMetadataRegistry c : listColumnsOfTable(r.getToCode())) {
+                    if (c.getEntryName() != null) {
+                        toByName.put(c.getEntryName().toLowerCase(Locale.ROOT), c);
+                    }
+                }
+                for (GovMetadataRegistry fc : fromCols) {
+                    if (fc.getEntryName() == null) continue;
+                    GovMetadataRegistry tc = toByName.get(fc.getEntryName().toLowerCase(Locale.ROOT));
+                    if (tc == null) continue;
+                    usedCols.add(fc.getEntryCode());
+                    usedCols.add(tc.getEntryCode());
+                    Map<String, Object> edge = new LinkedHashMap<>();
+                    edge.put("from", fc.getEntryCode());
+                    edge.put("to", tc.getEntryCode());
+                    edge.put("label", "推导：" + fc.getEntryName());
+                    edge.put("type", "COLUMN_LINEAGE");
+                    edge.put("derived", true);
+                    edge.put("fromTable", r.getFromCode());
+                    edge.put("toTable", r.getToCode());
+                    fieldEdges.add(edge);
+                }
+            }
+        }
+        List<Map<String, Object>> fieldNodes = new ArrayList<>();
+        for (String cc : usedCols) {
+            GovMetadataRegistry e = findByCode(cc);
+            Map<String, Object> n = new LinkedHashMap<>();
+            n.put("id", cc);
+            n.put("label", e == null ? cc : e.getEntryName());
+            n.put("type", "COLUMN");
+            n.put("tableCode", colTable.get(cc));
+            fieldNodes.add(n);
+        }
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("nodes", fieldNodes);
+        out.put("edges", fieldEdges);
+        out.put("edgeCount", fieldEdges.size());
+        return out;
+    }
+
     private Map<String, Object> parseSnapshot(String json) {
         if (json == null || json.isBlank()) return new LinkedHashMap<>();
         try {
@@ -1327,6 +2695,518 @@ public class MetadataSubsystemService {
         } catch (Exception e) {
             return new LinkedHashMap<>();
         }
+    }
+
+    private boolean catalogKeywordMatch(GovMetadataRegistry e, String kwLower) {
+        if (e == null || kwLower == null || kwLower.isBlank()) return false;
+        return containsIgnoreCase(e.getEntryName(), kwLower)
+                || containsIgnoreCase(e.getEntryCode(), kwLower)
+                || containsIgnoreCase(e.getPhysicalTableName(), kwLower)
+                || containsIgnoreCase(e.getDatabaseName(), kwLower)
+                || containsIgnoreCase(e.getKeywords(), kwLower)
+                || containsIgnoreCase(e.getTags(), kwLower)
+                || containsIgnoreCase(e.getDescription(), kwLower)
+                || containsIgnoreCase(e.getBusinessDomain(), kwLower)
+                || containsIgnoreCase(e.getOmRef(), kwLower);
+    }
+
+    private boolean containsIgnoreCase(String raw, String kwLower) {
+        return raw != null && raw.toLowerCase(Locale.ROOT).contains(kwLower);
+    }
+
+    private List<Map<String, Object>> buildSourceCatalogTree(List<GovMetadataRegistry> entries) {
+        Map<String, GovMetadataRegistry> byCode = entries.stream()
+                .filter(e -> e.getEntryCode() != null)
+                .collect(Collectors.toMap(GovMetadataRegistry::getEntryCode, e -> e, (a, b) -> a));
+        List<GovMetadataRegistry> sources = entries.stream()
+                .filter(e -> isSourceType(e.getEntryType()))
+                .collect(Collectors.toList());
+        List<GovMetadataRegistry> tables = entries.stream()
+                .filter(e -> "TABLE".equalsIgnoreCase(e.getEntryType()))
+                .collect(Collectors.toList());
+
+        Map<String, List<GovMetadataRegistry>> sourcesByBiz = new LinkedHashMap<>();
+        for (GovMetadataRegistry s : sources) {
+            String biz = firstNonBlank(s.getBusinessDomain(), "未归属业务系统");
+            sourcesByBiz.computeIfAbsent(biz, k -> new ArrayList<>()).add(s);
+        }
+        // 无源但有表时，按表业务域兜底
+        if (sources.isEmpty()) {
+            for (GovMetadataRegistry t : tables) {
+                String biz = firstNonBlank(t.getBusinessDomain(), "未归属业务系统");
+                sourcesByBiz.computeIfAbsent(biz, k -> new ArrayList<>());
+            }
+        }
+
+        List<Map<String, Object>> tree = new ArrayList<>();
+        for (Map.Entry<String, List<GovMetadataRegistry>> bizEn : sourcesByBiz.entrySet()) {
+            List<Map<String, Object>> sourceNodes = new ArrayList<>();
+            List<GovMetadataRegistry> srcList = bizEn.getValue();
+            if (srcList.isEmpty()) {
+                // 仅表：虚拟源节点
+                Map<String, List<GovMetadataRegistry>> byDb = new LinkedHashMap<>();
+                for (GovMetadataRegistry t : tables) {
+                    if (!bizEn.getKey().equals(firstNonBlank(t.getBusinessDomain(), "未归属业务系统"))) continue;
+                    String db = firstNonBlank(t.getDatabaseName(), "未命名库");
+                    byDb.computeIfAbsent(db, k -> new ArrayList<>()).add(t);
+                }
+                List<Map<String, Object>> dbNodes = new ArrayList<>();
+                for (Map.Entry<String, List<GovMetadataRegistry>> dbEn : byDb.entrySet()) {
+                    List<Map<String, Object>> tableNodes = new ArrayList<>();
+                    for (GovMetadataRegistry t : dbEn.getValue()) {
+                        tableNodes.add(catalogTreeLeaf(t));
+                    }
+                    dbNodes.add(catalogTreeGroup("db:" + bizEn.getKey() + ":" + dbEn.getKey(),
+                            dbEn.getKey() + "（" + tableNodes.size() + "）", tableNodes));
+                }
+                sourceNodes.add(catalogTreeGroup("src:__none__:" + bizEn.getKey(),
+                        "未登记数据源（" + tables.size() + "）", dbNodes));
+            } else {
+                for (GovMetadataRegistry s : srcList) {
+                    Map<String, List<GovMetadataRegistry>> byDb = new LinkedHashMap<>();
+                    for (GovMetadataRegistry t : tables) {
+                        if (!s.getEntryCode().equals(t.getParentCode())) continue;
+                        String db = firstNonBlank(t.getDatabaseName(), "未命名库");
+                        byDb.computeIfAbsent(db, k -> new ArrayList<>()).add(t);
+                    }
+                    List<Map<String, Object>> dbNodes = new ArrayList<>();
+                    int tableCount = 0;
+                    for (Map.Entry<String, List<GovMetadataRegistry>> dbEn : byDb.entrySet()) {
+                        List<Map<String, Object>> tableNodes = new ArrayList<>();
+                        for (GovMetadataRegistry t : dbEn.getValue()) {
+                            tableNodes.add(catalogTreeLeaf(t));
+                        }
+                        tableCount += tableNodes.size();
+                        dbNodes.add(catalogTreeGroup("db:" + s.getEntryCode() + ":" + dbEn.getKey(),
+                                dbEn.getKey() + "（" + tableNodes.size() + "）", tableNodes));
+                    }
+                    Map<String, Object> srcNode = catalogTreeGroup("src:" + s.getEntryCode(),
+                            s.getEntryName() + "（" + tableCount + "）", dbNodes);
+                    srcNode.put("entryCode", s.getEntryCode());
+                    sourceNodes.add(srcNode);
+                }
+            }
+            tree.add(catalogTreeGroup("biz:" + bizEn.getKey(),
+                    bizEn.getKey() + "（" + sourceNodes.size() + "）", sourceNodes));
+        }
+        return tree;
+    }
+
+    private List<Map<String, Object>> buildAssetCatalogTree(List<GovMetadataRegistry> entries) {
+        List<GovMetadataRegistry> tables = entries.stream()
+                .filter(e -> "TABLE".equalsIgnoreCase(e.getEntryType()))
+                .collect(Collectors.toList());
+        List<String> layers = List.of("ODS", "DWD", "DWS", "ADS");
+        List<Map<String, Object>> tree = new ArrayList<>();
+        for (String layer : layers) {
+            List<GovMetadataRegistry> layerTables = tables.stream()
+                    .filter(t -> layer.equalsIgnoreCase(resolveDataPlaneLayer(t)))
+                    .collect(Collectors.toList());
+            Map<String, List<GovMetadataRegistry>> byDomain = new LinkedHashMap<>();
+            for (GovMetadataRegistry t : layerTables) {
+                String domain = firstNonBlank(t.getBusinessDomain(), "未划分主题域");
+                byDomain.computeIfAbsent(domain, k -> new ArrayList<>()).add(t);
+            }
+            List<Map<String, Object>> domainNodes = new ArrayList<>();
+            for (Map.Entry<String, List<GovMetadataRegistry>> den : byDomain.entrySet()) {
+                List<Map<String, Object>> tableNodes = new ArrayList<>();
+                for (GovMetadataRegistry t : den.getValue()) {
+                    tableNodes.add(catalogTreeLeaf(t));
+                }
+                domainNodes.add(catalogTreeGroup("domain:" + layer + ":" + den.getKey(),
+                        den.getKey() + "（" + tableNodes.size() + "）", tableNodes));
+            }
+            String layerLabel = switch (layer) {
+                case "ODS" -> "ODS 原始层";
+                case "DWD" -> "DWD 明细层";
+                case "DWS" -> "DWS 汇总层";
+                case "ADS" -> "ADS 应用层";
+                default -> layer;
+            };
+            tree.add(catalogTreeGroup("layer:" + layer,
+                    layerLabel + "（" + layerTables.size() + "）", domainNodes));
+        }
+        return tree;
+    }
+
+    private Map<String, Object> catalogTreeGroup(String code, String label, List<Map<String, Object>> children) {
+        Map<String, Object> n = new LinkedHashMap<>();
+        n.put("code", code);
+        n.put("label", label);
+        n.put("children", children);
+        return n;
+    }
+
+    private Map<String, Object> catalogTreeLeaf(GovMetadataRegistry t) {
+        Map<String, Object> n = new LinkedHashMap<>();
+        n.put("code", t.getEntryCode());
+        n.put("label", t.getEntryName());
+        n.put("entryId", t.getId());
+        n.put("entryCode", t.getEntryCode());
+        n.put("entryType", t.getEntryType());
+        n.put("leaf", true);
+        return n;
+    }
+
+    private boolean isPublishedForQuery(GovMetadataRegistry e) {
+        if (e == null || "OFFLINE".equalsIgnoreCase(e.getStatus())) {
+            return false;
+        }
+        // 源连接保留树结构可见；表/字段须定版
+        if (isSourceType(e.getEntryType())) {
+            return true;
+        }
+        return "PUBLISHED".equalsIgnoreCase(e.getStatus()) || "SYNCED".equalsIgnoreCase(e.getChangeFlag());
+    }
+
+    private boolean isPublishSummary(String summary) {
+        return summary != null && summary.contains("发布");
+    }
+
+    private boolean isOfflineSummary(String summary) {
+        return summary != null && summary.contains("下线");
+    }
+
+    private Map<String, Object> enrichVersionTarget(String targetType, Long targetId, String code, String name,
+                                                    String status, String changeFlag) {
+        List<GovMetaVersion> versions = listVersions(targetType, targetId);
+        GovMetaVersion latest = versions.isEmpty() ? null : versions.get(0);
+        GovMetaVersion published = versions.stream()
+                .filter(v -> isPublishSummary(v.getChangeSummary()))
+                .findFirst()
+                .orElse(null);
+        String publishStatus;
+        if ("OFFLINE".equalsIgnoreCase(status)) {
+            publishStatus = "OFFLINE";
+        } else if ("PUBLISHED".equalsIgnoreCase(status)
+                || ("ENTRY".equals(targetType) && "SYNCED".equalsIgnoreCase(changeFlag))) {
+            publishStatus = "PUBLISHED";
+        } else {
+            publishStatus = "DRAFT";
+        }
+        Map<String, Object> row = new LinkedHashMap<>();
+        row.put("targetType", targetType);
+        row.put("targetId", targetId);
+        row.put("code", code);
+        row.put("name", name);
+        row.put("status", status);
+        row.put("changeFlag", changeFlag);
+        row.put("publishStatus", publishStatus);
+        row.put("versionCount", versions.size());
+        row.put("latestVersionNo", latest == null ? null : latest.getVersionNo());
+        row.put("latestVersionId", latest == null ? null : latest.getId());
+        row.put("publishedVersionNo", published == null ? null : published.getVersionNo());
+        row.put("publishedVersionId", published == null ? null : published.getId());
+        row.put("canSubscribe", "PUBLISHED".equals(publishStatus));
+        row.put("needRepublish", "ENTRY".equals(targetType)
+                && ("CHANGED".equalsIgnoreCase(changeFlag) || "NEW".equalsIgnoreCase(changeFlag)));
+        return row;
+    }
+
+    private void snapshotEntryVersion(UserPrincipal operator, GovMetadataRegistry e, String summary) {
+        Map<String, Object> snap = parseSnapshot(toJson(e));
+        snap.put("fields", buildFieldAttrsFromEntry(e));
+        snap.put("relations", listRelationsForEntryCode(e.getEntryCode()));
+        snapshotVersion(operator, "ENTRY", e.getId(), toJson(snap), summary);
+    }
+
+    private List<Map<String, Object>> listRelationsForEntryCode(String entryCode) {
+        if (entryCode == null || entryCode.isBlank()) {
+            return List.of();
+        }
+        List<GovMetaRelation> rels = relationMapper.selectList(new LambdaQueryWrapper<GovMetaRelation>()
+                .eq(GovMetaRelation::getStatus, "ACTIVE")
+                .and(w -> w.eq(GovMetaRelation::getFromCode, entryCode)
+                        .or().eq(GovMetaRelation::getToCode, entryCode))
+                .orderByDesc(GovMetaRelation::getId)
+                .last("limit 100"));
+        List<Map<String, Object>> out = new ArrayList<>();
+        for (GovMetaRelation r : rels) {
+            Map<String, Object> m = new LinkedHashMap<>();
+            m.put("fromCode", r.getFromCode());
+            m.put("toCode", r.getToCode());
+            m.put("relationType", r.getRelationType());
+            m.put("label", r.getLabel() == null ? r.getRelationType() : r.getLabel());
+            out.add(m);
+        }
+        return out;
+    }
+
+    private List<Map<String, Object>> buildFieldAttrsFromEntry(GovMetadataRegistry e) {
+        List<Map<String, Object>> fields = new ArrayList<>();
+        if (e == null) {
+            return fields;
+        }
+        if ("COLUMN".equalsIgnoreCase(e.getEntryType())) {
+            fields.add(normalizeFieldAttr(Map.of(
+                    "nameEn", nvl(e.getEntryName()),
+                    "nameZh", nvl(e.getEntryName()),
+                    "dataType", nvl(e.getKeywords()),
+                    "description", nvl(e.getDescription())
+            )));
+            return fields;
+        }
+        List<GovMetadataRegistry> cols = registryMapper.selectList(new LambdaQueryWrapper<GovMetadataRegistry>()
+                .eq(GovMetadataRegistry::getParentCode, e.getEntryCode())
+                .eq(GovMetadataRegistry::getEntryType, "COLUMN")
+                .orderByAsc(GovMetadataRegistry::getEntryCode));
+        for (GovMetadataRegistry c : cols) {
+            Map<String, Object> raw = new LinkedHashMap<>();
+            raw.put("nameEn", c.getEntryName());
+            raw.put("nameZh", firstNonBlank(c.getKeywords(), c.getEntryName()));
+            // keywords 可能存类型；description 存说明
+            String dtype = "";
+            String desc = nvl(c.getDescription());
+            if (c.getOmRef() != null && c.getOmRef().contains("|")) {
+                String[] parts = c.getOmRef().split("\\|", 2);
+                dtype = parts[0];
+            }
+            raw.put("dataType", dtype);
+            raw.put("length", "");
+            raw.put("primaryKey", "");
+            raw.put("partition", "");
+            raw.put("unit", "");
+            raw.put("description", desc);
+            fields.add(normalizeFieldAttr(raw));
+        }
+        if (fields.isEmpty() && e.getSourceTableId() != null) {
+            List<IngDataColumn> ings = ingDataColumnMapper.selectList(new LambdaQueryWrapper<IngDataColumn>()
+                    .eq(IngDataColumn::getTableId, e.getSourceTableId())
+                    .orderByAsc(IngDataColumn::getId));
+            for (IngDataColumn col : ings) {
+                Map<String, Object> raw = new LinkedHashMap<>();
+                raw.put("nameEn", col.getColumnCode());
+                raw.put("nameZh", firstNonBlank(col.getColumnName(), col.getColumnCode()));
+                raw.put("dataType", nvl(col.getDataType()));
+                raw.put("length", col.getLengthVal() == null ? "" : String.valueOf(col.getLengthVal()));
+                raw.put("primaryKey", "");
+                raw.put("partition", Integer.valueOf(1).equals(col.getPartitionColFlag()) ? "是" : "否");
+                raw.put("unit", "");
+                raw.put("description", nvl(col.getSemanticDesc()));
+                fields.add(normalizeFieldAttr(raw));
+            }
+        }
+        return fields;
+    }
+
+    private Map<String, Object> normalizeFieldAttr(Map<String, Object> raw) {
+        Map<String, Object> f = new LinkedHashMap<>();
+        f.put("nameEn", firstNonBlank(str(raw.get("nameEn"), null), str(raw.get("fieldName"), null),
+                str(raw.get("code"), null), str(raw.get("name"), null)));
+        f.put("nameZh", firstNonBlank(str(raw.get("nameZh"), null), str(raw.get("nameCn"), null),
+                str(raw.get("chineseName"), null), str(raw.get("name"), null), String.valueOf(f.get("nameEn"))));
+        f.put("dataType", firstNonBlank(str(raw.get("dataType"), null), str(raw.get("type"), null),
+                str(raw.get("data_type"), null)));
+        f.put("length", firstNonBlank(str(raw.get("length"), null), str(raw.get("dataLength"), null),
+                str(raw.get("columnSize"), null)));
+        Object pk = raw.get("primaryKey");
+        if (pk == null) pk = raw.get("pk");
+        if (pk == null) pk = raw.get("isPrimaryKey");
+        f.put("primaryKey", pk == null ? "" : (Boolean.TRUE.equals(pk) || "true".equalsIgnoreCase(String.valueOf(pk))
+                || "1".equals(String.valueOf(pk)) || "是".equals(String.valueOf(pk)) ? "是" : String.valueOf(pk)));
+        Object part = raw.get("partition");
+        if (part == null) part = raw.get("isPartition");
+        f.put("partition", part == null ? "" : String.valueOf(part));
+        f.put("unit", firstNonBlank(str(raw.get("unit"), null), str(raw.get("measureUnit"), null)));
+        f.put("description", firstNonBlank(str(raw.get("description"), null), str(raw.get("comment"), null),
+                str(raw.get("desc"), null)));
+        return f;
+    }
+
+    private List<Map<String, Object>> extractFieldAttrs(Map<String, Object> snap) {
+        Object fieldsObj = snap.get("fields");
+        if (fieldsObj instanceof List<?> list && !list.isEmpty()) {
+            List<Map<String, Object>> out = new ArrayList<>();
+            for (Object item : list) {
+                if (item instanceof Map<?, ?> map) {
+                    Map<String, Object> m = new LinkedHashMap<>();
+                    map.forEach((k, v) -> m.put(String.valueOf(k), v));
+                    out.add(normalizeFieldAttr(m));
+                }
+            }
+            if (!out.isEmpty()) {
+                return out;
+            }
+        }
+        Object content = snap.get("contentJson");
+        List<Map<String, Object>> fromContent = parseFieldList(content);
+        if (!fromContent.isEmpty()) {
+            return fromContent.stream().map(this::normalizeFieldAttr).collect(Collectors.toList());
+        }
+        // 实时回填：ENTRY 快照无 fields 时按当前登记补
+        Object entryCode = snap.get("entryCode");
+        if (entryCode != null) {
+            GovMetadataRegistry e = registryMapper.selectOne(new LambdaQueryWrapper<GovMetadataRegistry>()
+                    .eq(GovMetadataRegistry::getEntryCode, String.valueOf(entryCode)).last("limit 1"));
+            if (e != null) {
+                return buildFieldAttrsFromEntry(e);
+            }
+        }
+        return List.of();
+    }
+
+    @SuppressWarnings("unchecked")
+    private List<Map<String, Object>> extractRelationsFromSnap(Map<String, Object> snap) {
+        Object rel = snap.get("relations");
+        if (!(rel instanceof List<?> list)) {
+            return List.of();
+        }
+        List<Map<String, Object>> out = new ArrayList<>();
+        for (Object item : list) {
+            if (item instanceof Map<?, ?> map) {
+                Map<String, Object> m = new LinkedHashMap<>();
+                map.forEach((k, v) -> m.put(String.valueOf(k), v));
+                out.add(m);
+            }
+        }
+        return out;
+    }
+
+    private Object fieldRawFromSnap(Map<String, Object> snap) {
+        if (snap.containsKey("fields")) {
+            return snap.get("fields");
+        }
+        return snap.get("contentJson");
+    }
+
+    private List<Map<String, Object>> buildBasicDiff(Map<String, Object> leftSnap, Map<String, Object> rightSnap) {
+        Set<String> skip = Set.of("fields", "relations", "contentJson", "updatedAt", "createdAt",
+                "publishedAt", "omSyncedAt", "id");
+        Set<String> keys = new HashSet<>();
+        keys.addAll(leftSnap.keySet());
+        keys.addAll(rightSnap.keySet());
+        List<Map<String, Object>> basicDiff = new ArrayList<>();
+        for (String key : keys) {
+            if (skip.contains(key)) continue;
+            String lv = stringifySnapVal(leftSnap.get(key));
+            String rv = stringifySnapVal(rightSnap.get(key));
+            if (!lv.equals(rv)) {
+                Map<String, Object> d = new LinkedHashMap<>();
+                d.put("field", key);
+                d.put("left", lv);
+                d.put("right", rv);
+                d.put("changeType", "changed");
+                basicDiff.add(d);
+            }
+        }
+        return basicDiff;
+    }
+
+    private String stringifySnapVal(Object v) {
+        if (v == null) return "";
+        if (v instanceof Map || v instanceof List) {
+            return toJson(v);
+        }
+        return String.valueOf(v);
+    }
+
+    private List<Map<String, Object>> buildAttrDiff(Map<String, Object> leftSnap, Map<String, Object> rightSnap) {
+        Map<String, Map<String, Object>> leftMap = indexFieldAttrs(extractFieldAttrs(leftSnap));
+        Map<String, Map<String, Object>> rightMap = indexFieldAttrs(extractFieldAttrs(rightSnap));
+        Set<String> names = new HashSet<>();
+        names.addAll(leftMap.keySet());
+        names.addAll(rightMap.keySet());
+        List<String> attrKeys = List.of("nameZh", "nameEn", "dataType", "length", "primaryKey", "partition", "unit", "description");
+        List<Map<String, Object>> out = new ArrayList<>();
+        for (String name : names.stream().sorted().collect(Collectors.toList())) {
+            Map<String, Object> lf = leftMap.get(name);
+            Map<String, Object> rf = rightMap.get(name);
+            if (lf == null) {
+                Map<String, Object> d = new LinkedHashMap<>();
+                d.put("fieldName", name);
+                d.put("changeType", "added");
+                d.put("attr", "整行");
+                d.put("left", "");
+                d.put("right", summarizeFieldAttr(rf));
+                out.add(d);
+                continue;
+            }
+            if (rf == null) {
+                Map<String, Object> d = new LinkedHashMap<>();
+                d.put("fieldName", name);
+                d.put("changeType", "removed");
+                d.put("attr", "整行");
+                d.put("left", summarizeFieldAttr(lf));
+                d.put("right", "");
+                out.add(d);
+                continue;
+            }
+            for (String attr : attrKeys) {
+                String lv = nvl(String.valueOf(lf.getOrDefault(attr, "")));
+                String rv = nvl(String.valueOf(rf.getOrDefault(attr, "")));
+                if (!lv.equals(rv)) {
+                    Map<String, Object> d = new LinkedHashMap<>();
+                    d.put("fieldName", name);
+                    d.put("changeType", "changed");
+                    d.put("attr", attr);
+                    d.put("left", lv);
+                    d.put("right", rv);
+                    out.add(d);
+                }
+            }
+        }
+        return out;
+    }
+
+    private Map<String, Map<String, Object>> indexFieldAttrs(List<Map<String, Object>> fields) {
+        Map<String, Map<String, Object>> map = new LinkedHashMap<>();
+        for (Map<String, Object> f : fields) {
+            String key = firstNonBlank(str(f.get("nameEn"), null), str(f.get("nameZh"), null));
+            if (key == null || key.isBlank()) continue;
+            map.put(key, f);
+        }
+        return map;
+    }
+
+    private String summarizeFieldAttr(Map<String, Object> f) {
+        if (f == null) return "";
+        return nvl(String.valueOf(f.get("nameZh"))) + "/" + nvl(String.valueOf(f.get("nameEn")))
+                + " " + nvl(String.valueOf(f.get("dataType")));
+    }
+
+    private List<Map<String, Object>> parseFieldList(Object raw) {
+        List<Map<String, Object>> names = new ArrayList<>();
+        if (raw == null) return names;
+        try {
+            String json = raw instanceof String ? (String) raw : objectMapper.writeValueAsString(raw);
+            if (json == null || json.isBlank() || "null".equals(json)) return names;
+            List<Map<String, Object>> list = objectMapper.readValue(json, new TypeReference<List<Map<String, Object>>>() {});
+            return list == null ? List.of() : list;
+        } catch (Exception ignored) {
+            return List.of();
+        }
+    }
+
+    private List<Map<String, Object>> previewEntryRows(Map<String, Object> snap, int limit) {
+        String table = firstNonBlank(str(snap.get("physicalTableName"), null), str(snap.get("entryName"), null));
+        String db = str(snap.get("databaseName"), null);
+        if (table == null || table.isBlank() || dataSource == null) {
+            return List.of();
+        }
+        String sql;
+        if (db != null && !db.isBlank()) {
+            sql = "SELECT * FROM `" + db.replace("`", "") + "`.`" + table.replace("`", "") + "` LIMIT ?";
+        } else {
+            sql = "SELECT * FROM `" + table.replace("`", "") + "` LIMIT ?";
+        }
+        List<Map<String, Object>> rows = new ArrayList<>();
+        try (Connection conn = dataSource.getConnection();
+             PreparedStatement ps = conn.prepareStatement(sql)) {
+            ps.setInt(1, Math.max(1, Math.min(limit, 20)));
+            try (ResultSet rs = ps.executeQuery()) {
+                int colCount = rs.getMetaData().getColumnCount();
+                while (rs.next()) {
+                    Map<String, Object> row = new LinkedHashMap<>();
+                    for (int i = 1; i <= colCount; i++) {
+                        row.put(rs.getMetaData().getColumnLabel(i), rs.getObject(i));
+                    }
+                    rows.add(row);
+                }
+            }
+        } catch (Exception e) {
+            throw new BusinessException(400, e.getMessage());
+        }
+        return rows;
     }
 
     private Map<String, Object> diffContentJsonFields(Object leftRaw, Object rightRaw) {
@@ -1362,7 +3242,9 @@ public class MetadataSubsystemService {
                 List<Map<String, Object>> list = objectMapper.readValue(s, new TypeReference<List<Map<String, Object>>>() {});
                 for (Map<String, Object> item : list) {
                     Object fn = item.get("fieldName");
+                    if (fn == null) fn = item.get("nameEn");
                     if (fn == null) fn = item.get("name");
+                    if (fn == null) fn = item.get("code");
                     if (fn != null) names.add(String.valueOf(fn));
                 }
                 return names;
@@ -1371,7 +3253,9 @@ public class MetadataSubsystemService {
                 for (Object item : list) {
                     if (item instanceof Map<?, ?> map) {
                         Object fn = map.get("fieldName");
+                        if (fn == null) fn = map.get("nameEn");
                         if (fn == null) fn = map.get("name");
+                        if (fn == null) fn = map.get("code");
                         if (fn != null) names.add(String.valueOf(fn));
                     }
                 }
@@ -1388,7 +3272,9 @@ public class MetadataSubsystemService {
             List<Map<String, Object>> list = objectMapper.readValue(json, new TypeReference<List<Map<String, Object>>>() {});
             for (Map<String, Object> item : list) {
                 Object fn = item.get("fieldName");
+                if (fn == null) fn = item.get("nameEn");
                 if (fn == null) fn = item.get("name");
+                if (fn == null) fn = item.get("code");
                 if (fn != null) {
                     map.put(String.valueOf(fn), objectMapper.writeValueAsString(item));
                 }

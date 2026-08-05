@@ -2,7 +2,6 @@ package com.chengde.smartcity.masterdata.controller;
 
 import com.chengde.smartcity.common.api.ApiResponse;
 import com.chengde.smartcity.masterdata.entity.GovMetaChangeNotice;
-import com.chengde.smartcity.masterdata.entity.GovMetaCollectRun;
 import com.chengde.smartcity.masterdata.entity.GovMetaCollectTask;
 import com.chengde.smartcity.masterdata.entity.GovMetaModel;
 import com.chengde.smartcity.masterdata.entity.GovMetaSubscription;
@@ -165,12 +164,25 @@ public class MetadataSubsystemController {
         return ApiResponse.ok(service.stopRun(principal, runId));
     }
 
+    @PostMapping("/collect/tasks/{id}/stop")
+    @PreAuthorize("isAuthenticated()")
+    public ApiResponse<Map<String, Object>> stopCollectTask(@AuthenticationPrincipal UserPrincipal principal,
+                                                            @PathVariable Long id) {
+        return ApiResponse.ok(service.stopTaskRunning(principal, id));
+    }
+
     @GetMapping("/collect/runs")
     @PreAuthorize("isAuthenticated()")
-    public ApiResponse<List<GovMetaCollectRun>> collectRuns(@RequestParam(required = false) Long taskId,
-                                                            @RequestParam(required = false) String status,
-                                                            @RequestParam(required = false) String keyword) {
-        return ApiResponse.ok(service.listRuns(taskId, status, keyword));
+    public ApiResponse<List<Map<String, Object>>> collectRuns(@RequestParam(required = false) Long taskId,
+                                                              @RequestParam(required = false) String status,
+                                                              @RequestParam(required = false) String keyword) {
+        return ApiResponse.ok(service.listRunsEnriched(taskId, status, keyword));
+    }
+
+    @GetMapping("/collect/runs/{runId}")
+    @PreAuthorize("isAuthenticated()")
+    public ApiResponse<Map<String, Object>> collectRunDetail(@PathVariable Long runId) {
+        return ApiResponse.ok(service.runDetail(runId));
     }
 
     @GetMapping("/collect/runs/{runId}/results")
@@ -182,8 +194,11 @@ public class MetadataSubsystemController {
     @GetMapping("/collect/monitor")
     @PreAuthorize("isAuthenticated()")
     public ApiResponse<Map<String, Object>> collectMonitor(@RequestParam(required = false) String sourceKeyword,
-                                                           @RequestParam(required = false) String status) {
-        return ApiResponse.ok(service.monitorOverview(sourceKeyword, status));
+                                                           @RequestParam(required = false) String taskKeyword,
+                                                           @RequestParam(required = false) Long sourceId,
+                                                           @RequestParam(required = false) String status,
+                                                           @RequestParam(required = false) String runStatus) {
+        return ApiResponse.ok(service.monitorOverview(sourceKeyword, taskKeyword, sourceId, status, runStatus));
     }
 
     @PostMapping("/maintain")
@@ -191,6 +206,47 @@ public class MetadataSubsystemController {
     public ApiResponse<Long> maintain(@AuthenticationPrincipal UserPrincipal principal,
                                       @RequestBody Map<String, Object> body) {
         return ApiResponse.ok(service.maintainEntry(principal, body));
+    }
+
+    @GetMapping("/maintain/overview")
+    @PreAuthorize("isAuthenticated()")
+    public ApiResponse<Map<String, Object>> maintainOverview(@RequestParam(required = false) String keyword,
+                                                             @RequestParam(required = false) String entryType,
+                                                             @RequestParam(required = false) Boolean needRepublishOnly) {
+        return ApiResponse.ok(service.maintainOverview(keyword, entryType, needRepublishOnly));
+    }
+
+    @GetMapping("/maintain/auto-preview")
+    @PreAuthorize("isAuthenticated()")
+    public ApiResponse<List<Map<String, Object>>> autoPreview(@RequestParam(required = false) Integer limit) {
+        return ApiResponse.ok(service.autoMatchPreview(limit));
+    }
+
+    @PostMapping("/maintain/auto-run")
+    @PreAuthorize("isAuthenticated()")
+    public ApiResponse<Map<String, Object>> autoRun(@AuthenticationPrincipal UserPrincipal principal,
+                                                    @RequestBody(required = false) Map<String, Object> body) {
+        return ApiResponse.ok(service.autoMaintainBatch(principal, body == null ? Map.of() : body));
+    }
+
+    @PostMapping("/maintain/entries/{id}/publish")
+    @PreAuthorize("isAuthenticated()")
+    public ApiResponse<Map<String, Object>> publishEntry(@AuthenticationPrincipal UserPrincipal principal,
+                                                         @PathVariable Long id) {
+        return ApiResponse.ok(service.publishEntry(principal, id));
+    }
+
+    @GetMapping("/maintain/entries/{id}/compare-published")
+    @PreAuthorize("isAuthenticated()")
+    public ApiResponse<Map<String, Object>> comparePublished(@PathVariable Long id) {
+        return ApiResponse.ok(service.compareWithPublished(id));
+    }
+
+    @PostMapping("/notices/{id}/read")
+    @PreAuthorize("isAuthenticated()")
+    public ApiResponse<Void> readNotice(@PathVariable Long id) {
+        service.markNoticeRead(id);
+        return ApiResponse.ok(null);
     }
 
     @GetMapping("/maintain/suggest-standards")
@@ -211,6 +267,34 @@ public class MetadataSubsystemController {
     public ApiResponse<List<GovMetaVersion>> versions(@RequestParam String targetType,
                                                       @RequestParam Long targetId) {
         return ApiResponse.ok(service.listVersions(targetType, targetId));
+    }
+
+    @GetMapping("/versions/overview")
+    @PreAuthorize("isAuthenticated()")
+    public ApiResponse<Map<String, Object>> versionOverview(@RequestParam(required = false) String keyword,
+                                                            @RequestParam(required = false) String targetType,
+                                                            @RequestParam(required = false) String publishStatus) {
+        return ApiResponse.ok(service.versionOverview(keyword, targetType, publishStatus));
+    }
+
+    @GetMapping("/versions/{id}/detail")
+    @PreAuthorize("isAuthenticated()")
+    public ApiResponse<Map<String, Object>> versionDetail(@PathVariable Long id) {
+        return ApiResponse.ok(service.versionDetail(id));
+    }
+
+    @PostMapping("/versions/publish")
+    @PreAuthorize("isAuthenticated()")
+    public ApiResponse<Map<String, Object>> publishVersion(@AuthenticationPrincipal UserPrincipal principal,
+                                                           @RequestBody Map<String, Object> body) {
+        return ApiResponse.ok(service.publishVersionTarget(principal, body));
+    }
+
+    @PostMapping("/versions/offline")
+    @PreAuthorize("isAuthenticated()")
+    public ApiResponse<Map<String, Object>> offlineVersion(@AuthenticationPrincipal UserPrincipal principal,
+                                                           @RequestBody Map<String, Object> body) {
+        return ApiResponse.ok(service.offlineVersionTarget(principal, body));
     }
 
     @GetMapping("/versions/compare")
@@ -241,6 +325,21 @@ public class MetadataSubsystemController {
         return ApiResponse.ok(service.searchCatalog(keyword, type, tag, principal));
     }
 
+    @GetMapping("/catalog/browse")
+    @PreAuthorize("isAuthenticated()")
+    public ApiResponse<Map<String, Object>> catalogBrowse(@AuthenticationPrincipal UserPrincipal principal,
+                                                          @RequestParam(required = false) String keyword,
+                                                          @RequestParam(required = false) String tag,
+                                                          @RequestParam(required = false) String catalogKind) {
+        return ApiResponse.ok(service.catalogBrowse(keyword, tag, catalogKind, principal));
+    }
+
+    @GetMapping("/catalog/entries/{id}")
+    @PreAuthorize("isAuthenticated()")
+    public ApiResponse<Map<String, Object>> catalogEntryDetail(@PathVariable Long id) {
+        return ApiResponse.ok(service.catalogEntryDetail(id));
+    }
+
     @GetMapping("/catalog/inventory")
     @PreAuthorize("isAuthenticated()")
     public ApiResponse<Map<String, Object>> catalogInventory(@AuthenticationPrincipal UserPrincipal principal) {
@@ -257,14 +356,35 @@ public class MetadataSubsystemController {
 
     @GetMapping("/analyze")
     @PreAuthorize("isAuthenticated()")
-    public ApiResponse<Map<String, Object>> analyze(@RequestParam(required = false) String relationType) {
-        return ApiResponse.ok(service.analyzeGraph(relationType));
+    public ApiResponse<Map<String, Object>> analyze(@RequestParam(required = false) String relationType,
+                                                    @RequestParam(required = false) String focusCode) {
+        return ApiResponse.ok(service.analyzeGraph(relationType, focusCode));
+    }
+
+    @GetMapping("/analyze/overview")
+    @PreAuthorize("isAuthenticated()")
+    public ApiResponse<Map<String, Object>> analyzeOverview() {
+        return ApiResponse.ok(service.analyzeOverview());
+    }
+
+    @GetMapping("/analyze/tables")
+    @PreAuthorize("isAuthenticated()")
+    public ApiResponse<List<Map<String, Object>>> analyzeTables(@RequestParam(required = false) String keyword) {
+        return ApiResponse.ok(service.listAnalyzeTables(keyword));
+    }
+
+    @GetMapping("/analyze/lineage")
+    @PreAuthorize("isAuthenticated()")
+    public ApiResponse<Map<String, Object>> analyzeLineage(@RequestParam String entryCode,
+                                                           @RequestParam(required = false) String level) {
+        return ApiResponse.ok(service.analyzeLineage(entryCode, level));
     }
 
     @GetMapping("/analyze/impact")
     @PreAuthorize("isAuthenticated()")
-    public ApiResponse<Map<String, Object>> analyzeImpact(@RequestParam String fromCode) {
-        return ApiResponse.ok(service.analyzeImpactRecursive(fromCode));
+    public ApiResponse<Map<String, Object>> analyzeImpact(@RequestParam String fromCode,
+                                                          @RequestParam(required = false) Integer maxDepth) {
+        return ApiResponse.ok(service.analyzeImpactRecursive(fromCode, maxDepth));
     }
 
     @GetMapping("/analyze/offline-assess")
@@ -279,6 +399,13 @@ public class MetadataSubsystemController {
         return ApiResponse.ok(service.analyzeTasks(entryCode));
     }
 
+    @GetMapping("/relations")
+    @PreAuthorize("isAuthenticated()")
+    public ApiResponse<List<Map<String, Object>>> listRelations(@RequestParam(required = false) String relationType,
+                                                                @RequestParam(required = false) String keyword) {
+        return ApiResponse.ok(service.listRelations(relationType, keyword));
+    }
+
     @PostMapping("/relations")
     @PreAuthorize("isAuthenticated()")
     public ApiResponse<Long> createRelation(@AuthenticationPrincipal UserPrincipal principal,
@@ -286,11 +413,34 @@ public class MetadataSubsystemController {
         return ApiResponse.ok(service.createRelation(principal, body));
     }
 
+    @PutMapping("/relations/{id}")
+    @PreAuthorize("isAuthenticated()")
+    public ApiResponse<Void> updateRelation(@AuthenticationPrincipal UserPrincipal principal,
+                                            @PathVariable Long id,
+                                            @RequestBody Map<String, Object> body) {
+        service.updateRelation(principal, id, body);
+        return ApiResponse.ok(null);
+    }
+
+    @DeleteMapping("/relations/{id}")
+    @PreAuthorize("isAuthenticated()")
+    public ApiResponse<Void> deleteRelation(@AuthenticationPrincipal UserPrincipal principal,
+                                            @PathVariable Long id) {
+        service.deleteRelation(principal, id);
+        return ApiResponse.ok(null);
+    }
+
     @PostMapping("/relations/parse-fk")
     @PreAuthorize("isAuthenticated()")
     public ApiResponse<Integer> parseForeignKeys(@AuthenticationPrincipal UserPrincipal principal,
                                                  @RequestParam Long connectorId) {
         return ApiResponse.ok(service.parseForeignKeys(principal, connectorId));
+    }
+
+    @PostMapping("/relations/parse-lineage")
+    @PreAuthorize("isAuthenticated()")
+    public ApiResponse<Map<String, Object>> parseLineage(@AuthenticationPrincipal UserPrincipal principal) {
+        return ApiResponse.ok(service.parseLineageAuto(principal));
     }
 
     @PostMapping("/subscriptions")

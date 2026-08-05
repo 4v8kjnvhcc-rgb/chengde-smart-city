@@ -3,6 +3,8 @@ import { computed, onMounted, reactive, ref, watch } from 'vue'
 import api from '@/api/http'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import PageCard from '@/components/common/PageCard.vue'
+import PortalPagination from '@/components/common/PortalPagination.vue'
+import { useClientPager } from '@/composables/useClientPager'
 import { statusLabel, statusTagType } from '@/utils/status-label'
 import {
   catalogHintOfSourceId,
@@ -35,6 +37,13 @@ interface RuleRow {
 }
 
 const rules = ref<RuleRow[]>([])
+const {
+  page: rulePage,
+  pageSize: rulePageSize,
+  paged: pagedRules,
+  total: ruleTotal,
+  resetPage: resetRulePage,
+} = useClientPager(rules)
 const loading = ref(false)
 const selectedId = ref<number | null>(null)
 const sources = ref<QualitySourceOption[]>([])
@@ -77,6 +86,7 @@ async function load() {
   loading.value = true
   try {
     rules.value = (await api.get('/governance/quality/rule-mgmt')).data || []
+    resetRulePage()
     if (selectedId.value && !rules.value.some((r) => r.id === selectedId.value)) {
       selectedId.value = null
     }
@@ -249,7 +259,7 @@ onMounted(async () => {
     <div class="rule-layout">
       <div class="rule-list" v-loading="loading">
         <el-table
-          :data="rules"
+          :data="pagedRules"
           stripe
           size="small"
           highlight-current-row
@@ -272,6 +282,11 @@ onMounted(async () => {
             </template>
           </el-table-column>
         </el-table>
+        <PortalPagination
+          v-model:page="rulePage"
+          v-model:page-size="rulePageSize"
+          :total="ruleTotal"
+        />
         <el-empty v-if="!loading && !rules.length" description="暂无规则，请先新建" />
       </div>
 

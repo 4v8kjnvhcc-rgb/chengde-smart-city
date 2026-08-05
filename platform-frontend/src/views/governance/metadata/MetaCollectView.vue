@@ -3,6 +3,8 @@ import { computed, onMounted, reactive, ref, watch } from 'vue'
 import api from '@/api/http'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import PageCard from '@/components/common/PageCard.vue'
+import PortalPagination from '@/components/common/PortalPagination.vue'
+import { useClientPager } from '@/composables/useClientPager'
 import { LAYER_OPTIONS } from './meta-labels'
 
 interface DataSource {
@@ -45,6 +47,13 @@ const LAYER_GROUP_ORDER = ['EXTERNAL', 'ODS', 'DWD', 'DWS', 'ADS']
 const dataSources = ref<DataSource[]>([])
 const models = ref<MetaModel[]>([])
 const tasks = ref<Task[]>([])
+const {
+  page: taskPage,
+  pageSize: taskPageSize,
+  paged: pagedTasks,
+  total: taskTotal,
+  resetPage: resetTaskPage,
+} = useClientPager(tasks)
 
 const sourceTables = ref<SourceTable[]>([])
 const tablesLoading = ref(false)
@@ -200,6 +209,7 @@ async function loadModels() {
 
 async function loadTasks() {
   tasks.value = (await api.get('/governance/platform/metadata/collect/tasks')).data || []
+  resetTaskPage()
 }
 
 async function loadSourceTables(sourceId: number) {
@@ -433,7 +443,7 @@ onMounted(async () => {
     </el-form>
 
     <el-divider content-position="left">采集任务</el-divider>
-    <el-table :data="tasks" stripe size="small">
+    <el-table :data="pagedTasks" stripe size="small">
       <el-table-column prop="taskName" label="任务" min-width="140" />
       <el-table-column label="数据源" min-width="120">
         <template #default="{ row }">
@@ -465,6 +475,11 @@ onMounted(async () => {
         </template>
       </el-table-column>
     </el-table>
+    <PortalPagination
+      v-model:page="taskPage"
+      v-model:page-size="taskPageSize"
+      :total="taskTotal"
+    />
 
     <el-collapse style="margin-top:20px">
       <el-collapse-item title="高级：适配器" name="adapter">

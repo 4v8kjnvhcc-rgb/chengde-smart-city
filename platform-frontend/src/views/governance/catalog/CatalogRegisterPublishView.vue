@@ -3,6 +3,8 @@ import { computed, onActivated, onMounted, reactive, ref } from 'vue'
 import api from '@/api/http'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import PageCard from '@/components/common/PageCard.vue'
+import PortalPagination from '@/components/common/PortalPagination.vue'
+import { useClientPager } from '@/composables/useClientPager'
 import { statusLabel, statusTagType } from '@/utils/status-label'
 
 const props = withDefaults(defineProps<{ catalogOrigin?: 'INGEST' | 'GOVERNANCE' }>(), {
@@ -74,8 +76,22 @@ function matchCategoryPath(row: CatalogRes) {
 }
 
 const boundRows = computed(() => boundAll.value.filter(matchCategoryPath))
+const {
+  page: boundPage,
+  pageSize: boundPageSize,
+  paged: pagedBoundRows,
+  total: boundTotal,
+  resetPage: resetBoundPage,
+} = useClientPager(boundRows)
 
 const unboundRows = computed(() => unboundAll.value)
+const {
+  page: unboundPage,
+  pageSize: unboundPageSize,
+  paged: pagedUnboundRows,
+  total: unboundTotal,
+  resetPage: resetUnboundPage,
+} = useClientPager(unboundRows)
 
 async function loadCategoryOptions() {
   try {
@@ -144,6 +160,8 @@ async function refreshLists() {
   loading.value = true
   try {
     await Promise.all([loadBound(), loadUnbound()])
+    resetBoundPage()
+    resetUnboundPage()
   } finally {
     loading.value = false
   }
@@ -158,6 +176,7 @@ function resetQuery() {
 
 function onFilterCategoryChange() {
   selectedBound.value = []
+  resetBoundPage()
   void loadBound()
 }
 
@@ -347,7 +366,7 @@ onActivated(() => {
         </el-form-item>
       </el-form>
       <el-table
-        :data="boundRows"
+        :data="pagedBoundRows"
         stripe
         size="small"
         @selection-change="(rows: CatalogRes[]) => (selectedBound = rows)"
@@ -388,6 +407,11 @@ onActivated(() => {
           </template>
         </el-table-column>
       </el-table>
+      <PortalPagination
+        v-model:page="boundPage"
+        v-model:page-size="boundPageSize"
+        :total="boundTotal"
+      />
       <el-empty v-if="!boundRows.length" description="暂无已关联资源（编目时选择分类或在此关联后可见）" />
 
       <h4 style="margin-top: 24px">未挂载资源（可关联）</h4>
@@ -399,7 +423,7 @@ onActivated(() => {
         </el-form-item>
       </el-form>
       <el-table
-        :data="unboundRows"
+        :data="pagedUnboundRows"
         stripe
         size="small"
         @selection-change="(rows: CatalogRes[]) => (selectedUnbound = rows)"
@@ -422,6 +446,11 @@ onActivated(() => {
           </template>
         </el-table-column>
       </el-table>
+      <PortalPagination
+        v-model:page="unboundPage"
+        v-model:page-size="unboundPageSize"
+        :total="unboundTotal"
+      />
       <el-empty v-if="!unboundRows.length" description="暂无未挂载资源" />
     </div>
 

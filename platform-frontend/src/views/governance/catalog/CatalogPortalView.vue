@@ -3,6 +3,8 @@ import { computed, onActivated, onMounted, reactive, ref } from 'vue'
 import api from '@/api/http'
 import { ElMessage } from 'element-plus'
 import PageCard from '@/components/common/PageCard.vue'
+import PortalPagination from '@/components/common/PortalPagination.vue'
+import { useClientPager } from '@/composables/useClientPager'
 import { statusLabel } from '@/utils/status-label'
 
 interface CatalogRes {
@@ -38,6 +40,13 @@ const sourcePathType = ref('')
 const resourceType = ref('')
 const viewMode = ref<'card' | 'table'>('card')
 const cards = ref<CatalogRes[]>([])
+const {
+  page: cardPage,
+  pageSize: cardPageSize,
+  paged: pagedCards,
+  total: cardTotal,
+  resetPage: resetCardPage,
+} = useClientPager(cards)
 const loading = ref(false)
 const dialogVisible = ref(false)
 const current = ref<CatalogRes | null>(null)
@@ -68,6 +77,7 @@ async function load() {
       },
     })
     cards.value = res.data || []
+    resetCardPage()
   } catch {
     ElMessage.error('加载目录门户失败')
   } finally {
@@ -148,7 +158,7 @@ onActivated(() => {
 
     <div v-if="viewMode === 'card'" v-loading="loading" class="portal-grid">
       <el-empty v-if="!loading && !cards.length" description="暂无已发布资源" />
-      <div v-for="item in cards" :key="item.id" class="portal-card">
+      <div v-for="item in pagedCards" :key="item.id" class="portal-card">
         <div class="portal-card__head">
           <span class="portal-card__title">{{ item.resourceName }}</span>
           <span>
@@ -171,7 +181,7 @@ onActivated(() => {
       </div>
     </div>
 
-    <el-table v-else v-loading="loading" :data="cards" stripe size="small">
+    <el-table v-else v-loading="loading" :data="pagedCards" stripe size="small">
       <el-table-column prop="resourceCode" label="编码" width="130" />
       <el-table-column prop="resourceName" label="名称" min-width="140" />
       <el-table-column label="类型" width="70">
@@ -191,6 +201,11 @@ onActivated(() => {
         </template>
       </el-table-column>
     </el-table>
+    <PortalPagination
+      v-model:page="cardPage"
+      v-model:page-size="cardPageSize"
+      :total="cardTotal"
+    />
 
     <el-dialog v-model="dialogVisible" title="订阅申请" width="480px" destroy-on-close>
       <el-form label-width="90px">

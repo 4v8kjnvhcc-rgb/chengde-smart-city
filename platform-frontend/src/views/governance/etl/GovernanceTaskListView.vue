@@ -4,6 +4,8 @@ import { useRoute, useRouter } from 'vue-router'
 import api from '@/api/http'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import PageCard from '@/components/common/PageCard.vue'
+import PortalPagination from '@/components/common/PortalPagination.vue'
+import { useClientPager } from '@/composables/useClientPager'
 import { statusLabel, statusTagType } from '@/utils/status-label'
 
 export type ListMode = 'mgmt' | 'run' | 'schedule'
@@ -177,6 +179,13 @@ const displayTasks = computed(() => {
   if (props.mode !== 'run') return tasks.value
   return tasks.value.filter(t => t.status !== 'DRAFT' && t.status !== 'DISABLED')
 })
+const {
+  page: taskPage,
+  pageSize: taskPageSize,
+  paged: pagedTasks,
+  total: taskTotal,
+  resetPage: resetTaskPage,
+} = useClientPager(displayTasks)
 
 const selectedSource = computed(() => sourceOptions.value.find(s => s.value === form.sourceConnection))
 
@@ -271,6 +280,7 @@ async function load() {
     tasks.value = (await api.get('/governance/gov-tasks', {
       params: { taskDomain: props.taskDomain },
     })).data || []
+    resetTaskPage()
   } catch {
     ElMessage.error(isFusion.value ? '加载融合任务失败' : '加载治理任务失败')
   } finally {
@@ -616,7 +626,7 @@ defineExpose({ reload: load })
 
     <el-table
       v-loading="loading"
-      :data="displayTasks"
+      :data="pagedTasks"
       stripe
       size="small"
       @selection-change="(val: TaskRow[]) => selectedIds = val.map(r => r.id)"
@@ -699,6 +709,11 @@ defineExpose({ reload: load })
         </template>
       </el-table-column>
     </el-table>
+    <PortalPagination
+      v-model:page="taskPage"
+      v-model:page-size="taskPageSize"
+      :total="taskTotal"
+    />
 
     <el-dialog v-model="createVisible" :title="createDialogTitle" width="640px" destroy-on-close>
       <el-form label-width="100px">

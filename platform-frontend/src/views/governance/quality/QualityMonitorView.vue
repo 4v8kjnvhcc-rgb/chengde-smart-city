@@ -4,6 +4,8 @@ import * as echarts from 'echarts'
 import api from '@/api/http'
 import { ElMessage } from 'element-plus'
 import PageCard from '@/components/common/PageCard.vue'
+import PortalPagination from '@/components/common/PortalPagination.vue'
+import { useClientPager } from '@/composables/useClientPager'
 import { statusLabel, statusTagType } from '@/utils/status-label'
 
 interface TrendPoint {
@@ -55,6 +57,13 @@ interface Stats {
 
 const stats = ref<Stats | null>(null)
 const runs = ref<RunRow[]>([])
+const {
+  page: runPage,
+  pageSize: runPageSize,
+  paged: pagedRuns,
+  total: runTotal,
+  resetPage: resetRunPage,
+} = useClientPager(runs)
 const issues = ref<IssueRow[]>([])
 const selectedRunId = ref<number | null>(null)
 const loading = ref(false)
@@ -108,6 +117,7 @@ async function load() {
     ])
     stats.value = s.data
     runs.value = r.data || stats.value?.recentRuns || []
+    resetRunPage()
     await nextTick()
     renderChart()
   } catch {
@@ -190,7 +200,7 @@ onBeforeUnmount(() => {
     </PageCard>
 
     <PageCard title="运行记录">
-      <el-table :data="runs" stripe size="small" highlight-current-row @current-change="(row: RunRow | null) => row && openIssues(row.id)">
+      <el-table :data="pagedRuns" stripe size="small" highlight-current-row @current-change="(row: RunRow | null) => row && openIssues(row.id)">
         <el-table-column prop="id" label="运行ID" width="80" />
         <el-table-column label="任务" min-width="140">
           <template #default="{ row }">{{ row.taskName || `任务#${row.taskId}` }}</template>
@@ -211,6 +221,11 @@ onBeforeUnmount(() => {
           </template>
         </el-table-column>
       </el-table>
+      <PortalPagination
+        v-model:page="runPage"
+        v-model:page-size="runPageSize"
+        :total="runTotal"
+      />
       <el-empty v-if="!loading && !runs.length" description="暂无运行记录，请先在「数据质量任务」中执行" />
     </PageCard>
 

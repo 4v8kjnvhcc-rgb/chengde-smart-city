@@ -3,6 +3,8 @@ import { computed, onMounted, reactive, ref } from 'vue'
 import api from '@/api/http'
 import { ElMessage } from 'element-plus'
 import PageCard from '@/components/common/PageCard.vue'
+import PortalPagination from '@/components/common/PortalPagination.vue'
+import { useClientPager } from '@/composables/useClientPager'
 import {
   FIELD_TYPE_OPTIONS,
   parseFieldDefs,
@@ -60,6 +62,13 @@ const COMPONENT_TYPE_OPTIONS = [
 ]
 
 const models = ref<MetaModel[]>([])
+const {
+  page: modelPage,
+  pageSize: modelPageSize,
+  paged: pagedModels,
+  total: modelTotal,
+  resetPage: resetModelPage,
+} = useClientPager(models)
 const compare = ref<Record<string, unknown> | null>(null)
 const compareForm = reactive({ leftId: undefined as number | undefined, rightId: undefined as number | undefined })
 
@@ -149,6 +158,7 @@ function buildPayload() {
 
 async function loadModels() {
   models.value = (await api.get('/governance/platform/metadata/models')).data || []
+  resetModelPage()
 }
 
 async function saveDialog() {
@@ -300,7 +310,7 @@ onMounted(loadModels)
     </el-form>
     <input ref="importInputRef" type="file" accept=".json,application/json" style="display:none" @change="onImportFile">
 
-    <el-table :data="models" stripe size="small">
+    <el-table :data="pagedModels" stripe size="small">
       <el-table-column label="名称" min-width="180">
         <template #default="{ row }">
           <div>{{ row.modelNameZh }}</div>
@@ -329,6 +339,11 @@ onMounted(loadModels)
         </template>
       </el-table-column>
     </el-table>
+    <PortalPagination
+      v-model:page="modelPage"
+      v-model:page-size="modelPageSize"
+      :total="modelTotal"
+    />
 
     <el-divider content-position="left">模型比对</el-divider>
     <el-form inline class="portal-inline-form portal-inline-form--block">

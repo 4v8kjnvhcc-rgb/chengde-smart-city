@@ -4,6 +4,8 @@ import * as echarts from 'echarts'
 import api from '@/api/http'
 import { ElMessage } from 'element-plus'
 import PageCard from '@/components/common/PageCard.vue'
+import PortalPagination from '@/components/common/PortalPagination.vue'
+import { useClientPager } from '@/composables/useClientPager'
 
 interface ReportRow {
   id: number
@@ -36,6 +38,13 @@ interface IssueRow {
 }
 
 const reports = ref<ReportRow[]>([])
+const {
+  page: reportPage,
+  pageSize: reportPageSize,
+  paged: pagedReports,
+  total: reportTotal,
+  resetPage: resetReportPage,
+} = useClientPager(reports)
 const trend = ref<TrendPoint[]>([])
 const loading = ref(false)
 const selectedId = ref<number | null>(null)
@@ -68,6 +77,7 @@ async function loadList() {
   loading.value = true
   try {
     reports.value = (await api.get('/governance/quality/reports-mgmt')).data || []
+    resetReportPage()
   } catch {
     ElMessage.error('加载报告失败')
   } finally {
@@ -172,7 +182,7 @@ onBeforeUnmount(() => {
 
       <div ref="chartRef" style="height:260px;margin-bottom:16px" />
 
-      <el-table v-loading="loading" :data="reports" stripe size="small">
+      <el-table v-loading="loading" :data="pagedReports" stripe size="small">
         <el-table-column prop="reportCode" label="编码" width="160" />
         <el-table-column prop="reportName" label="名称" min-width="140" />
         <el-table-column prop="dimension" label="维度" width="140" />
@@ -186,6 +196,11 @@ onBeforeUnmount(() => {
           </template>
         </el-table-column>
       </el-table>
+      <PortalPagination
+        v-model:page="reportPage"
+        v-model:page-size="reportPageSize"
+        :total="reportTotal"
+      />
       <el-empty v-if="!loading && !reports.length" description="暂无报告；需先有任务运行评分后再生成" />
 
       <el-divider>详情</el-divider>

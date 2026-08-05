@@ -3,6 +3,8 @@ import { computed, onMounted, reactive, ref, watch } from 'vue'
 import api from '@/api/http'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import PageCard from '@/components/common/PageCard.vue'
+import PortalPagination from '@/components/common/PortalPagination.vue'
+import { useClientPager } from '@/composables/useClientPager'
 import { statusLabel, statusTagType } from '@/utils/status-label'
 
 const props = withDefaults(defineProps<{
@@ -52,6 +54,20 @@ interface RunRow {
 
 const scripts = ref<ScriptRow[]>([])
 const runs = ref<RunRow[]>([])
+const {
+  page: scriptPage,
+  pageSize: scriptPageSize,
+  paged: pagedScripts,
+  total: scriptTotal,
+  resetPage: resetScriptPage,
+} = useClientPager(scripts)
+const {
+  page: runPage,
+  pageSize: runPageSize,
+  paged: pagedRuns,
+  total: runTotal,
+  resetPage: resetRunPage,
+} = useClientPager(runs)
 const loading = ref(false)
 const drawer = ref(false)
 const versionDrawer = ref(false)
@@ -89,6 +105,7 @@ async function loadScripts() {
   loading.value = true
   try {
     scripts.value = (await api.get('/governance/fusion/scripts')).data || []
+    resetScriptPage()
   } catch {
     ElMessage.error('加载脚本失败')
   } finally {
@@ -99,6 +116,7 @@ async function loadScripts() {
 async function loadRuns() {
   try {
     runs.value = (await api.get('/governance/fusion/scripts/runs')).data || []
+    resetRunPage()
   } catch {
     runs.value = []
   }
@@ -278,7 +296,7 @@ onMounted(() => {
       </el-form-item>
     </el-form>
 
-    <el-table v-if="activeTab === 'list'" v-loading="loading" :data="scripts" stripe size="small">
+    <el-table v-if="activeTab === 'list'" v-loading="loading" :data="pagedScripts" stripe size="small">
       <el-table-column prop="scriptCode" label="编码" width="120" />
       <el-table-column prop="scriptName" label="名称" min-width="140" />
       <el-table-column label="类型" width="80">
@@ -299,6 +317,12 @@ onMounted(() => {
         </template>
       </el-table-column>
     </el-table>
+    <PortalPagination
+      v-if="activeTab === 'list'"
+      v-model:page="scriptPage"
+      v-model:page-size="scriptPageSize"
+      :total="scriptTotal"
+    />
     <el-empty v-if="activeTab === 'list' && !loading && !scripts.length" description="暂无融合脚本" />
 
     <template v-if="activeTab === 'runs'">
@@ -307,7 +331,7 @@ onMounted(() => {
           <el-button @click="loadRuns">刷新运行</el-button>
         </el-form-item>
       </el-form>
-      <el-table :data="runs" stripe size="small">
+      <el-table :data="pagedRuns" stripe size="small">
         <el-table-column prop="id" label="运行ID" width="80" />
         <el-table-column label="脚本" min-width="140">
           <template #default="{ row }">{{ row.scriptName || `脚本#${row.scriptId}` }}</template>
@@ -321,6 +345,11 @@ onMounted(() => {
         <el-table-column prop="startedAt" label="开始" width="170" />
         <el-table-column prop="message" label="摘要" min-width="160" show-overflow-tooltip />
       </el-table>
+      <PortalPagination
+        v-model:page="runPage"
+        v-model:page-size="runPageSize"
+        :total="runTotal"
+      />
       <el-empty v-if="!runs.length" description="暂无运行记录；执行脚本后将写入此处" />
     </template>
 

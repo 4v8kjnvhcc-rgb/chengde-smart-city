@@ -4,6 +4,7 @@ import { useRoute } from 'vue-router'
 import api from '@/api/http'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import PageCard from '@/components/common/PageCard.vue'
+import PortalPagination from '@/components/common/PortalPagination.vue'
 import { statusLabel, statusTagType } from '@/utils/status-label'
 
 const props = withDefaults(defineProps<{ catalogOrigin?: 'INGEST' | 'GOVERNANCE' }>(), {
@@ -127,10 +128,6 @@ function onScopeChange() {
   selected.value = []
   page.value = 1
   void load()
-}
-
-function onPageSizeChange() {
-  page.value = 1
 }
 
 function onQuery() {
@@ -361,17 +358,11 @@ onActivated(() => {
         </el-table-column>
       </el-table>
 
-      <div class="pager-wrap">
-        <el-pagination
-          v-model:current-page="page"
-          v-model:page-size="pageSize"
-          background
-          layout="total, sizes, prev, pager, next"
-          :page-sizes="[10, 20, 50]"
-          :total="rows.length"
-          @size-change="onPageSizeChange"
-        />
-      </div>
+      <PortalPagination
+        v-model:page="page"
+        v-model:page-size="pageSize"
+        :total="rows.length"
+      />
     </PageCard>
 
     <el-dialog

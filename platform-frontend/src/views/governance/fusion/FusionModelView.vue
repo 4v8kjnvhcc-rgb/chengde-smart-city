@@ -4,6 +4,8 @@ import { useRouter } from 'vue-router'
 import api from '@/api/http'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import PageCard from '@/components/common/PageCard.vue'
+import PortalPagination from '@/components/common/PortalPagination.vue'
+import { useClientPager } from '@/composables/useClientPager'
 import { statusLabel, statusTagType } from '@/utils/status-label'
 
 const router = useRouter()
@@ -63,11 +65,32 @@ interface PhysicalRow {
 }
 
 const domains = ref<DomainRow[]>([])
+const {
+  page: domainPage,
+  pageSize: domainPageSize,
+  paged: pagedDomains,
+  total: domainTotal,
+  resetPage: resetDomainPage,
+} = useClientPager(domains)
 const selectedDomainId = ref<number | null>(null)
 const entities = ref<EntityRow[]>([])
+const {
+  page: entityPage,
+  pageSize: entityPageSize,
+  paged: pagedEntities,
+  total: entityTotal,
+  resetPage: resetEntityPage,
+} = useClientPager(entities)
 const fields = ref<FieldRow[]>([])
 const relations = ref<RelationRow[]>([])
 const physicals = ref<PhysicalRow[]>([])
+const {
+  page: physicalPage,
+  pageSize: physicalPageSize,
+  paged: pagedPhysicals,
+  total: physicalTotal,
+  resetPage: resetPhysicalPage,
+} = useClientPager(physicals)
 const selectedEntityId = ref<number | null>(null)
 const loading = ref(false)
 const sources = ref<QualitySourceOption[]>([])
@@ -104,6 +127,7 @@ async function loadDomains() {
   loading.value = true
   try {
     domains.value = (await api.get('/governance/fusion/models/domains')).data || []
+    resetDomainPage()
     if (!selectedDomainId.value && domains.value.length) {
       selectedDomainId.value = domains.value[0].id
     }
@@ -125,6 +149,7 @@ async function loadDomainDetail() {
   try {
     const tree = (await api.get(`/governance/fusion/models/domains/${selectedDomainId.value}/tree`)).data
     entities.value = (tree.entities || []).map((n: { entity: EntityRow }) => n.entity)
+    resetEntityPage()
     relations.value = tree.relations || []
     if (!selectedEntityId.value && entities.value.length) {
       selectedEntityId.value = entities.value[0].id
@@ -145,6 +170,7 @@ async function loadEntityDetail() {
   try {
     fields.value = (await api.get('/governance/fusion/models/fields', { params: { entityId: selectedEntityId.value } })).data || []
     physicals.value = (await api.get('/governance/fusion/models/physical', { params: { entityId: selectedEntityId.value } })).data || []
+    resetPhysicalPage()
   } catch {
     ElMessage.error('加载字段/物理映射失败')
   }
@@ -428,7 +454,7 @@ onMounted(async () => {
         </div>
         <el-table
           v-loading="loading"
-          :data="domains"
+          :data="pagedDomains"
           stripe
           size="small"
           highlight-current-row
@@ -443,6 +469,11 @@ onMounted(async () => {
             </template>
           </el-table-column>
         </el-table>
+        <PortalPagination
+          v-model:page="domainPage"
+          v-model:page-size="domainPageSize"
+          :total="domainTotal"
+        />
       </el-col>
 
       <el-col :span="8">
@@ -451,7 +482,7 @@ onMounted(async () => {
           <el-button type="primary" size="small" :disabled="!selectedDomainId" @click="openEntityCreate">新增</el-button>
         </div>
         <el-table
-          :data="entities"
+          :data="pagedEntities"
           stripe
           size="small"
           highlight-current-row
@@ -470,6 +501,11 @@ onMounted(async () => {
             </template>
           </el-table-column>
         </el-table>
+        <PortalPagination
+          v-model:page="entityPage"
+          v-model:page-size="entityPageSize"
+          :total="entityTotal"
+        />
 
         <div class="panel-head" style="margin-top:12px">
           <span>实体关系</span>
@@ -508,7 +544,7 @@ onMounted(async () => {
           <span>物理映射</span>
           <el-button size="small" :disabled="!selectedEntityId" @click="openPhysicalCreate">新增</el-button>
         </div>
-        <el-table :data="physicals" stripe size="small">
+        <el-table :data="pagedPhysicals" stripe size="small">
           <el-table-column prop="physicalCode" label="编码" width="80" />
           <el-table-column prop="tableName" label="表名" min-width="100" />
           <el-table-column label="状态" width="70">
@@ -523,6 +559,11 @@ onMounted(async () => {
             </template>
           </el-table-column>
         </el-table>
+        <PortalPagination
+          v-model:page="physicalPage"
+          v-model:page-size="physicalPageSize"
+          :total="physicalTotal"
+        />
         <el-empty v-if="selectedEntityId && !physicals.length" description="尚未绑定物理表" :image-size="48" />
       </el-col>
     </el-row>
