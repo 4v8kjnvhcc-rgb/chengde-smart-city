@@ -10,7 +10,7 @@ import RcStorageLifecyclePanel from '@/views/resource/RcStorageLifecyclePanel.vu
       :closable="false"
       show-icon
       style="margin-bottom:12px"
-      title="能力来自资源中心存储策略（纳管表备份）；原「数据库存储管理」备份 Tab 已迁入本菜单。"
+      title="与资源中心「数据库存储管理 · 数据备份」共用策略与产物；可在此或资源中心入口操作。"
     />
     <RcStorageLifecyclePanel mode="backup" />
   </PageCard>

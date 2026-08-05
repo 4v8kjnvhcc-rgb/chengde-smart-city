@@ -10,6 +10,8 @@ public class RcManagedTable {
     @TableId(type = IdType.AUTO)
     private Long id;
     private Long themeId;
+    private Long libId;
+    private String assetType;
     private String physicalTable;
     private String metaEntryCode;
     private Long fusionPhysicalId;
@@ -26,6 +28,10 @@ public class RcManagedTable {
     public void setId(Long id) { this.id = id; }
     public Long getThemeId() { return themeId; }
     public void setThemeId(Long themeId) { this.themeId = themeId; }
+    public Long getLibId() { return libId; }
+    public void setLibId(Long libId) { this.libId = libId; }
+    public String getAssetType() { return assetType; }
+    public void setAssetType(String assetType) { this.assetType = assetType; }
     public String getPhysicalTable() { return physicalTable; }
     public void setPhysicalTable(String physicalTable) { this.physicalTable = physicalTable; }
     public String getMetaEntryCode() { return metaEntryCode; }

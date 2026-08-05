@@ -86,9 +86,24 @@ const STATUS_ZH: Record<string, string> = {
   REGISTERED: '已登记',
   INDEXED: '已索引',
   RAW: '原始',
+  EXTRACTED: '已提取特征',
+  UNDERSTOOD: '已内容理解',
   CLEANED: '已清洗',
+  PROBLEM: '问题数据',
+  ABANDONED: '已放弃',
+  CLEANED_IN: '清洗后入库',
+  OTHER: '其他处理',
+  OPEN: '待确认',
+  DEDUP: '去重',
+  VALIDATE: '校验',
+  TRANSFORM: '转换',
+  INFO: '信息',
+  CRITICAL: '严重',
   TAGGED: '已标注',
   LINKED: '已关联',
+  POSITIVE: '正向',
+  NEGATIVE: '负向',
+  NEUTRAL: '中性',
   // 评估
   EVALUATING: '评估中',
   SCORED: '已打分',
@@ -137,10 +152,14 @@ const STATUS_ZH: Record<string, string> = {
   DATA: '数据',
   // 安全分级
   PUBLIC: '公开',
+  PRIVATE: '未公开',
   INTERNAL: '内部',
   SENSITIVE: '敏感',
   SECRET: '核心',
   CORE: '核心',
+  AES256: 'AES-256',
+  SM4: '国密SM4',
+  NONE: '不加密',
   // 采集范围 / 符合度 / 分层
   FULL: '整库',
   PASS: '通过',
@@ -213,8 +232,13 @@ const STATUS_ZH: Record<string, string> = {
   // 通道类型
   FTP: 'FTP',
   LOCAL: '本地文件',
+  NAS: 'NAS存储',
+  GZIP: 'GZIP压缩',
+  NONE: '不压缩',
   UNSTRUCT: '非结构化',
   SEMI: '半结构化',
+  BASE: '基础库',
+  TOPIC: '专题库',
   CDC: 'CDC增量',
   // 作业/管道/策略类型
   PROBE: '探测',
@@ -247,6 +271,20 @@ const STATUS_ZH: Record<string, string> = {
   RECORD_COUNT: '记录数',
   ACCURACY: '准确性',
   INTEGRITY: '完整性',
+  AVAILABILITY: '可用性',
+  SECURITY: '安全性',
+  PERFORMANCE: '性能',
+  DB: '数据库',
+  STORAGE: '存储',
+  CHANNEL: '传输通道',
+  BACKUP: '备份',
+  CATALOG: '资产目录',
+  AUDIT: '访问审计',
+  PERF: '性能',
+  CATALOG_EXCHANGE: '目录交换通道',
+  BACKUP_TRANSFER: '备份传输通道',
+  LOCAL_FALLBACK: '本地降级',
+  IDLE: '空闲',
   NULL: '空值',
   NULL_VALUE: '空值',
   DUPLICATE: '重复值',
@@ -311,6 +349,13 @@ const STATUS_ZH: Record<string, string> = {
   // 分区类型
   RANGE: '范围',
   HASH: '哈希',
+  // 分区运维
+  MIGRATE: '分区迁移',
+  COMPRESS: '数据压缩',
+  REBUILD_INDEX: '重建索引',
+  CLEANUP: '数据清理',
+  RESTORE_PLAN: '恢复计划',
+  UNEVEN: '分布不均',
   // 血缘边 / 探查实体
   FLOW: '数据流',
   EXTRACT: '抽取',
@@ -441,13 +486,13 @@ export function statusLabel(value: unknown): string {
 
 export function statusTagType(value: unknown): 'success' | 'warning' | 'info' | 'danger' | 'primary' {
   const key = String(value ?? '').trim().toUpperCase()
-  if (['ACTIVE', 'ENABLED', 'SUCCESS', 'APPROVED', 'COMPLETED', 'FINISHED', 'CONFIRMED', 'PUBLISHED', 'READY', 'CONFIGURED', 'NORMAL', 'SUBSCRIBED', 'DISTRIBUTED', 'MAPPED', 'MATCHED', 'INDEXED', 'OK', 'IMPLEMENTED', 'ONLINE', 'UP', 'PASS'].includes(key)) {
+  if (['ACTIVE', 'ENABLED', 'SUCCESS', 'APPROVED', 'COMPLETED', 'FINISHED', 'CONFIRMED', 'PUBLISHED', 'READY', 'CONFIGURED', 'NORMAL', 'SUBSCRIBED', 'DISTRIBUTED', 'MAPPED', 'MATCHED', 'INDEXED', 'OK', 'IMPLEMENTED', 'ONLINE', 'UP', 'PASS', 'UNDERSTOOD', 'POSITIVE', 'CLEANED', 'CLEANED_IN', 'PUBLIC'].includes(key)) {
     return 'success'
   }
-  if (['PENDING', 'PENDING_ARCHIVE', 'RUNNING', 'ANALYZING', 'PRE_AUDITING', 'CORRECTION', 'WAITING', 'DRAFT', 'SUPERVISING', 'DISPATCHED', 'FULFILLING', 'PARTIAL', 'WARN', 'POC', 'MEDIUM', 'RAW', 'TAGGED', 'CLEANED', 'LEDGER'].includes(key)) {
+  if (['PENDING', 'PENDING_ARCHIVE', 'PENDING_REVIEW', 'RUNNING', 'ANALYZING', 'PRE_AUDITING', 'CORRECTION', 'WAITING', 'DRAFT', 'SUPERVISING', 'DISPATCHED', 'FULFILLING', 'PARTIAL', 'WARN', 'POC', 'MEDIUM', 'RAW', 'EXTRACTED', 'TAGGED', 'LEDGER', 'OPEN', 'OTHER', 'PRIVATE', 'UNEVEN'].includes(key)) {
     return 'warning'
   }
-  if (['REJECTED', 'FAILED', 'ERROR', 'CANCELLED', 'ABNORMAL', 'EXPIRED', 'RETURNED', 'STOPPED', 'UNMAPPED', 'UNMATCHED', 'CRITICAL', 'BLOCKED', 'MISSING', 'HIGH', 'DOWN', 'FAIL'].includes(key)) {
+  if (['REJECTED', 'FAILED', 'ERROR', 'CANCELLED', 'ABNORMAL', 'EXPIRED', 'RETURNED', 'STOPPED', 'UNMAPPED', 'UNMATCHED', 'CRITICAL', 'BLOCKED', 'MISSING', 'HIGH', 'DOWN', 'FAIL', 'NEGATIVE', 'PROBLEM', 'ABANDONED'].includes(key)) {
     return 'danger'
   }
   if (['INACTIVE', 'DISABLED', 'OFFLINE', 'CLOSED', 'WITHDRAWN', 'ARCHIVED', 'STUB', 'EXTERNAL', 'SKIPPED', 'UNTESTED', 'LOW'].includes(key)) {

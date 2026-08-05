@@ -10,7 +10,7 @@ import RcStorageLifecyclePanel from '@/views/resource/RcStorageLifecyclePanel.vu
       :closable="false"
       show-icon
       style="margin-bottom:12px"
-      title="能力来自资源中心存储策略（台账归档）；原「数据库存储管理」归档 Tab 已迁入本菜单。"
+      title="与资源中心「数据库存储管理 · 数据归档」共用策略与产物；归档执行记台账。"
     />
     <RcStorageLifecyclePanel mode="archive" />
   </PageCard>

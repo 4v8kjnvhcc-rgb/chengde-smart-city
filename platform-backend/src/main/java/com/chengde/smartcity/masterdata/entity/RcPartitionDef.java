@@ -20,6 +20,8 @@ public class RcPartitionDef {
     private String pretestStatus;
     private String pretestMessage;
     private LocalDateTime pretestAt;
+    private String remark;
+    private LocalDateTime updatedAt;
     private String status;
 
     public Long getId() { return id; }
@@ -46,6 +48,10 @@ public class RcPartitionDef {
     public void setPretestMessage(String pretestMessage) { this.pretestMessage = pretestMessage; }
     public LocalDateTime getPretestAt() { return pretestAt; }
     public void setPretestAt(LocalDateTime pretestAt) { this.pretestAt = pretestAt; }
+    public String getRemark() { return remark; }
+    public void setRemark(String remark) { this.remark = remark; }
+    public LocalDateTime getUpdatedAt() { return updatedAt; }
+    public void setUpdatedAt(LocalDateTime updatedAt) { this.updatedAt = updatedAt; }
     public String getStatus() { return status; }
     public void setStatus(String status) { this.status = status; }
 }

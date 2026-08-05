@@ -1724,8 +1724,8 @@ public class MetadataSubsystemService {
             }
             items.add(row);
         }
-        unreadNotice = (int) changeNoticeMapper.selectCount(new LambdaQueryWrapper<GovMetaChangeNotice>()
-                .eq(GovMetaChangeNotice::getStatus, "UNREAD"));
+        unreadNotice = Math.toIntExact(changeNoticeMapper.selectCount(new LambdaQueryWrapper<GovMetaChangeNotice>()
+                .eq(GovMetaChangeNotice::getStatus, "UNREAD")));
         matchedHint = (int) entries.stream().filter(e -> e.getOmRef() != null && !e.getOmRef().isBlank()).count();
         Map<String, Object> kpi = new LinkedHashMap<>();
         kpi.put("total", entries.size());

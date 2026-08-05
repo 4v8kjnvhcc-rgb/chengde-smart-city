@@ -3,29 +3,41 @@ package com.chengde.smartcity.masterdata.service;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.chengde.smartcity.audit.AuditService;
 import com.chengde.smartcity.common.exception.BusinessException;
+import com.chengde.smartcity.integration.storage.StorageIntegrationClient;
+import com.chengde.smartcity.system.entity.AuditLog;
+import com.chengde.smartcity.system.mapper.AuditLogMapper;
 import com.chengde.smartcity.masterdata.entity.GovCatalogResource;
 import com.chengde.smartcity.masterdata.entity.GovMetadataRegistry;
 import com.chengde.smartcity.masterdata.entity.RcAssetCatalogEntry;
 import com.chengde.smartcity.masterdata.entity.RcBackupArtifact;
 import com.chengde.smartcity.masterdata.entity.RcBackupJob;
 import com.chengde.smartcity.masterdata.entity.RcBaseLibrary;
+import com.chengde.smartcity.masterdata.entity.RcCatalogExchangeJob;
 import com.chengde.smartcity.masterdata.entity.RcManagedTable;
 import com.chengde.smartcity.masterdata.entity.RcMonitorMetric;
 import com.chengde.smartcity.masterdata.entity.RcPartitionDef;
+import com.chengde.smartcity.masterdata.entity.RcPartitionOp;
+import com.chengde.smartcity.masterdata.entity.RcPolicyRunLog;
 import com.chengde.smartcity.masterdata.entity.RcStoragePolicy;
 import com.chengde.smartcity.masterdata.entity.RcThemeLibrary;
+import com.chengde.smartcity.masterdata.entity.UnsDocument;
 import com.chengde.smartcity.masterdata.mapper.GovCatalogResourceMapper;
 import com.chengde.smartcity.masterdata.mapper.GovMetadataRegistryMapper;
 import com.chengde.smartcity.masterdata.mapper.RcAssetCatalogEntryMapper;
 import com.chengde.smartcity.masterdata.mapper.RcBackupArtifactMapper;
 import com.chengde.smartcity.masterdata.mapper.RcBackupJobMapper;
 import com.chengde.smartcity.masterdata.mapper.RcBaseLibraryMapper;
+import com.chengde.smartcity.masterdata.mapper.RcCatalogExchangeJobMapper;
 import com.chengde.smartcity.masterdata.mapper.RcManagedTableMapper;
 import com.chengde.smartcity.masterdata.mapper.RcMonitorMetricMapper;
 import com.chengde.smartcity.masterdata.mapper.RcPartitionDefMapper;
+import com.chengde.smartcity.masterdata.mapper.RcPartitionOpMapper;
+import com.chengde.smartcity.masterdata.mapper.RcPolicyRunLogMapper;
 import com.chengde.smartcity.masterdata.mapper.RcStoragePolicyMapper;
 import com.chengde.smartcity.masterdata.mapper.RcThemeLibraryMapper;
+import com.chengde.smartcity.masterdata.mapper.UnsDocumentMapper;
 import com.chengde.smartcity.security.UserPrincipal;
+import java.io.BufferedReader;
 import java.io.BufferedWriter;
 import java.io.InputStream;
 import java.io.OutputStream;
@@ -42,26 +54,62 @@ import java.sql.ResultSet;
 import java.sql.ResultSetMetaData;
 import java.sql.Statement;
 import java.time.LocalDateTime;
+import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.regex.Pattern;
+import java.util.zip.GZIPOutputStream;
 import javax.sql.DataSource;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+import org.springframework.scheduling.support.CronExpression;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 @Service
 public class ResourceCenterPlatformService {
 
+    private static final Logger log = LoggerFactory.getLogger(ResourceCenterPlatformService.class);
     private static final Pattern IDENT = Pattern.compile("^[A-Za-z_][A-Za-z0-9_]*$");
     private static final Path BACKUP_ROOT = Path.of("data", "nas-demo", "backups");
+    private static final Path ARCHIVE_ROOT = Path.of("data", "nas-demo", "archives");
+    private static final Path OBJECT_ROOT = Path.of("data", "nas-demo", "object-backups");
+
+    /** 门户子系统编码（公开目录共享；未公开目录按子系统隔离） */
+    private static final List<String[]> CATALOG_SUBSYSTEMS = List.of(
+            new String[]{"SHARED", "共享公开目录"},
+            new String[]{"RESOURCE", "大数据平台资源中心"},
+            new String[]{"EXCHANGE", "数据共享交换平台"},
+            new String[]{"GOVERNANCE", "数据融合治理平台"},
+            new String[]{"CATALOG", "数据目录管理系统"},
+            new String[]{"UNSTRUCTURED", "非结构数据融合治理平台"},
+            new String[]{"ANALYTICS", "大数据挖掘分析平台"}
+    );
+    private static final Set<String> ENCRYPT_ALGOS = Set.of("NONE", "AES256", "SM4");
+
+    /** V3.0 数据资产中心固定模块（zone_code） */
+    private static final List<String[]> ASSET_MODULES = List.of(
+            new String[]{"MODULE_POPULATION", "MOD_POPULATION", "人口库数据中心"},
+            new String[]{"MODULE_LEGAL", "MOD_LEGAL", "法人库数据中心"},
+            new String[]{"MODULE_LICENSE", "MOD_LICENSE", "电子证照库数据中心"},
+            new String[]{"MODULE_MACRO", "MOD_MACRO", "宏观经济库数据中心"},
+            new String[]{"MODULE_ENTERPRISE", "MOD_ENTERPRISE", "企业经济库数据中心"},
+            new String[]{"MODULE_GEO", "MOD_GEO", "地理信息库数据中心"},
+            new String[]{"MODULE_CITYPART", "MOD_CITYPART", "城市部件库数据中心"},
+            new String[]{"MODULE_TECH", "MOD_TECH", "科技资源库数据中心"},
+            new String[]{"MODULE_OTHER", "MOD_OTHER", "其他业务基础库数据中心"},
+            new String[]{"MODULE_APPROVAL", "MOD_APPROVAL", "行政审批库数据中心"}
+    );
 
     private final RcBaseLibraryMapper libraryMapper;
     private final RcPartitionDefMapper partitionMapper;
+    private final RcPartitionOpMapper partitionOpMapper;
     private final RcStoragePolicyMapper policyMapper;
     private final RcAssetCatalogEntryMapper catalogMapper;
     private final RcMonitorMetricMapper monitorMapper;
@@ -69,13 +117,19 @@ public class ResourceCenterPlatformService {
     private final RcManagedTableMapper managedTableMapper;
     private final RcBackupJobMapper backupJobMapper;
     private final RcBackupArtifactMapper backupArtifactMapper;
+    private final RcPolicyRunLogMapper policyRunLogMapper;
+    private final RcCatalogExchangeJobMapper catalogExchangeJobMapper;
     private final GovMetadataRegistryMapper registryMapper;
     private final GovCatalogResourceMapper catalogResourceMapper;
+    private final UnsDocumentMapper unsDocumentMapper;
     private final AuditService auditService;
+    private final AuditLogMapper auditLogMapper;
+    private final StorageIntegrationClient storageIntegrationClient;
     private final DataSource platformDataSource;
 
     public ResourceCenterPlatformService(RcBaseLibraryMapper libraryMapper,
                                          RcPartitionDefMapper partitionMapper,
+                                         RcPartitionOpMapper partitionOpMapper,
                                          RcStoragePolicyMapper policyMapper,
                                          RcAssetCatalogEntryMapper catalogMapper,
                                          RcMonitorMetricMapper monitorMapper,
@@ -83,12 +137,18 @@ public class ResourceCenterPlatformService {
                                          RcManagedTableMapper managedTableMapper,
                                          RcBackupJobMapper backupJobMapper,
                                          RcBackupArtifactMapper backupArtifactMapper,
+                                         RcPolicyRunLogMapper policyRunLogMapper,
+                                         RcCatalogExchangeJobMapper catalogExchangeJobMapper,
                                          GovMetadataRegistryMapper registryMapper,
                                          GovCatalogResourceMapper catalogResourceMapper,
+                                         UnsDocumentMapper unsDocumentMapper,
                                          AuditService auditService,
+                                         AuditLogMapper auditLogMapper,
+                                         StorageIntegrationClient storageIntegrationClient,
                                          DataSource platformDataSource) {
         this.libraryMapper = libraryMapper;
         this.partitionMapper = partitionMapper;
+        this.partitionOpMapper = partitionOpMapper;
         this.policyMapper = policyMapper;
         this.catalogMapper = catalogMapper;
         this.monitorMapper = monitorMapper;
@@ -96,24 +156,140 @@ public class ResourceCenterPlatformService {
         this.managedTableMapper = managedTableMapper;
         this.backupJobMapper = backupJobMapper;
         this.backupArtifactMapper = backupArtifactMapper;
+        this.policyRunLogMapper = policyRunLogMapper;
+        this.catalogExchangeJobMapper = catalogExchangeJobMapper;
         this.registryMapper = registryMapper;
         this.catalogResourceMapper = catalogResourceMapper;
+        this.unsDocumentMapper = unsDocumentMapper;
         this.auditService = auditService;
+        this.auditLogMapper = auditLogMapper;
+        this.storageIntegrationClient = storageIntegrationClient;
         this.platformDataSource = platformDataSource;
     }
 
     public Map<String, Object> libraryOverview() {
+        List<RcBaseLibrary> base = libraryMapper.selectList(new LambdaQueryWrapper<RcBaseLibrary>()
+                .eq(RcBaseLibrary::getLibType, "BASE").orderByAsc(RcBaseLibrary::getSortOrder).orderByAsc(RcBaseLibrary::getId));
+        List<RcBaseLibrary> semi = libraryMapper.selectList(new LambdaQueryWrapper<RcBaseLibrary>()
+                .eq(RcBaseLibrary::getLibType, "SEMI").orderByAsc(RcBaseLibrary::getSortOrder).orderByAsc(RcBaseLibrary::getId));
+        List<RcBaseLibrary> unstruct = libraryMapper.selectList(new LambdaQueryWrapper<RcBaseLibrary>()
+                .eq(RcBaseLibrary::getLibType, "UNSTRUCT").orderByAsc(RcBaseLibrary::getSortOrder).orderByAsc(RcBaseLibrary::getId));
+        List<Map<String, Object>> managed = listManagedTables(null);
+        Map<String, Object> inventory = buildInventory(base, semi, unstruct, managed);
+
         Map<String, Object> out = new LinkedHashMap<>();
-        out.put("baseLibraries", libraryMapper.selectList(new LambdaQueryWrapper<RcBaseLibrary>().eq(RcBaseLibrary::getLibType, "BASE")));
-        out.put("semiLibraries", libraryMapper.selectList(new LambdaQueryWrapper<RcBaseLibrary>().eq(RcBaseLibrary::getLibType, "SEMI")));
-        out.put("unstructLibraries", libraryMapper.selectList(new LambdaQueryWrapper<RcBaseLibrary>().eq(RcBaseLibrary::getLibType, "UNSTRUCT")));
+        out.put("baseLibraries", enrichLibraries(base, managed));
+        out.put("semiLibraries", enrichLibraries(semi, managed));
+        out.put("unstructLibraries", enrichLibraries(unstruct, managed));
         out.put("themes", listThemes(null));
-        out.put("managedTables", listManagedTables(null));
+        out.put("managedTables", managed);
+        out.put("modules", listAssetModules());
+        out.put("inventory", inventory);
+        out.put("lifecycleHints", Map.of(
+                "backup", "逻辑备份可在本区对纳管表执行，或前往「数据库存储管理」配置策略",
+                "archive", "归档策略在「数据库存储管理 / 归集·数据资产管理」执行（台账为主）",
+                "restore", "恢复依据备份产物 SHA 校验后手工回灌，本阶段不做自动覆盖生产表",
+                "migrate", "迁移请经治理/融合任务将成果表重新纳管到目标库区"
+        ));
+        return out;
+    }
+
+    /** 多角度盘点：按库类型 / 数据中心模块 / 纳管表 */
+    public Map<String, Object> assetInventory() {
+        return libraryOverview();
+    }
+
+    public List<Map<String, Object>> listAssetModules() {
+        List<Map<String, Object>> out = new ArrayList<>();
+        for (String[] def : ASSET_MODULES) {
+            String zone = def[0];
+            String code = def[1];
+            String name = def[2];
+            RcThemeLibrary theme = themeMapper.selectOne(new LambdaQueryWrapper<RcThemeLibrary>()
+                    .eq(RcThemeLibrary::getThemeCode, code).last("LIMIT 1"));
+            if (theme == null) {
+                theme = themeMapper.selectOne(new LambdaQueryWrapper<RcThemeLibrary>()
+                        .eq(RcThemeLibrary::getZoneCode, zone).last("LIMIT 1"));
+            }
+            Map<String, Object> m = new LinkedHashMap<>();
+            m.put("moduleCode", code);
+            m.put("moduleName", name);
+            m.put("zoneCode", zone);
+            if (theme != null) {
+                long cnt = managedTableMapper.selectCount(new LambdaQueryWrapper<RcManagedTable>()
+                        .eq(RcManagedTable::getThemeId, theme.getId())
+                        .eq(RcManagedTable::getStatus, "ACTIVE"));
+                m.put("themeId", theme.getId());
+                m.put("themeCode", theme.getThemeCode());
+                m.put("themeName", theme.getThemeName());
+                m.put("ownerOrg", theme.getOwnerOrg());
+                m.put("description", theme.getDescription());
+                m.put("status", theme.getStatus());
+                m.put("managedCount", cnt);
+                m.put("tables", listManagedTables(theme.getId()));
+            } else {
+                m.put("themeId", null);
+                m.put("status", "DRAFT");
+                m.put("managedCount", 0);
+                m.put("tables", List.of());
+            }
+            out.add(m);
+        }
+        return out;
+    }
+
+    /** 文件目录库 / 文件索引库 + 非结构化关联结构化表 */
+    public Map<String, Object> fileLibrariesOverview() {
+        List<UnsDocument> docs = unsDocumentMapper.selectList(new LambdaQueryWrapper<UnsDocument>()
+                .orderByDesc(UnsDocument::getId).last("LIMIT 200"));
+        List<Map<String, Object>> catalog = new ArrayList<>();
+        List<Map<String, Object>> index = new ArrayList<>();
+        for (UnsDocument d : docs) {
+            Map<String, Object> row = new LinkedHashMap<>();
+            row.put("id", d.getId());
+            row.put("title", d.getTitle());
+            row.put("docCode", d.getDocCode());
+            row.put("storageKey", d.getStorageKey());
+            row.put("categoryCode", d.getCategoryCode());
+            row.put("publishStatus", d.getPublishStatus());
+            row.put("indexStatus", d.getIndexStatus());
+            row.put("linkedDocId", d.getLinkedDocId());
+            row.put("updatedAt", d.getUpdatedAt());
+            if (d.getStorageKey() != null && !d.getStorageKey().isBlank()) {
+                catalog.add(row);
+            }
+            if ("INDEXED".equalsIgnoreCase(d.getIndexStatus()) || "SUCCESS".equalsIgnoreCase(d.getIndexStatus())) {
+                index.add(row);
+            }
+        }
+        List<Map<String, Object>> relatedStructured = listManagedTables(null).stream()
+                .filter(t -> {
+                    String at = String.valueOf(t.getOrDefault("assetType", ""));
+                    String kind = String.valueOf(t.getOrDefault("libraryKind", ""));
+                    return "UNSTRUCT".equalsIgnoreCase(at) || "SEMI".equalsIgnoreCase(at)
+                            || "TOPIC".equalsIgnoreCase(kind);
+                })
+                .toList();
+
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("catalogLib", libraryMapper.selectOne(new LambdaQueryWrapper<RcBaseLibrary>()
+                .eq(RcBaseLibrary::getLibCode, "LIB_UNS_CATALOG").last("LIMIT 1")));
+        out.put("indexLib", libraryMapper.selectOne(new LambdaQueryWrapper<RcBaseLibrary>()
+                .eq(RcBaseLibrary::getLibCode, "LIB_UNS_INDEX").last("LIMIT 1")));
+        out.put("catalogCount", catalog.size());
+        out.put("indexCount", index.size());
+        out.put("documentCount", docs.size());
+        out.put("catalogDocs", catalog);
+        out.put("indexDocs", index);
+        out.put("relatedStructuredTables", relatedStructured);
+        out.put("hint", "目录库维护存储键与发布态；索引库维护检索态；关联结构化表用于非结构化与结构化互查");
         return out;
     }
 
     public List<RcBaseLibrary> listLibraries(String libType) {
-        LambdaQueryWrapper<RcBaseLibrary> q = new LambdaQueryWrapper<RcBaseLibrary>().orderByAsc(RcBaseLibrary::getId);
+        LambdaQueryWrapper<RcBaseLibrary> q = new LambdaQueryWrapper<RcBaseLibrary>()
+                .orderByAsc(RcBaseLibrary::getSortOrder)
+                .orderByAsc(RcBaseLibrary::getId);
         if (libType != null && !libType.isBlank()) q.eq(RcBaseLibrary::getLibType, libType);
         return libraryMapper.selectList(q);
     }
@@ -123,9 +299,12 @@ public class ResourceCenterPlatformService {
         RcBaseLibrary lib = new RcBaseLibrary();
         lib.setLibCode(str(body.get("libCode"), "LIB_" + System.currentTimeMillis()));
         lib.setLibName(required(body.get("libName"), "libName").toString());
-        lib.setLibType(str(body.get("libType"), "BASE"));
+        lib.setLibType(str(body.get("libType"), "BASE").toUpperCase(Locale.ROOT));
         lib.setRecordCount(0);
         lib.setStatus("ACTIVE");
+        lib.setDescription(str(body.get("description"), null));
+        lib.setOwnerOrg(str(body.get("ownerOrg"), null));
+        lib.setSortOrder(intVal(body.get("sortOrder"), 999));
         libraryMapper.insert(lib);
         return lib.getId();
     }
@@ -248,6 +427,21 @@ public class ResourceCenterPlatformService {
         mt.setThemeId(themeId);
         mt.setPhysicalTable(physical);
         mt.setMetaEntryCode(meta);
+        Long libId = longVal(body.get("libId"));
+        String assetType = str(body.get("assetType"), null);
+        if (libId != null) {
+            RcBaseLibrary lib = libraryMapper.selectById(libId);
+            if (lib == null) throw new BusinessException(404, "关联库不存在");
+            mt.setLibId(libId);
+            if (assetType == null || assetType.isBlank()) {
+                assetType = lib.getLibType();
+            }
+        }
+        if (assetType != null && !assetType.isBlank()) {
+            mt.setAssetType(assetType.toUpperCase(Locale.ROOT));
+        } else if (mt.getAssetType() == null) {
+            mt.setAssetType("BASE");
+        }
         mt.setCatalogResourceCode(str(body.get("catalogResourceCode"), findCatalogCode(physical)));
         mt.setFusionPhysicalId(longVal(body.get("fusionPhysicalId")));
         mt.setStatus("ACTIVE");
@@ -278,11 +472,16 @@ public class ResourceCenterPlatformService {
 
     public Map<String, Object> partitionOverview() {
         Map<String, Object> out = new LinkedHashMap<>();
-        out.put("partitions", partitionMapper.selectList(new LambdaQueryWrapper<RcPartitionDef>().orderByAsc(RcPartitionDef::getId)));
+        out.put("partitions", partitionMapper.selectList(new LambdaQueryWrapper<RcPartitionDef>()
+                .ne(RcPartitionDef::getStatus, "OFFLINE")
+                .orderByAsc(RcPartitionDef::getId)));
+        out.put("ops", partitionOpMapper.selectList(new LambdaQueryWrapper<RcPartitionOp>()
+                .orderByDesc(RcPartitionOp::getId).last("LIMIT 100")));
         out.put("policies", policyMapper.selectList(new LambdaQueryWrapper<RcStoragePolicy>().orderByAsc(RcStoragePolicy::getId)));
         out.put("backups", backupJobMapper.selectList(new LambdaQueryWrapper<RcBackupJob>().orderByDesc(RcBackupJob::getId)));
         out.put("artifacts", backupArtifactMapper.selectList(new LambdaQueryWrapper<RcBackupArtifact>()
                 .orderByDesc(RcBackupArtifact::getId).last("LIMIT 50")));
+        out.put("monitorSummary", summarizePartitionMonitor());
         return out;
     }
 
@@ -293,32 +492,98 @@ public class ResourceCenterPlatformService {
             throw new BusinessException(400, "请选择已纳管的目标表");
         }
         requireIdent(tableName, "tableName");
-        long managed = managedTableMapper.selectCount(new LambdaQueryWrapper<RcManagedTable>()
-                .eq(RcManagedTable::getPhysicalTable, tableName)
-                .eq(RcManagedTable::getStatus, "ACTIVE"));
-        if (managed == 0) {
-            throw new BusinessException(400, "目标表须为已纳管物理表：" + tableName);
+        RcManagedTable mt = requireActiveManagedByTable(tableName);
+        String type = str(body.get("partitionType"), "RANGE").toUpperCase(Locale.ROOT);
+        if (!Set.of("RANGE", "HASH", "LIST").contains(type)) {
+            throw new BusinessException(400, "分区类型须为 RANGE / HASH / LIST");
+        }
+        String column = str(body.get("partitionColumn"), null);
+        if (column != null && !column.isBlank()) {
+            requireIdent(column, "partitionColumn");
         }
         RcPartitionDef p = new RcPartitionDef();
         p.setPartitionCode(str(body.get("partitionCode"), "PART_" + System.currentTimeMillis()));
         p.setPartitionName(required(body.get("partitionName"), "partitionName").toString());
-        p.setPartitionType(str(body.get("partitionType"), "RANGE").toUpperCase(Locale.ROOT));
-        p.setThemeId(longVal(body.get("themeId")));
+        p.setPartitionType(type);
+        p.setThemeId(longVal(body.get("themeId")) != null ? longVal(body.get("themeId")) : mt.getThemeId());
         p.setTableName(tableName);
-        p.setPartitionColumn(str(body.get("partitionColumn"), null));
+        p.setPartitionColumn(column);
         p.setExpressionText(str(body.get("expressionText"), null));
+        p.setRemark(str(body.get("remark"), null));
         p.setPretestStatus("DRAFT");
         p.setStatus("ACTIVE");
+        p.setUpdatedAt(LocalDateTime.now());
         partitionMapper.insert(p);
+        auditService.log(operator.getUserId(), operator.getUsername(), operator.getOrgId(),
+                "RC_PARTITION_CREATE", "rc_partition_def", String.valueOf(p.getId()), tableName);
         return p.getId();
+    }
+
+    @Transactional
+    public void updatePartition(UserPrincipal operator, Long id, Map<String, Object> body) {
+        RcPartitionDef p = partitionMapper.selectById(id);
+        if (p == null || "OFFLINE".equalsIgnoreCase(p.getStatus())) {
+            throw new BusinessException(404, "分区策略不存在");
+        }
+        if (body.get("partitionName") != null) {
+            p.setPartitionName(required(body.get("partitionName"), "partitionName").toString());
+        }
+        if (body.get("partitionType") != null) {
+            String type = str(body.get("partitionType"), p.getPartitionType()).toUpperCase(Locale.ROOT);
+            if (!Set.of("RANGE", "HASH", "LIST").contains(type)) {
+                throw new BusinessException(400, "分区类型须为 RANGE / HASH / LIST");
+            }
+            p.setPartitionType(type);
+        }
+        if (body.get("tableName") != null) {
+            String tableName = requireIdent(str(body.get("tableName"), null), "tableName");
+            RcManagedTable mt = requireActiveManagedByTable(tableName);
+            p.setTableName(tableName);
+            p.setThemeId(mt.getThemeId());
+        }
+        if (body.get("partitionColumn") != null) {
+            String column = str(body.get("partitionColumn"), null);
+            if (column != null && !column.isBlank()) {
+                requireIdent(column, "partitionColumn");
+            }
+            p.setPartitionColumn(column);
+        }
+        if (body.containsKey("expressionText")) {
+            p.setExpressionText(str(body.get("expressionText"), null));
+        }
+        if (body.containsKey("remark")) {
+            p.setRemark(str(body.get("remark"), null));
+        }
+        p.setPretestStatus("DRAFT");
+        p.setPretestMessage("策略已修改，请重新预检");
+        p.setPreviewDdl(null);
+        p.setUpdatedAt(LocalDateTime.now());
+        partitionMapper.updateById(p);
+        auditService.log(operator.getUserId(), operator.getUsername(), operator.getOrgId(),
+                "RC_PARTITION_UPDATE", "rc_partition_def", String.valueOf(id), p.getTableName());
+    }
+
+    @Transactional
+    public void deletePartition(UserPrincipal operator, Long id) {
+        RcPartitionDef p = partitionMapper.selectById(id);
+        if (p == null) throw new BusinessException(404, "分区策略不存在");
+        p.setStatus("OFFLINE");
+        p.setUpdatedAt(LocalDateTime.now());
+        partitionMapper.updateById(p);
+        auditService.log(operator.getUserId(), operator.getUsername(), operator.getOrgId(),
+                "RC_PARTITION_DELETE", "rc_partition_def", String.valueOf(id), p.getTableName());
     }
 
     @Transactional
     public Map<String, Object> pretestPartition(UserPrincipal operator, Long id) {
         RcPartitionDef p = partitionMapper.selectById(id);
-        if (p == null) throw new BusinessException(404, "分区策略不存在");
+        if (p == null || "OFFLINE".equalsIgnoreCase(p.getStatus())) {
+            throw new BusinessException(404, "分区策略不存在");
+        }
         String table = p.getTableName();
         String column = p.getPartitionColumn();
+        String type = p.getPartitionType() == null ? "RANGE" : p.getPartitionType().toUpperCase(Locale.ROOT);
+        String expr = p.getExpressionText() == null ? "" : p.getExpressionText().trim();
         List<String> risks = new ArrayList<>();
         String status = "READY";
         if (table == null || !IDENT.matcher(table).matches() || !tableExists(table)) {
@@ -332,18 +597,27 @@ public class ResourceCenterPlatformService {
                 risks.add("表存在主键/唯一键，执行物理分区前需评估键与分区键兼容性（本阶段不自动执行）");
             }
             if (isAlreadyPartitioned(table)) {
-                risks.add("表已分区，重复执行 ALTER 可能失败");
+                risks.add("表已分区，重复执行 ALTER 可能失败；建议走迁移预检");
+            }
+            if (expr.isBlank()) {
+                risks.add("未填写分区表达式，建议补充范围边界/哈希份数/列表值");
+            } else if ("RANGE".equals(type) && !expr.toUpperCase(Locale.ROOT).contains("VALUES LESS THAN")
+                    && !expr.toUpperCase(Locale.ROOT).contains("RANGE")) {
+                risks.add("范围分区表达式建议包含 VALUES LESS THAN 或 RANGE 边界说明");
+            } else if ("HASH".equals(type) && !expr.matches("(?i).*\\b\\d+\\b.*")
+                    && !expr.toUpperCase(Locale.ROOT).contains("PARTITIONS")) {
+                risks.add("哈希分区建议标明分区份数（如 PARTITIONS 4）");
+            } else if ("LIST".equals(type) && !expr.toUpperCase(Locale.ROOT).contains("IN")
+                    && !expr.toUpperCase(Locale.ROOT).contains("LIST")) {
+                risks.add("列表分区表达式建议包含 IN (...) 值列表");
             }
         }
-        String ddl = "ALTER TABLE `" + (table == null ? "?" : table) + "` "
-                + "PARTITION BY " + p.getPartitionType() + " (`"
-                + (column == null ? "?" : column) + "`) "
-                + "/* expression: " + (p.getExpressionText() == null ? "" : p.getExpressionText())
-                + " */ -- DRY-RUN ONLY, NOT EXECUTED";
+        String ddl = buildPartitionByDdl(table, type, column, expr);
         p.setPreviewDdl(ddl);
         p.setPretestStatus(status);
         p.setPretestMessage(String.join("; ", risks.isEmpty() ? List.of("预检通过，未执行物理DDL") : risks));
         p.setPretestAt(LocalDateTime.now());
+        p.setUpdatedAt(LocalDateTime.now());
         partitionMapper.updateById(p);
         auditService.log(operator.getUserId(), operator.getUsername(), operator.getOrgId(),
                 "RC_PARTITION_PRETEST", "rc_partition_def", String.valueOf(id), p.getPretestStatus());
@@ -357,27 +631,401 @@ public class ResourceCenterPlatformService {
     }
 
     @Transactional
+    public Map<String, Object> migratePartition(UserPrincipal operator, Long id, Map<String, Object> body) {
+        RcPartitionDef p = partitionMapper.selectById(id);
+        if (p == null || "OFFLINE".equalsIgnoreCase(p.getStatus())) {
+            throw new BusinessException(404, "分区策略不存在");
+        }
+        String table = requireIdent(p.getTableName(), "tableName");
+        String action = str(body.get("migrateAction"), "ADD").toUpperCase(Locale.ROOT);
+        if (!Set.of("ADD", "DROP", "REORGANIZE").contains(action)) {
+            throw new BusinessException(400, "migrateAction 须为 ADD / DROP / REORGANIZE");
+        }
+        String partName = str(body.get("partitionName"), "p_new");
+        if (!IDENT.matcher(partName).matches()) {
+            throw new BusinessException(400, "分区名非法");
+        }
+        String detail = str(body.get("detail"), "");
+        String sql;
+        if ("ADD".equals(action)) {
+            sql = "ALTER TABLE `" + table + "` ADD PARTITION (PARTITION `" + partName + "` "
+                    + (detail.isBlank() ? "VALUES LESS THAN (MAXVALUE)" : detail) + ")";
+        } else if ("DROP".equals(action)) {
+            sql = "ALTER TABLE `" + table + "` DROP PARTITION `" + partName + "`";
+        } else {
+            String target = str(body.get("targetPartition"), "p_reorg");
+            sql = "ALTER TABLE `" + table + "` REORGANIZE PARTITION `" + partName + "` INTO ("
+                    + (detail.isBlank() ? ("PARTITION `" + target + "` VALUES LESS THAN (MAXVALUE)") : detail) + ")";
+        }
+        sql = sql + " -- DRY-RUN ONLY, NOT EXECUTED";
+        RcManagedTable mt = findActiveManagedByTable(table);
+        RcPartitionOp op = new RcPartitionOp();
+        op.setPartitionDefId(p.getId());
+        op.setManagedTableId(mt == null ? null : mt.getId());
+        op.setPhysicalTable(table);
+        op.setOpType("MIGRATE");
+        op.setOpStatus("LEDGER");
+        op.setPreviewSql(sql);
+        op.setMessage("分区迁移候选DDL已登记，未执行物理变更；动作=" + action);
+        op.setCreatedBy(operator.getUsername());
+        op.setCreatedAt(LocalDateTime.now());
+        partitionOpMapper.insert(op);
+        auditService.log(operator.getUserId(), operator.getUsername(), operator.getOrgId(),
+                "RC_PARTITION_MIGRATE", "rc_partition_op", String.valueOf(op.getId()), action);
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("opId", op.getId());
+        out.put("opStatus", op.getOpStatus());
+        out.put("previewSql", op.getPreviewSql());
+        out.put("message", op.getMessage());
+        out.put("executed", false);
+        return out;
+    }
+
+    public List<Map<String, Object>> listManagedTableColumns(Long managedTableId) {
+        RcManagedTable mt = managedTableMapper.selectById(managedTableId);
+        if (mt == null || !"ACTIVE".equalsIgnoreCase(mt.getStatus())) {
+            throw new BusinessException(404, "纳管表不存在");
+        }
+        String table = requireIdent(mt.getPhysicalTable(), "physicalTable");
+        List<Map<String, Object>> cols = new ArrayList<>();
+        try (Connection c = platformDataSource.getConnection()) {
+            DatabaseMetaData md = c.getMetaData();
+            try (ResultSet rs = md.getColumns(c.getCatalog(), null, table, null)) {
+                while (rs.next()) {
+                    Map<String, Object> row = new LinkedHashMap<>();
+                    row.put("columnName", rs.getString("COLUMN_NAME"));
+                    row.put("dataType", rs.getString("TYPE_NAME"));
+                    row.put("columnSize", rs.getInt("COLUMN_SIZE"));
+                    row.put("nullable", "YES".equalsIgnoreCase(rs.getString("IS_NULLABLE")));
+                    row.put("ordinal", rs.getInt("ORDINAL_POSITION"));
+                    cols.add(row);
+                }
+            }
+        } catch (Exception e) {
+            throw new BusinessException(500, "读取表列失败: " + e.getMessage());
+        }
+        return cols;
+    }
+
+    public Map<String, Object> livePartitions(Long managedTableId) {
+        RcManagedTable mt = managedTableMapper.selectById(managedTableId);
+        if (mt == null || !"ACTIVE".equalsIgnoreCase(mt.getStatus())) {
+            throw new BusinessException(404, "纳管表不存在");
+        }
+        String table = requireIdent(mt.getPhysicalTable(), "physicalTable");
+        List<Map<String, Object>> parts = new ArrayList<>();
+        long totalRows = 0;
+        try (Connection c = platformDataSource.getConnection();
+             PreparedStatement ps = c.prepareStatement(
+                     "SELECT PARTITION_NAME, PARTITION_METHOD, PARTITION_EXPRESSION, PARTITION_DESCRIPTION, "
+                             + "TABLE_ROWS, DATA_LENGTH, INDEX_LENGTH, CREATE_TIME, UPDATE_TIME "
+                             + "FROM information_schema.PARTITIONS "
+                             + "WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? "
+                             + "ORDER BY PARTITION_ORDINAL_POSITION")) {
+            ps.setString(1, table);
+            try (ResultSet rs = ps.executeQuery()) {
+                while (rs.next()) {
+                    String pname = rs.getString("PARTITION_NAME");
+                    long rows = rs.getLong("TABLE_ROWS");
+                    totalRows += Math.max(rows, 0);
+                    Map<String, Object> row = new LinkedHashMap<>();
+                    row.put("partitionName", pname == null ? "(未分区)" : pname);
+                    row.put("partitionMethod", rs.getString("PARTITION_METHOD"));
+                    row.put("partitionExpression", rs.getString("PARTITION_EXPRESSION"));
+                    row.put("partitionDescription", rs.getString("PARTITION_DESCRIPTION"));
+                    row.put("tableRows", rows);
+                    row.put("dataBytes", rs.getLong("DATA_LENGTH"));
+                    row.put("indexBytes", rs.getLong("INDEX_LENGTH"));
+                    row.put("partitioned", pname != null);
+                    parts.add(row);
+                }
+            }
+        } catch (Exception e) {
+            throw new BusinessException(500, "读取分区信息失败: " + e.getMessage());
+        }
+        String alertLevel = "OK";
+        String alertMessage = "分布正常或尚未物理分区";
+        List<Map<String, Object>> realParts = parts.stream().filter(r -> Boolean.TRUE.equals(r.get("partitioned"))).toList();
+        if (realParts.isEmpty()) {
+            alertLevel = "WARN";
+            alertMessage = "表尚未物理分区，仅有策略台账";
+        } else if (totalRows > 0 && realParts.size() >= 2) {
+            double avg = (double) totalRows / realParts.size();
+            double maxShare = 0;
+            for (Map<String, Object> r : realParts) {
+                long rows = ((Number) r.get("tableRows")).longValue();
+                double share = rows * 1.0 / totalRows;
+                r.put("rowShare", Math.round(share * 10000) / 100.0);
+                if (share > maxShare) maxShare = share;
+                if (avg > 0 && rows > avg * 2.5) {
+                    r.put("balanceStatus", "UNEVEN");
+                } else {
+                    r.put("balanceStatus", "OK");
+                }
+            }
+            if (maxShare >= 0.7) {
+                alertLevel = "UNEVEN";
+                alertMessage = "检测到数据分布不均（最大分区占比≥70%），建议评估迁移或重建分区";
+            }
+        } else {
+            for (Map<String, Object> r : realParts) {
+                r.put("rowShare", 100.0);
+                r.put("balanceStatus", "OK");
+            }
+        }
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("managedTableId", managedTableId);
+        out.put("physicalTable", table);
+        out.put("partitioned", !realParts.isEmpty());
+        out.put("partitionCount", realParts.size());
+        out.put("totalRows", totalRows);
+        out.put("alertLevel", alertLevel);
+        out.put("alertMessage", alertMessage);
+        out.put("partitions", parts);
+        return out;
+    }
+
+    public List<RcPartitionOp> listPartitionOps(Long partitionDefId, Long managedTableId) {
+        LambdaQueryWrapper<RcPartitionOp> q = new LambdaQueryWrapper<RcPartitionOp>().orderByDesc(RcPartitionOp::getId);
+        if (partitionDefId != null) q.eq(RcPartitionOp::getPartitionDefId, partitionDefId);
+        if (managedTableId != null) q.eq(RcPartitionOp::getManagedTableId, managedTableId);
+        q.last("LIMIT 200");
+        return partitionOpMapper.selectList(q);
+    }
+
+    @Transactional
+    public Map<String, Object> createPartitionOp(UserPrincipal operator, Map<String, Object> body) {
+        String opType = str(body.get("opType"), "").toUpperCase(Locale.ROOT);
+        if (!Set.of("COMPRESS", "REBUILD_INDEX", "CLEANUP", "ANALYZE", "BACKUP", "RESTORE_PLAN").contains(opType)) {
+            throw new BusinessException(400, "opType 须为 COMPRESS / REBUILD_INDEX / CLEANUP / ANALYZE / BACKUP / RESTORE_PLAN");
+        }
+        Long defId = longVal(body.get("partitionDefId"));
+        Long managedId = longVal(body.get("managedTableId"));
+        RcPartitionDef def = null;
+        if (defId != null) {
+            def = partitionMapper.selectById(defId);
+            if (def == null || "OFFLINE".equalsIgnoreCase(def.getStatus())) {
+                throw new BusinessException(404, "分区策略不存在");
+            }
+        }
+        RcManagedTable mt = null;
+        if (managedId != null) {
+            mt = managedTableMapper.selectById(managedId);
+        } else if (def != null && def.getTableName() != null) {
+            mt = findActiveManagedByTable(def.getTableName());
+        }
+        if (mt == null || !"ACTIVE".equalsIgnoreCase(mt.getStatus())) {
+            throw new BusinessException(400, "请选择已纳管目标表或绑定策略");
+        }
+        String table = requireIdent(mt.getPhysicalTable(), "physicalTable");
+        String remark = str(body.get("remark"), null);
+
+        if ("BACKUP".equals(opType)) {
+            Map<String, Object> backup = runLogicalBackup(operator, mt.getId(),
+                    body.get("retentionDays") == null ? 30 : Integer.valueOf(String.valueOf(body.get("retentionDays"))));
+            RcPartitionOp op = new RcPartitionOp();
+            op.setPartitionDefId(def == null ? null : def.getId());
+            op.setManagedTableId(mt.getId());
+            op.setPhysicalTable(table);
+            op.setOpType("BACKUP");
+            op.setOpStatus("SUCCESS");
+            op.setPreviewSql("-- logical backup artifactId=" + backup.get("artifactId"));
+            op.setMessage("逻辑备份完成，行数=" + backup.get("rowCount"));
+            op.setCreatedBy(operator.getUsername());
+            op.setCreatedAt(LocalDateTime.now());
+            partitionOpMapper.insert(op);
+            Map<String, Object> out = new LinkedHashMap<>();
+            out.put("opId", op.getId());
+            out.put("opStatus", op.getOpStatus());
+            out.put("message", op.getMessage());
+            out.put("backup", backup);
+            out.put("executed", true);
+            return out;
+        }
+
+        String previewSql;
+        String message;
+        String opStatus = "LEDGER";
+        boolean executed = false;
+        switch (opType) {
+            case "ANALYZE" -> {
+                previewSql = "ANALYZE TABLE `" + table + "`";
+                try (Connection c = platformDataSource.getConnection(); Statement st = c.createStatement()) {
+                    st.execute(previewSql);
+                    opStatus = "SUCCESS";
+                    message = "已执行统计信息更新（ANALYZE TABLE）";
+                    executed = true;
+                } catch (Exception e) {
+                    opStatus = "FAILED";
+                    message = "ANALYZE 执行失败: " + e.getMessage();
+                }
+            }
+            case "COMPRESS" -> {
+                previewSql = "OPTIMIZE TABLE `" + table + "` -- LEDGER ONLY, NOT EXECUTED（压缩/碎片整理）";
+                message = "数据压缩/整理建议已登记为台账，未自动执行 OPTIMIZE（避免长锁表）";
+            }
+            case "REBUILD_INDEX" -> {
+                previewSql = "ALTER TABLE `" + table + "` ENGINE=InnoDB -- LEDGER ONLY, NOT EXECUTED（重建索引建议）";
+                message = "重建索引建议已登记为台账，未自动执行物理重建";
+            }
+            case "CLEANUP" -> {
+                previewSql = "-- CLEANUP LEDGER: 请按分区策略清理历史分区或过期数据，禁止自动 DROP PARTITION";
+                message = "数据清理计划已登记，未执行物理删除";
+            }
+            case "RESTORE_PLAN" -> {
+                Long artifactId = longVal(body.get("artifactId"));
+                previewSql = "-- RESTORE PLAN LEDGER: artifactId=" + (artifactId == null ? "?" : artifactId)
+                        + " table=" + table + "；禁止自动覆写生产表，需人工校验后回灌";
+                message = remark != null && !remark.isBlank()
+                        ? remark
+                        : "恢复计划已登记：校验备份产物 SHA-256 后手工回灌，不自动覆写";
+            }
+            default -> throw new BusinessException(400, "不支持的操作类型");
+        }
+
+        RcPartitionOp op = new RcPartitionOp();
+        op.setPartitionDefId(def == null ? null : def.getId());
+        op.setManagedTableId(mt.getId());
+        op.setPhysicalTable(table);
+        op.setOpType(opType);
+        op.setOpStatus(opStatus);
+        op.setPreviewSql(previewSql);
+        op.setMessage(message);
+        op.setCreatedBy(operator.getUsername());
+        op.setCreatedAt(LocalDateTime.now());
+        partitionOpMapper.insert(op);
+        auditService.log(operator.getUserId(), operator.getUsername(), operator.getOrgId(),
+                "RC_PARTITION_OP", "rc_partition_op", String.valueOf(op.getId()), opType + "/" + opStatus);
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("opId", op.getId());
+        out.put("opType", opType);
+        out.put("opStatus", opStatus);
+        out.put("previewSql", previewSql);
+        out.put("message", message);
+        out.put("executed", executed);
+        return out;
+    }
+
+    private List<Map<String, Object>> summarizePartitionMonitor() {
+        List<Map<String, Object>> summary = new ArrayList<>();
+        List<RcPartitionDef> defs = partitionMapper.selectList(new LambdaQueryWrapper<RcPartitionDef>()
+                .ne(RcPartitionDef::getStatus, "OFFLINE")
+                .orderByAsc(RcPartitionDef::getId));
+        Set<String> seen = new java.util.HashSet<>();
+        for (RcPartitionDef d : defs) {
+            if (d.getTableName() == null || !seen.add(d.getTableName())) continue;
+            RcManagedTable mt = findActiveManagedByTable(d.getTableName());
+            Map<String, Object> row = new LinkedHashMap<>();
+            row.put("partitionDefId", d.getId());
+            row.put("partitionName", d.getPartitionName());
+            row.put("tableName", d.getTableName());
+            row.put("partitionType", d.getPartitionType());
+            row.put("pretestStatus", d.getPretestStatus());
+            row.put("managedTableId", mt == null ? null : mt.getId());
+            if (mt != null) {
+                try {
+                    Map<String, Object> live = livePartitions(mt.getId());
+                    row.put("partitioned", live.get("partitioned"));
+                    row.put("partitionCount", live.get("partitionCount"));
+                    row.put("alertLevel", live.get("alertLevel"));
+                    row.put("alertMessage", live.get("alertMessage"));
+                } catch (Exception e) {
+                    row.put("alertLevel", "WARN");
+                    row.put("alertMessage", "监控读取失败");
+                }
+            } else {
+                row.put("alertLevel", "BLOCKED");
+                row.put("alertMessage", "目标表未纳管或已解绑");
+            }
+            summary.add(row);
+        }
+        return summary;
+    }
+
+    private String buildPartitionByDdl(String table, String type, String column, String expr) {
+        String t = table == null ? "?" : table;
+        String c = column == null ? "?" : column;
+        String e = expr == null ? "" : expr.trim();
+        StringBuilder sb = new StringBuilder();
+        sb.append("ALTER TABLE `").append(t).append("` PARTITION BY ").append(type);
+        sb.append(" (`").append(c).append("`) ");
+        if (!e.isBlank()) {
+            if ("HASH".equalsIgnoreCase(type) && e.toUpperCase(Locale.ROOT).startsWith("PARTITIONS")) {
+                sb.append(e);
+            } else if ("HASH".equalsIgnoreCase(type) && e.matches("\\d+")) {
+                sb.append("PARTITIONS ").append(e);
+            } else {
+                sb.append("/* ").append(e).append(" */");
+            }
+        }
+        sb.append(" -- DRY-RUN ONLY, NOT EXECUTED");
+        return sb.toString();
+    }
+
+    private RcManagedTable requireActiveManagedByTable(String tableName) {
+        RcManagedTable mt = findActiveManagedByTable(tableName);
+        if (mt == null) {
+            throw new BusinessException(400, "目标表须为已纳管物理表：" + tableName);
+        }
+        return mt;
+    }
+
+    private RcManagedTable findActiveManagedByTable(String tableName) {
+        if (tableName == null || tableName.isBlank()) return null;
+        return managedTableMapper.selectOne(new LambdaQueryWrapper<RcManagedTable>()
+                .eq(RcManagedTable::getPhysicalTable, tableName)
+                .eq(RcManagedTable::getStatus, "ACTIVE")
+                .last("LIMIT 1"));
+    }
+
+    @Transactional
     public Long createPolicy(UserPrincipal operator, Map<String, Object> body) {
         String action = str(body.get("actionType"), "BACKUP").toUpperCase(Locale.ROOT);
         if (!Set.of("BACKUP", "ARCHIVE", "DESTROY").contains(action)) {
             throw new BusinessException(400, "actionType 须为 BACKUP / ARCHIVE / DESTROY");
         }
         Long managedId = longVal(body.get("managedTableId"));
-        if (("BACKUP".equals(action) || "ARCHIVE".equals(action) || "DESTROY".equals(action))
-                && managedId != null) {
-            RcManagedTable mt = managedTableMapper.selectById(managedId);
-            if (mt == null || !"ACTIVE".equalsIgnoreCase(mt.getStatus())) {
-                throw new BusinessException(400, "纳管表不存在或已解绑");
-            }
+        if (managedId == null) {
+            throw new BusinessException(400, "须关联纳管表，为数据配置生命周期策略");
         }
+        RcManagedTable mt = managedTableMapper.selectById(managedId);
+        if (mt == null || !"ACTIVE".equalsIgnoreCase(mt.getStatus())) {
+            throw new BusinessException(400, "纳管表不存在或已解绑");
+        }
+        Long backupLibId = longVal(body.get("backupLibraryId"));
+        if (backupLibId != null && libraryMapper.selectById(backupLibId) == null) {
+            throw new BusinessException(400, "备份库不存在");
+        }
+        String strategy = str(body.get("storageStrategy"), "LOCAL").toUpperCase(Locale.ROOT);
+        if (!Set.of("LOCAL", "NAS", "OBJECT").contains(strategy)) {
+            throw new BusinessException(400, "storageStrategy 须为 LOCAL / NAS / OBJECT");
+        }
+        boolean scheduleOn = boolVal(body.get("scheduleEnabled"), false);
+        String cron = str(body.get("scheduleCron"), null);
+        if (scheduleOn) {
+            validateCron(cron);
+        }
+        String compressType = str(body.get("compressType"),
+                boolVal(body.get("compressEnabled"), false) ? "GZIP" : "NONE").toUpperCase(Locale.ROOT);
         RcStoragePolicy p = new RcStoragePolicy();
         p.setPolicyCode(str(body.get("policyCode"), "POL_" + System.currentTimeMillis()));
         p.setPolicyName(required(body.get("policyName"), "policyName").toString());
         p.setActionType(action);
         p.setRetentionDays(body.get("retentionDays") == null ? 30
                 : Integer.valueOf(String.valueOf(body.get("retentionDays"))));
-        p.setThemeId(longVal(body.get("themeId")));
+        p.setThemeId(longVal(body.get("themeId")) != null ? longVal(body.get("themeId")) : mt.getThemeId());
         p.setManagedTableId(managedId);
+        p.setStorageStrategy(strategy);
+        p.setBackupLibraryId(backupLibId);
+        p.setTableRule(str(body.get("tableRule"), null));
+        p.setCompressEnabled(boolVal(body.get("compressEnabled"), "GZIP".equals(compressType)) ? 1 : 0);
+        p.setCompressType(compressType);
+        p.setDestroyRule(str(body.get("destroyRule"), null));
+        p.setScheduleEnabled(scheduleOn ? 1 : 0);
+        p.setScheduleCron(cron);
+        if (scheduleOn) {
+            p.setNextRunAt(computeNextRun(cron, LocalDateTime.now()));
+        }
         p.setStatus("ACTIVE");
         policyMapper.insert(p);
         auditService.log(operator.getUserId(), operator.getUsername(), operator.getOrgId(),
@@ -386,61 +1034,251 @@ public class ResourceCenterPlatformService {
     }
 
     @Transactional
+    public Map<String, Object> updatePolicySchedule(UserPrincipal operator, Long policyId, Map<String, Object> body) {
+        RcStoragePolicy p = policyMapper.selectById(policyId);
+        if (p == null) throw new BusinessException(404, "策略不存在");
+        boolean scheduleOn = boolVal(body.get("scheduleEnabled"),
+                p.getScheduleEnabled() != null && p.getScheduleEnabled() == 1);
+        String cron = str(body.get("scheduleCron"), p.getScheduleCron());
+        if (scheduleOn) {
+            validateCron(cron);
+            p.setScheduleEnabled(1);
+            p.setScheduleCron(cron);
+            p.setNextRunAt(computeNextRun(cron, LocalDateTime.now()));
+        } else {
+            p.setScheduleEnabled(0);
+            p.setScheduleCron(cron);
+            p.setNextRunAt(null);
+        }
+        policyMapper.updateById(p);
+        auditService.log(operator.getUserId(), operator.getUsername(), operator.getOrgId(),
+                "RC_POLICY_SCHEDULE", "rc_storage_policy", String.valueOf(policyId),
+                scheduleOn ? cron : "DISABLED");
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("policyId", policyId);
+        out.put("scheduleEnabled", p.getScheduleEnabled());
+        out.put("scheduleCron", p.getScheduleCron());
+        out.put("nextRunAt", p.getNextRunAt());
+        return out;
+    }
+
+    @Transactional
     public Map<String, Object> executePolicy(UserPrincipal operator, Long policyId) {
         RcStoragePolicy p = policyMapper.selectById(policyId);
         if (p == null) throw new BusinessException(404, "策略不存在");
         String action = p.getActionType() == null ? "" : p.getActionType().toUpperCase(Locale.ROOT);
+        String actor = operator != null ? operator.getUsername() : "scheduler";
         Map<String, Object> out = new LinkedHashMap<>();
         out.put("policyId", policyId);
         out.put("actionType", action);
-        if ("BACKUP".equals(action)) {
-            Long managedId = p.getManagedTableId();
-            if (managedId == null) throw new BusinessException(400, "备份策略未绑定纳管表");
-            Map<String, Object> backup = runLogicalBackup(operator, managedId, p.getRetentionDays());
-            out.putAll(backup);
-            out.put("status", "SUCCESS");
-        } else if ("ARCHIVE".equals(action)) {
-            out.put("status", "LEDGER");
-            out.put("message", "归档状态已记录（台账），未移动物理数据");
-        } else if ("DESTROY".equals(action)) {
-            throw new BusinessException(403, "销毁策略禁止自动执行物理删除");
-        } else {
-            throw new BusinessException(400, "不支持的策略动作: " + action);
+        String runStatus;
+        String message;
+        Long artifactId = null;
+        Long rowCount = null;
+        String storageLocation = null;
+        try {
+            if ("BACKUP".equals(action)) {
+                Long managedId = p.getManagedTableId();
+                if (managedId == null) throw new BusinessException(400, "备份策略未绑定纳管表");
+                Map<String, Object> backup = runLogicalBackup(operator, managedId, p.getRetentionDays(),
+                        p.getStorageStrategy(), p.getTableRule(), p.getBackupLibraryId());
+                out.putAll(backup);
+                runStatus = "SUCCESS";
+                message = str(backup.get("message"), "备份完成");
+                artifactId = longVal(backup.get("artifactId"));
+                rowCount = backup.get("rowCount") == null ? null : Long.valueOf(String.valueOf(backup.get("rowCount")));
+                storageLocation = str(backup.get("storageLocation"), str(backup.get("filePath"), null));
+            } else if ("ARCHIVE".equals(action)) {
+                Map<String, Object> archive = runArchiveLedger(operator, p);
+                out.putAll(archive);
+                runStatus = "LEDGER";
+                message = str(archive.get("message"), "归档状态已记录（台账），未移动物理数据");
+                artifactId = longVal(archive.get("artifactId"));
+                rowCount = archive.get("rowCount") == null ? null : Long.valueOf(String.valueOf(archive.get("rowCount")));
+                storageLocation = str(archive.get("storageLocation"), null);
+            } else if ("DESTROY".equals(action)) {
+                runStatus = "REJECTED";
+                message = "销毁策略禁止自动执行物理删除；规则="
+                        + (p.getDestroyRule() == null || p.getDestroyRule().isBlank() ? "未配置" : p.getDestroyRule());
+                out.put("status", runStatus);
+                out.put("message", message);
+                recordPolicyRun(p, runStatus, null, null, null, message, actor);
+                markPolicyRun(p, runStatus, message);
+                if (p.getScheduleEnabled() != null && p.getScheduleEnabled() == 1) {
+                    refreshNextRunAfterExecute(policyId);
+                }
+                auditService.log(operator != null ? operator.getUserId() : null, actor,
+                        operator != null ? operator.getOrgId() : null,
+                        "RC_POLICY_RUN", "rc_storage_policy", String.valueOf(policyId), action);
+                throw new BusinessException(403, message);
+            } else {
+                throw new BusinessException(400, "不支持的策略动作: " + action);
+            }
+            out.put("status", runStatus);
+            out.put("message", message);
+            recordPolicyRun(p, runStatus, rowCount, artifactId, storageLocation, message, actor);
+            markPolicyRun(p, runStatus, message);
+            if (p.getScheduleEnabled() != null && p.getScheduleEnabled() == 1) {
+                refreshNextRunAfterExecute(policyId);
+            }
+            auditService.log(operator != null ? operator.getUserId() : null, actor,
+                    operator != null ? operator.getOrgId() : null,
+                    "RC_POLICY_RUN", "rc_storage_policy", String.valueOf(policyId), action);
+            out.put("retentionDays", p.getRetentionDays());
+            out.put("storageLocation", storageLocation);
+            return out;
+        } catch (BusinessException ex) {
+            if (!"DESTROY".equals(action)) {
+                recordPolicyRun(p, "FAILED", null, null, null, ex.getMessage(), actor);
+                markPolicyRun(p, "FAILED", ex.getMessage());
+            }
+            throw ex;
+        }
+    }
+
+    public void refreshNextRunAfterExecute(Long policyId) {
+        RcStoragePolicy p = policyMapper.selectById(policyId);
+        if (p == null || p.getScheduleEnabled() == null || p.getScheduleEnabled() != 1) return;
+        p.setNextRunAt(computeNextRun(p.getScheduleCron(), LocalDateTime.now().plusSeconds(1)));
+        policyMapper.updateById(p);
+    }
+
+    public List<RcStoragePolicy> listDuePolicies(LocalDateTime now) {
+        return policyMapper.selectList(new LambdaQueryWrapper<RcStoragePolicy>()
+                .eq(RcStoragePolicy::getScheduleEnabled, 1)
+                .eq(RcStoragePolicy::getStatus, "ACTIVE")
+                .isNotNull(RcStoragePolicy::getNextRunAt)
+                .le(RcStoragePolicy::getNextRunAt, now));
+    }
+
+    public List<RcPolicyRunLog> listPolicyRuns(Long policyId) {
+        LambdaQueryWrapper<RcPolicyRunLog> q = new LambdaQueryWrapper<RcPolicyRunLog>()
+                .orderByDesc(RcPolicyRunLog::getId);
+        if (policyId != null) q.eq(RcPolicyRunLog::getPolicyId, policyId);
+        return policyRunLogMapper.selectList(q.last("LIMIT 100"));
+    }
+
+    @Transactional
+    public Map<String, Object> restoreArtifact(UserPrincipal operator, Long artifactId) {
+        RcBackupArtifact art = backupArtifactMapper.selectById(artifactId);
+        if (art == null) throw new BusinessException(404, "备份/归档产物不存在");
+        if (!"BACKUP".equalsIgnoreCase(str(art.getArtifactType(), "BACKUP"))) {
+            throw new BusinessException(400, "仅支持对备份产物执行恢复");
+        }
+        Path path = Path.of(art.getFilePath());
+        if (!Files.exists(path)) {
+            throw new BusinessException(404, "产物文件不存在: " + art.getFilePath());
+        }
+        String restoreTable = "rc_restore_" + artifactId;
+        if (!IDENT.matcher(restoreTable).matches()) {
+            throw new BusinessException(400, "恢复表名非法");
+        }
+        long rows = 0;
+        try (BufferedReader reader = Files.newBufferedReader(path, StandardCharsets.UTF_8);
+             Connection conn = platformDataSource.getConnection();
+             Statement st = conn.createStatement()) {
+            String line;
+            List<String> headers = null;
+            while ((line = reader.readLine()) != null) {
+                if (line.startsWith("#") || line.isBlank()) continue;
+                if (headers == null) {
+                    headers = List.of(line.split("\t", -1));
+                    for (String h : headers) {
+                        if (!IDENT.matcher(h).matches()) {
+                            throw new BusinessException(400, "备份列名非法，无法恢复: " + h);
+                        }
+                    }
+                    st.execute("DROP TABLE IF EXISTS `" + restoreTable + "`");
+                    StringBuilder ddl = new StringBuilder("CREATE TABLE `").append(restoreTable).append("` (");
+                    for (int i = 0; i < headers.size(); i++) {
+                        if (i > 0) ddl.append(", ");
+                        ddl.append("`").append(headers.get(i)).append("` TEXT NULL");
+                    }
+                    ddl.append(") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+                    st.execute(ddl.toString());
+                    continue;
+                }
+                String[] values = line.split("\t", -1);
+                StringBuilder sql = new StringBuilder("INSERT INTO `").append(restoreTable).append("` VALUES (");
+                for (int i = 0; i < headers.size(); i++) {
+                    if (i > 0) sql.append(", ");
+                    String raw = i < values.length ? values[i] : "";
+                    if ("\\N".equals(raw)) {
+                        sql.append("NULL");
+                    } else {
+                        sql.append("'").append(raw.replace("'", "''")).append("'");
+                    }
+                }
+                sql.append(")");
+                st.executeUpdate(sql.toString());
+                rows++;
+            }
+            if (headers == null) {
+                throw new BusinessException(400, "备份文件无有效数据列");
+            }
+        } catch (BusinessException ex) {
+            throw ex;
+        } catch (Exception ex) {
+            throw new BusinessException(500, "数据恢复失败: " + ex.getMessage());
         }
         auditService.log(operator.getUserId(), operator.getUsername(), operator.getOrgId(),
-                "RC_POLICY_RUN", "rc_storage_policy", String.valueOf(policyId), action);
-        out.put("retentionDays", p.getRetentionDays());
+                "RC_BACKUP_RESTORE", "rc_backup_artifact", String.valueOf(artifactId),
+                "restoreTable=" + restoreTable + " rows=" + rows);
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("artifactId", artifactId);
+        out.put("restoreTable", restoreTable);
+        out.put("rowCount", rows);
+        out.put("sourceTable", art.getPhysicalTable());
+        out.put("message", "已恢复至独立表 " + restoreTable + "（不覆盖原表）");
+        out.put("status", "SUCCESS");
         return out;
     }
 
     @Transactional
     public Map<String, Object> runLogicalBackup(UserPrincipal operator, Long managedTableId, Integer retentionDays) {
+        return runLogicalBackup(operator, managedTableId, retentionDays, "LOCAL", null, null);
+    }
+
+    @Transactional
+    public Map<String, Object> runLogicalBackup(UserPrincipal operator, Long managedTableId, Integer retentionDays,
+                                                String storageStrategy, String tableRule, Long backupLibraryId) {
         RcManagedTable mt = managedTableMapper.selectById(managedTableId);
         if (mt == null || !"ACTIVE".equalsIgnoreCase(mt.getStatus())) {
             throw new BusinessException(404, "纳管表不存在");
         }
         String table = requireIdent(mt.getPhysicalTable(), "physicalTable");
+        String actor = operator != null ? operator.getUsername() : "scheduler";
+        String strategy = storageStrategy == null || storageStrategy.isBlank()
+                ? "LOCAL" : storageStrategy.toUpperCase(Locale.ROOT);
+        Path root = resolveStorageRoot(strategy);
         RcBackupJob job = new RcBackupJob();
         job.setJobName("BACKUP_" + table + "_" + LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyyMMddHHmmss")));
         job.setThemeId(mt.getThemeId());
         job.setStatus("RUNNING");
-        job.setCreatedBy(operator.getUsername());
+        job.setCreatedBy(actor);
         job.setCreatedAt(LocalDateTime.now());
         job.setUpdatedAt(LocalDateTime.now());
         backupJobMapper.insert(job);
 
         try {
-            Files.createDirectories(BACKUP_ROOT);
+            Files.createDirectories(root);
             String fileName = table + "_" + System.currentTimeMillis() + ".cdbak";
-            Path tmp = BACKUP_ROOT.resolve(fileName + ".tmp");
-            Path finalPath = BACKUP_ROOT.resolve(fileName);
+            Path tmp = root.resolve(fileName + ".tmp");
+            Path finalPath = root.resolve(fileName);
             long rows = 0;
+            String sql = "SELECT * FROM `" + table + "`";
+            String ruleNote = tableRule == null ? "" : tableRule.trim();
             try (Connection conn = platformDataSource.getConnection();
                  Statement st = conn.createStatement();
-                 ResultSet rs = st.executeQuery("SELECT * FROM `" + table + "`");
+                 ResultSet rs = st.executeQuery(sql);
                  BufferedWriter writer = Files.newBufferedWriter(tmp, StandardCharsets.UTF_8)) {
                 writer.write("# Chengde logical backup\n");
                 writer.write("# table=" + table + "\n");
+                writer.write("# storageStrategy=" + strategy + "\n");
+                writer.write("# tableRule=" + ruleNote + "\n");
+                if (backupLibraryId != null) {
+                    writer.write("# backupLibraryId=" + backupLibraryId + "\n");
+                }
                 writer.write("# createdAt=" + LocalDateTime.now() + "\n");
                 ResultSetMetaData meta = rs.getMetaData();
                 int cols = meta.getColumnCount();
@@ -466,19 +1304,24 @@ public class ResourceCenterPlatformService {
             }
             String sha = sha256(finalPath);
             long size = Files.size(finalPath);
+            String location = strategy + ":" + finalPath.toAbsolutePath();
 
             RcBackupArtifact art = new RcBackupArtifact();
+            art.setArtifactType("BACKUP");
             art.setJobId(job.getId());
             art.setManagedTableId(mt.getId());
             art.setPhysicalTable(table);
             art.setFilePath(finalPath.toAbsolutePath().toString());
+            art.setStorageLocation(location);
             art.setFileName(fileName);
             art.setRowCount(rows);
             art.setByteSize(size);
             art.setSha256(sha);
             art.setStatus("SUCCESS");
-            art.setMessage("logical backup ok");
-            art.setCreatedBy(operator.getUsername());
+            art.setMessage("logical backup ok"
+                    + (ruleNote.isBlank() ? "" : "; rule=" + ruleNote)
+                    + (backupLibraryId == null ? "" : "; lib=" + backupLibraryId));
+            art.setCreatedBy(actor);
             art.setCreatedAt(LocalDateTime.now());
             backupArtifactMapper.insert(art);
 
@@ -496,6 +1339,9 @@ public class ResourceCenterPlatformService {
             out.put("artifactId", art.getId());
             out.put("fileName", fileName);
             out.put("filePath", art.getFilePath());
+            out.put("storageLocation", location);
+            out.put("storageStrategy", strategy);
+            out.put("tableRule", ruleNote);
             out.put("rowCount", rows);
             out.put("byteSize", size);
             out.put("sha256", sha);
@@ -508,6 +1354,74 @@ public class ResourceCenterPlatformService {
             job.setUpdatedAt(LocalDateTime.now());
             backupJobMapper.updateById(job);
             throw new BusinessException(500, "逻辑备份失败: " + ex.getMessage());
+        }
+    }
+
+    @Transactional
+    public Map<String, Object> runArchiveLedger(UserPrincipal operator, RcStoragePolicy policy) {
+        Long managedId = policy.getManagedTableId();
+        if (managedId == null) throw new BusinessException(400, "归档策略未绑定纳管表");
+        RcManagedTable mt = managedTableMapper.selectById(managedId);
+        if (mt == null || !"ACTIVE".equalsIgnoreCase(mt.getStatus())) {
+            throw new BusinessException(404, "纳管表不存在");
+        }
+        String table = requireIdent(mt.getPhysicalTable(), "physicalTable");
+        String actor = operator != null ? operator.getUsername() : "scheduler";
+        boolean compress = policy.getCompressEnabled() != null && policy.getCompressEnabled() == 1;
+        String compressType = str(policy.getCompressType(), compress ? "GZIP" : "NONE").toUpperCase(Locale.ROOT);
+        Path root = ARCHIVE_ROOT;
+        try {
+            Files.createDirectories(root);
+            String fileName = table + "_" + System.currentTimeMillis()
+                    + (compress && "GZIP".equals(compressType) ? ".archive.gz" : ".archive.meta");
+            Path finalPath = root.resolve(fileName);
+            long approxRows = mt.getRecordCount() == null ? 0 : mt.getRecordCount();
+            byte[] meta = ("# Chengde archive ledger\n"
+                    + "# table=" + table + "\n"
+                    + "# retentionDays=" + policy.getRetentionDays() + "\n"
+                    + "# compress=" + compressType + "\n"
+                    + "# createdAt=" + LocalDateTime.now() + "\n").getBytes(StandardCharsets.UTF_8);
+            if (compress && "GZIP".equals(compressType)) {
+                try (OutputStream fos = Files.newOutputStream(finalPath);
+                     GZIPOutputStream gzip = new GZIPOutputStream(fos)) {
+                    gzip.write(meta);
+                    gzip.write(("# note=ledger only, physical rows not moved\n").getBytes(StandardCharsets.UTF_8));
+                }
+            } else {
+                Files.write(finalPath, meta);
+            }
+            String location = "ARCHIVE:" + finalPath.toAbsolutePath();
+            RcBackupArtifact art = new RcBackupArtifact();
+            art.setArtifactType("ARCHIVE");
+            art.setJobId(0L);
+            art.setManagedTableId(mt.getId());
+            art.setPhysicalTable(table);
+            art.setFilePath(finalPath.toAbsolutePath().toString());
+            art.setStorageLocation(location);
+            art.setFileName(fileName);
+            art.setRowCount(approxRows);
+            art.setByteSize(Files.size(finalPath));
+            art.setSha256(sha256(finalPath));
+            art.setStatus("LEDGER");
+            art.setMessage("归档台账已记录；压缩=" + compressType + "；保存天数=" + policy.getRetentionDays());
+            art.setCreatedBy(actor);
+            art.setCreatedAt(LocalDateTime.now());
+            backupArtifactMapper.insert(art);
+
+            Map<String, Object> out = new LinkedHashMap<>();
+            out.put("artifactId", art.getId());
+            out.put("fileName", fileName);
+            out.put("filePath", art.getFilePath());
+            out.put("storageLocation", location);
+            out.put("rowCount", approxRows);
+            out.put("compressType", compressType);
+            out.put("status", "LEDGER");
+            out.put("message", art.getMessage());
+            return out;
+        } catch (BusinessException ex) {
+            throw ex;
+        } catch (Exception ex) {
+            throw new BusinessException(500, "归档台账失败: " + ex.getMessage());
         }
     }
 
@@ -542,28 +1456,90 @@ public class ResourceCenterPlatformService {
 
     @Transactional
     public Map<String, Object> refreshMonitor(UserPrincipal operator) {
-        List<RcManagedTable> tables = managedTableMapper.selectList(new LambdaQueryWrapper<RcManagedTable>()
-                .eq(RcManagedTable::getStatus, "ACTIVE"));
-        long totalRows = 0;
-        long totalBytes = 0;
-        for (RcManagedTable mt : tables) {
-            refreshTableStats(mt);
-            totalRows += mt.getRecordCount() == null ? 0 : mt.getRecordCount();
-            totalBytes += (mt.getDataBytes() == null ? 0 : mt.getDataBytes())
-                    + (mt.getIndexBytes() == null ? 0 : mt.getIndexBytes());
-        }
-        upsertMetric("managed_tables", "纳管表数量", String.valueOf(tables.size()), "OK");
-        upsertMetric("total_rows", "纳管表总行数", String.valueOf(totalRows), totalRows > 0 ? "OK" : "WARN");
-        upsertMetric("total_bytes", "纳管表存储字节", String.valueOf(totalBytes), "OK");
-        upsertMetric("db_ping", "库连通性", pingDb() ? "UP" : "DOWN", pingDb() ? "OK" : "CRITICAL");
+        collectMonitorMetrics();
         auditService.log(operator.getUserId(), operator.getUsername(), operator.getOrgId(),
-                "RC_MONITOR_REFRESH", "rc_monitor_metric", "all", "tables=" + tables.size());
-        return Map.of("managedTables", tables.size(), "totalRows", totalRows, "totalBytes", totalBytes,
-                "metrics", monitorMetrics());
+                "RC_MONITOR_REFRESH", "rc_monitor_metric", "all", "四维监控刷新");
+        return monitorOverview();
     }
 
+    /** 资源监控总览：可用性/完整性/安全性/性能 + 通道与审计明细 */
+    public Map<String, Object> monitorOverview() {
+        List<RcMonitorMetric> metrics = monitorMetrics();
+        Map<String, List<Map<String, Object>>> byCategory = new LinkedHashMap<>();
+        byCategory.put("AVAILABILITY", new ArrayList<>());
+        byCategory.put("INTEGRITY", new ArrayList<>());
+        byCategory.put("SECURITY", new ArrayList<>());
+        byCategory.put("PERFORMANCE", new ArrayList<>());
+        int warn = 0;
+        int critical = 0;
+        LocalDateTime latest = null;
+        for (RcMonitorMetric m : metrics) {
+            String cat = m.getMetricCategory() == null ? "AVAILABILITY" : m.getMetricCategory().toUpperCase(Locale.ROOT);
+            byCategory.computeIfAbsent(cat, k -> new ArrayList<>()).add(toMetricView(m));
+            String level = m.getAlertLevel() == null ? "OK" : m.getAlertLevel().toUpperCase(Locale.ROOT);
+            if ("WARN".equals(level)) warn++;
+            if ("CRITICAL".equals(level)) critical++;
+            if (m.getCheckedAt() != null && (latest == null || m.getCheckedAt().isAfter(latest))) {
+                latest = m.getCheckedAt();
+            }
+        }
+        Map<String, Object> summary = new LinkedHashMap<>();
+        for (String cat : List.of("AVAILABILITY", "INTEGRITY", "SECURITY", "PERFORMANCE")) {
+            summary.put(cat, categoryHealth(byCategory.getOrDefault(cat, List.of())));
+        }
+        summary.put("warnCount", warn);
+        summary.put("criticalCount", critical);
+        summary.put("metricCount", metrics.size());
+
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("summary", summary);
+        out.put("metrics", metrics.stream().map(this::toMetricView).toList());
+        out.put("byCategory", byCategory);
+        out.put("channels", listMonitorChannels());
+        out.put("audits", listMonitorAudits(30));
+        out.put("integritySamples", listIntegritySamples(20));
+        out.put("checkedAt", latest);
+        out.put("hint", "监控覆盖数据库服务、存储设备、传输通道、备份校验、目录加密与访问审计、查询/传输性能；未接入外部监控探针时以平台实测与台账为准");
+        return out;
+    }
+
+    public List<Map<String, Object>> listCatalogSubsystems() {
+        List<Map<String, Object>> out = new ArrayList<>();
+        for (String[] s : CATALOG_SUBSYSTEMS) {
+            out.add(Map.of("code", s[0], "name", s[1]));
+        }
+        return out;
+    }
+
+    public List<Map<String, Object>> listCatalogEntries(String q, String visibility, String subsystem,
+                                                        String publishStatus) {
+        LambdaQueryWrapper<RcAssetCatalogEntry> w = new LambdaQueryWrapper<RcAssetCatalogEntry>()
+                .orderByDesc(RcAssetCatalogEntry::getId);
+        if (q != null && !q.isBlank()) {
+            w.and(x -> x.like(RcAssetCatalogEntry::getEntryCode, q)
+                    .or().like(RcAssetCatalogEntry::getEntryName, q)
+                    .or().like(RcAssetCatalogEntry::getDriveTask, q));
+        }
+        if (visibility != null && !visibility.isBlank()) {
+            w.eq(RcAssetCatalogEntry::getVisibility, visibility.trim().toUpperCase(Locale.ROOT));
+        }
+        if (subsystem != null && !subsystem.isBlank()) {
+            w.eq(RcAssetCatalogEntry::getSubsystemCode, subsystem.trim().toUpperCase(Locale.ROOT));
+        }
+        if (publishStatus != null && !publishStatus.isBlank()) {
+            w.eq(RcAssetCatalogEntry::getPublishStatus, publishStatus.trim().toUpperCase(Locale.ROOT));
+        }
+        List<Map<String, Object>> out = new ArrayList<>();
+        for (RcAssetCatalogEntry e : catalogMapper.selectList(w)) {
+            out.add(toCatalogView(e));
+        }
+        return out;
+    }
+
+    /** 兼容旧调用：无筛选返回全量视图 */
     public List<RcAssetCatalogEntry> listCatalogEntries() {
-        return catalogMapper.selectList(new LambdaQueryWrapper<RcAssetCatalogEntry>().orderByDesc(RcAssetCatalogEntry::getId));
+        return catalogMapper.selectList(new LambdaQueryWrapper<RcAssetCatalogEntry>()
+                .orderByDesc(RcAssetCatalogEntry::getId));
     }
 
     @Transactional
@@ -576,11 +1552,13 @@ public class ResourceCenterPlatformService {
         String entryName = str(body.get("entryName"), null);
         String driveTask = str(body.get("driveTask"), "exchange-task");
         Long libId = longVal(body.get("libId"));
+        String physicalTable = null;
         if (managedTableId != null) {
             RcManagedTable mt = managedTableMapper.selectById(managedTableId);
             if (mt == null || !"ACTIVE".equalsIgnoreCase(mt.getStatus())) {
                 throw new BusinessException(400, "纳管表不存在或已解绑");
             }
+            physicalTable = mt.getPhysicalTable();
             if (entryName == null || entryName.isBlank()) {
                 entryName = mt.getPhysicalTable();
             }
@@ -592,16 +1570,378 @@ public class ResourceCenterPlatformService {
             }
             driveTask = str(body.get("driveTask"), "managed:" + mt.getPhysicalTable());
         }
+        String subsystem = normalizeSubsystem(str(body.get("subsystemCode"), "RESOURCE"));
+        String encryptAlgo = normalizeEncryptAlgo(str(body.get("encryptAlgo"), "NONE"));
+        boolean encryptEnabled = boolVal(body.get("encryptEnabled"), !"NONE".equals(encryptAlgo));
+        if (encryptEnabled && "NONE".equals(encryptAlgo)) {
+            encryptAlgo = "AES256";
+        }
+        if (!encryptEnabled) {
+            encryptAlgo = "NONE";
+        }
+
         RcAssetCatalogEntry e = new RcAssetCatalogEntry();
         e.setEntryCode(str(body.get("entryCode"), metaEntryCode != null ? metaEntryCode : ("ACE_" + System.currentTimeMillis())));
         e.setEntryName(required(entryName, "entryName").toString());
         if (libId != null) e.setLibId(libId);
+        e.setManagedTableId(managedTableId);
+        e.setSubsystemCode(subsystem);
+        e.setVisibility("PRIVATE");
+        e.setEncryptEnabled(encryptEnabled ? 1 : 0);
+        e.setEncryptAlgo(encryptAlgo);
+        e.setPublishStatus("DRAFT");
+        e.setDescription(str(body.get("description"), null));
         e.setDriveTask(driveTask);
         e.setStatus("ACTIVE");
+        e.setCreatedBy(operator.getUsername());
+        e.setCreatedAt(LocalDateTime.now());
+        e.setUpdatedAt(LocalDateTime.now());
         catalogMapper.insert(e);
+        auditService.log(operator.getUserId(), operator.getUsername(), operator.getOrgId(),
+                "RC_CATALOG_CREATE", "rc_asset_catalog_entry", String.valueOf(e.getId()),
+                e.getEntryCode() + (physicalTable == null ? "" : " → " + physicalTable));
         return e.getId();
     }
 
+    @Transactional
+    public void updateCatalogEncrypt(UserPrincipal operator, Long id, Map<String, Object> body) {
+        RcAssetCatalogEntry e = requireCatalog(id);
+        String encryptAlgo = normalizeEncryptAlgo(str(body.get("encryptAlgo"), e.getEncryptAlgo()));
+        boolean encryptEnabled = boolVal(body.get("encryptEnabled"),
+                e.getEncryptEnabled() != null && e.getEncryptEnabled() == 1);
+        if (encryptEnabled && "NONE".equals(encryptAlgo)) {
+            encryptAlgo = "AES256";
+        }
+        if (!encryptEnabled) {
+            encryptAlgo = "NONE";
+        }
+        e.setEncryptEnabled(encryptEnabled ? 1 : 0);
+        e.setEncryptAlgo(encryptAlgo);
+        e.setUpdatedAt(LocalDateTime.now());
+        catalogMapper.updateById(e);
+        auditService.log(operator.getUserId(), operator.getUsername(), operator.getOrgId(),
+                "RC_CATALOG_ENCRYPT", "rc_asset_catalog_entry", String.valueOf(id),
+                encryptEnabled + "/" + encryptAlgo);
+    }
+
+    @Transactional
+    public void submitCatalogPublish(UserPrincipal operator, Long id) {
+        RcAssetCatalogEntry e = requireCatalog(id);
+        String ps = e.getPublishStatus() == null ? "DRAFT" : e.getPublishStatus().toUpperCase(Locale.ROOT);
+        if (!"DRAFT".equals(ps) && !"REJECTED".equals(ps)) {
+            throw new BusinessException(400, "仅草稿或驳回状态可提交公开审批，当前=" + ps);
+        }
+        e.setPublishStatus("PENDING_REVIEW");
+        e.setRejectReason(null);
+        e.setUpdatedAt(LocalDateTime.now());
+        catalogMapper.updateById(e);
+        auditService.log(operator.getUserId(), operator.getUsername(), operator.getOrgId(),
+                "RC_CATALOG_SUBMIT", "rc_asset_catalog_entry", String.valueOf(id), e.getEntryCode());
+    }
+
+    @Transactional
+    public void approveCatalogPublish(UserPrincipal operator, Long id) {
+        requireSysAdmin(operator);
+        RcAssetCatalogEntry e = requireCatalog(id);
+        if (!"PENDING_REVIEW".equalsIgnoreCase(nullToEmpty(e.getPublishStatus()))) {
+            throw new BusinessException(400, "仅待审核目录可由管理员公开");
+        }
+        e.setPublishStatus("PUBLISHED");
+        e.setVisibility("PUBLIC");
+        e.setRejectReason(null);
+        e.setUpdatedAt(LocalDateTime.now());
+        catalogMapper.updateById(e);
+        auditService.log(operator.getUserId(), operator.getUsername(), operator.getOrgId(),
+                "RC_CATALOG_APPROVE", "rc_asset_catalog_entry", String.valueOf(id), e.getEntryCode());
+    }
+
+    @Transactional
+    public void rejectCatalogPublish(UserPrincipal operator, Long id, Map<String, Object> body) {
+        requireSysAdmin(operator);
+        RcAssetCatalogEntry e = requireCatalog(id);
+        if (!"PENDING_REVIEW".equalsIgnoreCase(nullToEmpty(e.getPublishStatus()))) {
+            throw new BusinessException(400, "仅待审核目录可驳回");
+        }
+        String reason = str(body == null ? null : body.get("reason"), null);
+        if (reason == null || reason.isBlank()) {
+            throw new BusinessException(400, "请填写驳回原因");
+        }
+        e.setPublishStatus("REJECTED");
+        e.setVisibility("PRIVATE");
+        e.setRejectReason(reason.trim());
+        e.setUpdatedAt(LocalDateTime.now());
+        catalogMapper.updateById(e);
+        auditService.log(operator.getUserId(), operator.getUsername(), operator.getOrgId(),
+                "RC_CATALOG_REJECT", "rc_asset_catalog_entry", String.valueOf(id), reason);
+    }
+
+    @Transactional
+    public void unpublishCatalog(UserPrincipal operator, Long id) {
+        requireSysAdmin(operator);
+        RcAssetCatalogEntry e = requireCatalog(id);
+        if (!"PUBLIC".equalsIgnoreCase(nullToEmpty(e.getVisibility()))
+                && !"PUBLISHED".equalsIgnoreCase(nullToEmpty(e.getPublishStatus()))) {
+            throw new BusinessException(400, "目录未公开，无需下线");
+        }
+        e.setVisibility("PRIVATE");
+        e.setPublishStatus("DRAFT");
+        e.setUpdatedAt(LocalDateTime.now());
+        catalogMapper.updateById(e);
+        auditService.log(operator.getUserId(), operator.getUsername(), operator.getOrgId(),
+                "RC_CATALOG_UNPUBLISH", "rc_asset_catalog_entry", String.valueOf(id), e.getEntryCode());
+    }
+
+    @Transactional
+    public Map<String, Object> driveCatalogExchange(UserPrincipal operator, Long id) {
+        RcAssetCatalogEntry e = requireCatalog(id);
+        if (!"PUBLIC".equalsIgnoreCase(nullToEmpty(e.getVisibility()))
+                || !"PUBLISHED".equalsIgnoreCase(nullToEmpty(e.getPublishStatus()))) {
+            throw new BusinessException(400, "仅已公开目录可驱动数据交换");
+        }
+        if (!"ACTIVE".equalsIgnoreCase(nullToEmpty(e.getStatus()))) {
+            throw new BusinessException(400, "目录未启用，无法驱动交换");
+        }
+
+        RcManagedTable mt = e.getManagedTableId() == null ? null : managedTableMapper.selectById(e.getManagedTableId());
+        String physicalTable = mt != null ? mt.getPhysicalTable() : null;
+        Long rowCount = null;
+        String runStatus = "LEDGER";
+        String message;
+        if (mt != null && physicalTable != null && IDENT.matcher(physicalTable).matches()) {
+            try (Connection conn = platformDataSource.getConnection();
+                 Statement st = conn.createStatement();
+                 ResultSet rs = st.executeQuery("SELECT COUNT(*) FROM `" + physicalTable + "`")) {
+                if (rs.next()) rowCount = rs.getLong(1);
+                runStatus = "SUCCESS";
+                message = "已按公开目录生成交换任务并完成台账交换；源表=" + physicalTable
+                        + "，行数=" + (rowCount == null ? 0 : rowCount)
+                        + (e.getEncryptEnabled() != null && e.getEncryptEnabled() == 1
+                        ? "；传输加密=" + e.getEncryptAlgo() : "");
+            } catch (Exception ex) {
+                log.warn("catalog drive exchange count failed entry={}: {}", id, ex.getMessage());
+                runStatus = "LEDGER";
+                message = "已生成交换任务台账；未能读取源表行数（" + ex.getMessage() + "）";
+            }
+        } else {
+            message = "已按公开目录生成交换任务台账（未绑定可计数纳管表，driveTask="
+                    + nullToEmpty(e.getDriveTask()) + "）";
+        }
+
+        String jobCode = "CEX_" + id + "_" + System.currentTimeMillis();
+        RcCatalogExchangeJob job = new RcCatalogExchangeJob();
+        job.setCatalogEntryId(id);
+        job.setJobCode(jobCode);
+        job.setJobName("交换-" + e.getEntryName());
+        job.setManagedTableId(e.getManagedTableId());
+        job.setPhysicalTable(physicalTable);
+        job.setRowCount(rowCount);
+        job.setRunStatus(runStatus);
+        job.setMessage(message);
+        job.setCreatedBy(operator.getUsername());
+        job.setCreatedAt(LocalDateTime.now());
+        catalogExchangeJobMapper.insert(job);
+
+        e.setDriveTask(str(e.getDriveTask(), "exchange:" + e.getEntryCode()));
+        e.setExchangeTaskRef(jobCode);
+        e.setLastExchangeAt(LocalDateTime.now());
+        e.setLastExchangeMessage(message);
+        e.setUpdatedAt(LocalDateTime.now());
+        catalogMapper.updateById(e);
+
+        auditService.log(operator.getUserId(), operator.getUsername(), operator.getOrgId(),
+                "RC_CATALOG_DRIVE_EXCHANGE", "rc_catalog_exchange_job", String.valueOf(job.getId()), jobCode);
+
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("jobId", job.getId());
+        out.put("jobCode", jobCode);
+        out.put("runStatus", runStatus);
+        out.put("rowCount", rowCount == null ? 0 : rowCount);
+        out.put("message", message);
+        out.put("engineMode", "LEDGER");
+        return out;
+    }
+
+    @Transactional
+    public Map<String, Object> driveAllPublicCatalogExchange(UserPrincipal operator) {
+        List<RcAssetCatalogEntry> pubs = catalogMapper.selectList(new LambdaQueryWrapper<RcAssetCatalogEntry>()
+                .eq(RcAssetCatalogEntry::getVisibility, "PUBLIC")
+                .eq(RcAssetCatalogEntry::getPublishStatus, "PUBLISHED")
+                .eq(RcAssetCatalogEntry::getStatus, "ACTIVE"));
+        int ok = 0;
+        int fail = 0;
+        List<Map<String, Object>> results = new ArrayList<>();
+        for (RcAssetCatalogEntry e : pubs) {
+            try {
+                results.add(driveCatalogExchange(operator, e.getId()));
+                ok++;
+            } catch (BusinessException ex) {
+                fail++;
+                results.add(Map.of("entryId", e.getId(), "error", ex.getMessage()));
+            }
+        }
+        return Map.of("total", pubs.size(), "success", ok, "failed", fail, "results", results);
+    }
+
+    public List<Map<String, Object>> listCatalogExchangeJobs(Long entryId) {
+        LambdaQueryWrapper<RcCatalogExchangeJob> w = new LambdaQueryWrapper<RcCatalogExchangeJob>()
+                .orderByDesc(RcCatalogExchangeJob::getId)
+                .last("LIMIT 100");
+        if (entryId != null) {
+            w.eq(RcCatalogExchangeJob::getCatalogEntryId, entryId);
+        }
+        List<Map<String, Object>> out = new ArrayList<>();
+        for (RcCatalogExchangeJob j : catalogExchangeJobMapper.selectList(w)) {
+            Map<String, Object> m = new LinkedHashMap<>();
+            m.put("id", j.getId());
+            m.put("catalogEntryId", j.getCatalogEntryId());
+            m.put("jobCode", j.getJobCode());
+            m.put("jobName", j.getJobName());
+            m.put("managedTableId", j.getManagedTableId());
+            m.put("physicalTable", j.getPhysicalTable());
+            m.put("rowCount", j.getRowCount());
+            m.put("runStatus", j.getRunStatus());
+            m.put("message", j.getMessage());
+            m.put("createdBy", j.getCreatedBy());
+            m.put("createdAt", j.getCreatedAt() == null ? null : j.getCreatedAt().toString());
+            out.add(m);
+        }
+        return out;
+    }
+
+    private Map<String, Object> toCatalogView(RcAssetCatalogEntry e) {
+        Map<String, Object> m = new LinkedHashMap<>();
+        m.put("id", e.getId());
+        m.put("entryCode", e.getEntryCode());
+        m.put("entryName", e.getEntryName());
+        m.put("libId", e.getLibId());
+        m.put("managedTableId", e.getManagedTableId());
+        m.put("subsystemCode", e.getSubsystemCode());
+        m.put("subsystemName", subsystemName(e.getSubsystemCode()));
+        m.put("visibility", e.getVisibility() == null ? "PRIVATE" : e.getVisibility());
+        m.put("encryptEnabled", e.getEncryptEnabled() != null && e.getEncryptEnabled() == 1);
+        m.put("encryptAlgo", e.getEncryptAlgo() == null ? "NONE" : e.getEncryptAlgo());
+        m.put("publishStatus", e.getPublishStatus() == null ? "DRAFT" : e.getPublishStatus());
+        m.put("rejectReason", e.getRejectReason());
+        m.put("description", e.getDescription());
+        m.put("driveTask", e.getDriveTask());
+        m.put("exchangeTaskRef", e.getExchangeTaskRef());
+        m.put("lastExchangeAt", e.getLastExchangeAt() == null ? null : e.getLastExchangeAt().toString());
+        m.put("lastExchangeMessage", e.getLastExchangeMessage());
+        m.put("status", e.getStatus());
+        m.put("createdBy", e.getCreatedBy());
+        m.put("createdAt", e.getCreatedAt() == null ? null : e.getCreatedAt().toString());
+        m.put("updatedAt", e.getUpdatedAt() == null ? null : e.getUpdatedAt().toString());
+        if (e.getManagedTableId() != null) {
+            RcManagedTable mt = managedTableMapper.selectById(e.getManagedTableId());
+            if (mt != null) {
+                m.put("physicalTable", mt.getPhysicalTable());
+                m.put("metaEntryCode", mt.getMetaEntryCode());
+            }
+        }
+        return m;
+    }
+
+    private RcAssetCatalogEntry requireCatalog(Long id) {
+        if (id == null) throw new BusinessException(400, "目录 id 必填");
+        RcAssetCatalogEntry e = catalogMapper.selectById(id);
+        if (e == null) throw new BusinessException(404, "资产目录不存在");
+        return e;
+    }
+
+    private void requireSysAdmin(UserPrincipal operator) {
+        if (operator == null || !operator.isSystemAdmin()) {
+            throw new BusinessException(403, "目录公开及审批流程由系统管理员控制");
+        }
+    }
+
+    private String normalizeSubsystem(String code) {
+        String c = code == null ? "RESOURCE" : code.trim().toUpperCase(Locale.ROOT);
+        for (String[] s : CATALOG_SUBSYSTEMS) {
+            if (s[0].equals(c)) return c;
+        }
+        throw new BusinessException(400, "未知子系统: " + code);
+    }
+
+    private String normalizeEncryptAlgo(String algo) {
+        String a = algo == null || algo.isBlank() ? "NONE" : algo.trim().toUpperCase(Locale.ROOT);
+        if (!ENCRYPT_ALGOS.contains(a)) {
+            throw new BusinessException(400, "不支持的加密算法: " + algo);
+        }
+        return a;
+    }
+
+    private String subsystemName(String code) {
+        if (code == null) return "-";
+        for (String[] s : CATALOG_SUBSYSTEMS) {
+            if (s[0].equalsIgnoreCase(code)) return s[1];
+        }
+        return code;
+    }
+
+    private static String nullToEmpty(String s) {
+        return s == null ? "" : s;
+    }
+
+    private static boolean boolVal(Object v, boolean def) {
+        if (v == null) return def;
+        if (v instanceof Boolean b) return b;
+        String s = String.valueOf(v).trim();
+        if ("1".equals(s) || "true".equalsIgnoreCase(s) || "yes".equalsIgnoreCase(s)) return true;
+        if ("0".equals(s) || "false".equalsIgnoreCase(s) || "no".equalsIgnoreCase(s)) return false;
+        return def;
+    }
+
+    private void validateCron(String cron) {
+        if (cron == null || cron.isBlank()) {
+            throw new BusinessException(400, "启用调度时须填写 Cron 表达式");
+        }
+        try {
+            CronExpression.parse(cron.trim());
+        } catch (Exception ex) {
+            throw new BusinessException(400, "Cron 表达式非法: " + ex.getMessage());
+        }
+    }
+
+    private static LocalDateTime computeNextRun(String cron, LocalDateTime base) {
+        if (cron == null || cron.isBlank()) return null;
+        CronExpression expr = CronExpression.parse(cron.trim());
+        return expr.next(base == null ? LocalDateTime.now() : base);
+    }
+
+    private Path resolveStorageRoot(String strategy) {
+        String s = strategy == null ? "LOCAL" : strategy.toUpperCase(Locale.ROOT);
+        if ("NAS".equals(s)) return BACKUP_ROOT;
+        if ("OBJECT".equals(s)) return OBJECT_ROOT;
+        return BACKUP_ROOT;
+    }
+
+    private void recordPolicyRun(RcStoragePolicy policy, String runStatus, Long rowCount,
+                                 Long artifactId, String storageLocation, String message, String actor) {
+        RcPolicyRunLog logRow = new RcPolicyRunLog();
+        logRow.setPolicyId(policy.getId());
+        logRow.setActionType(policy.getActionType());
+        logRow.setRunStatus(runStatus);
+        logRow.setRowCount(rowCount);
+        logRow.setArtifactId(artifactId);
+        logRow.setStorageLocation(storageLocation);
+        logRow.setMessage(message);
+        logRow.setCreatedBy(actor);
+        logRow.setCreatedAt(LocalDateTime.now());
+        policyRunLogMapper.insert(logRow);
+    }
+
+    private void markPolicyRun(RcStoragePolicy policy, String runStatus, String message) {
+        policy.setLastRunAt(LocalDateTime.now());
+        policy.setLastRunStatus(runStatus);
+        policy.setLastRunMessage(message == null ? null
+                : (message.length() > 500 ? message.substring(0, 500) : message));
+        policyMapper.updateById(policy);
+    }
+
+    /**
+     * 兼容旧入口：库名 / 纳管表 / 元数据粗搜。
+     * 新页面请用 {@link #searchFullText} / {@link #searchMetadata}。
+     */
     public Map<String, Object> searchLibraries(String q) {
         List<Map<String, Object>> hits = new ArrayList<>();
         LambdaQueryWrapper<RcBaseLibrary> query = new LambdaQueryWrapper<RcBaseLibrary>().orderByDesc(RcBaseLibrary::getRecordCount);
@@ -623,7 +1963,6 @@ public class ResourceCenterPlatformService {
             hit.put("metaEntryCode", mt.getMetaEntryCode() == null ? "" : mt.getMetaEntryCode());
             hits.add(hit);
         }
-        // 元数据登记条目（供「数据搜索与元数据检索」）
         if (q != null && !q.isBlank()) {
             for (GovMetadataRegistry reg : registryMapper.selectList(new LambdaQueryWrapper<GovMetadataRegistry>()
                     .and(w -> w.like(GovMetadataRegistry::getEntryCode, q)
@@ -642,7 +1981,230 @@ public class ResourceCenterPlatformService {
         return Map.of("query", q == null ? "" : q, "hits", hits);
     }
 
+    /**
+     * 数据全文检索：在已纳管物理表业务数据中按关键词检索（姓名/身份证/手机号等）。
+     */
+    public Map<String, Object> searchFullText(String q, Integer perTableLimit, Integer maxTables) {
+        if (q == null || q.isBlank()) {
+            throw new BusinessException(400, "请输入关键词（如姓名、身份证号码、手机号）");
+        }
+        String keyword = q.trim();
+        if (keyword.length() > 64) {
+            throw new BusinessException(400, "关键词过长（最多 64 字）");
+        }
+        int per = perTableLimit == null ? 10 : Math.min(Math.max(perTableLimit, 1), 50);
+        int tableCap = maxTables == null ? 30 : Math.min(Math.max(maxTables, 1), 80);
+        List<RcManagedTable> tables = managedTableMapper.selectList(new LambdaQueryWrapper<RcManagedTable>()
+                .eq(RcManagedTable::getStatus, "ACTIVE")
+                .orderByDesc(RcManagedTable::getId)
+                .last("LIMIT " + tableCap));
+        List<Map<String, Object>> hits = new ArrayList<>();
+        List<String> scanned = new ArrayList<>();
+        List<String> skipped = new ArrayList<>();
+        String like = "%" + escapeLike(keyword) + "%";
+        try (Connection conn = platformDataSource.getConnection()) {
+            for (RcManagedTable mt : tables) {
+                String physical;
+                try {
+                    physical = requireIdent(mt.getPhysicalTable(), "physicalTable");
+                } catch (BusinessException e) {
+                    skipped.add(mt.getPhysicalTable() + "(非法表名)");
+                    continue;
+                }
+                if (!tableExists(physical)) {
+                    skipped.add(physical + "(表不存在)");
+                    continue;
+                }
+                List<String> searchable = listSearchableColumns(conn, physical);
+                if (searchable.isEmpty()) {
+                    skipped.add(physical + "(无可检索列)");
+                    continue;
+                }
+                scanned.add(physical);
+                StringBuilder sql = new StringBuilder("SELECT * FROM `").append(physical).append("` WHERE ");
+                for (int i = 0; i < searchable.size(); i++) {
+                    if (i > 0) sql.append(" OR ");
+                    sql.append("`").append(searchable.get(i)).append("` LIKE ? ESCAPE '\\\\'");
+                }
+                sql.append(" LIMIT ").append(per);
+                try (PreparedStatement ps = conn.prepareStatement(sql.toString())) {
+                    for (int i = 0; i < searchable.size(); i++) {
+                        ps.setString(i + 1, like);
+                    }
+                    try (ResultSet rs = ps.executeQuery()) {
+                        ResultSetMetaData meta = rs.getMetaData();
+                        int cc = meta.getColumnCount();
+                        List<String> columns = new ArrayList<>();
+                        for (int i = 1; i <= cc; i++) columns.add(meta.getColumnLabel(i));
+                        while (rs.next()) {
+                            Map<String, Object> row = new LinkedHashMap<>();
+                            List<String> matched = new ArrayList<>();
+                            for (String col : columns) {
+                                Object v = rs.getObject(col);
+                                String sv = v == null ? null : String.valueOf(v);
+                                row.put(col, sv);
+                                if (sv != null && sv.toLowerCase(Locale.ROOT).contains(keyword.toLowerCase(Locale.ROOT))) {
+                                    matched.add(col);
+                                }
+                            }
+                            Map<String, Object> hit = new LinkedHashMap<>();
+                            hit.put("hitType", "DATA");
+                            hit.put("managedTableId", mt.getId());
+                            hit.put("physicalTable", physical);
+                            hit.put("metaEntryCode", mt.getMetaEntryCode() == null ? "" : mt.getMetaEntryCode());
+                            hit.put("matchedColumns", matched);
+                            hit.put("summary", buildRowSummary(row, matched, keyword));
+                            hit.put("row", row);
+                            hits.add(hit);
+                        }
+                    }
+                } catch (Exception e) {
+                    log.warn("全文检索跳过表 {}: {}", physical, e.getMessage());
+                    skipped.add(physical + "(" + e.getMessage() + ")");
+                }
+            }
+        } catch (BusinessException e) {
+            throw e;
+        } catch (Exception e) {
+            throw new BusinessException(500, "全文检索失败: " + e.getMessage());
+        }
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("mode", "FULLTEXT");
+        out.put("query", keyword);
+        out.put("hitCount", hits.size());
+        out.put("scannedTables", scanned);
+        out.put("skippedTables", skipped);
+        out.put("hits", hits);
+        out.put("hint", "在已纳管物理表业务数据中检索；可点开详情，或锁定物理表后做条件查询/下载");
+        return out;
+    }
+
+    /**
+     * 元数据检索：按分类/标签/数据项/关键词从元数据库定位物理表。
+     */
+    public Map<String, Object> searchMetadata(String q, String tag, String domain, String dataItem) {
+        boolean hasCond = (q != null && !q.isBlank())
+                || (tag != null && !tag.isBlank())
+                || (domain != null && !domain.isBlank())
+                || (dataItem != null && !dataItem.isBlank());
+        if (!hasCond) {
+            throw new BusinessException(400, "请至少填写关键词、标签、业务分类或数据项之一");
+        }
+        String kw = q == null ? "" : q.trim().toLowerCase(Locale.ROOT);
+        String tg = tag == null ? "" : tag.trim().toLowerCase(Locale.ROOT);
+        String dm = domain == null ? "" : domain.trim().toLowerCase(Locale.ROOT);
+        String di = dataItem == null ? "" : dataItem.trim().toLowerCase(Locale.ROOT);
+
+        List<GovMetadataRegistry> all = registryMapper.selectList(new LambdaQueryWrapper<GovMetadataRegistry>()
+                .ne(GovMetadataRegistry::getStatus, "OFFLINE")
+                .orderByDesc(GovMetadataRegistry::getUpdatedAt)
+                .last("LIMIT 500"));
+
+        Map<String, RcManagedTable> managedByTable = new LinkedHashMap<>();
+        Map<String, RcManagedTable> managedByEntry = new LinkedHashMap<>();
+        for (RcManagedTable mt : managedTableMapper.selectList(new LambdaQueryWrapper<RcManagedTable>()
+                .eq(RcManagedTable::getStatus, "ACTIVE"))) {
+            if (mt.getPhysicalTable() != null) {
+                managedByTable.put(mt.getPhysicalTable().toLowerCase(Locale.ROOT), mt);
+            }
+            if (mt.getMetaEntryCode() != null && !mt.getMetaEntryCode().isBlank()) {
+                managedByEntry.put(mt.getMetaEntryCode().toLowerCase(Locale.ROOT), mt);
+            }
+        }
+
+        Set<String> keepTableCodes = new HashSet<>();
+        Map<String, List<String>> matchedItemsByParent = new LinkedHashMap<>();
+        for (GovMetadataRegistry e : all) {
+            if ("COLUMN".equalsIgnoreCase(e.getEntryType()) && !di.isEmpty()) {
+                String name = nvl(e.getEntryName()).toLowerCase(Locale.ROOT);
+                String code = nvl(e.getEntryCode()).toLowerCase(Locale.ROOT);
+                String kws = nvl(e.getKeywords()).toLowerCase(Locale.ROOT);
+                if (name.contains(di) || code.contains(di) || kws.contains(di)) {
+                    if (e.getParentCode() != null) {
+                        keepTableCodes.add(e.getParentCode());
+                        matchedItemsByParent
+                                .computeIfAbsent(e.getParentCode(), k -> new ArrayList<>())
+                                .add(e.getEntryName() == null ? e.getEntryCode() : e.getEntryName());
+                    }
+                }
+            }
+        }
+
+        List<Map<String, Object>> hits = new ArrayList<>();
+        for (GovMetadataRegistry e : all) {
+            boolean isTable = "TABLE".equalsIgnoreCase(e.getEntryType())
+                    || (e.getPhysicalTableName() != null && !e.getPhysicalTableName().isBlank()
+                    && !"COLUMN".equalsIgnoreCase(e.getEntryType())
+                    && !"SOURCE".equalsIgnoreCase(e.getEntryType()));
+            if (!isTable && !keepTableCodes.contains(e.getEntryCode())) {
+                continue;
+            }
+            if ("COLUMN".equalsIgnoreCase(e.getEntryType()) || "SOURCE".equalsIgnoreCase(e.getEntryType())) {
+                continue;
+            }
+            boolean kwOk = kw.isEmpty()
+                    || containsIgnore(e.getEntryCode(), kw)
+                    || containsIgnore(e.getEntryName(), kw)
+                    || containsIgnore(e.getPhysicalTableName(), kw)
+                    || containsIgnore(e.getDescription(), kw)
+                    || containsIgnore(e.getKeywords(), kw)
+                    || containsIgnore(e.getTags(), kw);
+            boolean tagOk = tg.isEmpty() || containsIgnore(e.getTags(), tg);
+            boolean domainOk = dm.isEmpty()
+                    || containsIgnore(e.getBusinessDomain(), dm)
+                    || containsIgnore(e.getEntryType(), dm)
+                    || containsIgnore(e.getDataLayer(), dm);
+            boolean dataItemOk = di.isEmpty() || keepTableCodes.contains(e.getEntryCode());
+            if (!(kwOk && tagOk && domainOk && dataItemOk)) {
+                continue;
+            }
+
+            RcManagedTable mt = null;
+            if (e.getEntryCode() != null) {
+                mt = managedByEntry.get(e.getEntryCode().toLowerCase(Locale.ROOT));
+            }
+            if (mt == null && e.getPhysicalTableName() != null) {
+                mt = managedByTable.get(e.getPhysicalTableName().toLowerCase(Locale.ROOT));
+            }
+            Map<String, Object> hit = new LinkedHashMap<>();
+            hit.put("hitType", "METADATA");
+            hit.put("entryCode", e.getEntryCode() == null ? "" : e.getEntryCode());
+            hit.put("entryName", e.getEntryName() == null ? "" : e.getEntryName());
+            hit.put("entryType", e.getEntryType() == null ? "" : e.getEntryType());
+            hit.put("physicalTable", e.getPhysicalTableName() == null ? "" : e.getPhysicalTableName());
+            hit.put("dataLayer", e.getDataLayer() == null ? "" : e.getDataLayer());
+            hit.put("businessDomain", e.getBusinessDomain() == null ? "" : e.getBusinessDomain());
+            hit.put("tags", e.getTags() == null ? "" : e.getTags());
+            hit.put("keywords", e.getKeywords() == null ? "" : e.getKeywords());
+            hit.put("description", e.getDescription() == null ? "" : e.getDescription());
+            hit.put("matchedDataItems", matchedItemsByParent.getOrDefault(e.getEntryCode(), List.of()));
+            hit.put("managed", mt != null);
+            hit.put("managedTableId", mt == null ? null : mt.getId());
+            hit.put("recordCount", mt == null || mt.getRecordCount() == null ? 0 : mt.getRecordCount());
+            hits.add(hit);
+            if (hits.size() >= 100) break;
+        }
+
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("mode", "METADATA");
+        out.put("query", q == null ? "" : q.trim());
+        out.put("tag", tag == null ? "" : tag.trim());
+        out.put("domain", domain == null ? "" : domain.trim());
+        out.put("dataItem", dataItem == null ? "" : dataItem.trim());
+        out.put("hitCount", hits.size());
+        out.put("hits", hits);
+        out.put("hint", "找到元数据后可锁定已纳管物理表，再按条件浏览或下载业务数据");
+        return out;
+    }
+
     public Map<String, Object> queryManagedTable(Long managedTableId, Integer limit) {
+        return queryManagedTable(managedTableId, limit, null, null);
+    }
+
+    /**
+     * 数据查询：可选关键词/指定列条件过滤后预览，供下载前锁定。
+     */
+    public Map<String, Object> queryManagedTable(Long managedTableId, Integer limit, String keyword, String column) {
         if (managedTableId == null) throw new BusinessException(400, "managedTableId required");
         RcManagedTable mt = managedTableMapper.selectById(managedTableId);
         if (mt == null || !"ACTIVE".equalsIgnoreCase(mt.getStatus())) {
@@ -652,19 +2214,57 @@ public class ResourceCenterPlatformService {
         int lim = limit == null ? 100 : Math.min(Math.max(limit, 1), 500);
         List<String> columns = new ArrayList<>();
         List<Map<String, Object>> rows = new ArrayList<>();
-        try (Connection conn = platformDataSource.getConnection();
-             Statement st = conn.createStatement();
-             ResultSet rs = st.executeQuery("SELECT * FROM `" + table + "` LIMIT " + lim)) {
-            ResultSetMetaData meta = rs.getMetaData();
-            int cc = meta.getColumnCount();
-            for (int i = 1; i <= cc; i++) columns.add(meta.getColumnLabel(i));
-            while (rs.next()) {
-                Map<String, Object> row = new LinkedHashMap<>();
-                for (String col : columns) {
-                    Object v = rs.getObject(col);
-                    row.put(col, v == null ? null : String.valueOf(v));
+        String appliedFilter = "";
+        try (Connection conn = platformDataSource.getConnection()) {
+            String sql;
+            List<String> params = new ArrayList<>();
+            if (keyword != null && !keyword.isBlank()) {
+                String kw = keyword.trim();
+                if (kw.length() > 64) throw new BusinessException(400, "查询关键词过长");
+                String like = "%" + escapeLike(kw) + "%";
+                List<String> cols;
+                if (column != null && !column.isBlank()) {
+                    String col = requireIdent(column.trim(), "column");
+                    if (!columnExists(table, col)) {
+                        throw new BusinessException(400, "列不存在: " + col);
+                    }
+                    cols = List.of(col);
+                    appliedFilter = col + " LIKE '%" + kw + "%'";
+                } else {
+                    cols = listSearchableColumns(conn, table);
+                    if (cols.isEmpty()) {
+                        throw new BusinessException(400, "该表无可检索字符列，请去掉关键词后查询");
+                    }
+                    appliedFilter = "多列 LIKE '%" + kw + "%'";
                 }
-                rows.add(row);
+                StringBuilder sb = new StringBuilder("SELECT * FROM `").append(table).append("` WHERE ");
+                for (int i = 0; i < cols.size(); i++) {
+                    if (i > 0) sb.append(" OR ");
+                    sb.append("`").append(cols.get(i)).append("` LIKE ? ESCAPE '\\\\'");
+                    params.add(like);
+                }
+                sb.append(" LIMIT ").append(lim);
+                sql = sb.toString();
+            } else {
+                sql = "SELECT * FROM `" + table + "` LIMIT " + lim;
+            }
+            try (PreparedStatement ps = conn.prepareStatement(sql)) {
+                for (int i = 0; i < params.size(); i++) {
+                    ps.setString(i + 1, params.get(i));
+                }
+                try (ResultSet rs = ps.executeQuery()) {
+                    ResultSetMetaData meta = rs.getMetaData();
+                    int cc = meta.getColumnCount();
+                    for (int i = 1; i <= cc; i++) columns.add(meta.getColumnLabel(i));
+                    while (rs.next()) {
+                        Map<String, Object> row = new LinkedHashMap<>();
+                        for (String col : columns) {
+                            Object v = rs.getObject(col);
+                            row.put(col, v == null ? null : String.valueOf(v));
+                        }
+                        rows.add(row);
+                    }
+                }
             }
         } catch (BusinessException e) {
             throw e;
@@ -676,10 +2276,77 @@ public class ResourceCenterPlatformService {
         out.put("physicalTable", table);
         out.put("metaEntryCode", mt.getMetaEntryCode());
         out.put("limit", lim);
+        out.put("filter", appliedFilter);
+        out.put("keyword", keyword == null ? "" : keyword.trim());
+        out.put("column", column == null ? "" : column.trim());
         out.put("columns", columns);
         out.put("rows", rows);
         out.put("rowCount", rows.size());
         return out;
+    }
+
+    private List<String> listSearchableColumns(Connection conn, String table) throws Exception {
+        List<String> cols = new ArrayList<>();
+        DatabaseMetaData md = conn.getMetaData();
+        try (ResultSet rs = md.getColumns(conn.getCatalog(), null, table, null)) {
+            while (rs.next()) {
+                String name = rs.getString("COLUMN_NAME");
+                String type = rs.getString("TYPE_NAME");
+                if (name == null || !IDENT.matcher(name).matches()) continue;
+                if (type == null) continue;
+                String t = type.toUpperCase(Locale.ROOT);
+                if (t.contains("CHAR") || t.contains("TEXT") || t.contains("JSON") || t.contains("ENUM")) {
+                    cols.add(name);
+                }
+            }
+        }
+        // 优先常见关键业务列
+        cols.sort((a, b) -> Integer.compare(personKeyScore(b), personKeyScore(a)));
+        if (cols.size() > 24) {
+            return new ArrayList<>(cols.subList(0, 24));
+        }
+        return cols;
+    }
+
+    private static int personKeyScore(String col) {
+        String c = col.toLowerCase(Locale.ROOT);
+        if (c.contains("id_card") || c.contains("idcard") || c.equals("sfzh") || c.contains("身份证")) return 100;
+        if (c.contains("mobile") || c.contains("phone") || c.equals("sjh") || c.contains("手机")) return 90;
+        if (c.equals("name") || c.equals("xm") || c.contains("姓名") || c.endsWith("_name")) return 80;
+        if (c.contains("person") || c.contains("entity")) return 50;
+        return 0;
+    }
+
+    private static String buildRowSummary(Map<String, Object> row, List<String> matched, String keyword) {
+        if (matched != null && !matched.isEmpty()) {
+            StringBuilder sb = new StringBuilder();
+            int n = 0;
+            for (String col : matched) {
+                if (n++ >= 3) break;
+                if (sb.length() > 0) sb.append(" · ");
+                sb.append(col).append("=").append(row.get(col));
+            }
+            return sb.toString();
+        }
+        for (Map.Entry<String, Object> e : row.entrySet()) {
+            Object v = e.getValue();
+            if (v != null && String.valueOf(v).contains(keyword)) {
+                return e.getKey() + "=" + v;
+            }
+        }
+        return keyword;
+    }
+
+    private static String escapeLike(String raw) {
+        return raw.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_");
+    }
+
+    private static String nvl(String s) {
+        return s == null ? "" : s;
+    }
+
+    private static boolean containsIgnore(String hay, String needleLower) {
+        return hay != null && hay.toLowerCase(Locale.ROOT).contains(needleLower);
     }
 
     public List<RcStoragePolicy> listPolicies(String actionType) {
@@ -713,6 +2380,326 @@ public class ResourceCenterPlatformService {
 
     // ---------- helpers ----------
 
+    private void collectMonitorMetrics() {
+        List<RcManagedTable> tables = managedTableMapper.selectList(new LambdaQueryWrapper<RcManagedTable>()
+                .eq(RcManagedTable::getStatus, "ACTIVE"));
+        long totalRows = 0;
+        long totalBytes = 0;
+        int missingPhysical = 0;
+        for (RcManagedTable mt : tables) {
+            refreshTableStats(mt);
+            totalRows += mt.getRecordCount() == null ? 0 : mt.getRecordCount();
+            totalBytes += (mt.getDataBytes() == null ? 0 : mt.getDataBytes())
+                    + (mt.getIndexBytes() == null ? 0 : mt.getIndexBytes());
+            if (mt.getPhysicalTable() == null || mt.getPhysicalTable().isBlank() || !tableExists(mt.getPhysicalTable())) {
+                missingPhysical++;
+            }
+        }
+
+        // —— 可用性：库服务 / 存储 / 传输通道 ——
+        long dbMs = pingDbMs();
+        boolean dbUp = dbMs >= 0;
+        upsertMetric("db_service", "AVAILABILITY", "数据库服务", dbUp ? "UP" : "DOWN",
+                null, "DB", dbUp ? "OK" : "CRITICAL");
+        upsertMetric("db_ping_ms", "AVAILABILITY", "数据库探活耗时", dbUp ? String.valueOf(dbMs) : "-",
+                "ms", "DB", !dbUp ? "CRITICAL" : (dbMs > 500 ? "WARN" : "OK"));
+
+        boolean backupWritable = pathWritable(BACKUP_ROOT);
+        boolean archiveWritable = pathWritable(ARCHIVE_ROOT);
+        upsertMetric("storage_backup", "AVAILABILITY", "备份存储目录",
+                backupWritable ? "UP" : "DOWN", null, "STORAGE", backupWritable ? "OK" : "CRITICAL");
+        upsertMetric("storage_archive", "AVAILABILITY", "归档存储目录",
+                archiveWritable ? "UP" : "DOWN", null, "STORAGE", archiveWritable ? "OK" : "WARN");
+
+        boolean seaweed = false;
+        boolean es = false;
+        try {
+            seaweed = storageIntegrationClient.isSeaweedHealthy();
+            es = storageIntegrationClient.isElasticsearchHealthy();
+        } catch (Exception e) {
+            log.debug("storage probe skipped: {}", e.getMessage());
+        }
+        boolean objectFallback = pathWritable(OBJECT_ROOT);
+        String objectVal;
+        String objectLevel;
+        if (seaweed) {
+            objectVal = "UP";
+            objectLevel = "OK";
+        } else if (objectFallback) {
+            objectVal = "LOCAL_FALLBACK";
+            objectLevel = "WARN";
+        } else {
+            objectVal = "DOWN";
+            objectLevel = "CRITICAL";
+        }
+        upsertMetric("storage_object", "AVAILABILITY", "对象存储服务", objectVal, null, "STORAGE", objectLevel);
+        upsertMetric("storage_index", "AVAILABILITY", "检索索引服务",
+                es ? "UP" : "LEDGER", null, "STORAGE", es ? "OK" : "WARN");
+
+        LocalDateTime since = LocalDateTime.now().minusDays(1);
+        List<RcCatalogExchangeJob> recentJobs = catalogExchangeJobMapper.selectList(
+                new LambdaQueryWrapper<RcCatalogExchangeJob>()
+                        .ge(RcCatalogExchangeJob::getCreatedAt, since)
+                        .orderByDesc(RcCatalogExchangeJob::getId));
+        long chFail = recentJobs.stream()
+                .filter(j -> "FAILED".equalsIgnoreCase(nullToEmpty(j.getRunStatus()))).count();
+        long chOk = recentJobs.stream()
+                .filter(j -> !"FAILED".equalsIgnoreCase(nullToEmpty(j.getRunStatus()))).count();
+        upsertMetric("channel_exchange_24h", "AVAILABILITY", "近24h目录交换通道",
+                recentJobs.isEmpty() ? "IDLE" : (chOk + "成功/" + chFail + "失败"),
+                null, "CHANNEL",
+                chFail > 0 ? "CRITICAL" : (recentJobs.isEmpty() ? "WARN" : "OK"));
+        upsertMetric("managed_tables", "AVAILABILITY", "纳管表数量",
+                String.valueOf(tables.size()), "张", "DB", tables.isEmpty() ? "WARN" : "OK");
+
+        // —— 完整性：物理表存在 / 备份校验 / 交换行数 ——
+        upsertMetric("physical_missing", "INTEGRITY", "纳管表物理缺失",
+                String.valueOf(missingPhysical), "张", "DB",
+                missingPhysical > 0 ? "CRITICAL" : "OK");
+        List<RcBackupArtifact> artifacts = backupArtifactMapper.selectList(
+                new LambdaQueryWrapper<RcBackupArtifact>().orderByDesc(RcBackupArtifact::getId).last("LIMIT 200"));
+        long withSha = artifacts.stream()
+                .filter(a -> a.getSha256() != null && !a.getSha256().isBlank()).count();
+        long shaPct = artifacts.isEmpty() ? 100 : Math.round(withSha * 100.0 / artifacts.size());
+        upsertMetric("backup_sha_coverage", "INTEGRITY", "备份SHA覆盖率",
+                String.valueOf(shaPct), "%", "BACKUP",
+                shaPct < 80 ? "WARN" : "OK");
+        int verifyOk = 0;
+        int verifyFail = 0;
+        int sampled = 0;
+        for (RcBackupArtifact art : artifacts) {
+            if (sampled >= 3) break;
+            if (art.getFilePath() == null || art.getSha256() == null || art.getSha256().isBlank()) continue;
+            sampled++;
+            try {
+                Path p = Path.of(art.getFilePath());
+                if (!Files.exists(p)) {
+                    verifyFail++;
+                    continue;
+                }
+                if (art.getSha256().equalsIgnoreCase(sha256(p))) verifyOk++;
+                else verifyFail++;
+            } catch (Exception e) {
+                verifyFail++;
+            }
+        }
+        upsertMetric("backup_verify_sample", "INTEGRITY", "备份抽样校验",
+                sampled == 0 ? "无样本" : (verifyOk + "通过/" + verifyFail + "失败"),
+                null, "BACKUP",
+                verifyFail > 0 ? "CRITICAL" : (sampled == 0 ? "WARN" : "OK"));
+        long exchangeRows = recentJobs.stream()
+                .mapToLong(j -> j.getRowCount() == null ? 0 : j.getRowCount()).sum();
+        upsertMetric("exchange_rows_24h", "INTEGRITY", "近24h交换行数",
+                String.valueOf(exchangeRows), "行", "CHANNEL", "OK");
+        upsertMetric("total_rows", "INTEGRITY", "纳管表总行数",
+                String.valueOf(totalRows), "行", "DB", totalRows > 0 ? "OK" : "WARN");
+
+        // —— 安全性：加密 / 权限可见性 / 访问审计 ——
+        List<RcAssetCatalogEntry> catalogs = catalogMapper.selectList(null);
+        long encrypted = catalogs.stream()
+                .filter(c -> c.getEncryptEnabled() != null && c.getEncryptEnabled() == 1).count();
+        long published = catalogs.stream()
+                .filter(c -> "PUBLISHED".equalsIgnoreCase(nullToEmpty(c.getPublishStatus()))).count();
+        long privates = catalogs.stream()
+                .filter(c -> !"PUBLIC".equalsIgnoreCase(nullToEmpty(c.getVisibility()))).count();
+        upsertMetric("catalog_encrypt", "SECURITY", "目录加密启用",
+                encrypted + "/" + catalogs.size(), null, "CATALOG",
+                catalogs.isEmpty() ? "WARN" : "OK");
+        upsertMetric("catalog_visibility", "SECURITY", "未公开目录占比",
+                catalogs.isEmpty() ? "0" : String.valueOf(Math.round(privates * 100.0 / catalogs.size())),
+                "%", "CATALOG", "OK");
+        upsertMetric("catalog_published", "SECURITY", "已公开目录数",
+                String.valueOf(published), "条", "CATALOG", "OK");
+
+        LocalDateTime auditSince = LocalDateTime.now().minusDays(1);
+        List<AuditLog> rcAudits = auditLogMapper.selectList(new LambdaQueryWrapper<AuditLog>()
+                .and(w -> w.likeRight(AuditLog::getAction, "RC_")
+                        .or().likeRight(AuditLog::getResourceType, "rc_"))
+                .ge(AuditLog::getCreatedAt, auditSince)
+                .orderByDesc(AuditLog::getId)
+                .last("LIMIT 500"));
+        upsertMetric("access_audit_24h", "SECURITY", "近24h资源访问审计",
+                String.valueOf(rcAudits.size()), "条", "AUDIT",
+                rcAudits.isEmpty() ? "WARN" : "OK");
+        long distinctIp = rcAudits.stream()
+                .map(a -> a.getIpAddress() == null ? "" : a.getIpAddress())
+                .filter(s -> !s.isBlank())
+                .distinct().count();
+        long distinctUser = rcAudits.stream()
+                .map(a -> a.getUsername() == null ? "" : a.getUsername())
+                .filter(s -> !s.isBlank())
+                .distinct().count();
+        // 简单异常：单 IP 访问量占比过高
+        Map<String, Long> ipCount = new LinkedHashMap<>();
+        for (AuditLog a : rcAudits) {
+            String ip = a.getIpAddress() == null ? "-" : a.getIpAddress();
+            ipCount.merge(ip, 1L, Long::sum);
+        }
+        long maxIpHits = ipCount.values().stream().mapToLong(Long::longValue).max().orElse(0);
+        boolean anomaly = !rcAudits.isEmpty() && rcAudits.size() >= 20 && maxIpHits * 100.0 / rcAudits.size() >= 80;
+        upsertMetric("access_anomaly", "SECURITY", "异常访问探测",
+                anomaly ? "单IP占比偏高(" + maxIpHits + "/" + rcAudits.size() + ")"
+                        : ("IP=" + distinctIp + " 用户=" + distinctUser),
+                null, "AUDIT", anomaly ? "WARN" : "OK");
+
+        // —— 性能：响应时间 / 存储规模 / 传输吞吐 ——
+        long queryMs = sampleQueryMs(tables);
+        upsertMetric("query_latency", "PERFORMANCE", "纳管表抽样查询耗时",
+                queryMs < 0 ? "-" : String.valueOf(queryMs), "ms", "PERF",
+                queryMs < 0 ? "WARN" : (queryMs > 1000 ? "WARN" : "OK"));
+        upsertMetric("db_response", "PERFORMANCE", "数据库响应时间",
+                dbUp ? String.valueOf(dbMs) : "-", "ms", "PERF",
+                !dbUp ? "CRITICAL" : (dbMs > 300 ? "WARN" : "OK"));
+        double gb = totalBytes / (1024.0 * 1024.0 * 1024.0);
+        upsertMetric("storage_capacity", "PERFORMANCE", "纳管表存储容量",
+                String.format(Locale.ROOT, "%.3f", gb), "GB", "PERF", "OK");
+        upsertMetric("total_bytes", "PERFORMANCE", "纳管表存储字节",
+                String.valueOf(totalBytes), "B", "PERF", "OK");
+        long transferRows = exchangeRows;
+        upsertMetric("transfer_throughput_24h", "PERFORMANCE", "近24h传输行量",
+                String.valueOf(transferRows), "行", "CHANNEL", "OK");
+        List<RcPolicyRunLog> runs = policyRunLogMapper.selectList(new LambdaQueryWrapper<RcPolicyRunLog>()
+                .ge(RcPolicyRunLog::getCreatedAt, since)
+                .orderByDesc(RcPolicyRunLog::getId)
+                .last("LIMIT 100"));
+        upsertMetric("policy_runs_24h", "PERFORMANCE", "近24h策略执行次数",
+                String.valueOf(runs.size()), "次", "PERF", "OK");
+    }
+
+    private Map<String, Object> toMetricView(RcMonitorMetric m) {
+        Map<String, Object> row = new LinkedHashMap<>();
+        row.put("id", m.getId());
+        row.put("metricKey", m.getMetricKey());
+        row.put("metricCategory", m.getMetricCategory());
+        row.put("metricLabel", m.getMetricLabel());
+        row.put("metricValue", m.getMetricValue());
+        row.put("metricUnit", m.getMetricUnit());
+        row.put("resourceType", m.getResourceType());
+        row.put("alertLevel", m.getAlertLevel());
+        row.put("checkedAt", m.getCheckedAt());
+        return row;
+    }
+
+    private String categoryHealth(List<Map<String, Object>> rows) {
+        boolean critical = rows.stream().anyMatch(r -> "CRITICAL".equalsIgnoreCase(String.valueOf(r.get("alertLevel"))));
+        if (critical) return "CRITICAL";
+        boolean warn = rows.stream().anyMatch(r -> "WARN".equalsIgnoreCase(String.valueOf(r.get("alertLevel"))));
+        if (warn) return "WARN";
+        return rows.isEmpty() ? "WARN" : "OK";
+    }
+
+    private List<Map<String, Object>> listMonitorChannels() {
+        List<Map<String, Object>> out = new ArrayList<>();
+        for (RcCatalogExchangeJob j : catalogExchangeJobMapper.selectList(
+                new LambdaQueryWrapper<RcCatalogExchangeJob>()
+                        .orderByDesc(RcCatalogExchangeJob::getId).last("LIMIT 30"))) {
+            Map<String, Object> row = new LinkedHashMap<>();
+            row.put("channelType", "CATALOG_EXCHANGE");
+            row.put("jobCode", j.getJobCode());
+            row.put("jobName", j.getJobName());
+            row.put("physicalTable", j.getPhysicalTable());
+            row.put("rowCount", j.getRowCount());
+            row.put("runStatus", j.getRunStatus());
+            row.put("message", j.getMessage());
+            row.put("createdAt", j.getCreatedAt());
+            out.add(row);
+        }
+        for (RcBackupJob job : backupJobMapper.selectList(
+                new LambdaQueryWrapper<RcBackupJob>().orderByDesc(RcBackupJob::getId).last("LIMIT 20"))) {
+            Map<String, Object> row = new LinkedHashMap<>();
+            row.put("channelType", "BACKUP_TRANSFER");
+            row.put("jobCode", "BJ-" + job.getId());
+            row.put("jobName", job.getJobName() != null ? job.getJobName() : "备份传输");
+            row.put("physicalTable", null);
+            row.put("rowCount", null);
+            row.put("runStatus", job.getStatus());
+            row.put("message", job.getLastMessage());
+            row.put("createdAt", job.getCreatedAt() != null ? job.getCreatedAt() : job.getLastRunAt());
+            out.add(row);
+        }
+        return out;
+    }
+
+    private List<Map<String, Object>> listMonitorAudits(int limit) {
+        List<Map<String, Object>> out = new ArrayList<>();
+        List<AuditLog> logs = auditLogMapper.selectList(new LambdaQueryWrapper<AuditLog>()
+                .and(w -> w.likeRight(AuditLog::getAction, "RC_")
+                        .or().likeRight(AuditLog::getResourceType, "rc_"))
+                .orderByDesc(AuditLog::getId)
+                .last("LIMIT " + Math.max(1, Math.min(limit, 100))));
+        for (AuditLog a : logs) {
+            Map<String, Object> row = new LinkedHashMap<>();
+            row.put("action", a.getAction());
+            row.put("username", a.getUsername());
+            row.put("resourceType", a.getResourceType());
+            row.put("resourceId", a.getResourceId());
+            row.put("detail", a.getDetail());
+            row.put("ipAddress", a.getIpAddress());
+            row.put("createdAt", a.getCreatedAt());
+            out.add(row);
+        }
+        return out;
+    }
+
+    private List<Map<String, Object>> listIntegritySamples(int limit) {
+        List<Map<String, Object>> out = new ArrayList<>();
+        for (RcBackupArtifact art : backupArtifactMapper.selectList(
+                new LambdaQueryWrapper<RcBackupArtifact>().orderByDesc(RcBackupArtifact::getId)
+                        .last("LIMIT " + Math.max(1, Math.min(limit, 50)))))) {
+            Map<String, Object> row = new LinkedHashMap<>();
+            row.put("id", art.getId());
+            row.put("physicalTable", art.getPhysicalTable());
+            row.put("fileName", art.getFileName());
+            row.put("rowCount", art.getRowCount());
+            row.put("byteSize", art.getByteSize());
+            row.put("sha256", art.getSha256());
+            row.put("status", art.getStatus());
+            row.put("createdAt", art.getCreatedAt());
+            boolean fileOk = art.getFilePath() != null && Files.exists(Path.of(art.getFilePath()));
+            row.put("fileExists", fileOk);
+            out.add(row);
+        }
+        return out;
+    }
+
+    private boolean pathWritable(Path root) {
+        try {
+            Files.createDirectories(root);
+            Path probe = root.resolve(".monitor-probe");
+            Files.writeString(probe, "ok", StandardCharsets.UTF_8);
+            Files.deleteIfExists(probe);
+            return true;
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
+    private long pingDbMs() {
+        long start = System.nanoTime();
+        try (Connection c = platformDataSource.getConnection(); Statement s = c.createStatement()) {
+            s.execute("SELECT 1");
+            return Math.max(0, (System.nanoTime() - start) / 1_000_000);
+        } catch (Exception e) {
+            return -1;
+        }
+    }
+
+    private long sampleQueryMs(List<RcManagedTable> tables) {
+        for (RcManagedTable mt : tables) {
+            if (mt.getPhysicalTable() == null || !IDENT.matcher(mt.getPhysicalTable()).matches()) continue;
+            if (!tableExists(mt.getPhysicalTable())) continue;
+            long start = System.nanoTime();
+            try (Connection c = platformDataSource.getConnection();
+                 Statement s = c.createStatement()) {
+                s.execute("SELECT * FROM `" + mt.getPhysicalTable() + "` LIMIT 1");
+                return Math.max(0, (System.nanoTime() - start) / 1_000_000);
+            } catch (Exception e) {
+                return -1;
+            }
+        }
+        return -1;
+    }
+
     private void refreshTableStats(RcManagedTable mt) {
         try (Connection conn = platformDataSource.getConnection();
              PreparedStatement ps = conn.prepareStatement(
@@ -744,20 +2731,27 @@ public class ResourceCenterPlatformService {
         }
     }
 
-    private void upsertMetric(String key, String label, String value, String level) {
+    private void upsertMetric(String key, String category, String label, String value,
+                              String unit, String resourceType, String level) {
         RcMonitorMetric m = monitorMapper.selectOne(new LambdaQueryWrapper<RcMonitorMetric>()
                 .eq(RcMonitorMetric::getMetricKey, key).last("LIMIT 1"));
         if (m == null) {
             m = new RcMonitorMetric();
             m.setMetricKey(key);
+            m.setMetricCategory(category);
             m.setMetricLabel(label);
             m.setMetricValue(value);
+            m.setMetricUnit(unit);
+            m.setResourceType(resourceType);
             m.setAlertLevel(level);
             m.setCheckedAt(LocalDateTime.now());
             monitorMapper.insert(m);
         } else {
+            m.setMetricCategory(category);
             m.setMetricLabel(label);
             m.setMetricValue(value);
+            m.setMetricUnit(unit);
+            m.setResourceType(resourceType);
             m.setAlertLevel(level);
             m.setCheckedAt(LocalDateTime.now());
             monitorMapper.updateById(m);
@@ -765,12 +2759,7 @@ public class ResourceCenterPlatformService {
     }
 
     private boolean pingDb() {
-        try (Connection c = platformDataSource.getConnection(); Statement s = c.createStatement()) {
-            s.execute("SELECT 1");
-            return true;
-        } catch (Exception e) {
-            return false;
-        }
+        return pingDbMs() >= 0;
     }
 
     private boolean tableExists(String table) {
@@ -856,6 +2845,8 @@ public class ResourceCenterPlatformService {
         Map<String, Object> m = new LinkedHashMap<>();
         m.put("id", mt.getId());
         m.put("themeId", mt.getThemeId());
+        m.put("libId", mt.getLibId());
+        m.put("assetType", mt.getAssetType());
         m.put("physicalTable", mt.getPhysicalTable());
         m.put("metaEntryCode", mt.getMetaEntryCode());
         m.put("catalogResourceCode", mt.getCatalogResourceCode());
@@ -868,8 +2859,84 @@ public class ResourceCenterPlatformService {
             m.put("themeCode", theme.getThemeCode());
             m.put("themeName", theme.getThemeName());
             m.put("libraryKind", theme.getLibraryKind());
+            m.put("zoneCode", theme.getZoneCode());
+        }
+        if (mt.getLibId() != null) {
+            RcBaseLibrary lib = libraryMapper.selectById(mt.getLibId());
+            if (lib != null) {
+                m.put("libCode", lib.getLibCode());
+                m.put("libName", lib.getLibName());
+                m.put("libType", lib.getLibType());
+            }
         }
         return m;
+    }
+
+    private List<Map<String, Object>> enrichLibraries(List<RcBaseLibrary> libs, List<Map<String, Object>> managed) {
+        List<Map<String, Object>> out = new ArrayList<>();
+        for (RcBaseLibrary lib : libs) {
+            Map<String, Object> m = new LinkedHashMap<>();
+            m.put("id", lib.getId());
+            m.put("libCode", lib.getLibCode());
+            m.put("libName", lib.getLibName());
+            m.put("libType", lib.getLibType());
+            m.put("recordCount", lib.getRecordCount());
+            m.put("status", lib.getStatus());
+            m.put("description", lib.getDescription());
+            m.put("ownerOrg", lib.getOwnerOrg());
+            m.put("sortOrder", lib.getSortOrder());
+            long bound = managed.stream()
+                    .filter(t -> lib.getId().equals(t.get("libId"))
+                            || (lib.getLibType() != null && lib.getLibType().equals(t.get("assetType"))
+                            && t.get("libId") == null))
+                    .count();
+            m.put("managedCount", bound);
+            out.add(m);
+        }
+        return out;
+    }
+
+    private Map<String, Object> buildInventory(List<RcBaseLibrary> base,
+                                               List<RcBaseLibrary> semi,
+                                               List<RcBaseLibrary> unstruct,
+                                               List<Map<String, Object>> managed) {
+        Map<String, Object> byType = new LinkedHashMap<>();
+        byType.put("BASE", Map.of("libraryCount", base.size(),
+                "recordCount", base.stream().mapToLong(l -> l.getRecordCount() == null ? 0 : l.getRecordCount()).sum()));
+        byType.put("SEMI", Map.of("libraryCount", semi.size(),
+                "recordCount", semi.stream().mapToLong(l -> l.getRecordCount() == null ? 0 : l.getRecordCount()).sum()));
+        byType.put("UNSTRUCT", Map.of("libraryCount", unstruct.size(),
+                "recordCount", unstruct.stream().mapToLong(l -> l.getRecordCount() == null ? 0 : l.getRecordCount()).sum()));
+
+        Map<String, Long> byAssetType = new LinkedHashMap<>();
+        byAssetType.put("BASE", 0L);
+        byAssetType.put("SEMI", 0L);
+        byAssetType.put("UNSTRUCT", 0L);
+        long managedRows = 0;
+        for (Map<String, Object> t : managed) {
+            String at = String.valueOf(t.getOrDefault("assetType", "BASE")).toUpperCase(Locale.ROOT);
+            byAssetType.merge(at, 1L, Long::sum);
+            Object rc = t.get("recordCount");
+            if (rc instanceof Number) managedRows += ((Number) rc).longValue();
+        }
+
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("byLibraryType", byType);
+        out.put("byAssetTypeTables", byAssetType);
+        out.put("managedTableCount", managed.size());
+        out.put("managedRecordCount", managedRows);
+        out.put("moduleCount", ASSET_MODULES.size());
+        out.put("angle", List.of("库类型", "资产类型（表）", "数据中心模块", "文件目录/索引"));
+        return out;
+    }
+
+    private static int intVal(Object o, int def) {
+        if (o == null) return def;
+        try {
+            return Integer.parseInt(String.valueOf(o));
+        } catch (Exception e) {
+            return def;
+        }
     }
 
     private static String sha256(Path path) throws Exception {

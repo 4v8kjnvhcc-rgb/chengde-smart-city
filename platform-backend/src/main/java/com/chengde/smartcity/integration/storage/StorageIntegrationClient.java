@@ -79,6 +79,53 @@ public class StorageIntegrationClient {
         }
     }
 
+    /**
+     * 读取平台登记文件。上传时始终保留本地镜像，因此 SeaweedFS 暂不可用时仍可预览和下载。
+     */
+    public byte[] readDocument(String storageKey) {
+        if (storageKey == null || storageKey.isBlank()) {
+            throw new IllegalArgumentException("文件存储键为空");
+        }
+        try {
+            Path local = resolveDocumentLocalPath(storageKey);
+            if (!Files.exists(local) || !Files.isRegularFile(local)) {
+                throw new IllegalArgumentException("文件内容不存在或已迁移");
+            }
+            return Files.readAllBytes(local);
+        } catch (IllegalArgumentException e) {
+            throw e;
+        } catch (Exception e) {
+            throw new RuntimeException("读取文件失败: " + e.getMessage(), e);
+        }
+    }
+
+    public void deleteDocument(String storageKey) {
+        if (storageKey == null || storageKey.isBlank() || storageKey.startsWith("external://")) {
+            return;
+        }
+        try {
+            Files.deleteIfExists(resolveDocumentLocalPath(storageKey));
+        } catch (Exception e) {
+            throw new RuntimeException("删除文件失败: " + e.getMessage(), e);
+        }
+    }
+
+    private Path resolveDocumentLocalPath(String storageKey) {
+        if (storageKey.startsWith("local://")) {
+            return Path.of(storageKey.substring("local://".length()));
+        }
+        int docsIndex = storageKey.indexOf("docs/");
+        if (docsIndex < 0) {
+            throw new IllegalArgumentException("不支持的文件存储键");
+        }
+        String key = storageKey.substring(docsIndex);
+        int queryIndex = key.indexOf('?');
+        if (queryIndex >= 0) {
+            key = key.substring(0, queryIndex);
+        }
+        return Path.of("data", "nas-demo", "seaweed-fallback", key);
+    }
+
     public Map<String, Object> indexCatalog(String catalogId, String catalogCode, String title, String description) {
         if (!props.isEnabled() || !isElasticsearchHealthy()) {
             return Map.of("indexStatus", "SKIPPED", "index", "smartcity_catalog", "source", "elasticsearch-offline");

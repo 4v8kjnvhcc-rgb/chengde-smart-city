@@ -13,6 +13,7 @@ public class UnsDocPipeline {
     private String pipelineType;
     private String status;
     private String resultMessage;
+    private String detailJson;
     private LocalDateTime createdAt;
 
     public Long getId() { return id; }
@@ -25,6 +26,8 @@ public class UnsDocPipeline {
     public void setStatus(String status) { this.status = status; }
     public String getResultMessage() { return resultMessage; }
     public void setResultMessage(String resultMessage) { this.resultMessage = resultMessage; }
+    public String getDetailJson() { return detailJson; }
+    public void setDetailJson(String detailJson) { this.detailJson = detailJson; }
     public LocalDateTime getCreatedAt() { return createdAt; }
     public void setCreatedAt(LocalDateTime createdAt) { this.createdAt = createdAt; }
 }

@@ -10,7 +10,7 @@ import RcStorageLifecyclePanel from '@/views/resource/RcStorageLifecyclePanel.vu
       :closable="false"
       show-icon
       style="margin-bottom:12px"
-      title="能力来自资源中心存储策略；禁止自动物理删除。原「数据库存储管理」销毁 Tab 已迁入本菜单。"
+      title="与资源中心「数据库存储管理 · 数据销毁」共用策略；禁止自动物理删除。"
     />
     <RcStorageLifecyclePanel mode="destroy" />
   </PageCard>
