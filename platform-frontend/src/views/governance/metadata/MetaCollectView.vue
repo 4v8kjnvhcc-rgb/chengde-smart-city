@@ -6,6 +6,7 @@ import PageCard from '@/components/common/PageCard.vue'
 import PortalPagination from '@/components/common/PortalPagination.vue'
 import { useClientPager } from '@/composables/useClientPager'
 import { LAYER_OPTIONS } from './meta-labels'
+import ExecCycleSelect from '@/views/system/ExecCycleSelect.vue'
 
 interface DataSource {
   id: number
@@ -60,11 +61,6 @@ const tablesLoading = ref(false)
 const selectedTableNames = ref<string[]>([])
 
 const cronEnabled = ref(false)
-const cronMode = ref<'hour' | 'day' | 'week' | 'month' | 'custom'>('day')
-const cronHour = ref(2)
-const cronMinute = ref(0)
-const cronWeekDay = ref(1)
-const cronMonthDay = ref(1)
 
 const form = reactive({
   taskName: '',
@@ -77,11 +73,6 @@ const form = reactive({
 const editVisible = ref(false)
 const editing = ref<Task | null>(null)
 const editCronEnabled = ref(false)
-const editCronMode = ref<'hour' | 'day' | 'week' | 'month' | 'custom'>('day')
-const editCronHour = ref(2)
-const editCronMinute = ref(0)
-const editCronWeekDay = ref(1)
-const editCronMonthDay = ref(1)
 const editForm = reactive({
   taskName: '',
   modelId: undefined as number | undefined,
@@ -152,36 +143,6 @@ function tableNameOf(t: SourceTable) {
   return t.sourceTable || t.tableName || ''
 }
 
-function buildCronExpr(mode: typeof cronMode.value, minute: number, hour: number, weekDay: number, monthDay: number, custom: string) {
-  if (mode === 'custom') return custom
-  const m = minute
-  const h = hour
-  if (mode === 'hour') return `0 ${m} * * * ?`
-  if (mode === 'day') return `0 ${m} ${h} * * ?`
-  if (mode === 'week') return `0 ${m} ${h} ? * ${weekDay}`
-  return `0 ${m} ${h} ${monthDay} * ?`
-}
-
-const cronPreview = computed(() =>
-  buildCronExpr(cronMode.value, cronMinute.value, cronHour.value, cronWeekDay.value, cronMonthDay.value, form.cronExpr),
-)
-
-const editCronPreview = computed(() =>
-  buildCronExpr(editCronMode.value, editCronMinute.value, editCronHour.value, editCronWeekDay.value, editCronMonthDay.value, editForm.cronExpr),
-)
-
-function applyCronPreview() {
-  if (cronMode.value !== 'custom') {
-    form.cronExpr = cronPreview.value
-  }
-}
-
-function applyEditCronPreview() {
-  if (editCronMode.value !== 'custom') {
-    editForm.cronExpr = editCronPreview.value
-  }
-}
-
 function parseTableList(raw?: string | null): string[] {
   if (!raw) return []
   const trimmed = raw.trim()
@@ -236,7 +197,7 @@ watch(() => form.scopeType, (scope) => {
 })
 
 watch(cronEnabled, (on) => {
-  if (on) applyCronPreview()
+  if (!on) form.cronExpr = ''
 })
 
 async function createTask() {
@@ -252,9 +213,11 @@ async function createTask() {
     ElMessage.warning('请至少选择一张表')
     return
   }
-  const cronExpr = cronEnabled.value
-    ? (cronMode.value === 'custom' ? form.cronExpr : cronPreview.value)
-    : null
+  if (cronEnabled.value && !form.cronExpr.trim()) {
+    ElMessage.warning('请选择执行周期')
+    return
+  }
+  const cronExpr = cronEnabled.value ? form.cronExpr : null
   await api.post('/governance/platform/metadata/collect/tasks', {
     taskName: form.taskName.trim(),
     ingDataSourceId: form.ingDataSourceId,
@@ -267,6 +230,7 @@ async function createTask() {
   form.taskName = ''
   form.modelId = undefined
   form.scopeType = 'FULL'
+  form.cronExpr = ''
   selectedTableNames.value = []
   cronEnabled.value = false
   await loadTasks()
@@ -280,13 +244,7 @@ async function runTask(id: number) {
 
 function initEditCronFromExpr(expr?: string) {
   editCronEnabled.value = !!expr
-  if (!expr) {
-    editForm.cronExpr = ''
-    editCronMode.value = 'day'
-    return
-  }
-  editForm.cronExpr = expr
-  editCronMode.value = 'custom'
+  editForm.cronExpr = expr || ''
 }
 
 async function openEdit(row: Task) {
@@ -314,9 +272,11 @@ async function openEdit(row: Task) {
 
 async function saveEdit() {
   if (!editing.value) return
-  const cronExpr = editCronEnabled.value
-    ? (editCronMode.value === 'custom' ? editForm.cronExpr : editCronPreview.value)
-    : null
+  if (editCronEnabled.value && !editForm.cronExpr.trim()) {
+    ElMessage.warning('请选择执行周期')
+    return
+  }
+  const cronExpr = editCronEnabled.value ? editForm.cronExpr : null
   await api.put(`/governance/platform/metadata/collect/tasks/${editing.value.id}`, {
     taskName: editForm.taskName.trim(),
     modelId: editForm.modelId || null,
@@ -409,34 +369,9 @@ onMounted(async () => {
       <el-form-item label="定时调度">
         <el-switch v-model="cronEnabled" active-text="启用定时" inactive-text="手动执行" />
       </el-form-item>
-      <template v-if="cronEnabled">
-        <el-form inline class="portal-inline-form portal-inline-form--block">
-          <el-form-item label="频率" class="portal-field-sm">
-            <el-select v-model="cronMode" @change="applyCronPreview">
-              <el-option label="每小时" value="hour" />
-              <el-option label="每天" value="day" />
-              <el-option label="每周" value="week" />
-              <el-option label="每月" value="month" />
-              <el-option label="自定义" value="custom" />
-            </el-select>
-          </el-form-item>
-          <el-form-item v-if="cronMode !== 'custom'" label="分" class="portal-field-xs">
-            <el-input-number v-model="cronMinute" :min="0" :max="59" size="small" @change="applyCronPreview" />
-          </el-form-item>
-          <el-form-item v-if="['day', 'week', 'month'].includes(cronMode)" label="时" class="portal-field-xs">
-            <el-input-number v-model="cronHour" :min="0" :max="23" size="small" @change="applyCronPreview" />
-          </el-form-item>
-          <el-form-item v-if="cronMode === 'week'" label="周几" class="portal-field-xs">
-            <el-input-number v-model="cronWeekDay" :min="1" :max="7" size="small" @change="applyCronPreview" />
-          </el-form-item>
-          <el-form-item v-if="cronMode === 'month'" label="日" class="portal-field-xs">
-            <el-input-number v-model="cronMonthDay" :min="1" :max="28" size="small" @change="applyCronPreview" />
-          </el-form-item>
-          <el-form-item label="Cron" class="portal-field-cron">
-            <el-input v-model="form.cronExpr" :readonly="cronMode !== 'custom'" />
-          </el-form-item>
-        </el-form>
-      </template>
+      <el-form-item v-if="cronEnabled" label="执行周期">
+        <ExecCycleSelect v-model="form.cronExpr" style="max-width:420px" />
+      </el-form-item>
       <el-form-item>
         <el-button type="primary" @click="createTask">创建任务</el-button>
       </el-form-item>
@@ -552,26 +487,9 @@ onMounted(async () => {
         <el-form-item label="定时调度">
           <el-switch v-model="editCronEnabled" active-text="启用" inactive-text="手动" />
         </el-form-item>
-        <template v-if="editCronEnabled">
-          <el-form-item label="频率">
-            <el-select v-model="editCronMode" @change="applyEditCronPreview">
-              <el-option label="每小时" value="hour" />
-              <el-option label="每天" value="day" />
-              <el-option label="每周" value="week" />
-              <el-option label="每月" value="month" />
-              <el-option label="自定义" value="custom" />
-            </el-select>
-          </el-form-item>
-          <el-form-item v-if="editCronMode !== 'custom'" label="分">
-            <el-input-number v-model="editCronMinute" :min="0" :max="59" size="small" @change="applyEditCronPreview" />
-          </el-form-item>
-          <el-form-item v-if="['day', 'week', 'month'].includes(editCronMode)" label="时">
-            <el-input-number v-model="editCronHour" :min="0" :max="23" size="small" @change="applyEditCronPreview" />
-          </el-form-item>
-          <el-form-item label="Cron">
-            <el-input v-model="editForm.cronExpr" :readonly="editCronMode !== 'custom'" />
-          </el-form-item>
-        </template>
+        <el-form-item v-if="editCronEnabled" label="执行周期">
+          <ExecCycleSelect v-model="editForm.cronExpr" />
+        </el-form-item>
       </el-form>
       <template #footer>
         <el-button @click="editVisible = false">取消</el-button>

@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { onMounted, reactive, ref } from 'vue'
 import api from '@/api/http'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import PageHeader from '@/components/common/PageHeader.vue'
 import PageCard from '@/components/common/PageCard.vue'
 
@@ -13,14 +13,73 @@ const objections = ref<Record<string, unknown>[]>([])
 const manifests = ref<Record<string, unknown>[]>([])
 const duties = ref<Record<string, unknown>[]>([])
 
+defineProps<{
+  /** 嵌入供需对接侧栏时隐藏独立页头，避免与外层标题重复 */
+  embedded?: boolean
+}>()
+
 const templateForm = reactive({
   templateCode: '',
   templateName: '',
   demandType: 'STRUCTURED',
   fieldSchema: '[{"key":"dataDomain","label":"数据域"},{"key":"updateFreq","label":"更新频率"},{"key":"shareScope","label":"共享范围"}]',
 })
+const schemaRows = ref<{ key: string; label: string }[]>([
+  { key: 'dataDomain', label: '数据域' },
+  { key: 'updateFreq', label: '更新频率' },
+  { key: 'shareScope', label: '共享范围' },
+])
 const catalogForm = reactive({ title: '', description: '' })
 void catalogForm
+
+const templateDialog = reactive({
+  visible: false,
+  mode: 'view' as 'view' | 'edit',
+  id: 0,
+  templateCode: '',
+  templateName: '',
+  demandType: 'STRUCTURED',
+  status: 'ACTIVE',
+  schemaRows: [] as { key: string; label: string }[],
+})
+
+function parseSchemaRows(raw: unknown): { key: string; label: string }[] {
+  try {
+    const parsed = typeof raw === 'string' ? JSON.parse(raw || '[]') : raw
+    if (!Array.isArray(parsed)) return []
+    return parsed.map((f: Record<string, string>) => ({
+      key: f.key || f.name || '',
+      label: f.label || f.name || f.key || '',
+    }))
+  } catch {
+    return []
+  }
+}
+
+function syncSchemaFromRows() {
+  templateForm.fieldSchema = JSON.stringify(
+    schemaRows.value
+      .filter((r) => r.key.trim() && r.label.trim())
+      .map((r) => ({ key: r.key.trim(), label: r.label.trim() })),
+  )
+}
+
+function addSchemaRow() {
+  schemaRows.value.push({ key: '', label: '' })
+}
+
+function removeSchemaRow(idx: number) {
+  schemaRows.value.splice(idx, 1)
+  syncSchemaFromRows()
+}
+
+function addDialogSchemaRow() {
+  templateDialog.schemaRows.push({ key: '', label: '' })
+}
+
+function removeDialogSchemaRow(idx: number) {
+  templateDialog.schemaRows.splice(idx, 1)
+}
 
 async function load() {
   loading.value = true
@@ -45,7 +104,8 @@ async function load() {
 
 async function createTemplate() {
   if (!templateForm.templateName) return ElMessage.warning('请填写模板名称')
-  if (templateForm.demandType === 'STRUCTURED' && templateForm.fieldSchema) {
+  if (templateForm.demandType === 'STRUCTURED') {
+    syncSchemaFromRows()
     try {
       JSON.parse(templateForm.fieldSchema)
     } catch {
@@ -58,13 +118,74 @@ async function createTemplate() {
   })
   templateForm.templateName = ''
   templateForm.templateCode = ''
-  templateForm.fieldSchema = '[{"key":"dataDomain","label":"数据域"},{"key":"updateFreq","label":"更新频率"},{"key":"shareScope","label":"共享范围"}]'
+  schemaRows.value = [
+    { key: 'dataDomain', label: '数据域' },
+    { key: 'updateFreq', label: '更新频率' },
+    { key: 'shareScope', label: '共享范围' },
+  ]
+  syncSchemaFromRows()
   ElMessage.success('模板已创建')
   await load()
 }
 
-async function setTemplateStatus(id: number, status: string) {
-  await api.post(`/exchange/supply/templates/${id}`, { status })
+function openViewTemplate(row: Record<string, unknown>) {
+  templateDialog.visible = true
+  templateDialog.mode = 'view'
+  templateDialog.id = Number(row.id)
+  templateDialog.templateCode = String(row.templateCode || '')
+  templateDialog.templateName = String(row.templateName || '')
+  templateDialog.demandType = String(row.demandType || 'STRUCTURED')
+  templateDialog.status = String(row.status || '')
+  templateDialog.schemaRows = parseSchemaRows(row.fieldSchema)
+}
+
+function openEditTemplate(row: Record<string, unknown>) {
+  templateDialog.visible = true
+  templateDialog.mode = 'edit'
+  templateDialog.id = Number(row.id)
+  templateDialog.templateCode = String(row.templateCode || '')
+  templateDialog.templateName = String(row.templateName || '')
+  templateDialog.demandType = String(row.demandType || 'STRUCTURED')
+  templateDialog.status = String(row.status || 'ACTIVE')
+  templateDialog.schemaRows = parseSchemaRows(row.fieldSchema)
+  if (!templateDialog.schemaRows.length && templateDialog.demandType === 'STRUCTURED') {
+    templateDialog.schemaRows = [{ key: '', label: '' }]
+  }
+}
+
+async function saveEditTemplate() {
+  if (!templateDialog.templateName.trim()) return ElMessage.warning('请填写模板名称')
+  const fieldSchema =
+    templateDialog.demandType === 'STRUCTURED'
+      ? JSON.stringify(
+          templateDialog.schemaRows
+            .filter((r) => r.key.trim() && r.label.trim())
+            .map((r) => ({ key: r.key.trim(), label: r.label.trim() })),
+        )
+      : '{}'
+  await api.post(`/exchange/supply/templates/${templateDialog.id}`, {
+    templateName: templateDialog.templateName.trim(),
+    demandType: templateDialog.demandType,
+    fieldSchema,
+    status: templateDialog.status,
+  })
+  ElMessage.success('模板已更新')
+  templateDialog.visible = false
+  await load()
+}
+
+async function deleteTemplate(row: Record<string, unknown>) {
+  try {
+    await ElMessageBox.confirm(`确认删除模板「${row.templateName}」？删除后不可恢复。`, '删除模板', {
+      type: 'warning',
+      confirmButtonText: '删除',
+      cancelButtonText: '取消',
+    })
+  } catch {
+    return
+  }
+  await api.post(`/exchange/supply/templates/${row.id}/delete`)
+  ElMessage.success('模板已删除')
   await load()
 }
 
@@ -93,6 +214,7 @@ onMounted(load)
 <template>
   <div v-loading="loading">
     <PageHeader
+      v-if="!embedded"
       title="供需配置"
       description="系统管理 · 数据共享交换平台 · 应用平台 — 模板、统一目录只读、异议治理与数据责任台账"
     />
@@ -121,32 +243,36 @@ onMounted(load)
             <el-radio-button value="UNSTRUCTURED">非结构化</el-radio-button>
           </el-radio-group>
         </el-form-item>
-        <el-form-item v-if="templateForm.demandType === 'STRUCTURED'" label="字段模型">
-          <el-input
-            v-model="templateForm.fieldSchema"
-            type="textarea"
-            :rows="4"
-            placeholder='[{"key":"dataDomain","label":"数据域"},{"key":"updateFreq","label":"更新频率"}]'
-          />
+        <el-form-item v-if="templateForm.demandType === 'STRUCTURED'" label="数据项">
+          <div class="schema-editor">
+            <div v-for="(row, idx) in schemaRows" :key="idx" class="schema-row">
+              <el-input v-model="row.key" placeholder="字段编码" style="width:140px" @change="syncSchemaFromRows" />
+              <el-input v-model="row.label" placeholder="显示名称" style="width:180px" @change="syncSchemaFromRows" />
+              <el-button link type="danger" @click="removeSchemaRow(idx)">删除</el-button>
+            </div>
+            <el-button type="primary" plain @click="addSchemaRow">新增数据项</el-button>
+          </div>
+        </el-form-item>
+        <el-form-item v-else label="说明">
+          <el-text type="info">非结构化模板用于正文描述式需求填报。</el-text>
         </el-form-item>
         <el-form-item>
           <el-button type="primary" @click="createTemplate">新建模板</el-button>
         </el-form-item>
       </el-form>
       <el-table :data="templates" stripe size="small">
-        <el-table-column prop="templateCode" label="编码" width="140" />
-        <el-table-column prop="templateName" label="名称" min-width="140" />
+        <el-table-column prop="templateName" label="名称" min-width="160" />
         <el-table-column label="类型" width="110">
           <template #default="{ row }">{{ $statusLabel(row.demandType) }}</template>
         </el-table-column>
-        <el-table-column prop="fieldSchema" label="字段模型" min-width="180" show-overflow-tooltip />
         <el-table-column label="状态" width="90">
           <template #default="{ row }">{{ $statusLabel(row.status) }}</template>
         </el-table-column>
-        <el-table-column label="操作" width="140">
+        <el-table-column label="操作" width="180" fixed="right">
           <template #default="{ row }">
-            <el-button v-if="row.status !== 'ACTIVE'" link type="primary" @click="setTemplateStatus(Number(row.id), 'ACTIVE')">启用</el-button>
-            <el-button v-else link type="warning" @click="setTemplateStatus(Number(row.id), 'INACTIVE')">停用</el-button>
+            <el-button link type="primary" @click="openViewTemplate(row)">查看</el-button>
+            <el-button link type="primary" @click="openEditTemplate(row)">编辑</el-button>
+            <el-button link type="danger" @click="deleteTemplate(row)">删除</el-button>
           </template>
         </el-table-column>
       </el-table>
@@ -232,9 +358,80 @@ onMounted(load)
         <el-table-column prop="remark" label="说明" min-width="180" />
       </el-table>
     </PageCard>
+
+    <el-dialog
+      v-model="templateDialog.visible"
+      :title="templateDialog.mode === 'view' ? '查看需求模板' : '编辑需求模板'"
+      width="560px"
+      destroy-on-close
+    >
+      <el-form label-width="96px">
+        <el-form-item label="编码">
+          <el-input :model-value="templateDialog.templateCode" disabled />
+        </el-form-item>
+        <el-form-item label="名称" required>
+          <el-input
+            v-model="templateDialog.templateName"
+            :disabled="templateDialog.mode === 'view'"
+          />
+        </el-form-item>
+        <el-form-item label="类型">
+          <el-radio-group v-model="templateDialog.demandType" :disabled="templateDialog.mode === 'view'">
+            <el-radio-button value="STRUCTURED">结构化</el-radio-button>
+            <el-radio-button value="UNSTRUCTURED">非结构化</el-radio-button>
+          </el-radio-group>
+        </el-form-item>
+        <el-form-item v-if="templateDialog.mode === 'edit'" label="状态">
+          <el-radio-group v-model="templateDialog.status">
+            <el-radio-button value="ACTIVE">启用</el-radio-button>
+            <el-radio-button value="INACTIVE">停用</el-radio-button>
+          </el-radio-group>
+        </el-form-item>
+        <el-form-item v-else label="状态">
+          <span>{{ $statusLabel(templateDialog.status) }}</span>
+        </el-form-item>
+        <el-form-item v-if="templateDialog.demandType === 'STRUCTURED'" label="数据项">
+          <div class="schema-editor">
+            <div v-for="(row, idx) in templateDialog.schemaRows" :key="idx" class="schema-row">
+              <el-input
+                v-model="row.key"
+                placeholder="字段编码"
+                style="width:140px"
+                :disabled="templateDialog.mode === 'view'"
+              />
+              <el-input
+                v-model="row.label"
+                placeholder="显示名称"
+                style="width:180px"
+                :disabled="templateDialog.mode === 'view'"
+              />
+              <el-button
+                v-if="templateDialog.mode === 'edit'"
+                link
+                type="danger"
+                @click="removeDialogSchemaRow(idx)"
+              >删除</el-button>
+            </div>
+            <el-button
+              v-if="templateDialog.mode === 'edit'"
+              type="primary"
+              plain
+              @click="addDialogSchemaRow"
+            >新增数据项</el-button>
+            <el-text v-if="templateDialog.mode === 'view' && !templateDialog.schemaRows.length" type="info">无数据项</el-text>
+          </div>
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="templateDialog.visible = false">关闭</el-button>
+        <el-button v-if="templateDialog.mode === 'edit'" type="primary" @click="saveEditTemplate">保存</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
 <style scoped>
 .mb { margin-bottom: 12px; }
+.schema-editor { display: flex; flex-direction: column; gap: 8px; width: 100%; }
+.schema-row { display: flex; gap: 8px; align-items: center; }
 </style>

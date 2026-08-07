@@ -6,6 +6,7 @@ import PageCard from '@/components/common/PageCard.vue'
 import PortalPagination from '@/components/common/PortalPagination.vue'
 import { useClientPager } from '@/composables/useClientPager'
 import { statusLabel, statusTagType } from '@/utils/status-label'
+import ExecCycleSelect from '@/views/system/ExecCycleSelect.vue'
 import {
   catalogHintOfSourceId,
   groupSourcesByRole,
@@ -363,8 +364,8 @@ onMounted(loadTasks)
             <el-option label="定时" value="CRON" />
           </el-select>
         </el-form-item>
-        <el-form-item v-if="form.scheduleType === 'CRON'" label="Cron">
-          <el-input v-model="form.cronExpr" placeholder="0 0 2 * * ?" />
+        <el-form-item v-if="form.scheduleType === 'CRON'" label="执行周期">
+          <ExecCycleSelect v-model="form.cronExpr" />
         </el-form-item>
         <el-form-item>
           <el-button type="primary" @click="saveTask">保存任务</el-button>

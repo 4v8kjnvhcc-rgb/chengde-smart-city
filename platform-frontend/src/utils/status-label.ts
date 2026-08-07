@@ -31,8 +31,9 @@ const STATUS_ZH: Record<string, string> = {
   PENDING: '待审核',
   APPROVED: '审核通过',
   REJECTED: '驳回待提交',
-  CANCELLED: '已取消',
+  CANCELLED: '已撤销',
   WITHDRAWN: '已撤回',
+  WITHDRAW_PENDING: '撤销待提交',
   RETURNED: '已退回',
   SUBSCRIBED: '已订阅',
   DISTRIBUTED: '已分发',
@@ -54,7 +55,7 @@ const STATUS_ZH: Record<string, string> = {
   ANALYSIS: '分析模型',
   LEDGER: '台账处理',
   ERROR: '错误',
-  COMPLETED: '已完成',
+  COMPLETED: '已办结',
   FINISHED: '已完成',
   STOPPED: '已停止',
   CLOSED: '已关闭',
@@ -62,13 +63,13 @@ const STATUS_ZH: Record<string, string> = {
   WAITING: '等待中',
   SKIPPED: '已跳过',
   // 供需
-  SUBMITTED: '已提交',
+  SUBMITTED: '待数据主管部门审核',
   ANALYZING: '预审中',
   PRE_AUDITING: '预审中',
   PRE_AUDIT: '预审',
   AUDIT: '审核',
-  CONFIRMED: '已审核',
-  DISPATCHED: '已分发',
+  CONFIRMED: '已确认',
+  DISPATCHED: '待确认',
   SUPERVISING: '督办中',
   CORRECTION: '异议回流',
   FULFILLING: '履约中',
@@ -489,7 +490,7 @@ export function statusTagType(value: unknown): 'success' | 'warning' | 'info' | 
   if (['ACTIVE', 'ENABLED', 'SUCCESS', 'APPROVED', 'COMPLETED', 'FINISHED', 'CONFIRMED', 'PUBLISHED', 'READY', 'CONFIGURED', 'NORMAL', 'SUBSCRIBED', 'DISTRIBUTED', 'MAPPED', 'MATCHED', 'INDEXED', 'OK', 'IMPLEMENTED', 'ONLINE', 'UP', 'PASS', 'UNDERSTOOD', 'POSITIVE', 'CLEANED', 'CLEANED_IN', 'PUBLIC'].includes(key)) {
     return 'success'
   }
-  if (['PENDING', 'PENDING_ARCHIVE', 'PENDING_REVIEW', 'RUNNING', 'ANALYZING', 'PRE_AUDITING', 'CORRECTION', 'WAITING', 'DRAFT', 'SUPERVISING', 'DISPATCHED', 'FULFILLING', 'PARTIAL', 'WARN', 'POC', 'MEDIUM', 'RAW', 'EXTRACTED', 'TAGGED', 'LEDGER', 'OPEN', 'OTHER', 'PRIVATE', 'UNEVEN'].includes(key)) {
+  if (['PENDING', 'PENDING_ARCHIVE', 'PENDING_REVIEW', 'RUNNING', 'ANALYZING', 'PRE_AUDITING', 'CORRECTION', 'WAITING', 'DRAFT', 'SUPERVISING', 'DISPATCHED', 'FULFILLING', 'PARTIAL', 'WARN', 'POC', 'MEDIUM', 'RAW', 'EXTRACTED', 'TAGGED', 'LEDGER', 'OPEN', 'OTHER', 'PRIVATE', 'UNEVEN', 'WITHDRAW_PENDING'].includes(key)) {
     return 'warning'
   }
   if (['REJECTED', 'FAILED', 'ERROR', 'CANCELLED', 'ABNORMAL', 'EXPIRED', 'RETURNED', 'STOPPED', 'UNMAPPED', 'UNMATCHED', 'CRITICAL', 'BLOCKED', 'MISSING', 'HIGH', 'DOWN', 'FAIL', 'NEGATIVE', 'PROBLEM', 'ABANDONED'].includes(key)) {

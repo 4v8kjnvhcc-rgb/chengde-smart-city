@@ -7,6 +7,7 @@ import PageCard from '@/components/common/PageCard.vue'
 import PortalPagination from '@/components/common/PortalPagination.vue'
 import { useClientPager } from '@/composables/useClientPager'
 import { statusLabel, statusTagType } from '@/utils/status-label'
+import ExecCycleSelect from '@/views/system/ExecCycleSelect.vue'
 
 export type ListMode = 'mgmt' | 'run' | 'schedule'
 
@@ -836,8 +837,8 @@ defineExpose({ reload: load })
             </el-form-item>
           </template>
           <template v-else>
-            <el-form-item label="Cron">
-              <el-input v-model="form.scheduleCron" placeholder="0 0 2 * * ?" class="portal-field-cron" />
+            <el-form-item label="执行周期">
+              <ExecCycleSelect v-model="form.scheduleCron" />
             </el-form-item>
           </template>
         </template>
@@ -890,17 +891,8 @@ defineExpose({ reload: load })
           </el-form-item>
         </template>
         <template v-if="scheduleForm.scheduleEnabled && scheduleForm.scheduleMode === 'CRON'">
-          <el-form-item label="自定义脚本">
-            <el-input
-              v-model="scheduleForm.scheduleCron"
-              placeholder="0 0 2 * * ?"
-              class="portal-field-cron"
-            />
-          </el-form-item>
-          <el-form-item label="常用模板">
-            <el-button size="small" @click="scheduleForm.scheduleCron = '0 0 2 * * ?'">每天2点</el-button>
-            <el-button size="small" @click="scheduleForm.scheduleCron = '0 0 */1 * * ?'">每小时</el-button>
-            <el-button size="small" @click="scheduleForm.scheduleCron = '0 0 0 ? * MON'">每周一</el-button>
+          <el-form-item label="执行周期">
+            <ExecCycleSelect v-model="scheduleForm.scheduleCron" />
           </el-form-item>
         </template>
         <el-form-item v-if="scheduleForm.nextRunAt" label="下次运行">

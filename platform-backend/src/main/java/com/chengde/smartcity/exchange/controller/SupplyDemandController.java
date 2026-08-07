@@ -55,6 +55,13 @@ public class SupplyDemandController {
         return ApiResponse.ok(null);
     }
 
+    @PostMapping("/templates/{id}/delete")
+    @PreAuthorize("hasAuthority('system:exchange:supply-config')")
+    public ApiResponse<Void> deleteTemplate(@AuthenticationPrincipal UserPrincipal principal, @PathVariable Long id) {
+        service.deleteTemplate(principal, id);
+        return ApiResponse.ok(null);
+    }
+
     @GetMapping("/duties")
     public ApiResponse<List<com.chengde.smartcity.exchange.entity.BizDataDuty>> duties(
             @RequestParam(required = false) Long demandId) {
@@ -68,24 +75,73 @@ public class SupplyDemandController {
     }
 
     @PostMapping("/demands")
+    @PreAuthorize("hasAuthority('portal:supply:create') or hasAuthority('portal:supply:approve') or hasRole('SYSTEM_ADMIN')")
     public ApiResponse<Long> createDemand(@AuthenticationPrincipal UserPrincipal principal,
                                           @RequestBody Map<String, Object> body) {
         return ApiResponse.ok(service.createDemand(principal, body));
     }
 
     @PostMapping("/demands/{id}/withdraw")
+    @PreAuthorize("hasAuthority('portal:supply:create') or hasAuthority('portal:supply:approve') or hasRole('SYSTEM_ADMIN')")
     public ApiResponse<Void> withdraw(@AuthenticationPrincipal UserPrincipal principal, @PathVariable Long id) {
         service.withdrawDemand(principal, id);
         return ApiResponse.ok(null);
     }
 
+    @PostMapping("/demands/{id}/submit")
+    @PreAuthorize("hasAuthority('portal:supply:create') or hasAuthority('portal:supply:approve') or hasRole('SYSTEM_ADMIN')")
+    public ApiResponse<Void> submitExisting(@AuthenticationPrincipal UserPrincipal principal, @PathVariable Long id) {
+        service.submitDemand(principal, id);
+        return ApiResponse.ok(null);
+    }
+
+    @PostMapping("/demands/{id}/delete")
+    @PreAuthorize("hasAuthority('portal:supply:create') or hasAuthority('portal:supply:approve') or hasRole('SYSTEM_ADMIN')")
+    public ApiResponse<Void> deleteDemand(@AuthenticationPrincipal UserPrincipal principal, @PathVariable Long id) {
+        service.deleteDemand(principal, id);
+        return ApiResponse.ok(null);
+    }
+
+    @GetMapping("/matters")
+    public ApiResponse<List<com.chengde.smartcity.exchange.entity.BizGovMatter>> matters(
+            @RequestParam(required = false) String keyword,
+            @RequestParam(required = false) String matterType,
+            @RequestParam(required = false) String status) {
+        return ApiResponse.ok(service.listMatters(keyword, matterType, status));
+    }
+
+    @PostMapping("/matters")
+    @PreAuthorize("hasAuthority('portal:supply:approve') or hasAuthority('system:exchange:supply-config') or hasRole('SYSTEM_ADMIN')")
+    public ApiResponse<Long> createMatter(@AuthenticationPrincipal UserPrincipal principal,
+                                          @RequestBody Map<String, Object> body) {
+        return ApiResponse.ok(service.createMatter(principal, body));
+    }
+
+    @PostMapping("/matters/{id}")
+    @PreAuthorize("hasAuthority('portal:supply:approve') or hasAuthority('system:exchange:supply-config') or hasRole('SYSTEM_ADMIN')")
+    public ApiResponse<Void> updateMatter(@AuthenticationPrincipal UserPrincipal principal,
+                                          @PathVariable Long id,
+                                          @RequestBody Map<String, Object> body) {
+        service.updateMatter(principal, id, body);
+        return ApiResponse.ok(null);
+    }
+
+    @PostMapping("/matters/{id}/delete")
+    @PreAuthorize("hasAuthority('portal:supply:approve') or hasAuthority('system:exchange:supply-config') or hasRole('SYSTEM_ADMIN')")
+    public ApiResponse<Void> deleteMatter(@AuthenticationPrincipal UserPrincipal principal, @PathVariable Long id) {
+        service.deleteMatter(principal, id);
+        return ApiResponse.ok(null);
+    }
+
     @PostMapping("/demands/{id}/analyze")
+    @PreAuthorize("hasAuthority('portal:supply:approve') or hasAuthority('system:exchange:supply-config') or hasRole('SYSTEM_ADMIN')")
     public ApiResponse<Map<String, Object>> analyze(@AuthenticationPrincipal UserPrincipal principal,
                                                       @PathVariable Long id) {
         return ApiResponse.ok(service.analyzeDemand(principal, id));
     }
 
     @PostMapping("/demands/{id}/dispatch")
+    @PreAuthorize("hasAuthority('portal:supply:approve') or hasAuthority('system:exchange:supply-config') or hasRole('SYSTEM_ADMIN')")
     public ApiResponse<Void> dispatch(@AuthenticationPrincipal UserPrincipal principal,
                                       @PathVariable Long id,
                                       @RequestBody Map<String, Object> body) {
@@ -94,6 +150,7 @@ public class SupplyDemandController {
     }
 
     @PostMapping("/demands/{id}/return")
+    @PreAuthorize("hasAuthority('portal:supply:approve') or hasAuthority('system:exchange:supply-config') or hasRole('SYSTEM_ADMIN')")
     public ApiResponse<Void> returnDemand(@AuthenticationPrincipal UserPrincipal principal,
                                           @PathVariable Long id,
                                           @RequestBody Map<String, Object> body) {
@@ -102,6 +159,7 @@ public class SupplyDemandController {
     }
 
     @PostMapping("/demands/{id}/supervise")
+    @PreAuthorize("hasAuthority('portal:supply:approve') or hasAuthority('system:exchange:supply-config') or hasRole('SYSTEM_ADMIN')")
     public ApiResponse<Void> supervise(@AuthenticationPrincipal UserPrincipal principal,
                                        @PathVariable Long id,
                                        @RequestBody Map<String, Object> body) {
@@ -110,6 +168,7 @@ public class SupplyDemandController {
     }
 
     @PostMapping("/demands/{id}/analysis-settings")
+    @PreAuthorize("hasAuthority('portal:supply:approve') or hasAuthority('system:exchange:supply-config') or hasRole('SYSTEM_ADMIN')")
     public ApiResponse<Map<String, Object>> analysisSettings(@AuthenticationPrincipal UserPrincipal principal,
                                                              @PathVariable Long id,
                                                              @RequestBody Map<String, Object> body) {
@@ -123,6 +182,7 @@ public class SupplyDemandController {
     }
 
     @PostMapping("/demands/{id}/confirm")
+    @PreAuthorize("hasAuthority('portal:supply:create') or hasAuthority('portal:supply:approve') or hasRole('SYSTEM_ADMIN')")
     public ApiResponse<Map<String, Object>> confirm(@AuthenticationPrincipal UserPrincipal principal,
                                                     @PathVariable Long id,
                                                     @RequestBody Map<String, Object> body) {
@@ -130,6 +190,7 @@ public class SupplyDemandController {
     }
 
     @PostMapping("/demands/{id}/confirm-return")
+    @PreAuthorize("hasAuthority('portal:supply:create') or hasAuthority('portal:supply:approve') or hasRole('SYSTEM_ADMIN')")
     public ApiResponse<Void> confirmReturn(@AuthenticationPrincipal UserPrincipal principal,
                                            @PathVariable Long id,
                                            @RequestBody Map<String, Object> body) {
@@ -138,6 +199,7 @@ public class SupplyDemandController {
     }
 
     @PostMapping("/demands/{id}/confirm-feedback")
+    @PreAuthorize("hasAuthority('portal:supply:create') or hasAuthority('portal:supply:approve') or hasRole('SYSTEM_ADMIN')")
     public ApiResponse<Void> confirmFeedback(@AuthenticationPrincipal UserPrincipal principal,
                                              @PathVariable Long id,
                                              @RequestBody Map<String, Object> body) {
@@ -146,6 +208,7 @@ public class SupplyDemandController {
     }
 
     @PostMapping("/demands/{id}/complete")
+    @PreAuthorize("hasAuthority('portal:supply:create') or hasAuthority('portal:supply:approve') or hasRole('SYSTEM_ADMIN')")
     public ApiResponse<Void> complete(@AuthenticationPrincipal UserPrincipal principal,
                                       @PathVariable Long id,
                                       @RequestBody(required = false) Map<String, Object> body) {
@@ -154,6 +217,7 @@ public class SupplyDemandController {
     }
 
     @PostMapping("/demands/{id}/cancel")
+    @PreAuthorize("hasAuthority('portal:supply:create') or hasAuthority('portal:supply:approve') or hasRole('SYSTEM_ADMIN')")
     public ApiResponse<Void> cancel(@AuthenticationPrincipal UserPrincipal principal,
                                     @PathVariable Long id,
                                     @RequestBody(required = false) Map<String, Object> body) {
@@ -162,6 +226,7 @@ public class SupplyDemandController {
     }
 
     @PostMapping("/demands/{id}/update")
+    @PreAuthorize("hasAuthority('portal:supply:create') or hasAuthority('portal:supply:approve') or hasRole('SYSTEM_ADMIN')")
     public ApiResponse<Void> update(@AuthenticationPrincipal UserPrincipal principal,
                                     @PathVariable Long id,
                                     @RequestBody Map<String, Object> body) {
@@ -170,6 +235,7 @@ public class SupplyDemandController {
     }
 
     @PostMapping("/demands/{id}/reject")
+    @PreAuthorize("hasAuthority('portal:supply:create') or hasAuthority('portal:supply:approve') or hasRole('SYSTEM_ADMIN')")
     public ApiResponse<Void> reject(@AuthenticationPrincipal UserPrincipal principal,
                                     @PathVariable Long id,
                                     @RequestBody Map<String, Object> body) {

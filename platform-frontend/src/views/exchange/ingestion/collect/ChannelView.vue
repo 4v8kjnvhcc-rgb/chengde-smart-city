@@ -1,13 +1,14 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from 'vue'
 import PageCard from '@/components/common/PageCard.vue'
+import ExecCycleSelect from '@/views/system/ExecCycleSelect.vue'
 import { ingestionApi, useIngestionLoading, type Channel, type IngestTask } from '../useIngestionHub'
 
 const props = defineProps<{ module: string }>()
 const { loading, loadError, withLoad } = useIngestionLoading()
 const channels = ref<Channel[]>([])
 const tasks = ref<IngestTask[]>([])
-const taskForm = reactive({ channelId: undefined as number | undefined, taskName: '', scheduleCron: '0 2 * * *' })
+const taskForm = reactive({ channelId: undefined as number | undefined, taskName: '', scheduleCron: '0 0 2 * * ?' })
 
 const CHANNEL_TYPE_MAP: Record<string, string> = {
   m054: 'TABLE', m055: 'FTP', m056: 'LOCAL', m057: 'UNSTRUCT', m058: 'SEMI', m059: 'API', m060: 'CDC',
@@ -70,7 +71,9 @@ onMounted(reload)
           </el-select>
         </el-form-item>
         <el-form-item label="任务名" class="portal-field-md"><el-input v-model="taskForm.taskName" /></el-form-item>
-        <el-form-item label="调度" class="portal-field-cron"><el-input v-model="taskForm.scheduleCron" /></el-form-item>
+        <el-form-item label="执行周期" class="portal-field-cron">
+          <ExecCycleSelect v-model="taskForm.scheduleCron" style="min-width:280px" />
+        </el-form-item>
         <el-form-item class="portal-form-actions">
           <el-button type="primary" @click="createTask">登记任务</el-button>
         </el-form-item>

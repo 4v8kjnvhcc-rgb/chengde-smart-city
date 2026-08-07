@@ -9,6 +9,7 @@ import RcStorageLifecyclePanel from '@/views/resource/RcStorageLifecyclePanel.vu
 import RcResourceMonitorPanel from '@/views/resource/RcResourceMonitorPanel.vue'
 import RcStatsAnalysisPanel from '@/views/resource/RcStatsAnalysisPanel.vue'
 import { statusLabel, statusTagType } from '@/utils/status-label'
+import ExecCycleSelect from '@/views/system/ExecCycleSelect.vue'
 import { useAuthStore } from '@/stores/auth'
 
 /** 侧栏对齐 V3：数据资产区单入口；资源中心管理为可展开父级，下挂六模块 */
@@ -2097,8 +2098,8 @@ onMounted(() => {
               <el-form-item label="周期调度" class="portal-field-xs">
                 <el-switch v-model="policyForm.scheduleEnabled" />
               </el-form-item>
-              <el-form-item v-if="policyForm.scheduleEnabled" label="Cron" class="portal-field-cron">
-                <el-input v-model="policyForm.scheduleCron" placeholder="0 0 2 * * ?" />
+              <el-form-item v-if="policyForm.scheduleEnabled" label="执行周期" class="portal-field-cron">
+                <ExecCycleSelect v-model="policyForm.scheduleCron" />
               </el-form-item>
               <el-form-item class="portal-form-actions">
                 <el-button type="primary" @click="createPolicy">创建策略</el-button>
@@ -2118,8 +2119,8 @@ onMounted(() => {
               <el-form-item label="启用" class="portal-field-xs">
                 <el-switch v-model="scheduleEdit.scheduleEnabled" />
               </el-form-item>
-              <el-form-item label="Cron" class="portal-field-cron">
-                <el-input v-model="scheduleEdit.scheduleCron" />
+              <el-form-item label="执行周期" class="portal-field-cron">
+                <ExecCycleSelect v-model="scheduleEdit.scheduleCron" />
               </el-form-item>
               <el-form-item class="portal-form-actions">
                 <el-button type="primary" @click="saveSchedule">保存调度</el-button>

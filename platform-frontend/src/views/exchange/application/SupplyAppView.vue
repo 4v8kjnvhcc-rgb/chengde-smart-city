@@ -4,16 +4,43 @@ import { useRoute, useRouter } from 'vue-router'
 import api from '@/api/http'
 import PageHeader from '@/components/common/PageHeader.vue'
 import HubSideLayout from '@/components/common/HubSideLayout.vue'
-import { SUPPLY_MAIN_SECTIONS } from './application-nav'
+import {
+  DocumentChecked,
+  CircleCheck,
+  Warning,
+  FolderOpened,
+  Sort,
+  DocumentCopy,
+} from '@element-plus/icons-vue'
+import { SUPPLY_MAIN_SECTIONS, SUPPLY_SIDE_NAV, SUPPLY_SYSTEM_SECTIONS } from './application-nav'
+import type { HubNavItem } from '@/components/common/HubSideLayout.vue'
+import { useSupplyRole } from './supply-role'
 
 const router = useRouter()
 const route = useRoute()
 const SupplyDemandView = defineAsyncComponent(() => import('./SupplyDemandView.vue'))
+const SupplyConfigView = defineAsyncComponent(() => import('@/views/system/SupplyConfigView.vue'))
+const MatterManageView = defineAsyncComponent(() => import('./MatterManageView.vue'))
+const { canAccessSection, isPlatformAdmin, isDemandDept, isProviderDept } = useSupplyRole()
 
 const section = ref('home')
 const kpi = ref({ preAudit: 0, confirm: 0, objection: 0, catalog: 0, supplyManifest: 0, objectionTotal: 0 })
 
-const navItems = SUPPLY_MAIN_SECTIONS.map((s) => ({ key: s.key, label: s.label }))
+const navItems = computed(() => {
+  const filterNav = (items: typeof SUPPLY_SIDE_NAV): HubNavItem[] =>
+    items
+      .map((item) => {
+        if ('children' in item && item.children) {
+          const children = item.children.filter((c) => canAccessSection(c.key))
+          if (!children.length || !canAccessSection(item.key)) return null
+          return { ...item, children } as HubNavItem
+        }
+        if (!canAccessSection(item.key)) return null
+        return item as HubNavItem
+      })
+      .filter(Boolean) as HubNavItem[]
+  return filterNav(SUPPLY_SIDE_NAV as unknown as typeof SUPPLY_SIDE_NAV)
+})
 
 const SECTION_LABEL: Record<string, string> = {
   home: '首页',
@@ -23,29 +50,41 @@ const SECTION_LABEL: Record<string, string> = {
   supply: '数据供给查看',
   supervise: '业务督办',
   'manifest-center': '清单中心',
+  'supply-config': '供需配置',
+  'matter-manage': '事项管理',
 }
+
+const leafKeys = new Set<string>([
+  ...SUPPLY_MAIN_SECTIONS.map((s) => s.key),
+  ...SUPPLY_SYSTEM_SECTIONS,
+])
 
 const pageTitle = computed(
   () => `大数据归集平台 · 数据供需对接系统 · ${SECTION_LABEL[section.value] || '首页'}`,
 )
-const pageDesc = '数据供需对接系统（切换系统请返回总览后重新进入）'
 
-const FLOW_STEPS = [
-  { title: '需求填报', tone: 'blue', go: 'demand' },
-  { title: '需求预审', tone: 'blue', go: 'analysis' },
-  { title: '需求审核', tone: 'blue', go: 'confirm' },
-  { title: '生成数据责任', tone: 'green', go: 'confirm' },
-  { title: '供给查看', tone: 'green', go: 'supply' },
-  { title: '任务执行', tone: 'amber', go: 'supply' },
-  { title: '清单监控', tone: 'amber', go: 'manifest-center' },
-]
+const FLOW_STEPS = computed(() => {
+  const all = [
+    { title: '需求填报', tone: 'blue', go: 'demand', need: () => isDemandDept.value },
+    { title: '需求预审', tone: 'blue', go: 'analysis', need: () => isPlatformAdmin.value },
+    { title: '需求确认', tone: 'blue', go: 'confirm', need: () => isProviderDept.value },
+    { title: '生成共享任务', tone: 'green', go: 'confirm', need: () => isProviderDept.value },
+    { title: '供给查看', tone: 'green', go: 'supply', need: () => isProviderDept.value },
+    { title: '清单监控', tone: 'amber', go: 'manifest-center', need: () => true },
+  ]
+  return all.filter((s) => s.need())
+})
 
 function syncFromRoute() {
   const s = String(route.query.sdSection || route.query.section || 'home')
-  section.value = navItems.some((n) => n.key === s) ? s : 'home'
+  const next = leafKeys.has(s) ? s : 'home'
+  section.value = canAccessSection(next) ? next : 'home'
 }
 
 function goSection(key: string, extra: Record<string, string> = {}) {
+  // 父级「系统管理」不可选中，仅展开子项
+  if (key === 'system' || !leafKeys.has(key)) return
+  if (!canAccessSection(key)) return
   section.value = key
   router.replace({
     path: '/exchange/application/supply',
@@ -95,7 +134,7 @@ onMounted(() => {
 
 <template>
   <div class="supply-hub">
-    <PageHeader :title="pageTitle" :description="pageDesc">
+    <PageHeader :title="pageTitle">
       <button type="button" class="hub-back" @click="router.push('/dashboard')">
         返回总览
       </button>
@@ -121,22 +160,22 @@ onMounted(() => {
           </div>
 
           <div class="kpi-row">
-            <button type="button" class="kpi-card tone-blue" @click="goSection('analysis')">
-              <div class="kpi-card__icon" />
+            <button v-if="isPlatformAdmin" type="button" class="kpi-card tone-blue" @click="goSection('analysis')">
+              <div class="kpi-card__icon"><el-icon :size="22"><DocumentChecked /></el-icon></div>
               <div class="kpi-card__body">
                 <div class="kpi-card__lab">待预审</div>
                 <div class="kpi-card__num">{{ kpi.preAudit }}</div>
               </div>
             </button>
-            <button type="button" class="kpi-card tone-green" @click="goSection('confirm')">
-              <div class="kpi-card__icon" />
+            <button v-if="isProviderDept" type="button" class="kpi-card tone-green" @click="goSection('confirm')">
+              <div class="kpi-card__icon"><el-icon :size="22"><CircleCheck /></el-icon></div>
               <div class="kpi-card__body">
                 <div class="kpi-card__lab">待确认</div>
                 <div class="kpi-card__num">{{ kpi.confirm }}</div>
               </div>
             </button>
             <button type="button" class="kpi-card tone-amber" @click="goSection('manifest-center', { listGroup: '异议清单' })">
-              <div class="kpi-card__icon" />
+              <div class="kpi-card__icon"><el-icon :size="22"><Warning /></el-icon></div>
               <div class="kpi-card__body">
                 <div class="kpi-card__lab">异议</div>
                 <div class="kpi-card__num">{{ kpi.objection }}</div>
@@ -147,7 +186,7 @@ onMounted(() => {
           <div class="list-entry-row">
             <div class="list-entry tone-blue">
               <div class="list-entry__head">
-                <span class="list-entry__ico" />
+                <span class="list-entry__ico"><el-icon :size="18"><FolderOpened /></el-icon></span>
                 <h3>目录清单</h3>
               </div>
               <div class="list-entry__metric"><b>{{ kpi.catalog }}</b><span>条目录</span></div>
@@ -155,7 +194,7 @@ onMounted(() => {
             </div>
             <div class="list-entry tone-green">
               <div class="list-entry__head">
-                <span class="list-entry__ico" />
+                <span class="list-entry__ico"><el-icon :size="18"><Sort /></el-icon></span>
                 <h3>供需清单</h3>
               </div>
               <div class="list-entry__metric"><b>{{ kpi.supplyManifest }}</b><span>条清单</span></div>
@@ -163,7 +202,7 @@ onMounted(() => {
             </div>
             <div class="list-entry tone-amber">
               <div class="list-entry__head">
-                <span class="list-entry__ico" />
+                <span class="list-entry__ico"><el-icon :size="18"><DocumentCopy /></el-icon></span>
                 <h3>异议清单</h3>
               </div>
               <div class="list-entry__metric"><b>{{ kpi.objectionTotal }}</b><span>条清单</span></div>
@@ -172,6 +211,14 @@ onMounted(() => {
           </div>
         </div>
       </template>
+
+      <div v-else-if="section === 'supply-config'" class="supply-config-pane">
+        <SupplyConfigView embedded />
+      </div>
+
+      <div v-else-if="section === 'matter-manage'" class="supply-config-pane">
+        <MatterManageView />
+      </div>
 
       <SupplyDemandView v-else mode="front" />
     </HubSideLayout>
@@ -203,6 +250,11 @@ onMounted(() => {
   max-height: calc(100vh - 40px - 72px);
   flex: 1;
   min-height: 320px;
+}
+.supply-config-pane {
+  height: 100%;
+  overflow: auto;
+  padding: 4px 2px 12px;
 }
 .hub-back {
   appearance: none;
@@ -256,11 +308,11 @@ onMounted(() => {
 }
 .kpi-card__icon {
   width: 48px; height: 48px; border-radius: 50%; flex-shrink: 0;
-  background: #e8f3ff center/22px no-repeat;
+  display: grid; place-items: center;
 }
-.kpi-card.tone-blue .kpi-card__icon { background-color: #e8f3ff; }
-.kpi-card.tone-green .kpi-card__icon { background-color: #e8f8ef; }
-.kpi-card.tone-amber .kpi-card__icon { background-color: #fff4e5; }
+.kpi-card.tone-blue .kpi-card__icon { background-color: #e8f3ff; color: #1677ff; }
+.kpi-card.tone-green .kpi-card__icon { background-color: #e8f8ef; color: #2e7d32; }
+.kpi-card.tone-amber .kpi-card__icon { background-color: #fff4e5; color: #ef6c00; }
 .kpi-card__num { font-size: 30px; font-weight: 700; line-height: 1.1; }
 .kpi-card.tone-blue .kpi-card__num { color: #1677ff; }
 .kpi-card.tone-green .kpi-card__num { color: #2e7d32; }
@@ -275,10 +327,11 @@ onMounted(() => {
 .list-entry__head { display: flex; align-items: center; gap: 10px; margin-bottom: 6px; }
 .list-entry__ico {
   width: 36px; height: 36px; border-radius: 8px; flex-shrink: 0;
+  display: grid; place-items: center;
 }
-.list-entry.tone-blue .list-entry__ico { background: #e8f3ff; }
-.list-entry.tone-green .list-entry__ico { background: #e8f8ef; }
-.list-entry.tone-amber .list-entry__ico { background: #fff4e5; }
+.list-entry.tone-blue .list-entry__ico { background: #e8f3ff; color: #1677ff; }
+.list-entry.tone-green .list-entry__ico { background: #e8f8ef; color: #2e7d32; }
+.list-entry.tone-amber .list-entry__ico { background: #fff4e5; color: #ef6c00; }
 .list-entry h3 { margin: 0; font-size: 16px; }
 .list-entry__metric { margin: 12px 0; }
 .list-entry__metric b { font-size: 28px; font-weight: 700; margin-right: 6px; }

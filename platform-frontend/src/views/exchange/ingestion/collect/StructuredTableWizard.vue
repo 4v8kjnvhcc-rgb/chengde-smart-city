@@ -3,6 +3,7 @@ import { computed, onMounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import PageCard from '@/components/common/PageCard.vue'
 import { statusLabel } from '@/utils/status-label'
+import ExecCycleSelect from '@/views/system/ExecCycleSelect.vue'
 import { ingestionRegisterCache } from '../ingestion-register-cache'
 import {
   ingestionApi,
@@ -76,7 +77,7 @@ const form = reactive({
   mappingMode: 'NAME' as 'ORDER' | 'NAME' | 'MANUAL',
   pairs: [] as MapPair[],
   // schedule
-  scheduleCron: '0 2 * * *',
+  scheduleCron: '0 0 2 * * ?',
   enabled: false,
 })
 
@@ -340,7 +341,7 @@ async function editJob(row: IngestTask) {
   form.taskName = row.taskName
   form.accessMode = (row.accessMode as AccessMode) || 'SINGLE'
   form.writeMode = (row.writeMode as 'FULL' | 'INCREMENTAL') || 'FULL'
-  form.scheduleCron = row.scheduleCron || '0 2 * * *'
+  form.scheduleCron = row.scheduleCron || '0 0 2 * * ?'
   form.enabled = row.enabled === 1
   form.sourceId = row.sourceId
   form.tableId = row.tableId
@@ -404,7 +405,7 @@ function resetWizard() {
   form.sqlTargetTable = 'ods_sql_result'
   form.paramBizDate = 'DATE_OFFSET:-1'
   form.targetTable = ''
-  form.scheduleCron = '0 2 * * *'
+  form.scheduleCron = '0 0 2 * * ?'
   form.enabled = false
   previewText.value = ''
   step.value = 0
@@ -674,8 +675,8 @@ onMounted(() => {
             <p class="hint">当前为「实时/立即」：不启用定时调度，仅可通过列表「执行」或保存后立即执行触发。</p>
           </template>
           <template v-else>
-            <el-form-item label="Cron" class="portal-field-cron">
-              <el-input v-model="form.scheduleCron" placeholder="0 2 * * *" />
+            <el-form-item label="执行周期" class="portal-field-cron">
+              <ExecCycleSelect v-model="form.scheduleCron" />
             </el-form-item>
             <el-form-item label="启用调度">
               <el-switch v-model="form.enabled" />

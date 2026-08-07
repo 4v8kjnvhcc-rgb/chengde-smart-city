@@ -11,6 +11,7 @@ import com.chengde.smartcity.exchange.entity.BizDataDuty;
 import com.chengde.smartcity.exchange.entity.BizDemandSupplyTask;
 import com.chengde.smartcity.exchange.entity.BizDemandTemplate;
 import com.chengde.smartcity.exchange.entity.BizEsbFlow;
+import com.chengde.smartcity.exchange.entity.BizGovMatter;
 import com.chengde.smartcity.exchange.entity.BizSupplyManifest;
 import com.chengde.smartcity.exchange.entity.IngDataTable;
 import com.chengde.smartcity.exchange.mapper.BizCatalogItemMapper;
@@ -21,6 +22,7 @@ import com.chengde.smartcity.exchange.mapper.BizDataDutyMapper;
 import com.chengde.smartcity.exchange.mapper.BizDemandSupplyTaskMapper;
 import com.chengde.smartcity.exchange.mapper.BizDemandTemplateMapper;
 import com.chengde.smartcity.exchange.mapper.BizEsbFlowMapper;
+import com.chengde.smartcity.exchange.mapper.BizGovMatterMapper;
 import com.chengde.smartcity.exchange.mapper.BizSupplyManifestMapper;
 import com.chengde.smartcity.exchange.mapper.IngDataTableMapper;
 import com.chengde.smartcity.masterdata.entity.GovCatalogApproval;
@@ -64,12 +66,49 @@ public class SupplyDemandService {
     private final IngDataTableMapper dataTableMapper;
     private final GovCatalogApprovalMapper approvalMapper;
     private final GovCatalogResourceMapper govResourceMapper;
+    private final BizGovMatterMapper matterMapper;
     private final AuditService auditService;
 
-    /** 预审中（兼容旧 ANALYZING） */
+    /** 预审相关（兼容旧 ANALYZING，写入时收敛为 PRE_AUDITING） */
     private static final Set<String> PRE_AUDIT_STATUSES = Set.of("PRE_AUDITING", "ANALYZING", "DISPATCHED", "SUPERVISING");
-    /** 可进入审核确认的状态 */
-    private static final Set<String> AUDIT_CONFIRMABLE = Set.of("DISPATCHED", "PRE_AUDITING", "ANALYZING", "SUPERVISING", "CORRECTION");
+    /** 提供部门可确认：已分发/督办中/异议回流 */
+    private static final Set<String> AUDIT_CONFIRMABLE = Set.of("DISPATCHED", "SUPERVISING", "CORRECTION");
+    /** 需求部门可编辑填报：草稿 / 撤销待提交 / 已退回 */
+    private static final Set<String> DEMAND_EDITABLE = Set.of("DRAFT", "WITHDRAW_PENDING", "RETURNED");
+
+    private void requirePlatformAdmin(UserPrincipal operator) {
+        if (operator == null) {
+            throw new BusinessException(401, "未登录");
+        }
+        if (operator.isSystemAdmin() || operator.isPlatformAdmin()) {
+            return;
+        }
+        if (operator.getPermissions() != null
+                && (operator.getPermissions().contains("portal:supply:approve")
+                || operator.getPermissions().contains("system:exchange:supply-config"))) {
+            return;
+        }
+        throw new BusinessException(403, "仅平台管理员（数据主管部门）可操作");
+    }
+
+    private void requireDemandOperator(UserPrincipal operator) {
+        if (operator == null) {
+            throw new BusinessException(401, "未登录");
+        }
+        if (operator.isSystemAdmin() || operator.isPlatformAdmin() || operator.isDeptAdmin()) {
+            return;
+        }
+        if (operator.getPermissions() != null
+                && (operator.getPermissions().contains("portal:supply:create")
+                || operator.getPermissions().contains("portal:supply:approve"))) {
+            return;
+        }
+        throw new BusinessException(403, "无权操作数据需求");
+    }
+
+    private void requireProviderOperator(UserPrincipal operator) {
+        requireDemandOperator(operator);
+    }
 
     @Value("${app.exchange.supply.dispatch-downstream:false}")
     private boolean dispatchDownstream;
@@ -80,7 +119,7 @@ public class SupplyDemandService {
                                BizEsbFlowMapper esbFlowMapper, BizDataDutyMapper dutyMapper,
                                BizCollectTaskMapper collectTaskMapper, IngDataTableMapper dataTableMapper,
                                GovCatalogApprovalMapper approvalMapper, GovCatalogResourceMapper govResourceMapper,
-                               AuditService auditService) {
+                               BizGovMatterMapper matterMapper, AuditService auditService) {
         this.templateMapper = templateMapper;
         this.demandMapper = demandMapper;
         this.catalogMapper = catalogMapper;
@@ -93,6 +132,7 @@ public class SupplyDemandService {
         this.dataTableMapper = dataTableMapper;
         this.approvalMapper = approvalMapper;
         this.govResourceMapper = govResourceMapper;
+        this.matterMapper = matterMapper;
         this.auditService = auditService;
     }
 
@@ -109,6 +149,7 @@ public class SupplyDemandService {
 
     @Transactional
     public Long createTemplate(UserPrincipal operator, Map<String, Object> body) {
+        requirePlatformAdmin(operator);
         BizDemandTemplate t = new BizDemandTemplate();
         t.setTemplateCode(str(body.get("templateCode"), "TPL_" + UUID.randomUUID().toString().substring(0, 8)));
         t.setTemplateName(required(body.get("templateName"), "模板名称").toString());
@@ -123,6 +164,7 @@ public class SupplyDemandService {
 
     @Transactional
     public void updateTemplate(UserPrincipal operator, Long id, Map<String, Object> body) {
+        requirePlatformAdmin(operator);
         BizDemandTemplate t = templateMapper.selectById(id);
         if (t == null) {
             throw new BusinessException(404, "模板不存在");
@@ -142,6 +184,18 @@ public class SupplyDemandService {
         templateMapper.updateById(t);
         auditService.log(operator.getUserId(), operator.getUsername(), operator.getOrgId(),
                 "DEMAND_TEMPLATE_UPDATE", "biz_demand_template", String.valueOf(id), t.getTemplateName());
+    }
+
+    @Transactional
+    public void deleteTemplate(UserPrincipal operator, Long id) {
+        requirePlatformAdmin(operator);
+        BizDemandTemplate t = templateMapper.selectById(id);
+        if (t == null) {
+            throw new BusinessException(404, "模板不存在");
+        }
+        templateMapper.deleteById(id);
+        auditService.log(operator.getUserId(), operator.getUsername(), operator.getOrgId(),
+                "DEMAND_TEMPLATE_DELETE", "biz_demand_template", String.valueOf(id), t.getTemplateName());
     }
 
     public List<BizDataDemand> listDemands(String stage, String status) {
@@ -165,49 +219,276 @@ public class SupplyDemandService {
 
     @Transactional
     public Long createDemand(UserPrincipal operator, Map<String, Object> body) {
+        requireDemandOperator(operator);
         BizDataDemand demand = new BizDataDemand();
-        demand.setDemandTitle(required(body.get("demandTitle"), "需求标题").toString());
-        demand.setRequesterOrg(str(body.get("requesterOrg"), "机构" + operator.getOrgId()));
-        demand.setDemandType(str(body.get("demandType"), "STRUCTURED"));
-        demand.setTemplateCode(str(body.get("templateCode"), null));
-        demand.setDemandContent(str(body.get("demandContent"), null));
-        if (body.get("modelFields") != null) {
-            demand.setModelFields(body.get("modelFields") instanceof String
-                    ? String.valueOf(body.get("modelFields"))
-                    : toJson(castMap(body.get("modelFields"))));
-        }
-        Object catalogId = body.get("targetCatalogId");
-        if (catalogId != null) {
-            demand.setTargetCatalogId(Long.valueOf(String.valueOf(catalogId)));
-        }
-        demand.setStatus("SUBMITTED");
+        applyDemandForm(demand, body, operator, true);
+        boolean draft = Boolean.TRUE.equals(body.get("draft"))
+                || "DRAFT".equalsIgnoreCase(str(body.get("status"), ""));
+        demand.setStatus(draft ? "DRAFT" : "SUBMITTED");
         demand.setStage("MANAGE");
         demand.setCreatedBy(operator.getUsername());
         demandMapper.insert(demand);
         auditService.log(operator.getUserId(), operator.getUsername(), operator.getOrgId(),
-                "DEMAND_SUBMIT", "biz_data_demand", String.valueOf(demand.getId()), demand.getDemandTitle());
+                draft ? "DEMAND_DRAFT" : "DEMAND_SUBMIT", "biz_data_demand",
+                String.valueOf(demand.getId()), demand.getDemandTitle());
         return demand.getId();
     }
 
     @Transactional
     public void withdrawDemand(UserPrincipal operator, Long id) {
+        requireDemandOperator(operator);
         BizDataDemand demand = getDemand(id);
         if (!"SUBMITTED".equals(demand.getStatus())) {
-            throw new BusinessException(400, "仅已提交需求可撤销");
+            throw new BusinessException(400, "仅待数据主管部门审核的需求可撤销");
         }
-        demand.setStatus("WITHDRAWN");
+        demand.setStatus("WITHDRAW_PENDING");
         demandMapper.updateById(demand);
         auditService.log(operator.getUserId(), operator.getUsername(), operator.getOrgId(),
                 "DEMAND_WITHDRAW", "biz_data_demand", String.valueOf(id), demand.getDemandTitle());
     }
 
     @Transactional
+    public void submitDemand(UserPrincipal operator, Long id) {
+        requireDemandOperator(operator);
+        BizDataDemand demand = getDemand(id);
+        if (!DEMAND_EDITABLE.contains(demand.getStatus())) {
+            throw new BusinessException(400, "仅草稿、撤销待提交或已退回状态可提交");
+        }
+        if (demand.getDemandTitle() == null || demand.getDemandTitle().isBlank()) {
+            throw new BusinessException(400, "请填写数据名称");
+        }
+        demand.setStatus("SUBMITTED");
+        demand.setStage("MANAGE");
+        demandMapper.updateById(demand);
+        auditService.log(operator.getUserId(), operator.getUsername(), operator.getOrgId(),
+                "DEMAND_SUBMIT", "biz_data_demand", String.valueOf(id), demand.getDemandTitle());
+    }
+
+    @Transactional
+    public void deleteDemand(UserPrincipal operator, Long id) {
+        requireDemandOperator(operator);
+        BizDataDemand demand = getDemand(id);
+        if (!DEMAND_EDITABLE.contains(demand.getStatus())) {
+            throw new BusinessException(400, "仅草稿、撤销待提交或已退回状态可删除");
+        }
+        demandMapper.deleteById(id);
+        auditService.log(operator.getUserId(), operator.getUsername(), operator.getOrgId(),
+                "DEMAND_DELETE", "biz_data_demand", String.valueOf(id), demand.getDemandTitle());
+    }
+
+    public List<BizGovMatter> listMatters(String keyword, String matterType, String status) {
+        ensureBuiltinMatters();
+        LambdaQueryWrapper<BizGovMatter> q = new LambdaQueryWrapper<BizGovMatter>()
+                .orderByAsc(BizGovMatter::getSortOrder)
+                .orderByAsc(BizGovMatter::getId);
+        if (keyword != null && !keyword.isBlank()) {
+            q.and(w -> w.like(BizGovMatter::getMatterName, keyword.trim())
+                    .or().like(BizGovMatter::getMatterCode, keyword.trim()));
+        }
+        if (matterType != null && !matterType.isBlank()) {
+            q.eq(BizGovMatter::getMatterType, matterType.trim());
+        }
+        if (status != null && !status.isBlank()) {
+            q.eq(BizGovMatter::getStatus, status.trim());
+        }
+        return matterMapper.selectList(q);
+    }
+
+    /** 若库中无事项，兜底写入国家/省/市示例（Flyway 未执行时仍可用） */
+    private void ensureBuiltinMatters() {
+        Long cnt = matterMapper.selectCount(null);
+        if (cnt != null && cnt > 0) {
+            return;
+        }
+        String[][] seeds = {
+                {"NATION-001", "结婚登记", "户籍婚姻", "NATIONAL", "1"},
+                {"NATION-002", "出生医学证明签发", "户籍婚姻", "NATIONAL", "2"},
+                {"NATION-003", "居民身份证申领", "证件证照", "NATIONAL", "3"},
+                {"HEBEI-001", "居住证办理", "证件证照", "PROVINCE", "10"},
+                {"HEBEI-002", "社保卡申领", "社会保障", "PROVINCE", "11"},
+                {"HEBEI-003", "不动产登记查询", "不动产", "PROVINCE", "12"},
+                {"CD-001", "高新技术企业认定", "企业服务", "CITY", "20"},
+                {"CD-002", "建设项目规划许可", "工程建设", "CITY", "21"},
+                {"CD-003", "公共场所卫生许可", "卫生健康", "CITY", "22"},
+                {"CD-004", "社会救助证明开具", "社会救助", "CITY", "23"},
+        };
+        for (String[] s : seeds) {
+            BizGovMatter m = new BizGovMatter();
+            m.setMatterCode(s[0]);
+            m.setMatterName(s[1]);
+            m.setMatterType(s[2]);
+            m.setRegionScope(s[3]);
+            m.setStatus("ACTIVE");
+            m.setSortOrder(Integer.parseInt(s[4]));
+            m.setCreatedBy("sys_admin");
+            try {
+                matterMapper.insert(m);
+            } catch (Exception ex) {
+                log.debug("seed matter skip {}: {}", s[0], ex.getMessage());
+            }
+        }
+    }
+
+    @Transactional
+    public Long createMatter(UserPrincipal operator, Map<String, Object> body) {
+        requirePlatformAdmin(operator);
+        BizGovMatter m = new BizGovMatter();
+        m.setMatterCode(required(body.get("matterCode"), "事项编码").toString().trim());
+        m.setMatterName(required(body.get("matterName"), "事项名称").toString().trim());
+        m.setMatterType(str(body.get("matterType"), "OTHER"));
+        m.setRegionScope(str(body.get("regionScope"), "CITY"));
+        m.setStatus(str(body.get("status"), "ACTIVE"));
+        m.setSortOrder(intVal(body.get("sortOrder"), 100));
+        m.setCreatedBy(operator == null ? null : operator.getUsername());
+        Long exists = matterMapper.selectCount(new LambdaQueryWrapper<BizGovMatter>()
+                .eq(BizGovMatter::getMatterCode, m.getMatterCode()));
+        if (exists != null && exists > 0) {
+            throw new BusinessException(400, "事项编码已存在");
+        }
+        matterMapper.insert(m);
+        auditService.log(operator.getUserId(), operator.getUsername(), operator.getOrgId(),
+                "GOV_MATTER_CREATE", "biz_gov_matter", String.valueOf(m.getId()), m.getMatterName());
+        return m.getId();
+    }
+
+    @Transactional
+    public void updateMatter(UserPrincipal operator, Long id, Map<String, Object> body) {
+        requirePlatformAdmin(operator);
+        BizGovMatter m = matterMapper.selectById(id);
+        if (m == null) {
+            throw new BusinessException(404, "事项不存在");
+        }
+        if (body.get("matterCode") != null) {
+            String code = String.valueOf(body.get("matterCode")).trim();
+            Long dup = matterMapper.selectCount(new LambdaQueryWrapper<BizGovMatter>()
+                    .eq(BizGovMatter::getMatterCode, code)
+                    .ne(BizGovMatter::getId, id));
+            if (dup != null && dup > 0) {
+                throw new BusinessException(400, "事项编码已存在");
+            }
+            m.setMatterCode(code);
+        }
+        if (body.get("matterName") != null) {
+            m.setMatterName(String.valueOf(body.get("matterName")).trim());
+        }
+        if (body.get("matterType") != null) {
+            m.setMatterType(String.valueOf(body.get("matterType")));
+        }
+        if (body.get("regionScope") != null) {
+            m.setRegionScope(String.valueOf(body.get("regionScope")));
+        }
+        if (body.get("status") != null) {
+            m.setStatus(String.valueOf(body.get("status")));
+        }
+        if (body.get("sortOrder") != null) {
+            m.setSortOrder(intVal(body.get("sortOrder"), m.getSortOrder() == null ? 0 : m.getSortOrder()));
+        }
+        matterMapper.updateById(m);
+        auditService.log(operator.getUserId(), operator.getUsername(), operator.getOrgId(),
+                "GOV_MATTER_UPDATE", "biz_gov_matter", String.valueOf(id), m.getMatterName());
+    }
+
+    @Transactional
+    public void deleteMatter(UserPrincipal operator, Long id) {
+        requirePlatformAdmin(operator);
+        BizGovMatter m = matterMapper.selectById(id);
+        if (m == null) {
+            throw new BusinessException(404, "事项不存在");
+        }
+        matterMapper.deleteById(id);
+        auditService.log(operator.getUserId(), operator.getUsername(), operator.getOrgId(),
+                "GOV_MATTER_DELETE", "biz_gov_matter", String.valueOf(id), m.getMatterName());
+    }
+
+    private void applyDemandForm(BizDataDemand demand, Map<String, Object> body, UserPrincipal operator, boolean creating) {
+        Object titleObj = body.get("demandTitle");
+        if (titleObj == null || String.valueOf(titleObj).isBlank()) {
+            titleObj = body.get("dataName");
+        }
+        if (creating) {
+            demand.setDemandTitle(required(titleObj, "数据名称").toString());
+        } else if (titleObj != null && !String.valueOf(titleObj).isBlank()) {
+            demand.setDemandTitle(String.valueOf(titleObj));
+        }
+        if (body.get("requesterOrg") != null || creating) {
+            demand.setRequesterOrg(str(body.get("requesterOrg"),
+                    operator == null ? "未知机构" : "机构" + operator.getOrgId()));
+        }
+        // demandType 保留 STRUCTURED/UNSTRUCTURED；政务类型写入 formPayload.serviceDemandType
+        String dtype = str(body.get("demandType"), demand.getDemandType() == null ? "STRUCTURED" : demand.getDemandType());
+        if ("GOV".equalsIgnoreCase(dtype) || "NON_GOV".equalsIgnoreCase(dtype)
+                || "政务服务需求".equals(dtype) || "非政务服务需求".equals(dtype)) {
+            dtype = demand.getDemandType() == null ? "STRUCTURED" : demand.getDemandType();
+        }
+        demand.setDemandType(dtype);
+        if (body.get("templateCode") != null) {
+            demand.setTemplateCode(str(body.get("templateCode"), null));
+        }
+        if (body.get("demandContent") != null) {
+            demand.setDemandContent(str(body.get("demandContent"), null));
+        }
+        if (body.get("modelFields") != null) {
+            demand.setModelFields(body.get("modelFields") instanceof String
+                    ? String.valueOf(body.get("modelFields"))
+                    : toJson(castMap(body.get("modelFields"))));
+        }
+        Object catalogId = body.get("targetCatalogId");
+        if (catalogId != null && !String.valueOf(catalogId).isBlank()) {
+            demand.setTargetCatalogId(Long.valueOf(String.valueOf(catalogId)));
+        }
+        if (body.get("formPayload") != null) {
+            if (body.get("formPayload") instanceof String) {
+                demand.setFormPayload(String.valueOf(body.get("formPayload")));
+            } else {
+                demand.setFormPayload(toJson(castMap(body.get("formPayload"))));
+            }
+        } else if (body.containsKey("providerOrg") || body.containsKey("dataName")
+                || body.containsKey("dataItems") || body.containsKey("matterIds")) {
+            Map<String, Object> payload = new LinkedHashMap<>();
+            putIfPresent(payload, body, "providerOrg");
+            putIfPresent(payload, body, "dataName");
+            putIfPresent(payload, body, "systemNames");
+            putIfPresent(payload, body, "dataItems");
+            putIfPresent(payload, body, "serviceDemandType");
+            putIfPresent(payload, body, "matterIds");
+            putIfPresent(payload, body, "matterNames");
+            putIfPresent(payload, body, "matterMaterials");
+            putIfPresent(payload, body, "usageScenario");
+            putIfPresent(payload, body, "demandBasis");
+            putIfPresent(payload, body, "shareProvideMode");
+            putIfPresent(payload, body, "updateFrequency");
+            putIfPresent(payload, body, "attachments");
+            putIfPresent(payload, body, "contactName");
+            putIfPresent(payload, body, "contactPhone");
+            putIfPresent(payload, body, "contactEmail");
+            putIfPresent(payload, body, "catalogTitle");
+            demand.setFormPayload(toJson(payload));
+            if ((demand.getDemandTitle() == null || demand.getDemandTitle().isBlank())
+                    && payload.get("dataName") != null) {
+                demand.setDemandTitle(String.valueOf(payload.get("dataName")));
+            }
+        }
+        if (body.get("assigneeOrg") != null) {
+            demand.setAssigneeOrg(String.valueOf(body.get("assigneeOrg")));
+        }
+        if (body.get("supplyMode") != null) {
+            demand.setSupplyMode(String.valueOf(body.get("supplyMode")));
+        }
+    }
+
+    private void putIfPresent(Map<String, Object> target, Map<String, Object> body, String key) {
+        if (body.containsKey(key) && body.get(key) != null) {
+            target.put(key, body.get(key));
+        }
+    }
+
+    @Transactional
     public Map<String, Object> analyzeDemand(UserPrincipal operator, Long id) {
+        requirePlatformAdmin(operator);
         BizDataDemand demand = getDemand(id);
         if (!"SUBMITTED".equals(demand.getStatus()) && !"PRE_AUDITING".equals(demand.getStatus())
-                && !"ANALYZING".equals(demand.getStatus()) && !"RETURNED".equals(demand.getStatus())
-                && !"SUPERVISING".equals(demand.getStatus())) {
-            throw new BusinessException(400, "当前状态不可预审分析");
+                && !"ANALYZING".equals(demand.getStatus()) && !"SUPERVISING".equals(demand.getStatus())) {
+            throw new BusinessException(400, "当前状态不可预审分析（已退回请由需求部门修改后重新提交）");
         }
         String keyword = demand.getDemandTitle().toLowerCase();
         List<Map<String, Object>> candidates = searchResourceCandidates(keyword);
@@ -277,6 +558,7 @@ public class SupplyDemandService {
 
     @Transactional
     public void superviseDemand(UserPrincipal operator, Long id, Map<String, Object> body) {
+        requirePlatformAdmin(operator);
         BizDataDemand demand = getDemand(id);
         if (!PRE_AUDIT_STATUSES.contains(demand.getStatus())) {
             throw new BusinessException(400, "仅预审中/已分发需求可督办");
@@ -299,6 +581,7 @@ public class SupplyDemandService {
      */
     @Transactional
     public Map<String, Object> applyAnalysisSettings(UserPrincipal operator, Long id, Map<String, Object> body) {
+        requirePlatformAdmin(operator);
         BizDataDemand demand = getDemand(id);
         if (body.get("evalStatus") != null) {
             String eval = String.valueOf(body.get("evalStatus")).toUpperCase();
@@ -331,7 +614,7 @@ public class SupplyDemandService {
         if (body.get("matchScore") != null) {
             demand.setMatchScore(new BigDecimal(String.valueOf(body.get("matchScore"))));
         }
-        if (demand.getStatus().equals("SUBMITTED") || demand.getStatus().equals("RETURNED")) {
+        if (demand.getStatus().equals("SUBMITTED")) {
             demand.setStatus("PRE_AUDITING");
             demand.setStage("PRE_AUDIT");
         }
@@ -352,6 +635,7 @@ public class SupplyDemandService {
 
     @Transactional
     public void dispatchDemand(UserPrincipal operator, Long id, Map<String, Object> body) {
+        requirePlatformAdmin(operator);
         BizDataDemand demand = getDemand(id);
         if (!Set.of("PRE_AUDITING", "ANALYZING", "DISPATCHED", "SUBMITTED", "SUPERVISING").contains(demand.getStatus())) {
             throw new BusinessException(400, "当前状态不可分发");
@@ -379,6 +663,7 @@ public class SupplyDemandService {
 
     @Transactional
     public void returnDemand(UserPrincipal operator, Long id, Map<String, Object> body) {
+        requirePlatformAdmin(operator);
         BizDataDemand demand = getDemand(id);
         demand.setStatus("RETURNED");
         demand.setStage("MANAGE");
@@ -390,9 +675,10 @@ public class SupplyDemandService {
 
     @Transactional
     public Map<String, Object> confirmDemand(UserPrincipal operator, Long id, Map<String, Object> body) {
+        requireProviderOperator(operator);
         BizDataDemand demand = getDemand(id);
         if (!AUDIT_CONFIRMABLE.contains(demand.getStatus())) {
-            throw new BusinessException(400, "仅预审分发/督办/异议回流中的需求可审核确认");
+            throw new BusinessException(400, "仅待确认/督办中的需求可同意并生成共享任务");
         }
         String path = str(body.get("fulfillPath"), demand.getFulfillPath());
         if (path == null || path.isBlank()) {
@@ -440,6 +726,7 @@ public class SupplyDemandService {
     /** 供数部门退回（审核环节） */
     @Transactional
     public void confirmReturnDemand(UserPrincipal operator, Long id, Map<String, Object> body) {
+        requireProviderOperator(operator);
         BizDataDemand demand = getDemand(id);
         if (!AUDIT_CONFIRMABLE.contains(demand.getStatus()) && !"CONFIRMED".equals(demand.getStatus())) {
             throw new BusinessException(400, "当前状态不可退回");
@@ -454,11 +741,12 @@ public class SupplyDemandService {
                 "DEMAND_CONFIRM_RETURN", "biz_data_demand", String.valueOf(id), note);
     }
 
-    /** 督查反馈（供数/主管部门在审核环节反馈） */
+    /** 督查反馈（供数部门在确认环节反馈） */
     @Transactional
     public void confirmFeedback(UserPrincipal operator, Long id, Map<String, Object> body) {
+        requireProviderOperator(operator);
         BizDataDemand demand = getDemand(id);
-        if (!Set.of("DISPATCHED", "PRE_AUDITING", "ANALYZING", "SUPERVISING", "CONFIRMED", "CORRECTION")
+        if (!Set.of("DISPATCHED", "SUPERVISING", "CONFIRMED", "CORRECTION")
                 .contains(demand.getStatus())) {
             throw new BusinessException(400, "当前状态不可填写督查反馈");
         }
@@ -477,6 +765,7 @@ public class SupplyDemandService {
     /** 整体办结 */
     @Transactional
     public void completeDemand(UserPrincipal operator, Long id, Map<String, Object> body) {
+        requireProviderOperator(operator);
         BizDataDemand demand = getDemand(id);
         if (!"CONFIRMED".equals(demand.getStatus())) {
             throw new BusinessException(400, "仅已确认需求可办结");
@@ -495,6 +784,7 @@ public class SupplyDemandService {
     /** 整体撤销（非已办结） */
     @Transactional
     public void cancelDemand(UserPrincipal operator, Long id, Map<String, Object> body) {
+        requireProviderOperator(operator);
         BizDataDemand demand = getDemand(id);
         if (Set.of("COMPLETED", "CANCELLED", "WITHDRAWN").contains(demand.getStatus())) {
             throw new BusinessException(400, "当前状态不可撤销");
@@ -509,9 +799,27 @@ public class SupplyDemandService {
     /** 整体修改（办结/撤销前） */
     @Transactional
     public void updateDemand(UserPrincipal operator, Long id, Map<String, Object> body) {
+        requireDemandOperator(operator);
         BizDataDemand demand = getDemand(id);
-        if (Set.of("COMPLETED", "CANCELLED", "WITHDRAWN", "REJECTED").contains(demand.getStatus())) {
+        if (Set.of("COMPLETED", "CANCELLED", "WITHDRAWN").contains(demand.getStatus())) {
             throw new BusinessException(400, "当前状态不可修改");
+        }
+        // 需求部门完整表单编辑：草稿 / 撤销待提交 / 已退回
+        if (body.containsKey("formPayload") || body.containsKey("dataName") || body.containsKey("dataItems")) {
+            if (!DEMAND_EDITABLE.contains(demand.getStatus())) {
+                throw new BusinessException(400, "仅草稿、撤销待提交或已退回状态可修改填报内容");
+            }
+            applyDemandForm(demand, body, operator, false);
+            if (Boolean.TRUE.equals(body.get("submit"))) {
+                demand.setStatus("SUBMITTED");
+                demand.setStage("MANAGE");
+            } else if (Boolean.TRUE.equals(body.get("draft"))) {
+                demand.setStatus("DRAFT");
+            }
+            demandMapper.updateById(demand);
+            auditService.log(operator.getUserId(), operator.getUsername(), operator.getOrgId(),
+                    "DEMAND_UPDATE", "biz_data_demand", String.valueOf(id), demand.getDemandTitle());
+            return;
         }
         if (body.get("demandTitle") != null && !String.valueOf(body.get("demandTitle")).isBlank()) {
             demand.setDemandTitle(String.valueOf(body.get("demandTitle")));
@@ -556,16 +864,18 @@ public class SupplyDemandService {
 
     @Transactional
     public void rejectDemand(UserPrincipal operator, Long id, Map<String, Object> body) {
+        requireProviderOperator(operator);
         BizDataDemand demand = getDemand(id);
         if (!AUDIT_CONFIRMABLE.contains(demand.getStatus())) {
-            throw new BusinessException(400, "仅预审分发/督办/异议回流中的需求可驳回");
+            throw new BusinessException(400, "仅待确认/督办中的需求可退回");
         }
-        demand.setStatus("REJECTED");
-        demand.setStage("AUDIT");
-        demand.setConfirmNote(str(body.get("confirmNote"), "需求已驳回"));
+        // 收敛：驳回并入「已退回」，需求部门可修改后重新提交
+        demand.setStatus("RETURNED");
+        demand.setStage("MANAGE");
+        demand.setConfirmNote(str(body.get("confirmNote"), "需求已退回"));
         demandMapper.updateById(demand);
         auditService.log(operator.getUserId(), operator.getUsername(), operator.getOrgId(),
-                "DEMAND_REJECT", "biz_data_demand", String.valueOf(id), demand.getConfirmNote());
+                "DEMAND_CONFIRM_RETURN", "biz_data_demand", String.valueOf(id), demand.getConfirmNote());
     }
 
     public List<BizDemandSupplyTask> listSupplyTasks(Long demandId) {
@@ -598,13 +908,13 @@ public class SupplyDemandService {
                 }).toList();
         List<Map<String, Object>> apiEndpoints = new ArrayList<>();
         for (BizDemandSupplyTask t : tasks) {
-            if ("SHARE".equals(t.getTaskType()) || "EXCHANGE".equals(t.getTaskType())) {
+            if ("API".equals(t.getTaskType()) || "SHARE".equals(t.getTaskType()) || "EXCHANGE".equals(t.getTaskType())) {
                 Map<String, Object> m = new LinkedHashMap<>();
                 m.put("name", t.getTaskName());
                 m.put("endpoint", catalog != null
                         ? "/api/v1/exchange/catalog/" + catalog.getId()
                         : "/api/v1/exchange/supply/supply-view/" + demandId);
-                m.put("method", "GET");
+                m.put("method", "API".equals(t.getTaskType()) ? "POST" : "GET");
                 m.put("status", t.getStatus());
                 apiEndpoints.add(m);
             }
@@ -1124,6 +1434,7 @@ public class SupplyDemandService {
             tasks.add(insertTask(demand.getId(), "COLLECT", "归集任务-" + demand.getDemandTitle(), "PENDING", null));
         }
         tasks.add(insertTask(demand.getId(), "SHARE", "共享页面-" + demand.getDemandTitle(), "PENDING", null));
+        tasks.add(insertTask(demand.getId(), "API", "接口服务-" + demand.getDemandTitle(), "PENDING", null));
         BizEsbFlow flow = esbFlowMapper.selectOne(new LambdaQueryWrapper<BizEsbFlow>().last("LIMIT 1"));
         String flowCode = flow != null ? flow.getFlowCode() : "MF_DEMO_001";
         tasks.add(insertTask(demand.getId(), "EXCHANGE", "交换作业-" + demand.getDemandTitle(), "PENDING", flowCode));
@@ -1151,6 +1462,9 @@ public class SupplyDemandService {
                     t.setStatus("LINKED");
                     supplyTaskMapper.updateById(t);
                 } else if ("SHARE".equals(t.getTaskType())) {
+                    t.setStatus("READY");
+                    supplyTaskMapper.updateById(t);
+                } else if ("API".equals(t.getTaskType())) {
                     t.setStatus("READY");
                     supplyTaskMapper.updateById(t);
                 }

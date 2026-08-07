@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref, watch } from 'vue'
+import { computed, nextTick, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import api from '@/api/http'
 import { ElMessage } from 'element-plus'
@@ -23,6 +23,7 @@ interface CatalogRow {
   shareModes?: string
   resourceCount?: number
   hotScore?: number
+  visitCount?: number
   publishedAt?: string
   previewItems?: { label: string; value: string }[]
 }
@@ -79,7 +80,9 @@ const subscriptions = ref<Subscription[]>([])
 const pendingSubsList = ref<Subscription[]>([])
 const catalogOptions = ref<CatalogRow[]>([])
 const preview = reactive<{ visible: boolean; row: CatalogRow | null }>({ visible: false, row: null })
-const shareCatalogRef = ref<{ loadCatalog: () => Promise<void>; openDetail?: (row: ShareCatalogRow) => void } | null>(null)
+const shareCatalogRef = ref<{ loadCatalog: () => Promise<void>; openDetail?: (row: ShareCatalogRow) => void | Promise<void> } | null>(null)
+/** 首页点资源后，切到政务共享资源再打开详情 */
+const pendingCatalogId = ref<number | string | null>(null)
 
 const subForm = reactive({
   catalogId: undefined as number | undefined,
@@ -120,7 +123,7 @@ function setTab(key: string) {
   if (searchQ.value) q.q = searchQ.value
   if (filterTheme.value) q.themeCode = filterTheme.value
   router.replace({ path: '/exchange/analysis-portal/dept', query: q })
-  loadTab()
+  void loadTab().then(() => flushPendingCatalogDetail())
 }
 
 async function loadHome() {
@@ -153,12 +156,10 @@ async function loadSubscriptions() {
 
 const shareBrowseMode = ref<'theme' | 'dept'>('theme')
 
-const hotApis = computed(() =>
-  (home.value?.hotResources || []).filter((r) => r.catalogKind === 'SERVICE' || String(r.shareModes || '').includes('API')).slice(0, 5),
-)
-const hotTables = computed(() =>
-  (home.value?.hotResources || []).filter((r) => r.catalogKind !== 'SERVICE' && !String(r.shareModes || '').includes('API')).slice(0, 5),
-)
+/** 最新资源：按发布时间倒序，默认 5 条 */
+const latestResources = computed(() => (home.value?.latestResources || []).slice(0, 5))
+/** 最热资源：按访问量倒序，默认 5 条 */
+const hotResources = computed(() => (home.value?.hotResources || []).slice(0, 5))
 
 const themeApiTotal = computed(() =>
   (home.value?.themes || []).reduce((s, t) => s + (t.apiCount || 0), 0),
@@ -223,13 +224,31 @@ function openPreview(row: CatalogRow) {
   preview.visible = true
 }
 
-function applyFromCatalog(row: CatalogRow) {
+/** 跳转政务共享资源详情页 */
+function openShareDetail(row: CatalogRow) {
   preview.visible = false
+  pendingCatalogId.value = row.id
   setTab('catalog')
-  // 留在共享资源页打开详情申请，不跳转订阅 Tab
-  setTimeout(() => {
-    shareCatalogRef.value?.openDetail?.(row as unknown as ShareCatalogRow)
-  }, 80)
+}
+
+async function flushPendingCatalogDetail() {
+  const id = pendingCatalogId.value
+  if (id == null || portalTab.value !== 'catalog') return
+  for (let i = 0; i < 30; i++) {
+    await nextTick()
+    const open = shareCatalogRef.value?.openDetail
+    if (open) {
+      pendingCatalogId.value = null
+      await open({ id } as ShareCatalogRow)
+      return
+    }
+    await new Promise((r) => setTimeout(r, 50))
+  }
+  pendingCatalogId.value = null
+}
+
+function applyFromCatalog(row: CatalogRow) {
+  openShareDetail(row)
 }
 
 async function submitSubscription() {
@@ -302,10 +321,15 @@ function payloadEntries(row: Subscription | null): { label: string; value: strin
 
 const pendingSubs = computed(() => pendingSubsList.value)
 const mySubs = computed(() => subscriptions.value)
+const myspaceInnerTab = ref<'mine' | 'pending'>('mine')
 const myspacePage = ref(1)
 const myspacePageSize = ref(10)
 const pendingPage = ref(1)
 const pendingPageSize = ref(10)
+
+function setMyspaceInnerTab(tab: 'mine' | 'pending') {
+  myspaceInnerTab.value = tab
+}
 const pagedMySubs = computed(() => {
   const start = (myspacePage.value - 1) * myspacePageSize.value
   return mySubs.value.slice(start, start + myspacePageSize.value)
@@ -319,12 +343,36 @@ const pagedPendingSubs = computed(() => {
 
 watch(() => route.query.section, () => {
   syncTab()
-  loadTab()
+  void loadTab().then(() => flushPendingCatalogDetail())
 })
+
+watch(
+  () => route.query.catalogId,
+  (cid) => {
+    if (cid == null || cid === '') return
+    pendingCatalogId.value = String(cid)
+    if (portalTab.value !== 'catalog') {
+      setTab('catalog')
+    } else {
+      void flushPendingCatalogDetail()
+    }
+  },
+)
 
 onMounted(() => {
   syncTab()
-  loadTab()
+  const cid = route.query.catalogId
+  if (cid != null && cid !== '') {
+    pendingCatalogId.value = String(cid)
+    if (String(route.query.section || '') !== 'catalog') {
+      portalTab.value = 'catalog'
+      router.replace({
+        path: '/exchange/analysis-portal/dept',
+        query: { ...route.query, section: 'catalog', catalogId: String(cid) },
+      })
+    }
+  }
+  void loadTab().then(() => flushPendingCatalogDetail())
 })
 </script>
 
@@ -335,7 +383,6 @@ onMounted(() => {
       <section class="hero">
         <div class="hero__inner">
           <div class="hero__copy">
-            <div class="hero__brand">{{ DEPT_PORTAL_BRAND }}</div>
             <h1 class="hero__title">构建完善的数据资产管理体系，数据汇聚全覆盖</h1>
             <div class="hero__search">
               <input
@@ -365,7 +412,7 @@ onMounted(() => {
 
       <section class="panel">
         <div class="panel__head">
-          <h2>共享资源</h2>
+          <h2>政务共享资源</h2>
           <div class="seg">
             <button type="button" :class="{ 'is-on': shareBrowseMode === 'theme' }" @click="shareBrowseMode = 'theme'">主题</button>
             <button type="button" :class="{ 'is-on': shareBrowseMode === 'dept' }" @click="shareBrowseMode = 'dept'">部门</button>
@@ -398,7 +445,7 @@ onMounted(() => {
               <span>数据库表数 <b class="c-amber">{{ t.dataCount ?? t.count ?? 0 }}</b></span>
             </div>
           </button>
-          <div v-if="!(home?.themes?.length)" class="theme-empty">暂无主题资源目录，请先在「数据资源分类」维护主题分类</div>
+          <div v-if="!(home?.themes?.length)" class="theme-empty">暂无已发布的主题资源目录</div>
         </div>
         <!-- 部门：审批通过且选择了组织机构（提供方）的资源 -->
         <div v-else class="theme-grid">
@@ -426,7 +473,7 @@ onMounted(() => {
               <span>数据库表数 <b class="c-amber">{{ p.dataCount ?? p.count ?? 0 }}</b></span>
             </div>
           </button>
-          <div v-if="!(home?.providers?.length)" class="theme-empty">暂无组织机构，请先在「组织与账号」维护部门</div>
+          <div v-if="!(home?.providers?.length)" class="theme-empty">暂无已发布的部门资源目录</div>
         </div>
       </section>
 
@@ -438,72 +485,42 @@ onMounted(() => {
           <div class="dual__col">
             <div class="dual__caption dual__caption--blue">
               <div>
-                <h3>热门接口</h3>
+                <h3>最新资源</h3>
               </div>
-              <button type="button" class="more more--light" @click="catalogKind='SERVICE'; setTab('catalog')">更多</button>
+              <button type="button" class="more more--light" @click="catalogKind=''; setTab('catalog')">更多</button>
             </div>
             <ul class="res-list">
-              <li v-for="r in (hotApis.length ? hotApis : (home?.hotResources || []).slice(0, 5))" :key="'api-' + String(r.id)">
-                <button type="button" @click="openPreview(r)">
+              <li v-for="r in latestResources" :key="'latest-' + String(r.id)">
+                <button type="button" @click="openShareDetail(r)">
                   <span class="res-list__main">
                     <span class="res-list__title">{{ r.title }}</span>
                     <span class="res-list__meta">来源: {{ r.providerOrg || '—' }}</span>
                   </span>
-                  <span class="res-list__views">访问量: {{ r.hotScore || 0 }}次</span>
+                  <span class="res-list__views">访问量: {{ r.visitCount ?? r.hotScore ?? 0 }}次</span>
                 </button>
               </li>
-              <li v-if="!(hotApis.length || home?.hotResources?.length)" class="empty">暂无热门接口</li>
+              <li v-if="!latestResources.length" class="empty">暂无最新资源</li>
             </ul>
           </div>
           <div class="dual__col">
             <div class="dual__caption dual__caption--blue">
               <div>
-                <h3>热门库表</h3>
+                <h3>最热资源</h3>
               </div>
-              <button type="button" class="more more--light" @click="catalogKind='DATA'; setTab('catalog')">更多</button>
+              <button type="button" class="more more--light" @click="catalogKind=''; setTab('catalog')">更多</button>
             </div>
             <ul class="res-list">
-              <li v-for="r in (hotTables.length ? hotTables : (home?.latestResources || []).slice(0, 5))" :key="'tbl-' + String(r.id)">
-                <button type="button" @click="openPreview(r)">
+              <li v-for="r in hotResources" :key="'hot-' + String(r.id)">
+                <button type="button" @click="openShareDetail(r)">
                   <span class="res-list__main">
                     <span class="res-list__title">{{ r.title }}</span>
                     <span class="res-list__meta">来源: {{ r.providerOrg || '—' }}</span>
                   </span>
-                  <span class="res-list__views">访问量: {{ r.hotScore || 0 }}次</span>
+                  <span class="res-list__views">访问量: {{ r.visitCount ?? r.hotScore ?? 0 }}次</span>
                 </button>
               </li>
-              <li v-if="!(hotTables.length || home?.latestResources?.length)" class="empty">暂无热门库表</li>
+              <li v-if="!hotResources.length" class="empty">暂无最热资源</li>
             </ul>
-          </div>
-        </div>
-      </section>
-
-      <section class="panel panel--info">
-        <div class="panel__head">
-          <h2>信息管理办法专区</h2>
-        </div>
-        <div class="info-grid">
-          <div class="info-banner" @click="setTab('myspace')">
-            <div class="info-banner__title">信息专区</div>
-            <div class="info-banner__desc">及时获取最新工作动态、政策动态</div>
-          </div>
-          <div class="info-side">
-            <div class="dual__col info-block">
-              <div class="dual__caption"><h3>政策法规</h3></div>
-              <ul class="feed-list">
-                <li><span class="feed-list__static"><span>政务数据共享条例</span><em>2026-02-28</em></span></li>
-                <li><span class="feed-list__static"><span>公共数据资源管理办法</span><em>2026-03-12</em></span></li>
-                <li><span class="feed-list__static"><span>承德市数据共享交换实施细则</span><em>2026-03-12</em></span></li>
-              </ul>
-            </div>
-            <div class="dual__col info-block">
-              <div class="dual__caption"><h3>工作动态</h3></div>
-              <ul class="feed-list">
-                <li><span class="feed-list__static"><span>数据共享门户上线试运行</span><em>2026-07-01</em></span></li>
-                <li><span class="feed-list__static"><span>全市政务数据归集进度通报</span><em>2026-06-18</em></span></li>
-                <li><span class="feed-list__static"><span>关于公示高新区数据资源目录建设规划的通知</span><em>2026-02-28</em></span></li>
-              </ul>
-            </div>
           </div>
         </div>
       </section>
@@ -537,107 +554,118 @@ onMounted(() => {
       <div v-else-if="portalTab === 'myspace'" class="myspace">
         <header class="myspace__hero">
           <div>
-            <h1>我的空间</h1>
-            <p>查看我的申请进度与待办审批</p>
+            <h1>个人空间</h1>
           </div>
           <div class="myspace__stats">
-            <div class="myspace-stat">
+            <button
+              type="button"
+              class="myspace-stat"
+              :class="{ 'is-active': myspaceInnerTab === 'mine' }"
+              @click="setMyspaceInnerTab('mine')"
+            >
               <b>{{ mySubs.length }}</b>
               <span>我的申请</span>
-            </div>
-            <div class="myspace-stat">
+            </button>
+            <button
+              type="button"
+              class="myspace-stat"
+              :class="{ 'is-active': myspaceInnerTab === 'pending' }"
+              @click="setMyspaceInnerTab('pending')"
+            >
               <b>{{ pendingSubs.length }}</b>
               <span>待我审批</span>
-            </div>
+            </button>
           </div>
         </header>
 
-        <div class="myspace__grid">
-          <section class="myspace-card myspace-card--wide">
-            <div class="myspace-card__head">
-              <h2>我的申请</h2>
-              <span class="myspace-hint">仅可查看，点击行查看详情</span>
-            </div>
-            <el-table
-              :data="pagedMySubs"
-              stripe
-              class="clickable-table"
-              @row-click="(row: Subscription) => openSubDetail(row, 'mine')"
-            >
-              <el-table-column prop="id" label="编号" width="80" />
-              <el-table-column label="资源" min-width="180">
-                <template #default="{ row }">
-                  <button type="button" class="link-title" @click.stop="openSubDetail(row, 'mine')">
-                    {{ row.catalogTitle || row.catalogId }}
-                  </button>
-                </template>
-              </el-table-column>
-              <el-table-column label="共享方式" width="110">
-                <template #default="{ row }">{{ shareLabel(row.resourceType) }}</template>
-              </el-table-column>
-              <el-table-column label="申请单位" width="140" prop="applicantOrg" />
-              <el-table-column label="状态" width="110">
-                <template #default="{ row }">
-                  <el-tag :type="$statusTagType(row.status)" size="small">{{ $statusLabel(row.status) }}</el-tag>
-                </template>
-              </el-table-column>
-              <el-table-column label="申请时间" width="170">
-                <template #default="{ row }">
-                  {{ row.createdAt ? String(row.createdAt).replace('T', ' ').slice(0, 19) : '—' }}
-                </template>
-              </el-table-column>
-            </el-table>
-            <PortalPagination
-              v-if="mySubs.length"
-              v-model:page="myspacePage"
-              v-model:page-size="myspacePageSize"
-              :total="mySubs.length"
-            />
-          </section>
+        <div class="myspace-card myspace-card--wide">
+          <el-tabs v-model="myspaceInnerTab" class="myspace-tabs">
+            <el-tab-pane name="mine">
+              <template #label>
+                <span>我的申请</span>
+                <span v-if="mySubs.length" class="myspace-tab-count">{{ mySubs.length }}</span>
+              </template>
+              <el-table
+                :data="pagedMySubs"
+                stripe
+                class="clickable-table"
+                @row-click="(row: Subscription) => openSubDetail(row, 'mine')"
+              >
+                <el-table-column prop="id" label="编号" width="80" />
+                <el-table-column label="资源" min-width="180">
+                  <template #default="{ row }">
+                    <button type="button" class="link-title" @click.stop="openSubDetail(row, 'mine')">
+                      {{ row.catalogTitle || row.catalogId }}
+                    </button>
+                  </template>
+                </el-table-column>
+                <el-table-column label="共享方式" width="110">
+                  <template #default="{ row }">{{ shareLabel(row.resourceType) }}</template>
+                </el-table-column>
+                <el-table-column label="申请单位" width="140" prop="applicantOrg" />
+                <el-table-column label="状态" width="110">
+                  <template #default="{ row }">
+                    <el-tag :type="$statusTagType(row.status)" size="small">{{ $statusLabel(row.status) }}</el-tag>
+                  </template>
+                </el-table-column>
+                <el-table-column label="申请时间" width="170">
+                  <template #default="{ row }">
+                    {{ row.createdAt ? String(row.createdAt).replace('T', ' ').slice(0, 19) : '—' }}
+                  </template>
+                </el-table-column>
+              </el-table>
+              <PortalPagination
+                v-if="mySubs.length"
+                v-model:page="myspacePage"
+                v-model:page-size="myspacePageSize"
+                :total="mySubs.length"
+              />
+            </el-tab-pane>
 
-          <section class="myspace-card myspace-card--wide">
-            <div class="myspace-card__head">
-              <h2>待我审批</h2>
-              <span class="myspace-badge" v-if="pendingSubs.length">{{ pendingSubs.length }}</span>
-            </div>
-            <el-empty v-if="!pendingSubs.length" description="暂无待审批申请" :image-size="72" />
-            <el-table
-              v-else
-              :data="pagedPendingSubs"
-              stripe
-              class="clickable-table"
-              @row-click="(row: Subscription) => openSubDetail(row, 'pending')"
-            >
-              <el-table-column label="资源" min-width="180">
-                <template #default="{ row }">
-                  <button type="button" class="link-title" @click.stop="openSubDetail(row, 'pending')">
-                    {{ row.catalogTitle || row.catalogId }}
-                  </button>
-                </template>
-              </el-table-column>
-              <el-table-column prop="applicantOrg" label="申请单位" width="160" />
-              <el-table-column label="共享方式" width="110">
-                <template #default="{ row }">{{ shareLabel(row.resourceType) }}</template>
-              </el-table-column>
-              <el-table-column prop="purpose" label="用途" min-width="140" show-overflow-tooltip />
-              <el-table-column label="申请时间" width="170">
-                <template #default="{ row }">
-                  {{ row.createdAt ? String(row.createdAt).replace('T', ' ').slice(0, 19) : '—' }}
-                </template>
-              </el-table-column>
-              <el-table-column label="操作" width="120" fixed="right">
-                <template #default="{ row }">
-                  <el-button link type="primary" @click.stop="openSubDetail(row, 'pending')">审核</el-button>
-                </template>
-              </el-table-column>
-            </el-table>
-            <PortalPagination
-              v-if="pendingSubs.length"
-              v-model:page="pendingPage"
-              v-model:page-size="pendingPageSize"
-              :total="pendingSubs.length"
-            />
-          </section>
+            <el-tab-pane name="pending">
+              <template #label>
+                <span>待我审批</span>
+                <span v-if="pendingSubs.length" class="myspace-badge myspace-badge--tab">{{ pendingSubs.length }}</span>
+              </template>
+              <el-empty v-if="!pendingSubs.length" description="暂无待审批申请" :image-size="72" />
+              <template v-else>
+                <el-table
+                  :data="pagedPendingSubs"
+                  stripe
+                  class="clickable-table"
+                  @row-click="(row: Subscription) => openSubDetail(row, 'pending')"
+                >
+                  <el-table-column label="资源" min-width="180">
+                    <template #default="{ row }">
+                      <button type="button" class="link-title" @click.stop="openSubDetail(row, 'pending')">
+                        {{ row.catalogTitle || row.catalogId }}
+                      </button>
+                    </template>
+                  </el-table-column>
+                  <el-table-column prop="applicantOrg" label="申请单位" width="160" />
+                  <el-table-column label="共享方式" width="110">
+                    <template #default="{ row }">{{ shareLabel(row.resourceType) }}</template>
+                  </el-table-column>
+                  <el-table-column prop="purpose" label="用途" min-width="140" show-overflow-tooltip />
+                  <el-table-column label="申请时间" width="170">
+                    <template #default="{ row }">
+                      {{ row.createdAt ? String(row.createdAt).replace('T', ' ').slice(0, 19) : '—' }}
+                    </template>
+                  </el-table-column>
+                  <el-table-column label="操作" width="120" fixed="right">
+                    <template #default="{ row }">
+                      <el-button link type="primary" @click.stop="openSubDetail(row, 'pending')">审核</el-button>
+                    </template>
+                  </el-table-column>
+                </el-table>
+                <PortalPagination
+                  v-model:page="pendingPage"
+                  v-model:page-size="pendingPageSize"
+                  :total="pendingSubs.length"
+                />
+              </template>
+            </el-tab-pane>
+          </el-tabs>
         </div>
       </div>
     </div>
@@ -698,15 +726,10 @@ onMounted(() => {
   border: 1px solid #e8edf5;
 }
 .myspace__hero h1 {
-  margin: 0 0 6px;
+  margin: 0;
   font-size: 24px;
   font-weight: 700;
   color: #1f2d3d;
-}
-.myspace__hero p {
-  margin: 0;
-  font-size: 13px;
-  color: #909399;
 }
 .myspace__stats {
   display: flex;
@@ -715,6 +738,16 @@ onMounted(() => {
 .myspace-stat {
   text-align: center;
   min-width: 72px;
+  border: 0;
+  background: transparent;
+  cursor: pointer;
+  padding: 4px 8px;
+  border-radius: 8px;
+  transition: background 0.15s ease;
+}
+.myspace-stat:hover,
+.myspace-stat.is-active {
+  background: rgba(22, 119, 255, 0.08);
 }
 .myspace-stat b {
   display: block;
@@ -727,22 +760,24 @@ onMounted(() => {
   font-size: 12px;
   color: #909399;
 }
-.myspace__grid {
-  display: grid;
-  grid-template-columns: 1fr;
-  gap: 14px;
-}
 .myspace-card {
   background: #fff;
   border: 1px solid #e8edf5;
   border-radius: 10px;
-  padding: 16px 18px 18px;
+  padding: 8px 18px 18px;
   box-shadow: 0 1px 4px rgba(15, 40, 80, 0.04);
   min-height: auto;
 }
 .myspace-card--wide {
-  grid-column: auto;
   min-height: auto;
+}
+.myspace-tabs :deep(.el-tabs__header) {
+  margin-bottom: 12px;
+}
+.myspace-tabs :deep(.el-tabs__item) {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
 }
 .myspace-card__head {
   display: flex;
@@ -752,16 +787,21 @@ onMounted(() => {
   margin-bottom: 14px;
   flex-wrap: wrap;
 }
-.myspace-card__head h2 {
-  margin: 0;
-  font-size: 17px;
-  font-weight: 700;
-  color: #1f2d3d;
-  padding-left: 10px;
-  border-left: 3px solid #1677ff;
+.myspace-tab-count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: #eef5ff;
+  color: #1677ff;
+  font-size: 11px;
+  font-weight: 600;
 }
-.myspace-hint { font-size: 12px; color: #909399; }
-.myspace-badge {
+.myspace-badge,
+.myspace-badge--tab {
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -773,6 +813,12 @@ onMounted(() => {
   color: #fff;
   font-size: 12px;
   font-weight: 600;
+}
+.myspace-badge--tab {
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  font-size: 11px;
 }
 .link-title {
   border: 0;
@@ -789,7 +835,7 @@ onMounted(() => {
 .muted { color: #c0c4cc; }
 
 @media (max-width: 960px) {
-  .myspace__grid { grid-template-columns: 1fr; }
+  .myspace__stats { gap: 16px; }
 }
 
 .hero {
@@ -1136,6 +1182,53 @@ onMounted(() => {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.feed-list { list-style: none; margin: 0; padding: 6px 12px 10px; }
+.feed-list li + li { border-top: 1px solid #f0f3f8; }
+.feed-list button,
+.feed-list__static {
+  width: 100%;
+  border: 0;
+  background: transparent;
+  text-align: left;
+  padding: 11px 4px;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.feed-list__static { cursor: default; }
+.feed-list__dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #1677ff;
+  flex-shrink: 0;
+}
+.feed-list__dot--amber { background: #fb8c00; }
+.feed-list__title {
+  flex: 1;
+  min-width: 0;
+  color: #1f2937;
+  font-size: 13px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.feed-list__date,
+.feed-list__static em {
+  flex-shrink: 0;
+  color: #9ca3af;
+  font-size: 12px;
+  font-style: normal;
+}
+.feed-list__static span {
+  flex: 1;
+  color: #1f2937;
+  font-size: 13px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .res-list { list-style: none; margin: 0; padding: 4px 12px 8px; }
 .res-list li + li { border-top: 1px solid #f0f3f8; }
 .res-list button {
@@ -1155,30 +1248,6 @@ onMounted(() => {
 .res-list__meta { display: block; margin-top: 4px; color: #9ca3af; font-size: 12px; }
 .res-list__views { flex-shrink: 0; color: #9ca3af; font-size: 12px; padding-top: 2px; }
 .empty { padding: 20px; color: #9ca3af; font-size: 13px; }
-
-.info-grid {
-  display: grid;
-  grid-template-columns: 1.1fr 1.4fr;
-  gap: 16px;
-  padding-bottom: 8px;
-}
-.info-banner {
-  min-height: 220px;
-  border-radius: 10px;
-  padding: 28px 24px;
-  color: #fff;
-  cursor: pointer;
-  background:
-    linear-gradient(135deg, rgba(8, 46, 110, 0.72), rgba(13, 71, 161, 0.88)),
-    linear-gradient(120deg, #0d47a1, #42a5f5);
-  display: flex;
-  flex-direction: column;
-  justify-content: flex-end;
-}
-.info-banner__title { font-size: 26px; font-weight: 700; margin-bottom: 8px; }
-.info-banner__desc { font-size: 13px; opacity: 0.9; }
-.info-side { display: grid; gap: 12px; }
-.info-block { min-height: 0; }
 
 .portal-foot {
   margin: 24px 0 0;

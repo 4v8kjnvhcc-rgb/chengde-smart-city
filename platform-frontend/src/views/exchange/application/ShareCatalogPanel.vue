@@ -59,6 +59,12 @@ const OPEN_ATTR_OPTS = [
   { value: 'NOT_OPEN', label: '不可对社会开放' },
   { value: 'PARTIAL_OPEN', label: '部分对社会开放' },
 ]
+const RESOURCE_TYPE_OPTS = [
+  { value: '', label: '全部' },
+  { value: 'TABLE', label: '库表' },
+  { value: 'API', label: '接口' },
+  { value: 'FILE', label: '文件' },
+]
 
 const loading = ref(false)
 const keyword = ref('')
@@ -67,6 +73,7 @@ const filterTheme = ref('')
 const filterProvider = ref('')
 const shareAttr = ref('')
 const openAttr = ref('')
+const resourceType = ref('')
 const sortBy = ref<'applyCount' | 'visitCount' | 'updatedAt'>('applyCount')
 const sortDir = ref<'asc' | 'desc'>('desc')
 const catalogView = ref<'card' | 'table'>('card')
@@ -154,6 +161,7 @@ async function loadCatalog() {
         providerOrg: filterProvider.value || undefined,
         shareAttr: shareAttr.value || undefined,
         openAttr: openAttr.value || undefined,
+        resourceType: resourceType.value || undefined,
         sortBy: sortBy.value,
         sortDir: sortDir.value,
       },
@@ -320,7 +328,7 @@ function toggleSubscribe() {
 async function submitApplyPayload(payload: Record<string, unknown>) {
   try {
     await api.post('/exchange/portal/subscriptions', payload)
-    ElMessage.success('资源申请已提交，可在「我的空间」查看')
+    ElMessage.success('资源申请已提交，可在「个人空间」查看')
     applyVisible.value = false
     emit('submitted')
     await loadCatalog()
@@ -359,7 +367,7 @@ defineExpose({ loadCatalog, openDetail })
 <template>
   <div v-loading="loading" class="share-cat">
     <div v-if="detailVisible" v-loading="detailLoading" class="share-detail">
-      <button type="button" class="share-detail__back" @click="closeDetail">← 返回共享资源</button>
+      <button type="button" class="share-detail__back" @click="closeDetail">← 返回政务共享资源</button>
       <template v-if="detail">
         <div class="share-detail__head">
           <h2 class="share-detail__title">{{ detail.title }}</h2>
@@ -601,6 +609,17 @@ defineExpose({ loadCatalog, openDetail })
               class="chip"
               :class="{ 'is-on': openAttr === o.value }"
               @click="openAttr = o.value; loadCatalog()"
+            >{{ o.label }}</button>
+          </div>
+          <div class="filter-row">
+            <span class="filter-label">资源类型</span>
+            <button
+              v-for="o in RESOURCE_TYPE_OPTS"
+              :key="'rt-' + o.value"
+              type="button"
+              class="chip"
+              :class="{ 'is-on': resourceType === o.value }"
+              @click="resourceType = o.value; loadCatalog()"
             >{{ o.label }}</button>
           </div>
         </div>
