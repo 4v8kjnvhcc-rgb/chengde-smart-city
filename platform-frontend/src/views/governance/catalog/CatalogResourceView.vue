@@ -374,11 +374,6 @@ const form = reactive({
 const pageTitle = computed(() =>
   props.catalogOrigin === 'INGEST' ? '数据资源编目管理' : '资源目录编制',
 )
-const pageAlert = computed(() =>
-  props.catalogOrigin === 'INGEST'
-    ? '手动新增仅保存草稿；点「提交」后才会出现在「资源目录注册发布」；审批在「数据资源目录审批」。过程层 DWD 不可编目。'
-    : '手动新增仅保存草稿；点「提交」后才会出现在「目录注册发布」；审批在「资源目录审批」。过程层 DWD 不可编目；仅挂载直通源或加工主题/专题资源。',
-)
 const publishEntryName = computed(() =>
   props.catalogOrigin === 'INGEST' ? '资源目录注册发布' : '目录注册发布',
 )
@@ -1720,14 +1715,6 @@ onActivated(async () => {
 
 <template>
   <PageCard :title="pageTitle">
-    <el-alert
-      type="info"
-      :closable="false"
-      show-icon
-      :title="pageAlert"
-      style="margin-bottom: 12px"
-    />
-
     <el-form inline class="portal-inline-form portal-inline-form--block">
       <el-form-item label="资源名称" class="portal-field-lg">
         <el-input

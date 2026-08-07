@@ -251,10 +251,6 @@ onActivated(() => {
 <template>
   <div class="classify-page">
     <PageCard :title="pageTitle">
-      <p class="hint">
-        按类/项/目/细目维护多级资源目录树。可先建「基础资源目录 / 部门资源目录 / 主题资源目录」等顶级分类，再在其下新增下级。
-        分类的新增、编辑、删除须经「{{ approvalEntryName }}」通过后生效。
-      </p>
       <div class="toolbar">
         <el-input
           v-model="keyword"

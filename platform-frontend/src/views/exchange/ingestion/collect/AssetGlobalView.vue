@@ -78,11 +78,6 @@ onMounted(reload)
 <template>
   <div v-loading="loading">
     <PageCard title="全局数据资产视图">
-      <p class="hint">
-        全维度资产全景（D05 M076）：规模 KPI、分面分布、资产 TOP、近 14 日趋势、血缘快照与下钻。
-        检索能力见「数据搜索」；本页为统一可视化门户与定位入口。
-      </p>
-
       <el-tabs :model-value="tab" @tab-change="onTab">
         <el-tab-pane label="全景总览" name="overview" />
         <el-tab-pane label="资产 TOP" name="top" />
@@ -150,8 +145,6 @@ onMounted(reload)
       </div>
 
       <div v-if="tab === 'top'">
-        <el-alert type="info" :closable="false" show-icon class="mb"
-          title="综合标签绑定数、搜索热度、字段数与行数估算排序；点击可下钻详情。" />
         <el-table :data="topAssets" stripe @row-click="openDetail">
           <el-table-column type="index" label="#" width="50" />
           <el-table-column label="类型" width="100">

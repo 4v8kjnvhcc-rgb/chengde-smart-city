@@ -4,7 +4,7 @@
  * 脚本开发 / 数据清洗 / 工作流调度 / 任务执行 / 版本管理
  * （框架能力复用数据治理 ETL + 融合脚本；黄金路径挂在任务执行下）
  */
-import { computed, defineAsyncComponent, ref, watch } from 'vue'
+import { defineAsyncComponent, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import PageCard from '@/components/common/PageCard.vue'
 
@@ -46,18 +46,6 @@ watch(
   { immediate: true },
 )
 
-const TAB_ZH: Record<ProcTab, string> = {
-  script: '脚本开发',
-  clean: '数据清洗',
-  schedule: '工作流调度',
-  execute: '任务执行',
-  version: '版本管理',
-  'direct-share': '直通共享（场景）',
-  'processed-share': '加工共享（场景）',
-}
-
-const tabLabel = computed(() => TAB_ZH[active.value])
-
 function onTab(name: string | number) {
   const tab = resolveTab(name)
   active.value = tab
@@ -88,14 +76,6 @@ function goFusionComponents() {
 
 <template>
   <PageCard title="数据融合处理">
-    <el-alert
-      type="info"
-      :closable="false"
-      show-icon
-      style="margin-bottom: 12px"
-      :title="`V3.0「数据融合处理」· ${tabLabel}。能力按投标目录挂载；清洗/调度/执行复用数据治理 ETL（Kettle/调度），脚本与版本在本模块落地。`"
-    />
-
     <el-tabs :model-value="active" @tab-change="onTab">
       <el-tab-pane label="脚本开发" name="script" />
       <el-tab-pane label="数据清洗" name="clean" />
@@ -109,15 +89,8 @@ function goFusionComponents() {
     <!-- 脚本开发：本模块已实现 -->
     <FusionScriptView v-if="active === 'script'" embedded />
 
-    <!-- 版本管理：同一脚本能力，默认打开运行/版本视角说明 -->
+    <!-- 版本管理：同一脚本能力 -->
     <div v-else-if="active === 'version'">
-      <el-alert
-        type="success"
-        :closable="false"
-        show-icon
-        style="margin-bottom: 12px"
-        title="版本管理对应融合脚本的发布 / 回滚 / 版本列表（已实现）。请在下方编辑脚本后使用「版本」抽屉，或切换到「脚本开发」Tab。"
-      />
       <FusionScriptView embedded />
     </div>
 

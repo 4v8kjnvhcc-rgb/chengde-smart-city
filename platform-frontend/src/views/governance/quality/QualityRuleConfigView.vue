@@ -242,13 +242,6 @@ onMounted(async () => {
 
 <template>
   <PageCard title="质量规则配置">
-    <el-alert
-      type="warning"
-      :closable="false"
-      show-icon
-      style="margin-bottom: 12px"
-      title="质量门禁分层：源层→直通编目；过程层(DWD)默认不进门户；资源层(DWS/ADS)→加工编目。请按稽核对象选对来源库。"
-    />
     <el-form inline class="portal-inline-form portal-inline-form--block">
       <el-form-item class="portal-form-actions">
         <el-button type="primary" @click="createVisible = true">新建规则</el-button>

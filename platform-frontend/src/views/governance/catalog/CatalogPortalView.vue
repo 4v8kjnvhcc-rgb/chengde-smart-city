@@ -580,13 +580,6 @@ onActivated(() => {
     </div>
 
     <template v-else>
-      <el-alert
-        type="info"
-        :closable="false"
-        show-icon
-        title="仅展示已审批发布的可共享资源。支持资源申请与订阅；订阅后可在「资源申请订阅 · 我的订阅」查看。点击「资源申请」先查看详情，再提交申请；申请按部门隔离。"
-        style="margin-bottom: 12px"
-      />
       <el-form inline class="portal-inline-form portal-inline-form--block">
         <el-form-item label="提供方" class="portal-field-md">
           <el-select v-model="providerOrg" clearable filterable allow-create placeholder="全部">

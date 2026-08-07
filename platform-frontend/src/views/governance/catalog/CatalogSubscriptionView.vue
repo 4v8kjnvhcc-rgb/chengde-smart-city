@@ -298,7 +298,6 @@ onActivated(() => {
             <el-button @click="onReset">重置</el-button>
           </el-form-item>
         </el-form>
-        <p class="hint">本部门提交的资源申请。点击行查看完整申请单（联系人、办事场景、依据等）。</p>
         <el-table
           v-loading="loading"
           :data="pagedMine"
@@ -355,7 +354,6 @@ onActivated(() => {
             <el-button type="primary" @click="loadPending">刷新</el-button>
           </el-form-item>
         </el-form>
-        <p class="hint">本部门作为资源提供方的待审申请。点击行查看完整申请内容后再通过/驳回。</p>
         <el-empty v-if="!pendingRows.length && !loading" description="暂无待审批申请" :image-size="72" />
         <el-table
           v-else
@@ -407,7 +405,6 @@ onActivated(() => {
       </el-tab-pane>
 
       <el-tab-pane label="我的订阅" name="favorites" lazy>
-        <p class="hint">在「资源目录门户」点击订阅后的收藏资源，可快速回看或取消订阅。</p>
         <el-empty v-if="!favoriteRows.length" description="暂无订阅，请到资源目录门户点击「订阅」" :image-size="72" />
         <el-table v-else :data="pagedFav" stripe size="small">
           <el-table-column prop="catalogCode" label="资源编码" width="130" show-overflow-tooltip />

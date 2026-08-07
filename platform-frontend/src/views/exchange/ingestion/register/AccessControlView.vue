@@ -224,11 +224,6 @@ onMounted(async () => {
   <div v-loading="loading">
     <el-alert v-if="loadError" type="error" :title="loadError" show-icon :closable="false" style="margin-bottom:12px" />
     <PageCard title="访问控制管理">
-      <p class="hint">
-        机构即租户隔离边界。功能权限控制模块/按钮；项目授权控制项目可见范围；数据权限控制库表使用范围。
-        跨部门访问资源时需提交申请并由有权账号审批。
-      </p>
-
       <el-tabs v-model="activeTab">
         <el-tab-pane label="总览" name="overview">
           <el-descriptions v-if="overview" :column="3" border>

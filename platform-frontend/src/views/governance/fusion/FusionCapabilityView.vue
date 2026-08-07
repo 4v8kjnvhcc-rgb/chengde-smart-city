@@ -92,15 +92,6 @@ function goSibling(mSub: string) {
 <template>
   <div class="fusion-cap">
     <PageCard :title="`数据融合处理 · ${meta.title}`">
-      <el-alert
-        type="success"
-        :closable="false"
-        show-icon
-        style="margin-bottom: 12px"
-        :title="`V3.0 对应：数据融合系统 → 数据融合处理 → ${meta.title}`"
-        :description="`落地：${meta.mapsTo}`"
-      />
-
       <!-- 脚本 / 版本 -->
       <FusionScriptView
         v-if="capability === 'script' || capability === 'version'"

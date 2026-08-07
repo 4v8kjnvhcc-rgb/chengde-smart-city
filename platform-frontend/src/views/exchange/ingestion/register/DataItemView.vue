@@ -278,9 +278,6 @@ onMounted(reload)
   <div v-loading="loading">
     <el-alert v-if="loadError" type="error" :title="loadError" show-icon :closable="false" style="margin-bottom:12px" />
     <PageCard title="数据项管理">
-      <p class="hint">
-        按当前项目过滤物理表。属性是否可编辑由平台管理 · 系统管理 ·「内置属性管理」统一配置。
-      </p>
       <el-form inline class="portal-inline-form portal-inline-form--block">
         <el-form-item label="当前项目" class="portal-field-xl">
           <el-select

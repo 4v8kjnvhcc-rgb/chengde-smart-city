@@ -125,14 +125,6 @@ onMounted(load)
 
 <template>
   <PageCard title="数据质量评估">
-    <el-alert
-      type="info"
-      :closable="false"
-      show-icon
-      style="margin-bottom: 12px"
-      title="V3.0「数据质量评估」：按完整性、一致性、准确性、及时性等维度汇总近期稽核。请结合任务来源库区分源/过程/资源层——仅源层与资源层评估结果用于目录发布门禁。"
-    />
-
     <el-form inline class="portal-inline-form portal-inline-form--block">
       <el-form-item label="综合评分（近运行）" class="portal-field-md">
         <el-tag size="large" :type="avgScore == null ? 'info' : avgScore >= 80 ? 'success' : avgScore >= 60 ? 'warning' : 'danger'">

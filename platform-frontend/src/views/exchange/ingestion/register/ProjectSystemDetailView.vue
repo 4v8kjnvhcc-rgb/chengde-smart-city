@@ -71,10 +71,6 @@ const connDialog = ref(false)
 const editingDs = ref<DataSource | null>(null)
 const connForm = reactive({ host: '127.0.0.1', port: 3306, database: '', username: '', password: '' })
 
-function isOtherProject(code?: string) {
-  return !!code && (code === 'PRJ_OTHER' || code.startsWith('PRJ_OTHER_'))
-}
-
 function isOtherSystem(code?: string) {
   return !!code && (code === 'SYS_OTHER' || code.startsWith('SYS_OTHER_'))
 }
@@ -450,16 +446,6 @@ onMounted(() => {
         <h4 class="section-title">业务系统</h4>
         <el-button v-if="canMutate" type="primary" size="small" @click="openAddSystem">新增系统</el-button>
       </div>
-      <p class="hint">
-        展开系统行可查看其下全部数据源；归属项目：{{ projectPathLabel }}。
-        <template v-if="canMutate && isOtherProject(project.projectCode)">
-          「其他」为系统初始化项目，可新增业务系统或另建项目。
-        </template>
-        <template v-if="isReadonly">
-          当前为只读查看，不可新增或修改；
-          <template v-if="canDeleteChild">超级管理员仍可删除无下级关联的系统/数据库。</template>
-        </template>
-      </p>
 
       <el-table
         v-if="systems.length"

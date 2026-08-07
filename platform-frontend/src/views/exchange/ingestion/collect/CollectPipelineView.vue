@@ -238,13 +238,6 @@ onMounted(() => {
   <div v-loading="loading">
     <el-alert v-if="loadError" type="error" :title="loadError" show-icon :closable="false" style="margin-bottom:12px" />
     <el-alert
-      type="info"
-      :closable="false"
-      show-icon
-      style="margin-bottom:16px"
-      title="规范设计复用「数据资产登记」中的数据源、表模型与字段定义；请在汇聚数据分类中维护并选用分类后，再执行探查与对账。"
-    />
-    <el-alert
       v-if="lastReconcileHint"
       type="success"
       :closable="true"
@@ -263,9 +256,6 @@ onMounted(() => {
 
     <div v-show="step === 0">
       <PageCard title="汇聚数据分类">
-        <p class="hint">
-          在此维护数字化管道数据分类（含三级配置明细）。点左侧「选用」选中一条<strong>已启用</strong>分类后，再进入探查配置。
-        </p>
         <DataCategoryView
           embed
           selectable

@@ -363,13 +363,6 @@ onMounted(reloadAll)
 
 <template>
   <div v-loading="loading">
-    <el-alert
-      type="info"
-      :closable="false"
-      show-icon
-      style="margin-bottom:12px"
-      title="对齐 GB/T 43697-2024：识别→分类→分级→管控→复核。级别与分类可配置；类别+级别冲突时取更严策略。不含涉密/军事数据。"
-    />
     <el-tabs :model-value="tab" @tab-change="onTabChange">
       <el-tab-pane label="资产标注与定级" name="marks" />
       <el-tab-pane label="级别字典" name="levels" />
@@ -471,7 +464,6 @@ onMounted(reloadAll)
     </PageCard>
 
     <PageCard v-else-if="tab === 'scopes'" title="使用范围策略">
-      <p class="hint">同一资产同时命中多条类别/级别策略时，按严重权重取最严；同权时「禁止」优先于「允许」。</p>
       <el-button type="primary" style="margin-bottom:12px" @click="openScope()">新增策略</el-button>
       <el-table :data="scopes" stripe border>
         <el-table-column prop="ruleName" label="策略" min-width="160" />

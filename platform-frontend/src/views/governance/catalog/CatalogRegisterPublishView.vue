@@ -320,14 +320,6 @@ onActivated(() => {
 
 <template>
   <PageCard :title="pageTitle">
-    <el-alert
-      type="info"
-      :closable="false"
-      show-icon
-      :title="`本页仅显示编目已点「提交」的资源（待注册发布）。草稿不会出现在此。关联分类后点「发布」进入「${approvalEntryName}」；发布通过后离开本页。`"
-      style="margin-bottom: 12px"
-    />
-
     <el-form inline class="portal-inline-form portal-inline-form--block">
       <el-form-item label="名称" class="portal-field-lg">
         <el-input

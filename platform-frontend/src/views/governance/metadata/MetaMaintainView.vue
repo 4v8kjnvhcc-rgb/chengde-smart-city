@@ -466,13 +466,6 @@ onMounted(async () => {
 
       <!-- 自动维护 -->
       <template v-else-if="activeTab === 'auto'">
-        <el-alert
-          type="info"
-          :closable="false"
-          show-icon
-          style="margin-bottom:12px"
-          title="系统将元数据信息项与数据元标准自动匹配，依据标准补充说明、分级、业务域、标签等缺失信息。"
-        />
         <div class="mmaint-auto-actions">
           <el-button type="primary" :loading="autoRunning" @click="runAuto(false)">一键自动匹配补充</el-button>
           <el-button :loading="autoRunning" :disabled="!selectedIds.length" @click="runAuto(true)">仅匹配已选条目</el-button>

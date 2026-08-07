@@ -1,9 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { useRouter } from 'vue-router'
 import PageCard from '@/components/common/PageCard.vue'
-import { useAuthStore } from '@/stores/auth'
 import {
   activeProjectId,
   projectOptionLabel,
@@ -21,16 +19,7 @@ import {
 } from '../useIngestionHub'
 
 defineProps<{ module: string }>()
-const router = useRouter()
-const auth = useAuthStore()
 const { loading, loadError, withLoad } = useIngestionLoading()
-
-/** 标签库维护入口：仅具备系统标签菜单权限时展示跳转 */
-const canManageTagLibrary = computed(() =>
-  auth.hasPermission('system:tag:list')
-  || auth.hasPermission('system:tag:edit')
-  || auth.hasPermission('system:tag:query'),
-)
 
 const projects = ref<Project[]>([])
 const standardTree = ref<AssetTag[]>([])
@@ -81,19 +70,6 @@ const drawerVisible = computed({
   },
 })
 
-const isDirty = computed(() => {
-  if (!selectedTableId.value) return false
-  if (!sameIdSet(draftTableTagIds.value, savedTableTagIds.value)) return true
-  const colIds = new Set([
-    ...Object.keys(draftColumnTagMap.value),
-    ...Object.keys(savedColumnTagMap.value),
-  ].map(Number))
-  for (const id of colIds) {
-    if (!sameIdSet(draftColumnTagMap.value[id] || [], savedColumnTagMap.value[id] || [])) return true
-  }
-  return false
-})
-
 type TreeOption = { value: number; label: string; disabled?: boolean; children?: TreeOption[]; keywords?: string }
 
 const treeSelectData = computed((): TreeOption[] => {
@@ -124,13 +100,6 @@ const treeSelectData = computed((): TreeOption[] => {
     },
   ]
 })
-
-function sameIdSet(a: number[], b: number[]) {
-  if (a.length !== b.length) return false
-  const sa = [...a].sort((x, y) => x - y)
-  const sb = [...b].sort((x, y) => x - y)
-  return sa.every((v, i) => v === sb[i])
-}
 
 function resetDraft() {
   savedTableTagIds.value = []
@@ -369,17 +338,6 @@ onMounted(loadBase)
   <div v-loading="loading">
     <el-alert v-if="loadError" type="error" :title="loadError" show-icon :closable="false" style="margin-bottom:12px" />
     <PageCard title="数据资产标签登记">
-      <p class="tag-desc">
-        在匹配抽屉中勾选标签仅为本地选择，不会立即保存；点击「完成登记」后才写入挂标，并询问是否生成识别规则。
-        <template v-if="canManageTagLibrary">
-          标签库维护请前往
-          <el-button link type="primary" @click="router.push('/system/tags')">系统管理 → 标签库</el-button>。
-        </template>
-        <template v-else>
-          标签库由系统管理员维护；本页仅做资产挂标登记。
-        </template>
-      </p>
-
       <el-form inline class="portal-inline-form portal-inline-form--block">
         <el-form-item label="当前项目" class="portal-field-xl">
           <el-select
@@ -452,13 +410,6 @@ onMounted(loadBase)
       destroy-on-close
     >
       <template v-if="selectedTable">
-        <el-alert
-          :title="isDirty ? '当前为未保存的选择，需点击「完成登记」才会写入' : '可勾选标签进行匹配，完成后点击「完成登记」保存'"
-          :type="isDirty ? 'warning' : 'info'"
-          show-icon
-          :closable="false"
-          style="margin-bottom:12px"
-        />
         <div class="bind-block">
           <div class="bind-title">表级标签</div>
           <el-tree-select
@@ -512,7 +463,6 @@ onMounted(loadBase)
 </template>
 
 <style scoped>
-.tag-desc { font-size: 13px; color: #606266; margin: 0 0 12px; line-height: 1.6; }
 .muted { color: #c0c4cc; font-size: 12px; }
 .bind-block { margin-bottom: 20px; }
 .bind-title { font-size: 13px; font-weight: 600; margin-bottom: 8px; }

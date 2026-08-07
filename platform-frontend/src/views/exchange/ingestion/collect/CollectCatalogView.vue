@@ -190,14 +190,7 @@ onMounted(() => reload())
 
     <el-alert v-if="loadError" type="error" :title="loadError" show-icon :closable="false" style="margin-bottom:12px" />
 
-    <el-alert type="info" :closable="false" show-icon style="margin-bottom:16px"
-
-      title="目录编目关联「数据资产登记」中的数据源、物理表与字典；编目信息在界面填写，无需修改后台 JSON。" />
-
-
-
     <PageCard title="数据资源编目管理">
-
       <el-form label-width="120px">
 
         <el-form-item label="目录标题"><el-input v-model="registryForm.title" style="max-width:360px" /></el-form-item>

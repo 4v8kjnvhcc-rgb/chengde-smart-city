@@ -439,13 +439,6 @@ onMounted(async () => {
 
 <template>
   <PageCard title="数据仓库建设">
-    <el-alert
-      type="success"
-      :closable="false"
-      show-icon
-      style="margin-bottom: 12px"
-      title="V3.0「数据仓库建设」：主题域 → 逻辑实体 → 物理表。目标是多表融合成基础库/主题库/专题库（DWS/ADS）。绑定后请用「加工落库」进入加工共享；治理过程表(DWD)不作为目录资源。"
-    />
     <el-row :gutter="12">
       <el-col :span="8">
         <div class="panel-head">

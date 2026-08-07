@@ -145,13 +145,6 @@ onMounted(reload)
     />
 
     <template v-else>
-      <el-alert
-        type="info"
-        :closable="false"
-        style="margin-bottom:12px"
-        title="展示登记页已提交的项目。点「审核」通过或驳回；点「查看」可看系统与数据源详情（只读）。"
-      />
-
       <PageCard title="项目/系统信息管理">
         <el-form inline class="portal-inline-form portal-inline-form--block">
           <el-form-item label="状态" class="portal-field-md">

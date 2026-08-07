@@ -518,13 +518,6 @@ onMounted(reload)
     />
 
     <template v-else>
-      <el-alert
-        type="info"
-        :closable="false"
-        style="margin-bottom:12px"
-        title="一个项目可挂多个业务系统，一个系统可挂多个数据源。新建时可一并创建首个系统与数据源，之后在详情中继续添加。"
-      />
-
       <PageCard title="项目">
         <el-form inline class="portal-inline-form portal-inline-form--block">
           <el-form-item class="portal-form-actions">

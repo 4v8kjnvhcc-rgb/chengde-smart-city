@@ -11,7 +11,6 @@ const router = useRouter()
     <el-result
       icon="info"
       title="系统维护管理"
-      sub-title="外观、系统邮箱与等保安全配置已挂在系统管理 · 平台运维。"
     >
       <template #extra>
         <el-button type="primary" @click="router.push('/system/maintenance')">前往系统维护管理</el-button>

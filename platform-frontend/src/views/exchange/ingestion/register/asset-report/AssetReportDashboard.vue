@@ -137,8 +137,6 @@ onBeforeUnmount(() => {
   <div v-loading="loading">
     <el-alert v-if="loadError" type="error" :title="loadError" show-icon :closable="false" style="margin-bottom:12px" />
     <PageCard title="数据资产报告">
-      <p class="hint">全可视化展示平台数据资产：项目、表、脚本、工作流及存储与增长趋势；支持 TOP 下钻至详情。</p>
-
       <el-row v-if="report" :gutter="12" class="stat-row">
         <el-col :xs="12" :sm="8" :md="4"><el-statistic title="登记项目" :value="Number(report.projectCount || 0)" /></el-col>
         <el-col :xs="12" :sm="8" :md="4"><el-statistic title="物理表" :value="Number(report.tableCount || 0)" /></el-col>

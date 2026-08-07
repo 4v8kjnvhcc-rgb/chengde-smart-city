@@ -369,14 +369,6 @@ onUnmounted(clearPoll)
 
 <template>
   <PageCard :title="taskId ? `ETL监控 · 任务 ${taskId}` : 'ETL监控'">
-    <el-alert
-      type="info"
-      :closable="false"
-      show-icon
-      class="monitor-tip"
-      title="不同治理任务可以同时运行；同一任务运行中不可再次启动。写入 DWD/DWS/ADS 时，若目标表不存在，系统会按 ODS 源表结构自动建表。"
-    />
-
     <el-form inline class="portal-inline-form portal-inline-form--block">
       <el-form-item class="portal-form-actions">
         <el-button @click="backToList">返回列表</el-button>
