@@ -61,6 +61,12 @@ const OPEN_ATTR_OPTS = [
   { value: 'NOT_OPEN', label: '不可对社会开放' },
   { value: 'PARTIAL_OPEN', label: '部分对社会开放' },
 ]
+const RESOURCE_TYPE_OPTS = [
+  { value: '', label: '全部' },
+  { value: 'TABLE', label: '库表' },
+  { value: 'API', label: '接口' },
+  { value: 'FILE', label: '文件' },
+]
 
 /** 基础资源六库兜底（无 API 数据时） */
 const FALLBACK_LIBS: CatalogFacet[] = [
@@ -77,6 +83,7 @@ const keyword = ref('')
 const filterTheme = ref('')
 const shareAttr = ref('')
 const openAttr = ref('')
+const resourceType = ref('')
 const sortBy = ref<'applyCount' | 'visitCount' | 'updatedAt'>('applyCount')
 const sortDir = ref<'asc' | 'desc'>('desc')
 const catalogView = ref<'card' | 'table'>('card')
@@ -125,11 +132,13 @@ function setFollowed(id: number | string, on: boolean) {
 }
 
 const libraries = computed(() => {
-  if (props.baseLibraries?.length) return props.baseLibraries
+  const omitRoot = (list: CatalogFacet[]) =>
+    list.filter((t) => t.name && t.name !== '基础资源目录')
+  if (props.baseLibraries?.length) return omitRoot(props.baseLibraries)
   // 主题里若已含六库名称，优先用主题 facet
   const names = new Set(FALLBACK_LIBS.map((x) => x.name))
   const fromThemes = (props.themes || []).filter((t) => names.has(t.name))
-  if (fromThemes.length) return fromThemes
+  if (fromThemes.length) return omitRoot(fromThemes)
   return FALLBACK_LIBS
 })
 
@@ -138,11 +147,6 @@ const activeLib = computed(() => {
   return libraries.value.find(
     (t) => t.code === filterTheme.value || t.name === filterTheme.value,
   ) || null
-})
-
-const pageTitle = computed(() => {
-  if (activeLib.value) return activeLib.value.name
-  return '全部'
 })
 
 const bannerStats = computed(() => {
@@ -206,6 +210,7 @@ async function loadCatalog() {
         baseCode: filterTheme.value || undefined,
         shareAttr: shareAttr.value || undefined,
         openAttr: openAttr.value || undefined,
+        resourceType: resourceType.value || undefined,
         sortBy: sortBy.value,
         sortDir: sortDir.value,
       },
@@ -309,7 +314,7 @@ async function submitApplyPayload(payload: Record<string, unknown>) {
   applySubmitting.value = true
   try {
     await api.post('/exchange/portal/subscriptions', payload)
-    ElMessage.success('资源申请已提交，可在「我的空间」与治理平台「资源申请订阅」查看')
+    ElMessage.success('资源申请已提交，可在「个人空间」与治理平台「资源申请订阅」查看')
     applyVisible.value = false
     emit('submitted')
     await loadCatalog()
@@ -384,7 +389,7 @@ defineExpose({ loadCatalog, openDetail })
   <div v-loading="loading" class="share-cat">
     <!-- 详情 -->
     <div v-if="detailVisible" v-loading="detailLoading" class="share-detail">
-      <button type="button" class="share-detail__back" @click="closeDetail">← 返回资源订阅申请</button>
+      <button type="button" class="share-detail__back" @click="closeDetail">← 返回基础资源目录</button>
       <template v-if="detail">
         <div class="share-detail__head">
           <h2 class="share-detail__title">{{ detail.title }}</h2>
@@ -561,9 +566,6 @@ defineExpose({ loadCatalog, openDetail })
 
     <!-- 列表：六库图标 + 浅色横幅 + 卡片/表格 + 申请记录 -->
     <div v-else class="share-browse">
-      <div class="page-head">
-        <h1 class="page-head__title">资源订阅申请</h1>
-      </div>
       <nav class="lib-bar" aria-label="基础资源分类">
         <button
           type="button"
@@ -587,14 +589,7 @@ defineExpose({ loadCatalog, openDetail })
         </button>
       </nav>
 
-      <div class="lib-banner">
-        <div class="lib-banner__left">
-          <h2>{{ pageTitle }}</h2>
-          <p>
-            <template v-if="activeLib">基础资源目录 / {{ activeLib.name }}</template>
-            <template v-else>基础资源目录 · 已发布可共享资源</template>
-          </p>
-        </div>
+      <div class="lib-banner lib-banner--metrics-only">
         <div class="lib-banner__metrics">
           <div class="metric">
             <b>{{ bannerStats.catalogCount }}</b>
@@ -612,8 +607,6 @@ defineExpose({ loadCatalog, openDetail })
       </div>
 
       <section class="list-main">
-        <h2 class="list-title">{{ pageTitle }}</h2>
-
         <div class="filter-box">
           <div class="filter-row">
             <span class="filter-label">共享属性</span>
@@ -635,6 +628,17 @@ defineExpose({ loadCatalog, openDetail })
               class="chip"
               :class="{ 'is-on': openAttr === o.value }"
               @click="openAttr = o.value; loadCatalog()"
+            >{{ o.label }}</button>
+          </div>
+          <div class="filter-row">
+            <span class="filter-label">资源类型</span>
+            <button
+              v-for="o in RESOURCE_TYPE_OPTS"
+              :key="'rt-' + o.value"
+              type="button"
+              class="chip"
+              :class="{ 'is-on': resourceType === o.value }"
+              @click="resourceType = o.value; loadCatalog()"
             >{{ o.label }}</button>
           </div>
         </div>
@@ -920,6 +924,9 @@ defineExpose({ loadCatalog, openDetail })
   background: #fff;
   border: 1px solid #e8edf5;
   border-top: 0;
+}
+.lib-banner--metrics-only {
+  justify-content: flex-end;
 }
 .lib-banner__left h2 {
   margin: 0 0 4px;

@@ -33,6 +33,8 @@ public class BizDataDemand {
     private java.time.LocalDateTime superviseAt;
     private String superviseBy;
     private String analysisPayload;
+    /** 需求填报表单 JSON（提供单位/目录/数据项/事项等） */
+    private String formPayload;
     private String createdBy;
     private LocalDateTime createdAt;
     private LocalDateTime updatedAt;
@@ -85,6 +87,8 @@ public class BizDataDemand {
     public void setSuperviseBy(String superviseBy) { this.superviseBy = superviseBy; }
     public String getAnalysisPayload() { return analysisPayload; }
     public void setAnalysisPayload(String analysisPayload) { this.analysisPayload = analysisPayload; }
+    public String getFormPayload() { return formPayload; }
+    public void setFormPayload(String formPayload) { this.formPayload = formPayload; }
     public String getCreatedBy() { return createdBy; }
     public void setCreatedBy(String createdBy) { this.createdBy = createdBy; }
     public LocalDateTime getCreatedAt() { return createdAt; }

@@ -113,11 +113,13 @@ const activeComponent = computed(() => {
   return moduleComponents[module.value]
 })
 const pageTitle = computed(() => `大数据归集平台 · ${systemTitle(system.value)} · ${moduleTitle(module.value)}`)
-const pageDesc = computed(() =>
-  system.value === 'register'
+const pageDesc = computed(() => {
+  // 填报指引页不展示副标题，避免与指引正文重复占位
+  if (system.value === 'register' && module.value === 'm039') return ''
+  return system.value === 'register'
     ? '数据资产登记管理（切换系统请返回总览后重新进入）'
-    : '数据资源采集汇聚（切换系统请返回总览后重新进入）',
-)
+    : '数据资源采集汇聚（切换系统请返回总览后重新进入）'
+})
 
 function isRegisterModuleAllowed(moduleKey: string, allowed: typeof allowedRegister.value): boolean {
   if (allowed.some((m) => m.key === moduleKey)) return true

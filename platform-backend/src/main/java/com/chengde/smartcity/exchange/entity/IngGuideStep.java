@@ -12,6 +12,8 @@ public class IngGuideStep {
     private String stepName;
     private String stepDesc;
     private Integer requiredFlag;
+    /** 登记侧 module key，如 m040；空则仅展示说明 */
+    private String jumpModule;
 
     public Long getId() { return id; }
     public void setId(Long id) { this.id = id; }
@@ -23,4 +25,6 @@ public class IngGuideStep {
     public void setStepDesc(String stepDesc) { this.stepDesc = stepDesc; }
     public Integer getRequiredFlag() { return requiredFlag; }
     public void setRequiredFlag(Integer requiredFlag) { this.requiredFlag = requiredFlag; }
+    public String getJumpModule() { return jumpModule; }
+    public void setJumpModule(String jumpModule) { this.jumpModule = jumpModule; }
 }

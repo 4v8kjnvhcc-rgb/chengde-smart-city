@@ -38,9 +38,9 @@ export const APPLICATION_APPS: {
 /** 部门数据共享门户 Tab（不含考核/供需） */
 export const DEPT_PORTAL_TABS = [
   { key: 'home', label: '首页' },
-  { key: 'catalog', label: '共享资源' },
-  { key: 'subscribe', label: '资源订阅申请' },
-  { key: 'myspace', label: '我的空间' },
+  { key: 'catalog', label: '政务共享资源' },
+  { key: 'subscribe', label: '基础资源目录' },
+  { key: 'myspace', label: '个人空间' },
 ] as const
 
 export const DEPT_PORTAL_BRAND = '部门数据共享门户'
@@ -69,6 +69,21 @@ export const SUPPLY_MAIN_SECTIONS = [
   { key: 'supervise', label: '业务督办', mCode: 'M021' },
   { key: 'manifest-center', label: '清单中心', mCode: 'M024' },
 ] as const
+
+/** 供需对接侧栏：业务菜单 + 系统管理（含供需配置、事项管理） */
+export const SUPPLY_SIDE_NAV = [
+  ...SUPPLY_MAIN_SECTIONS.map((s) => ({ key: s.key, label: s.label })),
+  {
+    key: 'system',
+    label: '系统管理',
+    children: [
+      { key: 'supply-config', label: '供需配置' },
+      { key: 'matter-manage', label: '事项管理' },
+    ],
+  },
+] as const
+
+export const SUPPLY_SYSTEM_SECTIONS = ['supply-config', 'matter-manage'] as const
 
 /** 清单中心：目录清单 / 供需清单 / 异议清单 */
 export const MANIFEST_CENTER_SECTIONS = [

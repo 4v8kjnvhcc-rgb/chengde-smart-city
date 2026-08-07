@@ -18,6 +18,7 @@ import AccessControlView from '@/views/exchange/ingestion/register/AccessControl
 import SecurityConfig from '@/views/system/SecurityConfig.vue'
 import SystemMaintenanceView from '@/views/system/maintenance/SystemMaintenanceView.vue'
 import SystemMailConfigView from '@/views/system/maintenance/SystemMailConfigView.vue'
+import ExecCycleManageView from '@/views/system/ExecCycleManageView.vue'
 import PortalNavConfigPanel from '@/views/system/PortalNavConfigPanel.vue'
 import SysDictManagePanel from '@/views/system/SysDictManagePanel.vue'
 import BuiltinAttrManageView from '@/views/system/BuiltinAttrManageView.vue'
@@ -61,6 +62,7 @@ const navItems: HubNavItem[] = [
         children: [
           { key: 'sys.cfg.appearance', label: '基础信息' },
           { key: 'sys.cfg.mail', label: '系统邮箱' },
+          { key: 'sys.cfg.cron', label: '执行周期管理' },
         ],
       },
       { key: 'sys.tags', label: '标签库' },
@@ -567,6 +569,9 @@ onMounted(() => {
         </PageCard>
         <PageCard v-else-if="tab === 'sys.cfg.mail'" title="系统邮箱">
           <SystemMailConfigView embed />
+        </PageCard>
+        <PageCard v-else-if="tab === 'sys.cfg.cron'" title="执行周期管理">
+          <ExecCycleManageView />
         </PageCard>
         <div v-else-if="tab === 'sys.tags'" class="support-embed"><TagLibraryManage /></div>
         <div v-else-if="tab === 'sys.builtin'" class="support-embed"><BuiltinAttrManageView /></div>

@@ -12,11 +12,14 @@ import {
   resolveApplicationNav,
   type FulfillPath,
 } from './application-nav'
+import DemandApplyForm, { type DemandFormModel } from './DemandApplyForm.vue'
+import { useAuthStore } from '@/stores/auth'
 
 const props = defineProps<{ mode?: 'front' | 'config'; embedded?: boolean }>()
 
 const route = useRoute()
 const router = useRouter()
+const auth = useAuthStore()
 
 const loading = ref(false)
 const moduleKey = ref('supply-flow')
@@ -69,6 +72,10 @@ const quickSet = reactive({
   shareAttr: 'CONDITIONAL',
 })
 const superviseNote = ref('请尽快完成需求分析与供数确认')
+const returnNote = ref('材料不全，请补充后重新提交')
+const analysisOrgs = ref<{ id: number; orgName: string }[]>([])
+const returnDialog = reactive({ visible: false, id: 0 })
+const superviseDialog = reactive({ visible: false, id: 0 })
 const confirmNote = ref('供需对接确认，可满足需求，转换为数据责任并生成归集/共享任务')
 const confirmFeedback = ref('')
 const confirmResult = ref<Record<string, unknown> | null>(null)
@@ -86,6 +93,9 @@ const demandFilter = reactive({ title: '', demandType: '', status: '' })
 const demandPage = ref(1)
 const demandPageSize = ref(10)
 const createVisible = ref(false)
+const applyMode = ref<'create' | 'edit' | 'view'>('create')
+const applyFormModel = ref<Partial<DemandFormModel> | null>(null)
+const editingDemandId = ref<number>(0)
 const trackDrawer = reactive<{ visible: boolean; row: Record<string, unknown> | null }>({
   visible: false,
   row: null,
@@ -141,13 +151,120 @@ function resetDemandFilter() {
   demandPage.value = 1
 }
 
+function parseFormPayload(row: Record<string, unknown>): Partial<DemandFormModel> {
+  let payload: Record<string, unknown> = {}
+  const raw = row.formPayload
+  if (typeof raw === 'string' && raw.trim()) {
+    try {
+      payload = JSON.parse(raw) as Record<string, unknown>
+    } catch {
+      payload = {}
+    }
+  } else if (raw && typeof raw === 'object') {
+    payload = raw as Record<string, unknown>
+  }
+  return {
+    id: Number(row.id),
+    providerOrg: String(payload.providerOrg || row.assigneeOrg || ''),
+    providerOrgId: payload.providerOrgId != null ? Number(payload.providerOrgId) : undefined,
+    targetCatalogId: row.targetCatalogId != null ? Number(row.targetCatalogId) : undefined,
+    catalogTitle: String(payload.catalogTitle || ''),
+    dataName: String(payload.dataName || row.demandTitle || ''),
+    systemNames: Array.isArray(payload.systemNames) ? (payload.systemNames as string[]) : [''],
+    dataItems: Array.isArray(payload.dataItems) ? (payload.dataItems as string[]) : [],
+    serviceDemandType: (payload.serviceDemandType as 'GOV' | 'NON_GOV') || 'GOV',
+    matterIds: Array.isArray(payload.matterIds) ? (payload.matterIds as number[]) : [],
+    matterNames: Array.isArray(payload.matterNames) ? (payload.matterNames as string[]) : [],
+    matterMaterials: String(payload.matterMaterials || ''),
+    usageScenario: String(payload.usageScenario || ''),
+    demandBasis: String(payload.demandBasis || row.demandContent || ''),
+    shareProvideMode: String(payload.shareProvideMode || row.supplyMode || ''),
+    updateFrequency: String(payload.updateFrequency || '实时'),
+    requesterOrg: String(row.requesterOrg || '承德高新技术产业开发区管理委员会'),
+    contactName: String(payload.contactName || ''),
+    contactPhone: String(payload.contactPhone || ''),
+    contactEmail: String(payload.contactEmail || ''),
+    demandType: (String(row.demandType || 'STRUCTURED') as 'STRUCTURED' | 'UNSTRUCTURED'),
+    templateCode: String(row.templateCode || ''),
+    demandContent: String(row.demandContent || ''),
+  }
+}
+
+function buildDemandBody(v: DemandFormModel, draft: boolean) {
+  return {
+    draft,
+    demandTitle: v.dataName,
+    requesterOrg: v.requesterOrg,
+    demandType: v.demandType || 'STRUCTURED',
+    templateCode: v.templateCode || undefined,
+    demandContent: v.demandBasis || v.usageScenario || v.demandContent || undefined,
+    targetCatalogId: v.targetCatalogId,
+    assigneeOrg: v.providerOrg || undefined,
+    supplyMode: v.shareProvideMode || undefined,
+    formPayload: {
+      providerOrg: v.providerOrg,
+      providerOrgId: v.providerOrgId,
+      catalogTitle: v.catalogTitle,
+      dataName: v.dataName,
+      systemNames: v.systemNames,
+      dataItems: v.dataItems,
+      serviceDemandType: v.serviceDemandType,
+      matterIds: v.matterIds,
+      matterNames: v.matterNames,
+      matterMaterials: v.matterMaterials,
+      usageScenario: v.usageScenario,
+      demandBasis: v.demandBasis,
+      shareProvideMode: v.shareProvideMode,
+      updateFrequency: v.updateFrequency,
+      contactName: v.contactName,
+      contactPhone: v.contactPhone,
+      contactEmail: v.contactEmail,
+    },
+  }
+}
+
 function openCreateDemand() {
+  applyMode.value = 'create'
+  editingDemandId.value = 0
+  applyFormModel.value = {
+    requesterOrg: auth.user?.orgName || '承德高新技术产业开发区管理委员会',
+    serviceDemandType: 'GOV',
+    updateFrequency: '实时',
+    systemNames: [''],
+    dataItems: [],
+    matterIds: [],
+    matterNames: [],
+    demandType: 'STRUCTURED',
+  }
+  createVisible.value = true
+}
+
+function openViewDemand(row: Record<string, unknown>) {
+  applyMode.value = 'view'
+  editingDemandId.value = Number(row.id)
+  applyFormModel.value = parseFormPayload(row)
+  createVisible.value = true
+}
+
+function openEditDemandForm(row: Record<string, unknown>) {
+  applyMode.value = 'edit'
+  editingDemandId.value = Number(row.id)
+  applyFormModel.value = parseFormPayload(row)
   createVisible.value = true
 }
 
 function openTrack(row: Record<string, unknown>) {
   trackDrawer.row = row
   trackDrawer.visible = true
+}
+
+function demandOps(status: string) {
+  const s = String(status || '')
+  if (s === 'DRAFT') return ['view', 'edit', 'submit', 'delete'] as const
+  if (s === 'SUBMITTED') return ['withdraw', 'view', 'track'] as const
+  if (s === 'WITHDRAW_PENDING' || s === 'RETURNED') return ['view', 'edit', 'submit', 'delete', 'track'] as const
+  if (s === 'CANCELLED') return ['view', 'track'] as const
+  return ['view', 'track'] as const
 }
 
 function importHint() {
@@ -171,7 +288,7 @@ async function exportDemandsCsv() {
 
 const analysisPending = computed(() =>
   demands.value.filter((d) =>
-    ['SUBMITTED', 'PRE_AUDITING', 'ANALYZING', 'DISPATCHED', 'RETURNED', 'SUPERVISING'].includes(String(d.status)),
+    ['SUBMITTED', 'PRE_AUDITING', 'ANALYZING', 'SUPERVISING'].includes(String(d.status)),
   ),
 )
 const filteredAnalysis = computed(() =>
@@ -204,21 +321,53 @@ const matchPercent = computed(() => {
   return Number.isFinite(n) ? Math.max(0, Math.min(100, Math.round(n))) : 0
 })
 
+function restoreAnalysisFromRow(row: Record<string, unknown>) {
+  analysisResult.value = {
+    demandId: row.id,
+    analysisNote: row.analysisNote || '已有匹配结果',
+    matchScore: row.matchScore,
+    evalStatus: row.evalStatus,
+    shareAttr: row.shareAttr,
+    fulfillPath: row.fulfillPath,
+  }
+  let payload: Record<string, unknown> = {}
+  const raw = row.analysisPayload
+  if (typeof raw === 'string' && raw.trim()) {
+    try {
+      payload = JSON.parse(raw) as Record<string, unknown>
+    } catch {
+      payload = {}
+    }
+  } else if (raw && typeof raw === 'object') {
+    payload = raw as Record<string, unknown>
+  }
+  analysisCandidates.value = (payload.candidates as Record<string, unknown>[]) || []
+  relationGraph.value = (payload.relationGraph as typeof relationGraph.value) || null
+  if (row.evalStatus) quickSet.evalStatus = String(row.evalStatus)
+  if (row.shareAttr) quickSet.shareAttr = String(row.shareAttr)
+  if (row.fulfillPath) dispatchForm.fulfillPath = row.fulfillPath as FulfillPath
+  if (row.assigneeOrg) dispatchForm.assigneeOrg = String(row.assigneeOrg)
+  if (row.analysisNote) dispatchForm.analysisNote = String(row.analysisNote)
+}
+
 async function selectAnalysisRow(row: Record<string, unknown>) {
   analyzingId.value = Number(row.id)
   if (row.matchScore == null || row.matchScore === '') {
     await analyzeDemand(Number(row.id))
   } else {
-    analysisResult.value = {
-      demandId: row.id,
-      analysisNote: row.analysisNote || '已有匹配结果',
-      matchScore: row.matchScore,
-      evalStatus: row.evalStatus,
-      shareAttr: row.shareAttr,
-    }
-    if (row.evalStatus) quickSet.evalStatus = String(row.evalStatus)
-    if (row.shareAttr) quickSet.shareAttr = String(row.shareAttr)
-    if (row.fulfillPath) dispatchForm.fulfillPath = row.fulfillPath as FulfillPath
+    restoreAnalysisFromRow(row)
+  }
+}
+
+async function loadAnalysisOrgs() {
+  try {
+    const res = await api.get('/system/orgs')
+    analysisOrgs.value = ((res.data || []) as { id: number; orgName: string }[]).map((o) => ({
+      id: o.id,
+      orgName: o.orgName,
+    }))
+  } catch {
+    analysisOrgs.value = []
   }
 }
 
@@ -486,8 +635,8 @@ async function searchResourceCatalog() {
 function goPortalApply(row: Record<string, unknown>) {
   const id = row.resourceId
   router.push({
-    path: '/exchange/portal',
-    query: { tab: 'catalog', id: id != null ? String(id) : undefined },
+    path: '/exchange/analysis-portal/dept',
+    query: { section: 'catalog', catalogId: id != null ? String(id) : undefined },
   })
 }
 
@@ -504,8 +653,9 @@ async function loadSection() {
     } else if (section.value === 'analysis' || section.value === 'confirm' || section.value === 'supervise') {
       demands.value = (await api.get('/exchange/supply/demands')).data
       if (section.value === 'analysis') {
+        await loadAnalysisOrgs()
         if (!analyzingId.value && analysisPending.value.length) {
-          analyzingId.value = Number(analysisPending.value[0].id)
+          await selectAnalysisRow(analysisPending.value[0])
         }
       }
     } else if (section.value === 'home') {
@@ -518,16 +668,15 @@ async function loadSection() {
       demands.value = dm.data
       supplyTasks.value = tasks.data || []
       exchangeJobs.value = supplyTasks.value.filter((t) => ['EXCHANGE', 'COLLECT'].includes(String(t.taskType)))
+      if (!selectedDemandId.value && supplyViewDemands.value.length) {
+        selectedDemandId.value = Number(supplyViewDemands.value[0].id)
+      }
       if (selectedDemandId.value) {
-        const view = (await api.get(`/exchange/supply/supply-view/${selectedDemandId.value}`)).data
-        supplyView.value = view
-        duties.value = (view?.duties as Record<string, unknown>[]) || []
-        apiEndpoints.value = (view?.apiEndpoints as Record<string, unknown>[]) || []
-        sharePages.value = (view?.sharePages as Record<string, unknown>[]) || []
-        if (props.mode !== 'front') {
-          supplyTasks.value = (view?.tasks as Record<string, unknown>[]) || supplyTasks.value
-          exchangeJobs.value = (view?.exchangeJobs as Record<string, unknown>[]) || exchangeJobs.value
-        }
+        await loadSupplyView(selectedDemandId.value)
+      } else {
+        apiEndpoints.value = []
+        sharePages.value = []
+        duties.value = []
       }
     } else if (section.value === 'manifest-center') {
       await Promise.all([loadListCenter(), refreshManifestCounts()])
@@ -578,8 +727,47 @@ async function submitDemand() {
   demandPage.value = 1
 }
 
+async function saveApplyDraft(v: DemandFormModel) {
+  const body = buildDemandBody(v, true)
+  if (applyMode.value === 'edit' && editingDemandId.value) {
+    await api.post(`/exchange/supply/demands/${editingDemandId.value}/update`, { ...body, draft: true })
+  } else {
+    await api.post('/exchange/supply/demands', body)
+  }
+  ElMessage.success('已暂存草稿')
+  createVisible.value = false
+  demands.value = (await api.get('/exchange/supply/demands')).data
+  demandPage.value = 1
+}
+
+async function saveApplySubmit(v: DemandFormModel) {
+  const body = buildDemandBody(v, false)
+  if (applyMode.value === 'edit' && editingDemandId.value) {
+    await api.post(`/exchange/supply/demands/${editingDemandId.value}/update`, { ...body, submit: true })
+  } else {
+    await api.post('/exchange/supply/demands', body)
+  }
+  ElMessage.success('已提交，待数据主管部门审核')
+  createVisible.value = false
+  demands.value = (await api.get('/exchange/supply/demands')).data
+  demandPage.value = 1
+}
+
+async function submitExistingDemand(id: number) {
+  await api.post(`/exchange/supply/demands/${id}/submit`)
+  ElMessage.success('已提交，待数据主管部门审核')
+  demands.value = (await api.get('/exchange/supply/demands')).data
+}
+
+async function deleteDemandRow(id: number) {
+  await api.post(`/exchange/supply/demands/${id}/delete`)
+  ElMessage.success('已删除')
+  demands.value = (await api.get('/exchange/supply/demands')).data
+}
+
 async function withdrawDemand(id: number) {
   await api.post(`/exchange/supply/demands/${id}/withdraw`)
+  ElMessage.success('已撤销，状态为撤销待提交')
   demands.value = (await api.get('/exchange/supply/demands')).data
 }
 
@@ -602,21 +790,56 @@ async function analyzeDemand(id: number) {
 }
 
 async function dispatchDemand(id: number) {
-  await api.post(`/exchange/supply/demands/${id}/dispatch`, dispatchForm)
-  ElMessage.success('已分发并设定履约路径')
+  if (!dispatchForm.assigneeOrg?.trim()) {
+    return ElMessage.warning('请选择分发部门')
+  }
+  await api.post(`/exchange/supply/demands/${id}/dispatch`, {
+    ...dispatchForm,
+    analysisNote: dispatchForm.analysisNote || analysisResult.value?.analysisNote || '已完成需求分析并分发',
+  })
+  ElMessage.success('已分发到对应部门')
+  analyzingId.value = undefined
+  demands.value = (await api.get('/exchange/supply/demands')).data
+}
+
+function openReturnDialog(id: number) {
+  returnDialog.id = id
+  returnNote.value = returnNote.value || '材料不全，请补充后重新提交'
+  returnDialog.visible = true
+}
+
+async function confirmReturnDemandAnalysis() {
+  if (!returnNote.value.trim()) return ElMessage.warning('请填写退回原因')
+  await api.post(`/exchange/supply/demands/${returnDialog.id}/return`, {
+    analysisNote: returnNote.value.trim(),
+  })
+  returnDialog.visible = false
+  ElMessage.success('已退回数据提交部门')
+  analyzingId.value = undefined
+  demands.value = (await api.get('/exchange/supply/demands')).data
+}
+
+function openSuperviseDialog(id: number) {
+  superviseDialog.id = id
+  superviseDialog.visible = true
+}
+
+async function confirmSuperviseDemand() {
+  if (!superviseNote.value.trim()) return ElMessage.warning('请填写督办说明')
+  await api.post(`/exchange/supply/demands/${superviseDialog.id}/supervise`, {
+    superviseNote: superviseNote.value.trim(),
+  })
+  superviseDialog.visible = false
+  ElMessage.success('已发起督查督办')
   demands.value = (await api.get('/exchange/supply/demands')).data
 }
 
 async function returnDemand(id: number) {
-  await api.post(`/exchange/supply/demands/${id}/return`, { analysisNote: '材料不全，请补充' })
-  demands.value = (await api.get('/exchange/supply/demands')).data
+  openReturnDialog(id)
 }
 
 async function superviseDemand(id: number) {
-  if (!superviseNote.value) return ElMessage.warning('请填写督办说明')
-  await api.post(`/exchange/supply/demands/${id}/supervise`, { superviseNote: superviseNote.value })
-  ElMessage.success('已发起督查督办')
-  demands.value = (await api.get('/exchange/supply/demands')).data
+  openSuperviseDialog(id)
 }
 
 async function applyQuickSettings(id?: number) {
@@ -664,7 +887,7 @@ async function bindResourceToDemand(row: Record<string, unknown>) {
 
 async function confirmDemand(id: number, row: Record<string, unknown>) {
   const res = await api.post(`/exchange/supply/demands/${id}/confirm`, {
-    confirmNote: confirmNote.value,
+    confirmNote: confirmNote.value || '同意提供，生成共享任务',
     confirmFeedback: confirmFeedback.value || undefined,
     fulfillPath: row.fulfillPath || dispatchForm.fulfillPath,
     supplyMode: row.fulfillPath === 'NEED_COLLECT' ? 'COLLECT' : 'EXCHANGE',
@@ -673,8 +896,34 @@ async function confirmDemand(id: number, row: Record<string, unknown>) {
   })
   confirmResult.value = res.data
   const taskCount = (res.data.tasks as unknown[])?.length || 0
-  ElMessage.success(`已确认：数据责任 #${res.data.dutyId}，生成 ${taskCount} 项归集/共享任务`)
+  ElMessage.success(`已同意提供：数据责任 #${res.data.dutyId}，生成 ${taskCount} 项共享任务`)
   selectedDemandId.value = id
+  confirmDrawer.visible = false
+  demands.value = (await api.get('/exchange/supply/demands')).data
+  await loadSupplyView(id)
+}
+
+const confirmReturnDialog = reactive({ visible: false, id: 0 })
+const confirmReturnReason = ref('不同意提供，请补充说明后重新分析分发')
+
+function openConfirmReturn(id: number) {
+  confirmReturnDialog.id = id
+  confirmReturnDialog.visible = true
+}
+
+async function confirmReturnDemand(id: number) {
+  openConfirmReturn(id)
+}
+
+async function submitConfirmReturn() {
+  if (!confirmReturnReason.value.trim()) return ElMessage.warning('请填写不同意/退回原因')
+  await api.post(`/exchange/supply/demands/${confirmReturnDialog.id}/confirm-return`, {
+    confirmNote: confirmReturnReason.value.trim(),
+    confirmFeedback: confirmFeedback.value || undefined,
+  })
+  confirmReturnDialog.visible = false
+  confirmDrawer.visible = false
+  ElMessage.success('已退回（不同意提供）')
   demands.value = (await api.get('/exchange/supply/demands')).data
 }
 
@@ -683,15 +932,6 @@ async function rejectDemand(id: number) {
     confirmNote: confirmNote.value || '不符合共享范围',
   })
   ElMessage.success('已驳回')
-  demands.value = (await api.get('/exchange/supply/demands')).data
-}
-
-async function confirmReturnDemand(id: number) {
-  await api.post(`/exchange/supply/demands/${id}/confirm-return`, {
-    confirmNote: confirmNote.value || '供数部门退回，请补充材料',
-    confirmFeedback: confirmFeedback.value || undefined,
-  })
-  ElMessage.success('已退回需数部门')
   demands.value = (await api.get('/exchange/supply/demands')).data
 }
 
@@ -709,14 +949,19 @@ async function completeDemand(id: number) {
     confirmNote: confirmNote.value,
     confirmFeedback: confirmFeedback.value || undefined,
   })
-  ElMessage.success('需求已办结')
+  confirmDrawer.visible = false
+  ElMessage.success('需求已办结，可在「数据供给查看」中查看共享方式')
   demands.value = (await api.get('/exchange/supply/demands')).data
+  selectedDemandId.value = id
+  await loadSupplyView(id)
+  setSection('supply')
 }
 
 async function cancelDemand(id: number) {
   await api.post(`/exchange/supply/demands/${id}/cancel`, {
     confirmNote: confirmNote.value || '需求已撤销',
   })
+  confirmDrawer.visible = false
   ElMessage.success('需求已撤销')
   demands.value = (await api.get('/exchange/supply/demands')).data
 }
@@ -743,11 +988,17 @@ async function saveEdit() {
   demands.value = (await api.get('/exchange/supply/demands')).data
 }
 
+/** 已分发至供数部门、待确认（含督办/补正） */
 const confirmPending = computed(() =>
-  demands.value.filter((d) => ['PRE_AUDITING', 'ANALYZING', 'DISPATCHED', 'SUPERVISING', 'CORRECTION'].includes(String(d.status))),
+  demands.value.filter((d) => ['DISPATCHED', 'SUPERVISING', 'CORRECTION'].includes(String(d.status))),
 )
+/** 已确认 / 办结 / 退回 / 撤销等台账 */
 const confirmManaged = computed(() =>
   demands.value.filter((d) => ['CONFIRMED', 'COMPLETED', 'CANCELLED', 'REJECTED', 'RETURNED'].includes(String(d.status))),
+)
+/** 数据供给查看：仅已办结 */
+const supplyViewDemands = computed(() =>
+  demands.value.filter((d) => String(d.status) === 'COMPLETED'),
 )
 const confirmRows = computed(() => {
   const ids = new Set<number>()
@@ -856,11 +1107,16 @@ onMounted(() => {
             </el-form-item>
             <el-form-item label="状态" class="portal-field-md">
               <el-select v-model="demandFilter.status" clearable placeholder="请选择状态">
-                <el-option label="已提交" value="SUBMITTED" />
+                <el-option label="草稿" value="DRAFT" />
+                <el-option label="待数据主管部门审核" value="SUBMITTED" />
+                <el-option label="撤销待提交" value="WITHDRAW_PENDING" />
                 <el-option label="预审中" value="PRE_AUDITING" />
-                <el-option label="已分发" value="DISPATCHED" />
+                <el-option label="待确认" value="DISPATCHED" />
+                <el-option label="督办中" value="SUPERVISING" />
                 <el-option label="已确认" value="CONFIRMED" />
+                <el-option label="已办结" value="COMPLETED" />
                 <el-option label="已退回" value="RETURNED" />
+                <el-option label="已撤销" value="CANCELLED" />
               </el-select>
             </el-form-item>
             <el-form-item class="portal-form-actions">
@@ -892,16 +1148,16 @@ onMounted(() => {
                 {{ row.updatedAt ? String(row.updatedAt).replace('T', ' ').slice(0, 19) : '—' }}
               </template>
             </el-table-column>
-            <el-table-column label="操作" width="180" fixed="right">
+            <el-table-column label="操作" width="280" fixed="right">
               <template #default="{ row }">
-                <el-button link type="primary" @click="openEdit(row)">编辑</el-button>
-                <el-button link type="primary" @click="openTrack(row)">跟踪</el-button>
-                <el-button
-                  v-if="row.status === 'SUBMITTED'"
-                  link
-                  type="danger"
-                  @click="withdrawDemand(Number(row.id))"
-                >撤销</el-button>
+                <template v-for="op in demandOps(String(row.status))" :key="op">
+                  <el-button v-if="op === 'view'" link type="primary" @click="openViewDemand(row)">查看</el-button>
+                  <el-button v-else-if="op === 'edit'" link type="primary" @click="openEditDemandForm(row)">修改</el-button>
+                  <el-button v-else-if="op === 'submit'" link type="primary" @click="submitExistingDemand(Number(row.id))">提交</el-button>
+                  <el-button v-else-if="op === 'delete'" link type="danger" @click="deleteDemandRow(Number(row.id))">删除</el-button>
+                  <el-button v-else-if="op === 'withdraw'" link type="danger" @click="withdrawDemand(Number(row.id))">撤销</el-button>
+                  <el-button v-else-if="op === 'track'" link type="primary" @click="openTrack(row)">需求跟踪</el-button>
+                </template>
               </template>
             </el-table-column>
           </el-table>
@@ -913,38 +1169,20 @@ onMounted(() => {
           />
         </div>
 
-        <el-dialog v-model="createVisible" title="新建需求" width="640px" destroy-on-close>
-          <el-form label-width="96px">
-            <el-form-item label="需求模板">
-              <el-select v-model="demandForm.templateCode" clearable placeholder="可选模板" style="width:100%" @change="onTemplateChange">
-                <el-option v-for="t in templates" :key="t.templateCode" :label="`${t.templateName}`" :value="t.templateCode" />
-              </el-select>
-            </el-form-item>
-            <el-form-item label="需求类型">
-              <el-radio-group v-model="demandForm.demandType">
-                <el-radio-button value="STRUCTURED">结构化</el-radio-button>
-                <el-radio-button value="UNSTRUCTURED">非结构化</el-radio-button>
-              </el-radio-group>
-            </el-form-item>
-            <el-form-item label="需求标题">
-              <el-input v-model="demandForm.demandTitle" placeholder="模型化需求名称" />
-            </el-form-item>
-            <el-form-item label="申请方">
-              <el-input v-model="demandForm.requesterOrg" />
-            </el-form-item>
-            <template v-if="demandForm.demandType === 'STRUCTURED'">
-              <el-form-item v-for="f in templateFields" :key="f.key" :label="f.label">
-                <el-input v-model="modelFieldValues[f.key]" :placeholder="`请输入${f.label}`" />
-              </el-form-item>
-            </template>
-            <el-form-item v-else label="需求正文">
-              <el-input v-model="demandForm.demandContent" type="textarea" :rows="4" />
-            </el-form-item>
-          </el-form>
-          <template #footer>
-            <el-button @click="createVisible = false">取消</el-button>
-            <el-button type="primary" @click="submitDemand">提交需求</el-button>
-          </template>
+        <el-dialog
+          v-model="createVisible"
+          :title="applyMode === 'view' ? '查看需求' : applyMode === 'edit' ? '修改需求' : '新增需求'"
+          width="1080px"
+          top="4vh"
+          destroy-on-close
+        >
+          <DemandApplyForm
+            :model-value="applyFormModel"
+            :readonly="applyMode === 'view'"
+            @draft="saveApplyDraft"
+            @submit="saveApplySubmit"
+            @cancel="createVisible = false"
+          />
         </el-dialog>
 
         <el-drawer v-model="trackDrawer.visible" title="需求跟踪" size="420px">
@@ -1027,7 +1265,7 @@ onMounted(() => {
       <template v-if="mode === 'front'">
         <div class="sd-analysis">
           <div class="sd-analysis__left sd-table-card">
-            <div class="sd-card-title">待匹配需求列表</div>
+            <div class="sd-card-title">待分析需求（已提交待审核）</div>
             <el-form inline class="portal-inline-form portal-inline-form--sm" size="small">
               <el-form-item class="portal-field-md">
                 <el-input v-model="analysisFilter.title" placeholder="请输入需求标题" clearable />
@@ -1069,11 +1307,11 @@ onMounted(() => {
           </div>
 
           <div class="sd-analysis__right sd-table-card">
-            <div class="sd-card-title">需求详情</div>
+            <div class="sd-card-title">需求详情与智能分析</div>
             <template v-if="selectedAnalysis">
               <div class="sd-detail-head">
                 <h3>{{ selectedAnalysis.demandTitle }}</h3>
-                <el-tag type="primary" size="small">数据需求</el-tag>
+                <el-tag type="primary" size="small">{{ $statusLabel(selectedAnalysis.status) }}</el-tag>
               </div>
               <el-descriptions :column="2" size="small" class="sd-detail-desc">
                 <el-descriptions-item label="需求部门">{{ selectedAnalysis.requesterOrg || '—' }}</el-descriptions-item>
@@ -1086,8 +1324,9 @@ onMounted(() => {
                 <el-descriptions-item label="共享属性">
                   <el-tag size="small">{{ shareLabel(selectedAnalysis.shareAttr) }}</el-tag>
                 </el-descriptions-item>
-                <el-descriptions-item label="分发单位">{{ selectedAnalysis.assigneeOrg || dispatchForm.assigneeOrg }}</el-descriptions-item>
+                <el-descriptions-item label="分发单位">{{ selectedAnalysis.assigneeOrg || dispatchForm.assigneeOrg || '—' }}</el-descriptions-item>
                 <el-descriptions-item label="履约路径">{{ fulfillLabel(selectedAnalysis.fulfillPath || dispatchForm.fulfillPath) }}</el-descriptions-item>
+                <el-descriptions-item label="分析说明" :span="2">{{ selectedAnalysis.analysisNote || analysisResult?.analysisNote || '—' }}</el-descriptions-item>
               </el-descriptions>
 
               <div class="sd-match-row">
@@ -1102,12 +1341,74 @@ onMounted(() => {
                     <div class="sd-rel-node is-table">库表 {{ relationCounts.table }} 个</div>
                     <div class="sd-rel-node is-api">接口 {{ relationCounts.api }} 个</div>
                   </div>
+                  <ul v-if="relationGraph?.edges?.length" class="sd-rel-edges">
+                    <li v-for="(e, idx) in relationGraph.edges" :key="idx">
+                      {{ e.from }} → {{ e.to }}
+                      <em v-if="e.label">（{{ e.label }}）</em>
+                    </li>
+                  </ul>
                 </div>
               </div>
 
+              <PageCard title="资源目录快速查询（同部门数据共享门户已发布目录）" style="margin:12px 0">
+                <el-form inline class="portal-inline-form portal-inline-form--sm" size="small">
+                  <el-form-item label="关键词" class="portal-field-lg">
+                    <el-input
+                      v-model="resourceSearch.keyword"
+                      placeholder="目录/库表/接口名称"
+                      clearable
+                      @keyup.enter="searchResourceCatalog"
+                    />
+                  </el-form-item>
+                  <el-form-item label="类型" class="portal-field-sm">
+                    <el-select v-model="resourceSearch.resourceType">
+                      <el-option label="全部" value="ALL" />
+                      <el-option label="目录" value="CATALOG" />
+                      <el-option label="库表" value="TABLE" />
+                      <el-option label="接口" value="API" />
+                    </el-select>
+                  </el-form-item>
+                  <el-form-item class="portal-form-actions">
+                    <el-button type="primary" @click="searchResourceCatalog">查询</el-button>
+                  </el-form-item>
+                </el-form>
+                <el-table :data="resourceHits" stripe size="small" max-height="200">
+                  <el-table-column label="类型" width="80">
+                    <template #default="{ row }">{{ resourceTypeLabel(row.resourceType) }}</template>
+                  </el-table-column>
+                  <el-table-column prop="title" label="名称" min-width="140" show-overflow-tooltip />
+                  <el-table-column prop="score" label="匹配度" width="80" />
+                  <el-table-column label="操作" width="200">
+                    <template #default="{ row }">
+                      <el-button link type="primary" @click="bindResourceToDemand(row)">选用</el-button>
+                      <el-button
+                        v-if="row.resourceType === 'CATALOG'"
+                        link
+                        type="success"
+                        @click="goPortalApply(row)"
+                      >跳转门户申请</el-button>
+                    </template>
+                  </el-table-column>
+                </el-table>
+              </PageCard>
+
               <el-form inline class="portal-inline-form portal-inline-form--sm" size="small" style="margin-top:12px">
-                <el-form-item label="分发单位" class="portal-field-md">
-                  <el-input v-model="dispatchForm.assigneeOrg" />
+                <el-form-item label="分发部门" class="portal-field-lg" required>
+                  <el-select
+                    v-model="dispatchForm.assigneeOrg"
+                    filterable
+                    allow-create
+                    default-first-option
+                    placeholder="选择或输入数源部门"
+                    style="width:240px"
+                  >
+                    <el-option
+                      v-for="o in analysisOrgs"
+                      :key="o.id"
+                      :label="o.orgName"
+                      :value="o.orgName"
+                    />
+                  </el-select>
                 </el-form-item>
                 <el-form-item label="履约路径" class="portal-field-lg">
                   <el-select v-model="dispatchForm.fulfillPath">
@@ -1127,21 +1428,22 @@ onMounted(() => {
               </el-form>
 
               <div class="sd-detail-actions">
-                <el-button type="primary" @click="dispatchDemand(Number(selectedAnalysis.id))">分发</el-button>
-                <el-button @click="returnDemand(Number(selectedAnalysis.id))">退回</el-button>
+                <el-button type="primary" @click="dispatchDemand(Number(selectedAnalysis.id))">分发到部门</el-button>
+                <el-button @click="returnDemand(Number(selectedAnalysis.id))">退回提交部门</el-button>
                 <el-button type="warning" @click="superviseDemand(Number(selectedAnalysis.id))">督查督办</el-button>
                 <el-button type="success" @click="applyQuickSettings(Number(selectedAnalysis.id))">一键设置信息项</el-button>
                 <el-button link type="primary" @click="analyzeDemand(Number(selectedAnalysis.id))">重新智能匹配</el-button>
               </div>
 
               <div v-if="analysisCandidates.length" class="analysis-panel">
-                <h4>智能匹配候选</h4>
+                <h4>智能匹配候选（目录 / 库表 / 接口）</h4>
                 <el-table :data="analysisCandidates" stripe size="small">
                   <el-table-column label="类型" width="80">
                     <template #default="{ row }">{{ resourceTypeLabel(row.resourceType) }}</template>
                   </el-table-column>
                   <el-table-column prop="title" label="资源" min-width="140" />
                   <el-table-column prop="score" label="匹配度%" width="90" />
+                  <el-table-column prop="subtitle" label="说明" min-width="120" show-overflow-tooltip />
                   <el-table-column label="操作" width="100">
                     <template #default="{ row }">
                       <el-button link type="primary" @click="applyCandidate(row)">一键采用</el-button>
@@ -1153,6 +1455,30 @@ onMounted(() => {
             <el-empty v-else description="请从左侧选择待匹配需求" :image-size="72" />
           </div>
         </div>
+
+        <el-dialog v-model="returnDialog.visible" title="退回数据提交部门" width="480px" destroy-on-close>
+          <el-form label-width="88px">
+            <el-form-item label="退回原因" required>
+              <el-input v-model="returnNote" type="textarea" :rows="3" placeholder="请说明退回原因" />
+            </el-form-item>
+          </el-form>
+          <template #footer>
+            <el-button @click="returnDialog.visible = false">取消</el-button>
+            <el-button type="primary" @click="confirmReturnDemandAnalysis">确认退回</el-button>
+          </template>
+        </el-dialog>
+
+        <el-dialog v-model="superviseDialog.visible" title="督查督办" width="480px" destroy-on-close>
+          <el-form label-width="88px">
+            <el-form-item label="督办说明" required>
+              <el-input v-model="superviseNote" type="textarea" :rows="3" placeholder="请填写督办说明" />
+            </el-form-item>
+          </el-form>
+          <template #footer>
+            <el-button @click="superviseDialog.visible = false">取消</el-button>
+            <el-button type="warning" @click="confirmSuperviseDemand">发起督办</el-button>
+          </template>
+        </el-dialog>
       </template>
 
       <template v-else>
@@ -1424,9 +1750,11 @@ onMounted(() => {
               <el-select v-model="confirmFilter.status" clearable placeholder="全部状态">
                 <el-option label="待确认" value="DISPATCHED" />
                 <el-option label="督办中" value="SUPERVISING" />
+                <el-option label="待补正" value="CORRECTION" />
                 <el-option label="已确认" value="CONFIRMED" />
                 <el-option label="已退回" value="RETURNED" />
                 <el-option label="已办结" value="COMPLETED" />
+                <el-option label="已撤销" value="CANCELLED" />
               </el-select>
             </el-form-item>
             <el-form-item class="portal-form-actions">
@@ -1437,9 +1765,10 @@ onMounted(() => {
         </div>
         <div class="sd-table-card">
           <el-table :data="pagedConfirm" stripe size="small" @row-click="openConfirmDrawer">
-            <el-table-column prop="demandTitle" label="需求标题" min-width="180" show-overflow-tooltip />
-            <el-table-column prop="requesterOrg" label="需求单位" width="140" />
-            <el-table-column label="匹配目录" width="120">
+            <el-table-column prop="demandTitle" label="需求标题" min-width="160" show-overflow-tooltip />
+            <el-table-column prop="requesterOrg" label="需求单位" width="120" />
+            <el-table-column prop="assigneeOrg" label="供数单位" width="120" />
+            <el-table-column label="匹配目录" width="100">
               <template #default="{ row }">{{ row.matchedCatalogId || '—' }}</template>
             </el-table-column>
             <el-table-column label="状态" width="110">
@@ -1447,9 +1776,23 @@ onMounted(() => {
                 <el-tag :type="$statusTagType(row.status)" size="small">{{ $statusLabel(row.status) }}</el-tag>
               </template>
             </el-table-column>
-            <el-table-column label="操作" width="100" fixed="right">
+            <el-table-column label="操作" width="320" fixed="right">
               <template #default="{ row }">
-                <el-button link type="primary" @click.stop="openConfirmDrawer(row)">确认详情</el-button>
+                <template v-if="['DISPATCHED','SUPERVISING','CORRECTION'].includes(String(row.status))">
+                  <el-button link type="success" @click.stop="confirmDemand(Number(row.id), row)">同意并生成共享任务</el-button>
+                  <el-button link type="warning" @click.stop="confirmReturnDemand(Number(row.id))">退回</el-button>
+                  <el-button link @click.stop="openConfirmDrawer(row)">督查反馈</el-button>
+                </template>
+                <template v-else-if="row.status === 'CONFIRMED'">
+                  <el-button link type="success" @click.stop="completeDemand(Number(row.id))">办结</el-button>
+                  <el-button link @click.stop="openEdit(row)">修改</el-button>
+                  <el-button link type="info" @click.stop="cancelDemand(Number(row.id))">撤销</el-button>
+                </template>
+                <template v-else-if="row.status === 'COMPLETED'">
+                  <el-button link type="primary" @click.stop="loadSupplyView(Number(row.id)); setSection('supply')">供给查看</el-button>
+                  <el-button link @click.stop="openConfirmDrawer(row)">详情</el-button>
+                </template>
+                <el-button v-else link type="primary" @click.stop="openConfirmDrawer(row)">详情</el-button>
               </template>
             </el-table-column>
           </el-table>
@@ -1461,7 +1804,7 @@ onMounted(() => {
           />
         </div>
 
-        <el-drawer v-model="confirmDrawer.visible" title="确认详情" size="460px">
+        <el-drawer v-model="confirmDrawer.visible" title="需求确认" size="480px">
           <template v-if="confirmDrawer.row">
             <h4 class="confirm-h">基本信息</h4>
             <el-descriptions :column="1" border size="small">
@@ -1469,6 +1812,7 @@ onMounted(() => {
               <el-descriptions-item label="申请单位">{{ confirmDrawer.row.requesterOrg || '—' }}</el-descriptions-item>
               <el-descriptions-item label="供数单位">{{ confirmDrawer.row.assigneeOrg || '—' }}</el-descriptions-item>
               <el-descriptions-item label="状态">{{ $statusLabel(confirmDrawer.row.status) }}</el-descriptions-item>
+              <el-descriptions-item v-if="confirmDrawer.row.superviseNote" label="督办说明">{{ confirmDrawer.row.superviseNote }}</el-descriptions-item>
             </el-descriptions>
             <h4 class="confirm-h">匹配信息</h4>
             <el-descriptions :column="1" border size="small">
@@ -1477,26 +1821,45 @@ onMounted(() => {
               <el-descriptions-item label="共享属性">{{ shareLabel(confirmDrawer.row.shareAttr) }}</el-descriptions-item>
             </el-descriptions>
             <h4 class="confirm-h">确认说明</h4>
-            <el-input v-model="confirmNote" type="textarea" :rows="2" />
+            <el-input v-model="confirmNote" type="textarea" :rows="2" placeholder="同意提供时可填写说明" />
             <h4 class="confirm-h">督查反馈</h4>
-            <el-input v-model="confirmFeedback" type="textarea" :rows="2" placeholder="供数部门对督办的反馈意见" />
+            <el-input v-model="confirmFeedback" type="textarea" :rows="2" placeholder="对平台管理员督查督办的反馈意见" />
             <div class="sd-drawer-actions">
               <el-button
-                v-if="['DISPATCHED','SUPERVISING','CORRECTION','ANALYZING','PRE_AUDITING'].includes(String(confirmDrawer.row.status))"
+                v-if="['DISPATCHED','SUPERVISING','CORRECTION'].includes(String(confirmDrawer.row.status))"
                 type="success"
                 @click="confirmDemand(Number(confirmDrawer.row.id), confirmDrawer.row)"
-              >确认可满足</el-button>
-              <el-button @click="confirmReturnDemand(Number(confirmDrawer.row.id))">退回</el-button>
+              >同意并生成共享任务</el-button>
+              <el-button
+                v-if="['DISPATCHED','SUPERVISING','CORRECTION'].includes(String(confirmDrawer.row.status))"
+                type="warning"
+                @click="confirmReturnDemand(Number(confirmDrawer.row.id))"
+              >退回</el-button>
               <el-button type="warning" plain @click="submitConfirmFeedback(Number(confirmDrawer.row.id))">督查反馈</el-button>
               <el-button
                 v-if="confirmDrawer.row.status === 'CONFIRMED'"
+                type="success"
+                @click="completeDemand(Number(confirmDrawer.row.id))"
+              >办结</el-button>
+              <el-button
+                v-if="confirmDrawer.row.status === 'CONFIRMED' || ['DISPATCHED','SUPERVISING','CORRECTION'].includes(String(confirmDrawer.row.status))"
+                @click="openEdit(confirmDrawer.row)"
+              >修改</el-button>
+              <el-button
+                v-if="confirmDrawer.row.status === 'CONFIRMED'"
+                type="info"
+                @click="cancelDemand(Number(confirmDrawer.row.id))"
+              >撤销</el-button>
+              <el-button
+                v-if="['CONFIRMED','COMPLETED'].includes(String(confirmDrawer.row.status))"
                 type="primary"
-                @click="loadSupplyView(Number(confirmDrawer.row.id)); setSection('supply')"
-              >生成共享任务 / 查看</el-button>
+                :disabled="confirmDrawer.row.status !== 'COMPLETED'"
+                @click="loadSupplyView(Number(confirmDrawer.row.id)); setSection('supply'); confirmDrawer.visible = false"
+              >{{ confirmDrawer.row.status === 'COMPLETED' ? '供给查看' : '请先办结' }}</el-button>
             </div>
             <div v-if="confirmResult" class="confirm-result">
               <el-alert type="success" :closable="false" show-icon
-                :title="`确认成功：数据责任 #${confirmResult.dutyId}`" />
+                :title="`已同意提供并生成共享任务：数据责任 #${confirmResult.dutyId}，共 ${(confirmResult.tasks as unknown[])?.length || 0} 项`" />
             </div>
           </template>
         </el-drawer>
@@ -1507,7 +1870,7 @@ onMounted(() => {
         :closable="false"
         show-icon
         style="margin-bottom:12px"
-        title="数源部门确认可满足后自动转数据责任，并对接目录 / 共享交换 / 归集生成任务；支持退回、督查反馈。"
+        title="数据提供部门确认：同意并生成共享任务；不同意须填写原因后退回；对督查督办填写督查反馈；已确认需求可办结、撤销、修改。"
       />
       <el-form label-width="88px" style="max-width:720px;margin-bottom:12px">
         <el-form-item label="确认说明">
@@ -1518,7 +1881,7 @@ onMounted(() => {
         </el-form-item>
       </el-form>
 
-      <h4 class="confirm-h">待审核需求</h4>
+      <h4 class="confirm-h">待确认需求</h4>
       <el-table :data="confirmPending" stripe size="small">
         <el-table-column prop="demandTitle" label="需求" min-width="140" />
         <el-table-column prop="assigneeOrg" label="供数单位" width="110" />
@@ -1529,19 +1892,18 @@ onMounted(() => {
         <el-table-column label="状态" width="110">
           <template #default="{ row }"><el-tag :type="$statusTagType(row.status)" size="small">{{ $statusLabel(row.status) }}</el-tag></template>
         </el-table-column>
-        <el-table-column label="操作" width="380" fixed="right">
+        <el-table-column label="操作" width="400" fixed="right">
           <template #default="{ row }">
-            <el-button link type="success" @click="confirmDemand(Number(row.id), row)">审核通过并生成任务</el-button>
+            <el-button link type="success" @click="confirmDemand(Number(row.id), row)">同意并生成共享任务</el-button>
             <el-button link type="warning" @click="confirmReturnDemand(Number(row.id))">退回</el-button>
             <el-button link @click="submitConfirmFeedback(Number(row.id))">督查反馈</el-button>
-            <el-button link type="danger" @click="rejectDemand(Number(row.id))">驳回</el-button>
             <el-button link @click="openEdit(row)">修改</el-button>
             <el-button link type="info" @click="cancelDemand(Number(row.id))">撤销</el-button>
           </template>
         </el-table-column>
       </el-table>
 
-      <h4 class="confirm-h">已审核 / 办结台账</h4>
+      <h4 class="confirm-h">已确认 / 办结台账</h4>
       <el-table :data="confirmManaged" stripe size="small">
         <el-table-column prop="demandTitle" label="需求" min-width="140" />
         <el-table-column prop="confirmNote" label="确认说明" min-width="160" show-overflow-tooltip />
@@ -1549,12 +1911,12 @@ onMounted(() => {
         <el-table-column label="状态" width="110">
           <template #default="{ row }"><el-tag :type="$statusTagType(row.status)" size="small">{{ $statusLabel(row.status) }}</el-tag></template>
         </el-table-column>
-        <el-table-column label="操作" width="220" fixed="right">
+        <el-table-column label="操作" width="260" fixed="right">
           <template #default="{ row }">
             <el-button v-if="row.status === 'CONFIRMED'" link type="success" @click="completeDemand(Number(row.id))">办结</el-button>
             <el-button v-if="!['COMPLETED','CANCELLED','WITHDRAWN'].includes(String(row.status))" link @click="openEdit(row)">修改</el-button>
             <el-button v-if="row.status === 'CONFIRMED'" link type="info" @click="cancelDemand(Number(row.id))">撤销</el-button>
-            <el-button v-if="row.status === 'CONFIRMED'" link type="primary" @click="loadSupplyView(Number(row.id)); setSection('supply')">查看任务</el-button>
+            <el-button v-if="row.status === 'COMPLETED'" link type="primary" @click="loadSupplyView(Number(row.id)); setSection('supply')">供给查看</el-button>
           </template>
         </el-table-column>
       </el-table>
@@ -1590,7 +1952,39 @@ onMounted(() => {
 
     <PageCard v-else-if="section === 'supply'" :title="mode === 'front' ? '' : '数据供给查看'" class="sd-panel">
       <template v-if="mode === 'front'">
+        <div class="sd-filter-card">
+          <el-form inline class="portal-inline-form portal-inline-form--block">
+            <el-form-item label="办结需求" class="portal-field-xl">
+              <el-select
+                v-model="selectedDemandId"
+                clearable
+                filterable
+                placeholder="请选择已办结的需求"
+                style="min-width:280px"
+                @change="onSupplyDemandPick"
+              >
+                <el-option
+                  v-for="d in supplyViewDemands"
+                  :key="String(d.id)"
+                  :label="`${d.demandTitle}（${$statusLabel(d.status)}）`"
+                  :value="Number(d.id)"
+                />
+              </el-select>
+            </el-form-item>
+            <el-form-item class="portal-form-actions">
+              <el-button type="primary" :disabled="!selectedDemandId" @click="selectedDemandId && loadSupplyView(selectedDemandId)">刷新供给</el-button>
+            </el-form-item>
+          </el-form>
+        </div>
         <div class="sd-table-card">
+          <el-empty
+            v-if="!supplyViewDemands.length"
+            description="暂无已办结需求。请先在「数据需求确认」中同意提供并办结。"
+          />
+          <template v-else-if="!selectedDemandId">
+            <el-empty description="请选择已办结的数据需求，查看共享方式、交换作业、接口与通用共享页" />
+          </template>
+          <template v-else>
           <el-tabs v-model="supplyTab">
             <el-tab-pane label="共享方式" name="share" />
             <el-tab-pane label="交换作业" name="exchange" />
@@ -1603,7 +1997,7 @@ onMounted(() => {
             <div class="sd-kpi tone-red"><div class="sd-kpi__lab">失败</div><div class="sd-kpi__num">{{ supplyKpi.fail }}</div></div>
           </div>
 
-          <el-table v-if="supplyTab === 'share'" :data="supplyShareRows" stripe size="small">
+          <el-table v-if="supplyTab === 'share'" :data="supplyShareRows" stripe size="small" empty-text="暂无共享任务（请先同意并生成共享任务）">
             <el-table-column prop="taskName" label="任务名称" min-width="180" show-overflow-tooltip />
             <el-table-column label="共享方式" width="120">
               <template #default="{ row }">
@@ -1613,7 +2007,7 @@ onMounted(() => {
               </template>
             </el-table-column>
             <el-table-column label="关联需求" width="100">
-              <template #default="{ row }">{{ row.demandId || '—' }}</template>
+              <template #default="{ row }">{{ row.demandId || selectedDemandId || '—' }}</template>
             </el-table-column>
             <el-table-column label="状态" width="100">
               <template #default="{ row }">
@@ -1625,10 +2019,9 @@ onMounted(() => {
                 {{ row.updatedAt ? String(row.updatedAt).replace('T', ' ').slice(0, 19) : (row.createdAt ? String(row.createdAt).replace('T', ' ').slice(0, 19) : '—') }}
               </template>
             </el-table-column>
-            <el-table-column label="操作" width="140" fixed="right">
+            <el-table-column label="操作" width="100" fixed="right">
               <template #default="{ row }">
-                <el-button link type="primary" @click="selectedDemandId = Number(row.demandId); loadSupplyView(Number(row.demandId))">查看结果</el-button>
-                <el-button link type="primary" @click="openTrack(demands.find(d => Number(d.id) === Number(row.demandId)) || row)">详情</el-button>
+                <el-button link type="primary" @click="openTrack(demands.find(d => Number(d.id) === Number(row.demandId || selectedDemandId)) || row)">详情</el-button>
               </template>
             </el-table-column>
           </el-table>
@@ -1646,13 +2039,13 @@ onMounted(() => {
             </el-table-column>
           </el-table>
 
-          <el-table v-else-if="supplyTab === 'api'" :data="apiEndpoints" stripe size="small" empty-text="暂无接口（请选择已确认需求查看）">
+          <el-table v-else-if="supplyTab === 'api'" :data="apiEndpoints" stripe size="small" empty-text="暂无接口服务">
             <el-table-column prop="name" label="名称" min-width="120" />
             <el-table-column prop="method" label="方式" width="80" />
             <el-table-column prop="endpoint" label="地址" min-width="160" show-overflow-tooltip />
           </el-table>
 
-          <el-table v-else :data="sharePages" stripe size="small" empty-text="暂无共享页">
+          <el-table v-else :data="sharePages" stripe size="small" empty-text="暂无通用共享页">
             <el-table-column prop="title" label="页面" min-width="140" />
             <el-table-column prop="url" label="链接" min-width="160" show-overflow-tooltip />
             <el-table-column label="打开" width="80">
@@ -1661,19 +2054,7 @@ onMounted(() => {
               </template>
             </el-table-column>
           </el-table>
-
-          <el-form inline class="portal-inline-form" style="margin-top:12px">
-            <el-form-item label="按需求查看接口/共享页" class="portal-field-xl">
-              <el-select v-model="selectedDemandId" clearable placeholder="选择已确认需求" @change="onSupplyDemandPick">
-                <el-option
-                  v-for="d in demands.filter(x => ['CONFIRMED','COMPLETED'].includes(String(x.status)))"
-                  :key="String(d.id)"
-                  :label="String(d.demandTitle)"
-                  :value="Number(d.id)"
-                />
-              </el-select>
-            </el-form-item>
-          </el-form>
+          </template>
         </div>
       </template>
       <template v-else>
@@ -1682,10 +2063,15 @@ onMounted(() => {
         :closable="false"
         show-icon
         style="margin-bottom:12px"
-        title="查看数据供给共享方式：交换作业、接口、通用共享页面。"
+        title="针对已办结的数据需求，查看共享方式、交换作业、接口与通用共享页面。"
       />
-      <el-select v-model="selectedDemandId" placeholder="选择已确认需求" style="width:320px;margin-bottom:12px" @change="loadSupplyView">
-        <el-option v-for="d in demands.filter(x => ['CONFIRMED','COMPLETED'].includes(String(x.status)))" :key="String(d.id)" :label="String(d.demandTitle)" :value="Number(d.id)" />
+      <el-select v-model="selectedDemandId" filterable placeholder="选择已办结需求" style="width:360px;margin-bottom:12px" @change="loadSupplyView">
+        <el-option
+          v-for="d in supplyViewDemands"
+          :key="String(d.id)"
+          :label="`${d.demandTitle}（${$statusLabel(d.status)}）`"
+          :value="Number(d.id)"
+        />
       </el-select>
       <h4 v-if="duties.length" class="confirm-h">数据责任</h4>
       <el-table v-if="duties.length" :data="duties" stripe size="small" style="margin-bottom:12px">
@@ -1739,7 +2125,7 @@ onMounted(() => {
           </PageCard>
         </el-col>
       </el-row>
-      <el-empty v-if="!selectedDemandId" description="请选择已确认需求查看供给共享方式" />
+      <el-empty v-if="!selectedDemandId" description="请选择已办结需求查看供给共享方式" />
       </template>
     </PageCard>
 
@@ -1975,6 +2361,23 @@ onMounted(() => {
       </template>
     </PageCard>
 
+    <el-dialog v-model="confirmReturnDialog.visible" title="不同意提供 / 退回" width="480px">
+      <el-form label-width="88px">
+        <el-form-item label="退回原因" required>
+          <el-input
+            v-model="confirmReturnReason"
+            type="textarea"
+            :rows="4"
+            placeholder="请填写不同意提供的原因"
+          />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="confirmReturnDialog.visible = false">取消</el-button>
+        <el-button type="warning" @click="submitConfirmReturn">确认退回</el-button>
+      </template>
+    </el-dialog>
+
     <el-dialog v-model="editDialog.visible" title="修改需求" width="520px">
       <el-form label-width="88px">
         <el-form-item label="标题"><el-input v-model="editDialog.demandTitle" /></el-form-item>
@@ -2066,6 +2469,16 @@ onMounted(() => {
 }
 .sd-rel-node.is-catalog { border-color: #91caff; background: #e8f3ff; color: #1677ff; }
 .sd-rel-node.is-table { border-color: #b7eb8f; background: #f6ffed; color: #389e0d; }
+.sd-rel-node.is-api { border-color: #ffd591; background: #fff7e6; color: #d46b08; }
+.sd-rel-edges {
+  margin: 10px 0 0;
+  padding-left: 18px;
+  font-size: 12px;
+  color: #606266;
+  max-height: 120px;
+  overflow: auto;
+}
+.sd-rel-edges em { font-style: normal; color: #909399; }
 .sd-rel-node.is-api { border-color: #ffd591; background: #fff7e6; color: #d46b08; }
 .sd-detail-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 14px; }
 .sd-drawer-actions { display: flex; flex-direction: column; gap: 8px; margin-top: 16px; }

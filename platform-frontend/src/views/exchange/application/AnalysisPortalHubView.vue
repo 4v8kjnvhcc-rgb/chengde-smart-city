@@ -8,7 +8,7 @@ const portals = [
   {
     key: 'dept',
     title: '部门数据共享门户',
-    desc: '首页、共享资源、资源订阅申请、我的空间',
+    desc: '首页、政务共享资源、基础资源目录、个人空间',
     path: '/exchange/analysis-portal/dept',
   },
   {

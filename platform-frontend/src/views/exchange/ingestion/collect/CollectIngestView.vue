@@ -115,7 +115,7 @@ const selectedChannelId = ref<number | undefined>()
 
 const channelForm = reactive<Record<string, string>>({})
 
-const taskForm = reactive({ channelId: undefined as number | undefined, taskName: '', scheduleCron: '0 2 * * *' })
+const taskForm = reactive({ channelId: undefined as number | undefined, taskName: '', scheduleCron: '0 0 2 * * ?' })
 
 const tplForm = reactive({ templateCode: '', templateName: '' })
 const tplFileInput = ref<HTMLInputElement>()

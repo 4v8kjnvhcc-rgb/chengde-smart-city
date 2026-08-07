@@ -26,6 +26,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import java.time.LocalDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
+import java.util.Collection;
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
@@ -112,16 +113,18 @@ public class PortalService {
                 .sorted(Comparator
                         .comparing(BizCatalogItem::getPublishedAt, Comparator.nullsLast(Comparator.reverseOrder()))
                         .thenComparing(BizCatalogItem::getId, Comparator.nullsLast(Comparator.reverseOrder())))
-                .limit(6)
+                .limit(5)
                 .map(this::catalogView)
-                .toList();
+                .collect(Collectors.toCollection(ArrayList::new));
         List<Map<String, Object>> hot = published.stream()
                 .sorted(Comparator
                         .comparing((BizCatalogItem c) -> c.getHotScore() == null ? 0 : c.getHotScore()).reversed()
                         .thenComparing(BizCatalogItem::getId, Comparator.nullsLast(Comparator.reverseOrder())))
-                .limit(6)
+                .limit(5)
                 .map(this::catalogView)
-                .toList();
+                .collect(Collectors.toCollection(ArrayList::new));
+        enrichShareOpenStats(latest);
+        enrichShareOpenStats(hot);
 
         List<BizPortalSubscription> recentSubs = subscriptionMapper.selectList(new LambdaQueryWrapper<BizPortalSubscription>()
                 .orderByDesc(BizPortalSubscription::getId)
@@ -831,15 +834,6 @@ public class PortalService {
                 row.put("resourceTypeLabel", resourceTypeLabel(rt));
             }
             int apply = catalogId == null ? 0 : applyByCatalog.getOrDefault(catalogId, 0);
-            // 演示资源补默认申请量（尚无订阅记录时）
-            if (apply == 0 && row.get("catalogCode") != null) {
-                apply = switch (String.valueOf(row.get("catalogCode"))) {
-                    case "13080000230006" -> 8;
-                    case "13080000050007" -> 12;
-                    case "13080000990001" -> 5;
-                    default -> 0;
-                };
-            }
             row.put("applyCount", apply);
             Object visit = row.get("visitCount");
             if (visit == null) {
@@ -1021,12 +1015,19 @@ public class PortalService {
                 bumpFacet(map.get(key), c);
             }
         }
-        return new ArrayList<>(map.values());
+        List<Map<String, Object>> out = new ArrayList<>();
+        for (Map<String, Object> m : map.values()) {
+            if ("基础资源目录".equals(String.valueOf(m.getOrDefault("name", "")))) {
+                continue;
+            }
+            out.add(m);
+        }
+        return out;
     }
 
     /**
-     * 主题卡片：先列出「主题资源目录」下一级全部分类（无资源也显示，计数为 0），
-     * 再叠加审批通过已发布资源的接口数/库表数。
+     * 主题卡片：按「主题资源目录」一级分类排序，叠加审批通过已发布资源的接口数/库表数；
+     * 仅返回已有已发布目录的主题（接口或库表计数 > 0）。
      */
     private List<Map<String, Object>> buildThemes(List<BizCatalogItem> published) {
         Map<String, Map<String, Object>> map = new LinkedHashMap<>();
@@ -1069,12 +1070,12 @@ public class PortalService {
             }
             bumpFacet(map.get(key), c);
         }
-        return new ArrayList<>(map.values());
+        return filterFacetsWithCatalog(map.values());
     }
 
     /**
-     * 部门卡片：先列出组织机构全量（无资源也显示，计数为 0），
-     * 再叠加审批通过已发布资源的接口数/库表数。
+     * 部门卡片：按组织机构排序，叠加审批通过已发布资源的接口数/库表数；
+     * 仅返回已有已发布目录的部门（接口或库表计数 > 0）。
      */
     private List<Map<String, Object>> buildProviders(List<BizCatalogItem> published) {
         Map<String, Map<String, Object>> map = new LinkedHashMap<>();
@@ -1103,7 +1104,20 @@ public class PortalService {
                     "/exchange/analysis-portal/dept?section=catalog&providerOrg=" + name));
             bumpFacet(map.get(name), c);
         }
-        return new ArrayList<>(map.values());
+        return filterFacetsWithCatalog(map.values());
+    }
+
+    /** 仅保留至少有一条已发布目录的主题/部门分面。 */
+    private List<Map<String, Object>> filterFacetsWithCatalog(Collection<Map<String, Object>> facets) {
+        List<Map<String, Object>> out = new ArrayList<>();
+        for (Map<String, Object> m : facets) {
+            Object raw = m.get("count");
+            int count = raw instanceof Number ? ((Number) raw).intValue() : 0;
+            if (count > 0) {
+                out.add(m);
+            }
+        }
+        return out;
     }
 
     private List<GovCatalogCategory> listThemeL1Categories() {
@@ -1141,7 +1155,8 @@ public class PortalService {
                 continue;
             }
             String name = nz(c.getCategoryName(), "");
-            if (name.isEmpty() || !seenNames.add(name)) {
+            // 根节点名称本身不作为一级库展示（避免图标条出现「基础资源目录」）
+            if (name.isEmpty() || name.equals(rootName) || !seenNames.add(name)) {
                 continue;
             }
             l1.add(c);
@@ -1158,7 +1173,8 @@ public class PortalService {
                 if (rest.isEmpty() || rest.contains("/")) {
                     continue;
                 }
-                if (c.getCategoryName() == null || !seenNames.add(c.getCategoryName())) {
+                String name = c.getCategoryName();
+                if (name == null || name.equals(rootName) || !seenNames.add(name)) {
                     continue;
                 }
                 l1.add(c);

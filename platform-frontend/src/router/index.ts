@@ -84,6 +84,7 @@ const router = createRouter({
             const map: Record<string, string> = {
               appearance: 'sys.cfg.appearance',
               mail: 'sys.cfg.mail',
+              cron: 'sys.cfg.cron',
               security: 'audit.security',
             }
             return { path: '/analytics/support', query: { tab: map[p] || 'sys.cfg.appearance' } }

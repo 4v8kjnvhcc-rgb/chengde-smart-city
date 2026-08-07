@@ -7,6 +7,7 @@ import { computed, onMounted, reactive, ref } from 'vue'
 import api from '@/api/http'
 import { ElMessage } from 'element-plus'
 import { statusLabel, statusTagType } from '@/utils/status-label'
+import ExecCycleSelect from '@/views/system/ExecCycleSelect.vue'
 
 const props = defineProps<{
   mode: 'backup' | 'archive' | 'destroy'
@@ -275,8 +276,8 @@ onMounted(reload)
       <el-form-item label="周期调度" class="portal-field-xs">
         <el-switch v-model="form.scheduleEnabled" />
       </el-form-item>
-      <el-form-item v-if="form.scheduleEnabled" label="Cron" class="portal-field-cron">
-        <el-input v-model="form.scheduleCron" placeholder="0 0 2 * * ?" />
+      <el-form-item v-if="form.scheduleEnabled" label="执行周期" class="portal-field-cron">
+        <ExecCycleSelect v-model="form.scheduleCron" />
       </el-form-item>
       <el-form-item class="portal-form-actions">
         <el-button
