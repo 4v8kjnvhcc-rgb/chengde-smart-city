@@ -14,10 +14,19 @@ import ProjectSystemDetailView from './ProjectSystemDetailView.vue'
 import {
   canEditRegister,
   canSubmitRegister,
+  canWithdrawRegister,
   registerStatusZh,
   submitRegister,
+  withdrawRegister,
   useRegisterWorkflowRole,
 } from './register-workflow'
+import {
+  SOURCE_TYPE_GROUPS,
+  defaultPortFor,
+  isDbType,
+  isFileType,
+  isMemoryType,
+} from './source-types'
 
 function isApprovedRegister(status?: string | null) {
   const s = String(status || '').toUpperCase()
@@ -45,6 +54,7 @@ interface ProjectGrantRow {
   granteeId?: number
   granteeName?: string
   perm?: string
+  creatorGrant?: boolean
 }
 
 const detailProjectId = ref<number | null>(null)
@@ -73,13 +83,13 @@ function isOtherProject(code?: string) {
   return !!code && (code === 'PRJ_OTHER' || code.startsWith('PRJ_OTHER_'))
 }
 
-function isDbType(type: string) {
-  return type === 'MYSQL' || type === 'ORACLE'
+function onSourceTypeChange(type: string) {
+  projectForm.port = defaultPortFor(type)
 }
 const currentAccountLabel = computed(() => {
   const u = auth.user
   if (!u) return '—'
-  return u.displayName ? `${u.displayName}（${u.username}）` : u.username
+  return u.displayName || u.username
 })
 
 const projectDialogTitle = computed(() =>
@@ -102,7 +112,27 @@ const projectGrants = ref<ProjectGrantRow[]>([])
 const projectGrantForm = reactive({
   projectId: 0,
   projectName: '',
+  createdBy: '' as string,
   userId: undefined as number | undefined,
+  perm: 'VIEW' as 'VIEW' | 'ADMIN',
+})
+
+/** 仅项目创建人可给同组织其他用户授权 */
+const canManageProjectGrant = computed(() => {
+  const me = auth.user?.username
+  if (!me) return false
+  if (auth.isSystemAdmin) return true
+  return !!projectGrantForm.createdBy && projectGrantForm.createdBy === me
+})
+
+/** 下拉排除已授权用户，避免重复授权 */
+const availableGrantUsers = computed(() => {
+  const granted = new Set(
+    projectGrants.value
+      .map((g) => Number(g.granteeId))
+      .filter((id) => Number.isFinite(id) && id > 0),
+  )
+  return grantUsers.value.filter((u) => !granted.has(Number(u.id)))
 })
 
 const selectedProject = computed(() => {
@@ -203,11 +233,15 @@ function validateProjectForm() {
       return false
     }
     if (!projectForm.sourceName.trim()) {
-      ElMessage.warning('请填写数据源名称')
+      ElMessage.warning('请填写数据源')
       return false
     }
     if (isDbType(projectForm.sourceType) && !projectForm.database.trim()) {
       ElMessage.warning('请填写库名')
+      return false
+    }
+    if (isMemoryType(projectForm.sourceType) && !projectForm.host.trim()) {
+      ElMessage.warning('请填写主机地址')
       return false
     }
   }
@@ -271,8 +305,8 @@ async function deleteOneProject(row: Project) {
     ElMessage.warning('「其他」为系统初始化项目，不可删除')
     return
   }
-  if (isApprovedRegister(row.registerStatus) && !auth.isSystemAdmin) {
-    ElMessage.warning('审核通过的项目仅超级管理员可删除')
+  if (isApprovedRegister(row.registerStatus) && !auth.isPlatformOrSystemAdmin) {
+    ElMessage.warning('审核通过的项目仅平台管理员或超级管理员可删除')
     return
   }
   try {
@@ -290,7 +324,7 @@ async function deleteOneProject(row: Project) {
     return
   }
   const tip = isApprovedRegister(row.registerStatus)
-    ? `该项目已审核通过，确认以超级管理员身份删除「${row.projectName}」？`
+    ? `该项目已审核通过，确认以平台/超级管理员身份删除「${row.projectName}」？`
     : `确定删除项目「${row.projectName}」？`
   await ElMessageBox.confirm(tip, '删除确认', { type: 'warning' })
   try {
@@ -305,7 +339,7 @@ async function deleteOneProject(row: Project) {
 
 function canShowProjectDelete(row: Project) {
   if (isOtherProject(row.projectCode)) return false
-  if (isApprovedRegister(row.registerStatus)) return !!auth.isSystemAdmin
+  if (isApprovedRegister(row.registerStatus)) return !!auth.isPlatformOrSystemAdmin
   return !!canDeleteProject.value
 }
 
@@ -319,11 +353,11 @@ async function batchDeleteProjects() {
   const blockedOther = targets.filter((p) => isOtherProject(p.projectCode))
   let candidates = targets.filter((p) => !isOtherProject(p.projectCode))
 
-  if (!auth.isSystemAdmin) {
+  if (!auth.isPlatformOrSystemAdmin) {
     const approved = candidates.filter((p) => isApprovedRegister(p.registerStatus))
     if (approved.length) {
       await ElMessageBox.alert(
-        `以下项目已审核通过，仅超级管理员可删除：${approved.map((p) => p.projectName).join('、')}`,
+        `以下项目已审核通过，仅平台管理员或超级管理员可删除：${approved.map((p) => p.projectName).join('、')}`,
         '无法删除',
         { type: 'warning' },
       )
@@ -399,6 +433,15 @@ async function doSubmit(row: Project) {
   await reload()
 }
 
+async function doWithdraw(row: Project) {
+  await ElMessageBox.confirm(`确认撤销「${row.projectName}」的审核提交？撤销后状态将回到草稿。`, '撤销确认', {
+    type: 'warning',
+  })
+  await withdrawRegister('PROJECT', row.id)
+  ElMessage.success('已撤销，状态为草稿')
+  await reload()
+}
+
 function openDetail(row: Project) {
   setActiveProjectId(row.id)
   selectedIds.value = [row.id]
@@ -407,8 +450,11 @@ function openDetail(row: Project) {
 
 async function loadGrantUsers() {
   try {
-    const res = await api.get('/system/users', { params: { page: 1, size: 500 } })
-    const records = (res.data?.records || res.data || []) as GrantUser[]
+    // 本部门其他可授权账号（排除当前登录用户、排除外部门）
+    const res = await api.get('/system/access/users-for-project-grant', {
+      params: { projectId: projectGrantForm.projectId || undefined },
+    })
+    const records = (res.data || []) as GrantUser[]
     grantUsers.value = records.filter((u) => u && u.id != null)
   } catch {
     grantUsers.value = []
@@ -433,12 +479,18 @@ async function openProjectGrant(row: Project) {
   selectedIds.value = [row.id]
   projectGrantForm.projectId = row.id
   projectGrantForm.projectName = row.projectName
+  projectGrantForm.createdBy = String(row.createdBy || '')
   projectGrantForm.userId = undefined
+  projectGrantForm.perm = 'VIEW'
   await Promise.all([loadGrantUsers(), loadProjectGrants(row.id)])
   projectGrantVisible.value = true
 }
 
 async function submitProjectGrant() {
+  if (!canManageProjectGrant.value) {
+    ElMessage.warning('仅项目创建人可授权')
+    return
+  }
   if (!projectGrantForm.userId) {
     ElMessage.warning('请选择用户')
     return
@@ -449,10 +501,11 @@ async function submitProjectGrant() {
       projectId: projectGrantForm.projectId,
       granteeType: 'USER',
       granteeId: projectGrantForm.userId,
-      perm: 'VIEW',
+      perm: projectGrantForm.perm,
     })
     ElMessage.success('项目授权成功')
     projectGrantForm.userId = undefined
+    projectGrantForm.perm = 'VIEW'
     await loadProjectGrants(projectGrantForm.projectId)
   } catch (e: unknown) {
     ElMessage.error(e instanceof Error ? e.message : '项目授权失败')
@@ -462,6 +515,14 @@ async function submitProjectGrant() {
 }
 
 async function revokeProjectGrant(row: ProjectGrantRow) {
+  if (row.creatorGrant) {
+    ElMessage.warning('项目创建人的管理权限不可取消')
+    return
+  }
+  if (!canManageProjectGrant.value) {
+    ElMessage.warning('仅项目创建人可取消授权')
+    return
+  }
   try {
     await ElMessageBox.confirm(
       `确认取消用户「${row.granteeName || row.granteeId}」对本项目的授权？`,
@@ -564,7 +625,7 @@ onMounted(reload)
               <el-tag size="small">{{ registerStatusZh(row.registerStatus) }}</el-tag>
             </template>
           </el-table-column>
-          <el-table-column label="操作" width="340" fixed="right">
+          <el-table-column label="操作" width="400" fixed="right">
             <template #default="{ row }">
               <el-button
                 v-if="canEditRegister(row.registerStatus) && canCreateProject"
@@ -581,6 +642,14 @@ onMounted(reload)
                 @click="doSubmit(row)"
               >
                 提交
+              </el-button>
+              <el-button
+                v-if="canSubmit && canWithdrawRegister(row.registerStatus)"
+                link
+                type="warning"
+                @click="doWithdraw(row)"
+              >
+                撤销
               </el-button>
               <el-button link type="primary" @click="openProjectGrant(row)">项目权限</el-button>
               <el-button link type="primary" @click="openDetail(row)">详情</el-button>
@@ -633,7 +702,7 @@ onMounted(reload)
             <el-option
               v-for="c in clusterOptions"
               :key="c.id"
-              :label="`${c.clusterName}（${c.clusterCode} / ${c.accountName}）`"
+              :label="c.clusterName"
               :value="c.id"
             />
           </el-select>
@@ -643,19 +712,31 @@ onMounted(reload)
             <el-input v-model="projectForm.systemName" placeholder="首个业务系统名，同一项目可再添加多个" />
           </el-form-item>
           <el-divider content-position="left">首个数据源</el-divider>
-          <el-form-item label="数据源名" required>
+          <el-form-item label="数据源" required>
             <el-input v-model="projectForm.sourceName" />
           </el-form-item>
           <el-form-item label="类型" required>
-            <el-select v-model="projectForm.sourceType" style="width:100%">
-              <el-option label="MySQL" value="MYSQL" />
-              <el-option label="Oracle" value="ORACLE" />
-              <el-option label="文件(手动上传资产)" value="FILE" />
-              <el-option label="API" value="API" />
+            <el-select
+              v-model="projectForm.sourceType"
+              style="width:100%"
+              @change="onSourceTypeChange"
+            >
+              <el-option-group
+                v-for="g in SOURCE_TYPE_GROUPS"
+                :key="g.label"
+                :label="g.label"
+              >
+                <el-option
+                  v-for="o in g.options"
+                  :key="o.value"
+                  :label="o.label"
+                  :value="o.value"
+                />
+              </el-option-group>
             </el-select>
           </el-form-item>
-          <p v-if="projectForm.sourceType === 'FILE'" class="form-hint">
-            选择「文件」类型后，可在手动上传模板中选择本项目/系统，用于归集不同的上传数据资产。
+          <p v-if="isFileType(projectForm.sourceType)" class="form-hint">
+            文件型数据源无需填写连接信息，可在后续「手动上传」中归集 {{ projectForm.sourceType }} 资产。
           </p>
           <template v-if="isDbType(projectForm.sourceType)">
             <el-form-item label="主机"><el-input v-model="projectForm.host" /></el-form-item>
@@ -664,6 +745,14 @@ onMounted(reload)
             <el-form-item label="用户名"><el-input v-model="projectForm.username" /></el-form-item>
             <el-form-item label="密码">
               <el-input v-model="projectForm.password" type="password" show-password />
+            </el-form-item>
+          </template>
+          <template v-else-if="isMemoryType(projectForm.sourceType)">
+            <el-form-item label="主机" required><el-input v-model="projectForm.host" placeholder="如：127.0.0.1" /></el-form-item>
+            <el-form-item label="端口"><el-input-number v-model="projectForm.port" :min="1" :max="65535" style="width:100%" /></el-form-item>
+            <el-form-item label="库号"><el-input v-model="projectForm.database" placeholder="可选，如 0" /></el-form-item>
+            <el-form-item label="密码">
+              <el-input v-model="projectForm.password" type="password" show-password placeholder="可选" />
             </el-form-item>
           </template>
         </template>
@@ -691,30 +780,47 @@ onMounted(reload)
             v-model="projectGrantForm.userId"
             filterable
             clearable
+            :disabled="!canManageProjectGrant"
             placeholder="请选择要授权的用户"
             style="width: 100%"
           >
             <el-option
-              v-for="u in grantUsers"
+              v-for="u in availableGrantUsers"
               :key="u.id"
               :label="`${u.displayName || '-'}（${u.username}）`"
               :value="u.id"
             />
           </el-select>
         </el-form-item>
+        <el-form-item label="权限" required>
+          <el-radio-group v-model="projectGrantForm.perm" :disabled="!canManageProjectGrant">
+            <el-radio value="VIEW">查看</el-radio>
+            <el-radio value="ADMIN">管理</el-radio>
+          </el-radio-group>
+        </el-form-item>
+        <p v-if="!canManageProjectGrant" class="form-hint">仅项目创建人可给同组织其他用户授权</p>
       </el-form>
 
       <h4 class="grant-subtitle">已授权用户</h4>
       <el-table :data="projectGrants" size="small" stripe max-height="240">
         <el-table-column label="用户" min-width="160" show-overflow-tooltip>
-          <template #default="{ row }">{{ row.granteeName || row.granteeId }}</template>
+          <template #default="{ row }">
+            {{ row.granteeName || row.granteeId }}
+            <el-tag v-if="row.creatorGrant" size="small" type="info" style="margin-left:6px">创建人</el-tag>
+          </template>
         </el-table-column>
         <el-table-column label="权限" width="90">
           <template #default="{ row }">{{ permLabel(row.perm) }}</template>
         </el-table-column>
         <el-table-column label="操作" width="90">
           <template #default="{ row }">
-            <el-button link type="danger" @click="revokeProjectGrant(row)">取消</el-button>
+            <el-button
+              v-if="canManageProjectGrant && !row.creatorGrant"
+              link
+              type="danger"
+              @click="revokeProjectGrant(row)"
+            >取消</el-button>
+            <span v-else class="muted">—</span>
           </template>
         </el-table-column>
       </el-table>
@@ -722,7 +828,12 @@ onMounted(reload)
 
       <template #footer>
         <el-button @click="projectGrantVisible = false">关闭</el-button>
-        <el-button type="primary" :loading="projectGrantSaving" @click="submitProjectGrant">确认</el-button>
+        <el-button
+          type="primary"
+          :loading="projectGrantSaving"
+          :disabled="!canManageProjectGrant"
+          @click="submitProjectGrant"
+        >确认</el-button>
       </template>
     </el-dialog>
   </div>
@@ -744,6 +855,7 @@ onMounted(reload)
   color: #909399;
   line-height: 1.4;
 }
+.muted { font-size: 13px; color: #909399; }
 .grant-subtitle {
   margin: 8px 0 10px;
   font-size: 14px;

@@ -132,6 +132,20 @@ public class RegisterWorkflowService {
         writeLog(operator, objectType, objectId, "REJECT", from, RegisterStatuses.REJECTED, reason.trim());
     }
 
+    /** 待审核撤销：回到草稿，清空驳回原因 */
+    @Transactional
+    public void withdraw(UserPrincipal operator, String objectType, Long objectId) {
+        if (!canSubmit(operator)) {
+            throw new BusinessException(403, "无撤销权限");
+        }
+        String from = getStatus(objectType, objectId);
+        if (!RegisterStatuses.canAudit(from)) {
+            throw new BusinessException(400, "仅待审核状态可撤销，撤销后回到草稿");
+        }
+        setStatus(objectType, objectId, RegisterStatuses.DRAFT, null);
+        writeLog(operator, objectType, objectId, "WITHDRAW", from, RegisterStatuses.DRAFT, "撤销提交");
+    }
+
     public void writeCreateLog(UserPrincipal operator, String objectType, Long objectId) {
         writeLog(operator, objectType, objectId, "CREATE", null, RegisterStatuses.DRAFT, null);
     }

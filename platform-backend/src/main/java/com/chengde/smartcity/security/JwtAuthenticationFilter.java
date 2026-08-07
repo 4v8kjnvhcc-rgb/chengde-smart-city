@@ -54,9 +54,12 @@ public class JwtAuthenticationFilter extends OncePerRequestFilter {
                 var authorities = new java.util.ArrayList<>(principal.getPermissions().stream()
                         .map(SimpleGrantedAuthority::new)
                         .toList());
-                // 超级管理员：额外授予 ROLE_SYSTEM_ADMIN，避免侧栏隐藏菜单导致权限码缺失时被拒
+                // 超级/平台管理员：额外授予 ROLE_*，避免侧栏隐藏菜单导致权限码缺失时被拒
                 if (principal.isSystemAdmin()) {
                     authorities.add(new SimpleGrantedAuthority("ROLE_SYSTEM_ADMIN"));
+                }
+                if (principal.isPlatformAdmin()) {
+                    authorities.add(new SimpleGrantedAuthority("ROLE_PLATFORM_ADMIN"));
                 }
                 var auth = new UsernamePasswordAuthenticationToken(principal, null, authorities);
                 SecurityContextHolder.getContext().setAuthentication(auth);

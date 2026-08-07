@@ -75,6 +75,11 @@ public class SupplyDemandController {
         return ApiResponse.ok(service.listDemands(stage, status));
     }
 
+    @GetMapping("/demands/{id}/track")
+    public ApiResponse<Map<String, Object>> demandTrack(@PathVariable Long id) {
+        return ApiResponse.ok(service.getDemandTrack(id));
+    }
+
     @PostMapping("/demands")
     @PreAuthorize("hasAuthority('portal:supply:create') or hasAuthority('portal:supply:approve') or hasRole('SYSTEM_ADMIN')")
     public ApiResponse<Long> createDemand(@AuthenticationPrincipal UserPrincipal principal,
@@ -310,8 +315,10 @@ public class SupplyDemandController {
     }
 
     @GetMapping("/list-center")
-    public ApiResponse<Map<String, Object>> listCenter(@RequestParam(required = false, defaultValue = "dept-catalog") String listType) {
-        return ApiResponse.ok(service.listCenter(listType));
+    public ApiResponse<Map<String, Object>> listCenter(
+            @AuthenticationPrincipal UserPrincipal principal,
+            @RequestParam(required = false, defaultValue = "dept-catalog") String listType) {
+        return ApiResponse.ok(service.listCenter(listType, principal));
     }
 
     @GetMapping("/catalog-manifest")

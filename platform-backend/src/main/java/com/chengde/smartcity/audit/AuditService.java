@@ -1,9 +1,11 @@
 package com.chengde.smartcity.audit;
 
+import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.chengde.smartcity.system.entity.AuditLog;
 import com.chengde.smartcity.system.mapper.AuditLogMapper;
 import com.chengde.smartcity.system.service.SecurityConfigService;
 import jakarta.servlet.http.HttpServletRequest;
+import java.util.List;
 import org.springframework.stereotype.Service;
 import org.springframework.web.context.request.RequestContextHolder;
 import org.springframework.web.context.request.ServletRequestAttributes;
@@ -39,5 +41,12 @@ public class AuditService {
             log.setUserAgent(request.getHeader("User-Agent"));
         }
         auditLogMapper.insert(log);
+    }
+
+    public List<AuditLog> listByResource(String resourceType, String resourceId) {
+        return auditLogMapper.selectList(new LambdaQueryWrapper<AuditLog>()
+                .eq(AuditLog::getResourceType, resourceType)
+                .eq(AuditLog::getResourceId, resourceId)
+                .orderByAsc(AuditLog::getId));
     }
 }

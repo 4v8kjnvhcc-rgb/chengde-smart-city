@@ -4,12 +4,19 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import PageCard from '@/components/common/PageCard.vue'
 import { useAuthStore } from '@/stores/auth'
 import { statusTagType } from '@/utils/status-label'
-import { ingestionApi, useIngestionLoading, type AssetCatalogReg } from '../useIngestionHub'
+import {
+  ingestionApi,
+  useIngestionLoading,
+  type AssetCatalogReg,
+  type Project,
+} from '../useIngestionHub'
 import {
   canEditRegister,
   canSubmitRegister,
+  canWithdrawRegister,
   registerStatusZh,
   submitRegister,
+  withdrawRegister,
 } from './register-workflow'
 import AssetCatalogFormDialog from './AssetCatalogFormDialog.vue'
 
@@ -29,6 +36,8 @@ const dialogVisible = ref(false)
 const dialogMode = ref<'create' | 'edit' | 'view'>('create')
 const editingId = ref<number | null>(null)
 const actingId = ref<number | null>(null)
+const orgOptions = ref<Array<{ id: number; orgName: string; label: string }>>([])
+const projectOptions = ref<Project[]>([])
 
 function normStatus(status?: string | null) {
   return (status || 'DRAFT').trim().toUpperCase()
@@ -39,9 +48,9 @@ function isApproved(status?: string | null) {
   return s === 'APPROVED' || s === 'ARCHIVED'
 }
 
-/** 草稿/驳回待提交：均可删；审核通过：仅超级管理员 */
+/** 草稿/驳回待提交：均可删；其它状态：平台/超级管理员可删 */
 function canDelete(row: AssetCatalogReg) {
-  if (isApproved(row.status)) return !!auth.isSystemAdmin
+  if (auth.isPlatformOrSystemAdmin) return true
   const s = normStatus(row.status)
   return s === 'DRAFT' || s === 'REJECTED'
 }
@@ -105,17 +114,33 @@ async function doSubmit(row: AssetCatalogReg) {
   }
 }
 
-async function doDelete(row: AssetCatalogReg) {
-  if (!canDelete(row)) {
-    if (isApproved(row.status)) {
-      ElMessage.warning('审核通过的资产目录仅超级管理员可删除')
-    } else {
-      ElMessage.warning('当前状态不可删除')
-    }
+async function doWithdraw(row: AssetCatalogReg) {
+  if (!canWithdrawRegister(row.status)) {
+    ElMessage.warning('仅待审核状态可撤销')
     return
   }
-  const tip = isApproved(row.status)
-    ? `该资产已审核通过，确认以超级管理员身份删除「${row.assetName}」？`
+  await ElMessageBox.confirm(`确认撤销「${row.assetName}」的审核提交？撤销后状态将回到草稿。`, '撤销确认', {
+    type: 'warning',
+  })
+  actingId.value = row.id
+  try {
+    await withdrawRegister('CATALOG_REG', row.id)
+    ElMessage.success('已撤销，状态为草稿')
+    await reload()
+  } catch (e: unknown) {
+    ElMessage.error(e instanceof Error ? e.message : '撤销失败')
+  } finally {
+    actingId.value = null
+  }
+}
+
+async function doDelete(row: AssetCatalogReg) {
+  if (!canDelete(row)) {
+    ElMessage.warning('当前状态不可删除；待审核/审核通过需平台管理员或超级管理员删除')
+    return
+  }
+  const tip = !canEditRegister(row.status)
+    ? `确认以平台/超级管理员身份删除「${row.assetName}」？`
     : `确认删除资产「${row.assetName}」？`
   await ElMessageBox.confirm(tip, '删除确认', { type: 'warning' })
   actingId.value = row.id
@@ -135,7 +160,21 @@ function formatTime(v?: string) {
   return String(v).replace('T', ' ').slice(0, 19)
 }
 
+async function loadFilterOptions() {
+  try {
+    orgOptions.value = (await ingestionApi.assetCatalogOrgOptions()).data || []
+  } catch {
+    orgOptions.value = []
+  }
+  try {
+    projectOptions.value = (await ingestionApi.projects()).data || []
+  } catch {
+    projectOptions.value = []
+  }
+}
+
 onMounted(() => {
+  void loadFilterOptions()
   void reload()
 })
 </script>
@@ -147,10 +186,24 @@ onMounted(() => {
         <el-input v-model="query.assetName" clearable placeholder="资产名称" @keyup.enter="reload" />
       </el-form-item>
       <el-form-item label="所属机构" class="portal-field-md">
-        <el-input v-model="query.orgName" clearable placeholder="所属机构" @keyup.enter="reload" />
+        <el-select v-model="query.orgName" clearable filterable placeholder="全部机构" style="width:100%">
+          <el-option
+            v-for="o in orgOptions"
+            :key="o.id"
+            :label="o.orgName || o.label"
+            :value="o.orgName || o.label"
+          />
+        </el-select>
       </el-form-item>
       <el-form-item label="来源项目" class="portal-field-md">
-        <el-input v-model="query.projectName" clearable placeholder="来源项目" @keyup.enter="reload" />
+        <el-select v-model="query.projectName" clearable filterable placeholder="全部项目" style="width:100%">
+          <el-option
+            v-for="p in projectOptions"
+            :key="p.id"
+            :label="p.projectName"
+            :value="p.projectName"
+          />
+        </el-select>
       </el-form-item>
       <el-form-item label="状态" class="portal-field-sm">
         <el-select v-model="query.status" clearable placeholder="全部">
@@ -205,6 +258,15 @@ onMounted(() => {
             @click="doSubmit(row)"
           >
             提交
+          </el-button>
+          <el-button
+            v-if="canWithdrawRegister(row.status)"
+            link
+            type="warning"
+            :loading="actingId === row.id"
+            @click="doWithdraw(row)"
+          >
+            撤销
           </el-button>
           <el-button
             v-if="canDelete(row)"

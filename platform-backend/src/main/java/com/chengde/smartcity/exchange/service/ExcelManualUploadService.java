@@ -1033,8 +1033,8 @@ public class ExcelManualUploadService {
             if (ds == null) {
                 throw new BusinessException(404, "数据源不存在: " + sourceId);
             }
-            if (!"FILE".equalsIgnoreCase(ds.getSourceType())) {
-                throw new BusinessException(400, "手动上传资产只能挂到 FILE 类型数据源（系统）下");
+            if (!isFileLikeSourceType(ds.getSourceType())) {
+                throw new BusinessException(400, "手动上传资产只能挂到文件型数据源（FILE/CSV/Excel/JSON）下");
             }
         } else {
             ds = ensureManualUploadSource(operator);
@@ -1072,5 +1072,13 @@ public class ExcelManualUploadService {
         } catch (Exception e) {
             return null;
         }
+    }
+
+    private static boolean isFileLikeSourceType(String sourceType) {
+        if (sourceType == null || sourceType.isBlank()) {
+            return false;
+        }
+        String t = sourceType.trim().toUpperCase(java.util.Locale.ROOT);
+        return "FILE".equals(t) || "CSV".equals(t) || "EXCEL".equals(t) || "JSON".equals(t);
     }
 }

@@ -362,15 +362,25 @@ public class AccessControlService {
     }
 
     /**
-     * 可被项目授权的用户：启用账号，且角色具备「数据资产登记管理」相关菜单权限（含系统管理员）。
+     * 可被项目授权的用户：启用账号，具备数据资产登记相关权限；
+     * 仅本部门用户，且不包含当前登录账号（「其他用户」）。
+     * 优先按项目绑定机构过滤；否则按操作者所属机构过滤。
      */
     public List<Map<String, Object>> listUsersForProjectGrant(UserPrincipal operator) {
+        return listUsersForProjectGrant(operator, null);
+    }
+
+    public List<Map<String, Object>> listUsersForProjectGrant(UserPrincipal operator, Long projectId) {
+        Long orgId = resolveGrantOrgId(operator, projectId);
+        Long excludeUserId = operator != null ? operator.getUserId() : null;
         String sql = """
                 SELECT DISTINCT u.id, u.username, u.display_name AS displayName, u.org_id AS orgId,
                        COALESCE(o.org_name, '未分配机构') AS orgName
                 FROM sys_user u
                 LEFT JOIN sys_org o ON o.id = u.org_id
                 WHERE u.status = 1
+                  AND (? IS NULL OR u.org_id = ?)
+                  AND (? IS NULL OR u.id <> ?)
                   AND (
                     EXISTS (
                       SELECT 1 FROM sys_user_role ur
@@ -391,7 +401,7 @@ public class AccessControlService {
                   )
                 ORDER BY orgName, displayName, username
                 """;
-        List<Map<String, Object>> rows = jdbcTemplate.queryForList(sql);
+        List<Map<String, Object>> rows = jdbcTemplate.queryForList(sql, orgId, orgId, excludeUserId, excludeUserId);
         List<Map<String, Object>> out = new ArrayList<>();
         for (Map<String, Object> row : rows) {
             Map<String, Object> m = new LinkedHashMap<>();
@@ -405,19 +415,33 @@ public class AccessControlService {
         return out;
     }
 
+    private Long resolveGrantOrgId(UserPrincipal operator, Long projectId) {
+        if (projectId != null) {
+            IngProject project = projectMapper.selectById(projectId);
+            if (project != null && project.getBoundOrgId() != null) {
+                return project.getBoundOrgId();
+            }
+        }
+        return operator != null ? operator.getOrgId() : null;
+    }
+
     @Transactional
     public Long createProjectGrant(UserPrincipal operator, Map<String, Object> body) {
         boolean sysAdmin = operator.isSystemAdmin();
-        if (!sysAdmin) {
-            assertCanGrantResourceOrData(operator);
-        }
         Long projectId = longVal(body.get("projectId"));
         String granteeType = str(body.get("granteeType"), "USER").toUpperCase(Locale.ROOT);
         Long granteeId = longVal(body.get("granteeId"));
         String perm = str(body.get("perm"), "VIEW").toUpperCase(Locale.ROOT);
+        if (!Set.of("VIEW", "ADMIN", "EDIT", "MANAGE").contains(perm)) {
+            throw new BusinessException(400, "perm 须为 VIEW（查看）或 ADMIN（管理）");
+        }
+        if ("EDIT".equals(perm) || "MANAGE".equals(perm)) {
+            perm = "ADMIN";
+        }
         if (projectId == null || granteeId == null) throw new BusinessException(400, "projectId/granteeId required");
         IngProject project = projectMapper.selectById(projectId);
         if (project == null) throw new BusinessException(404, "项目不存在");
+        assertCanAuthorizeProject(operator, project);
         if (!sysAdmin) {
             if (!Objects.equals(project.getBoundOrgId(), operator.getOrgId())) {
                 throw new BusinessException(403, "只能授权本机构项目");
@@ -440,7 +464,11 @@ public class AccessControlService {
                 .eq(SysProjectGrant::getGranteeType, granteeType)
                 .eq(SysProjectGrant::getGranteeId, granteeId));
         if (exist != null) {
-            exist.setPerm(perm);
+            if (isCreatorGrant(project, exist)) {
+                exist.setPerm("ADMIN");
+            } else {
+                exist.setPerm(perm);
+            }
             exist.setGrantedBy(operator.getUserId());
             if (grantOrgId != null) {
                 exist.setOrgId(grantOrgId);
@@ -453,7 +481,7 @@ public class AccessControlService {
         g.setGranteeType(granteeType);
         g.setGranteeId(granteeId);
         g.setOrgId(grantOrgId);
-        g.setPerm(perm);
+        g.setPerm(isCreatorUser(project, granteeType, granteeId) ? "ADMIN" : perm);
         g.setGrantedBy(operator.getUserId());
         g.setCreatedAt(LocalDateTime.now());
         projectGrantMapper.insert(g);
@@ -463,16 +491,50 @@ public class AccessControlService {
 
     @Transactional
     public void deleteProjectGrant(UserPrincipal operator, Long id) {
-        boolean sysAdmin = operator.isSystemAdmin();
-        if (!sysAdmin) {
-            assertCanGrantResourceOrData(operator);
-        }
         SysProjectGrant g = projectGrantMapper.selectById(id);
         if (g == null) throw new BusinessException(404, "授权不存在");
-        if (!sysAdmin && !Objects.equals(g.getOrgId(), operator.getOrgId())) {
+        IngProject project = projectMapper.selectById(g.getProjectId());
+        if (project == null) throw new BusinessException(404, "项目不存在");
+        if (isCreatorGrant(project, g)) {
+            throw new BusinessException(400, "项目创建人的管理权限不可取消");
+        }
+        assertCanAuthorizeProject(operator, project);
+        if (!operator.isSystemAdmin() && !Objects.equals(g.getOrgId(), operator.getOrgId())
+                && !Objects.equals(project.getBoundOrgId(), operator.getOrgId())) {
             throw new BusinessException(403, "只能删除本机构授权");
         }
         projectGrantMapper.deleteById(id);
+    }
+
+    /** 仅项目创建人可给同组织其他用户授权（系统管理员可代管） */
+    private void assertCanAuthorizeProject(UserPrincipal operator, IngProject project) {
+        if (operator == null) {
+            throw new BusinessException(401, "未登录");
+        }
+        if (operator.isSystemAdmin()) {
+            return;
+        }
+        String createdBy = project.getCreatedBy();
+        if (createdBy == null || createdBy.isBlank()
+                || !createdBy.equalsIgnoreCase(operator.getUsername())) {
+            throw new BusinessException(403, "仅项目创建人可授权同组织其他用户");
+        }
+    }
+
+    private boolean isCreatorGrant(IngProject project, SysProjectGrant g) {
+        return g != null && isCreatorUser(project, g.getGranteeType(), g.getGranteeId());
+    }
+
+    private boolean isCreatorUser(IngProject project, String granteeType, Long granteeId) {
+        if (project == null || granteeId == null || !"USER".equalsIgnoreCase(granteeType)) {
+            return false;
+        }
+        String createdBy = project.getCreatedBy();
+        if (createdBy == null || createdBy.isBlank()) {
+            return false;
+        }
+        SysUser u = userMapper.selectById(granteeId);
+        return u != null && createdBy.equalsIgnoreCase(u.getUsername());
     }
 
     public List<Map<String, Object>> listDataGrants(UserPrincipal operator, String scopeType, Long scopeId) {
@@ -735,6 +797,7 @@ public class AccessControlService {
         m.put("perm", g.getPerm());
         m.put("grantedBy", g.getGrantedBy());
         m.put("createdAt", g.getCreatedAt());
+        m.put("creatorGrant", isCreatorGrant(p, g));
         return m;
     }
 

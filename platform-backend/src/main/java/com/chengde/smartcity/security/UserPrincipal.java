@@ -40,4 +40,9 @@ public class UserPrincipal {
     public boolean isPlatformAdmin() {
         return roleCodes.contains("PLATFORM_ADMIN");
     }
+
+    /** 平台管理员或超级管理员（登记对象强制删除等） */
+    public boolean isPlatformOrSystemAdmin() {
+        return isSystemAdmin() || isPlatformAdmin();
+    }
 }

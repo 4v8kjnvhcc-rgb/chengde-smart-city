@@ -136,7 +136,10 @@ async function loadAssetTargets() {
     ingestionApi.dataSources(),
   ])
   projects.value = p.data || []
-  fileSources.value = (ds.data || []).filter((s) => String(s.sourceType || '').toUpperCase() === 'FILE')
+  fileSources.value = (ds.data || []).filter((s) => {
+    const t = String(s.sourceType || '').toUpperCase()
+    return t === 'FILE' || t === 'CSV' || t === 'EXCEL' || t === 'JSON'
+  })
   const other = projects.value.find((x) => isOtherProject(x.projectCode))
   if (!tplProjectId.value) {
     tplProjectId.value = other?.id || projects.value[0]?.id
@@ -796,7 +799,7 @@ onMounted(() => {
             @keyup.enter="submitAddSystem"
           />
         </el-form-item>
-        <el-form-item label="数据源名">
+        <el-form-item label="数据源">
           <el-input v-model="addSysForm.sourceName" placeholder="默认：手动上传" maxlength="80" />
         </el-form-item>
       </el-form>

@@ -58,7 +58,19 @@ export interface DataTable {
   sourceTable?: string
   physicalTableName?: string
 }
-export interface DataColumn { id: number; tableId: number; columnCode: string; columnName: string; dataType: string; nullableFlag: number; semanticDesc?: string; lengthVal?: number; componentType?: string; requiredTip?: string }
+export interface DataColumn {
+  id: number
+  tableId: number
+  columnCode: string
+  columnName: string
+  dataType: string
+  nullableFlag: number
+  pkFlag?: number
+  semanticDesc?: string
+  lengthVal?: number
+  componentType?: string
+  requiredTip?: string
+}
 export interface Dict {
   id: number
   dictCode: string
@@ -81,6 +93,16 @@ export interface DictItem {
   bizUsage?: string
   sortOrder: number
   status: string
+}
+
+export interface AssetFishboneNode {
+  id: string
+  type: 'PROJECT' | 'SYSTEM' | 'DATABASE' | 'TABLE' | 'COLUMN' | 'DICT' | string
+  refId: number
+  label: string
+  code?: string | null
+  childCount?: number
+  children?: AssetFishboneNode[]
 }
 export interface LineageEdge {
   id?: number
@@ -307,6 +329,15 @@ export const ingestionApi = {
   guides: () => api.get<GuideStep[]>('/exchange/ingestion/guides'),
   registerOverview: () => api.get<Record<string, unknown>>('/exchange/ingestion/register/overview'),
   assetReport: () => api.get<Record<string, unknown>>('/exchange/ingestion/register/asset-report'),
+  assetFishbone: (params?: { orgId?: number }) =>
+    api.get<{
+      mode: 'PLATFORM' | 'DEPT'
+      rootOrg: { id: number | null; orgName: string; orgCode?: string; parentId?: number | null }
+      orgs: Array<{ id: number; orgName: string; orgCode?: string; parentId?: number | null }>
+      selectedOrgId: number | null
+      selectedOrg?: { id: number | null; orgName: string; orgCode?: string; parentId?: number | null } | null
+      tree: AssetFishboneNode[]
+    }>('/exchange/ingestion/register/asset-fishbone', { params }),
   assetReportProjectTables: (projectId: number) =>
     api.get<Record<string, unknown>[]>(`/exchange/ingestion/register/asset-report/projects/${projectId}/tables`),
   assetReportTableDetail: (id: number) =>
@@ -373,11 +404,15 @@ export const ingestionApi = {
   registerTables: (id: number, body: Record<string, unknown>) => api.post<Record<string, unknown>>(`/exchange/ingestion/data-sources/${id}/register-tables`, body),
   tables: (sourceId?: number) => api.get<DataTable[]>('/exchange/ingestion/register/tables', { params: { sourceId } }),
   createTable: (body: Record<string, unknown>) => api.post<number>('/exchange/ingestion/register/tables', body),
+  updateTable: (tableId: number, body: Record<string, unknown>) =>
+    api.put<void>(`/exchange/ingestion/register/tables/${tableId}`, body),
+  deleteTable: (tableId: number) => api.delete<void>(`/exchange/ingestion/register/tables/${tableId}`),
   finalizeForwardTable: (tableId: number) =>
     api.post<Record<string, unknown>>(`/exchange/ingestion/register/tables/${tableId}/finalize-forward`),
   columns: (tableId: number) => api.get<DataColumn[]>(`/exchange/ingestion/register/tables/${tableId}/columns`),
   createColumn: (tableId: number, body: Record<string, unknown>) => api.post<number>(`/exchange/ingestion/register/tables/${tableId}/columns`, body),
   updateColumn: (columnId: number, body: Record<string, unknown>) => api.put<void>(`/exchange/ingestion/register/columns/${columnId}`, body),
+  deleteColumn: (columnId: number) => api.delete<void>(`/exchange/ingestion/register/columns/${columnId}`),
   builtinAttrConfig: () => api.get<Record<string, boolean>>('/system/builtin-attr-config'),
   metadataTemplate: () => api.get<string>('/exchange/ingestion/register/metadata/template'),
   importMetadata: (body: Record<string, unknown>) => api.post<Record<string, unknown>>('/exchange/ingestion/register/metadata/import', body),
@@ -400,6 +435,7 @@ export const ingestionApi = {
   tagTree: () => api.get<AssetTagTreeResult>('/exchange/ingestion/register/tags', { params: { tree: true } }),
   createTag: (body: Record<string, unknown>) => api.post<number>('/exchange/ingestion/register/tags', body),
   updateTag: (id: number, body: Record<string, unknown>) => api.put<void>(`/exchange/ingestion/register/tags/${id}`, body),
+  deleteTag: (id: number) => api.delete<void>(`/exchange/ingestion/register/tags/${id}`),
   matchTags: () => api.post<Record<string, unknown>>('/exchange/ingestion/register/tags/match'),
   suggestTagRule: (id: number) => api.get<Record<string, unknown>>(`/exchange/ingestion/register/tags/${id}/suggest-rule`),
   applySuggestedTagRule: (id: number, body?: { ruleExpr?: string }) =>
@@ -554,9 +590,13 @@ export const ingestionApi = {
   backupJobs: () => api.get<Record<string, unknown>[]>('/exchange/ingestion/collect/backup-jobs'),
   archiveJobs: () => api.get<Record<string, unknown>[]>('/exchange/ingestion/collect/archive-jobs'),
   assetCatalogDefaults: () =>
-    api.get<{ ownerName?: string; contactInfo?: string; orgId?: number; orgName?: string }>(
-      '/exchange/ingestion/asset-catalog-regs/defaults',
-    ),
+    api.get<{
+      ownerName?: string
+      contactInfo?: string
+      orgId?: number | null
+      orgName?: string
+      canPickOtherOrg?: boolean
+    }>('/exchange/ingestion/asset-catalog-regs/defaults'),
   assetCatalogOrgOptions: () =>
     api.get<Array<{ id: number; orgCode?: string; orgName: string; parentId?: number; label: string }>>(
       '/exchange/ingestion/asset-catalog-regs/org-options',

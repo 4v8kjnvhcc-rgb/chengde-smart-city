@@ -13,6 +13,7 @@ public class IngDataColumn {
     private String columnName;
     private String dataType;
     private Integer nullableFlag;
+    private Integer pkFlag;
     private Integer sortOrder;
     private String semanticDesc;
     private Integer lengthVal;
@@ -33,6 +34,8 @@ public class IngDataColumn {
     public void setDataType(String dataType) { this.dataType = dataType; }
     public Integer getNullableFlag() { return nullableFlag; }
     public void setNullableFlag(Integer nullableFlag) { this.nullableFlag = nullableFlag; }
+    public Integer getPkFlag() { return pkFlag; }
+    public void setPkFlag(Integer pkFlag) { this.pkFlag = pkFlag; }
     public Integer getSortOrder() { return sortOrder; }
     public void setSortOrder(Integer sortOrder) { this.sortOrder = sortOrder; }
     public String getSemanticDesc() { return semanticDesc; }

@@ -1,12 +1,10 @@
 <script setup lang="ts">
 import { computed, onMounted, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { useRouter } from 'vue-router'
 import PageCard from '@/components/common/PageCard.vue'
-import { useAuthStore } from '@/stores/auth'
+import TagLibraryManage from '@/views/system/TagLibraryManage.vue'
 import {
   activeProjectId,
-  projectOptionLabel,
   setActiveProjectId,
   syncActiveProject,
 } from '../ingestion-project-scope'
@@ -14,6 +12,7 @@ import {
   ingestionApi,
   useIngestionLoading,
   type AssetTag,
+  type BizSystem,
   type DataColumn,
   type DataSource,
   type DataTable,
@@ -21,18 +20,11 @@ import {
 } from '../useIngestionHub'
 
 defineProps<{ module: string }>()
-const router = useRouter()
-const auth = useAuthStore()
 const { loading, loadError, withLoad } = useIngestionLoading()
 
-/** 标签库维护入口：仅具备系统标签菜单权限时展示跳转 */
-const canManageTagLibrary = computed(() =>
-  auth.hasPermission('system:tag:list')
-  || auth.hasPermission('system:tag:edit')
-  || auth.hasPermission('system:tag:query'),
-)
-
+const activeTab = ref('library')
 const projects = ref<Project[]>([])
+const systems = ref<BizSystem[]>([])
 const standardTree = ref<AssetTag[]>([])
 const customTags = ref<AssetTag[]>([])
 const sources = ref<DataSource[]>([])
@@ -40,13 +32,12 @@ const tables = ref<DataTable[]>([])
 const columns = ref<DataColumn[]>([])
 
 const assetKeyword = ref('')
+const systemId = ref<number | null>(null)
 const sourceId = ref<number | null>(null)
 const selectedTableId = ref<number | null>(null)
 
-/** 打开抽屉时从服务端加载的已保存挂标 */
 const savedTableTagIds = ref<number[]>([])
 const savedColumnTagMap = ref<Record<number, number[]>>({})
-/** 本地草稿选择（未点完成登记前不落库） */
 const draftTableTagIds = ref<number[]>([])
 const draftColumnTagMap = ref<Record<number, number[]>>({})
 
@@ -59,16 +50,22 @@ const sourceNameMap = computed(() => {
   return m
 })
 
+const appliedKeyword = ref('')
+
 const filteredTables = computed(() => {
   let list = tables.value
   if (sourceId.value) list = list.filter((t) => t.sourceId === sourceId.value)
-  const kw = assetKeyword.value.trim().toLowerCase()
+  const kw = appliedKeyword.value.trim().toLowerCase()
   if (!kw) return list
   return list.filter((t) => {
     const src = sourceNameMap.value.get(t.sourceId) || ''
     return [t.tableCode, t.tableName, src].some((s) => String(s || '').toLowerCase().includes(kw))
   })
 })
+
+function runAssetQuery() {
+  appliedKeyword.value = assetKeyword.value
+}
 
 const selectedTable = computed(() => tables.value.find((t) => t.id === selectedTableId.value) || null)
 const drawerVisible = computed({
@@ -146,37 +143,77 @@ function filterTagNode(query: string, data: TreeOption) {
   return text.includes(q)
 }
 
+async function loadTagTree() {
+  const treeRes = await ingestionApi.tagTree()
+  standardTree.value = treeRes.data.standardTree || []
+  customTags.value = treeRes.data.customTags || []
+}
+
+async function loadSystems() {
+  if (!activeProjectId.value) {
+    systems.value = []
+    systemId.value = null
+    sources.value = []
+    sourceId.value = null
+    tables.value = []
+    return
+  }
+  systems.value = (await ingestionApi.systems(activeProjectId.value)).data || []
+  if (systemId.value && !systems.value.some((s) => s.id === systemId.value)) {
+    systemId.value = null
+  }
+  if (!systemId.value && systems.value.length) {
+    systemId.value = systems.value[0].id
+  }
+  await loadSourcesAndTables()
+}
+
+async function loadSourcesAndTables() {
+  if (!activeProjectId.value || !systemId.value) {
+    sources.value = []
+    sourceId.value = null
+    tables.value = []
+    return
+  }
+  sources.value = (await ingestionApi.dataSources(activeProjectId.value, systemId.value)).data || []
+  const sourceIds = new Set(sources.value.map((s) => s.id))
+  if (sourceId.value && !sourceIds.has(sourceId.value)) sourceId.value = null
+  if (!sources.value.length) {
+    tables.value = []
+    return
+  }
+  const allTables = (await ingestionApi.tables()).data || []
+  tables.value = allTables.filter((t) => sourceIds.has(t.sourceId))
+}
+
 async function loadBase() {
   await withLoad(async () => {
     projects.value = (await ingestionApi.projects()).data || []
     syncActiveProject(projects.value)
-    const [treeRes, srcRes] = await Promise.all([
-      ingestionApi.tagTree(),
-      activeProjectId.value
-        ? ingestionApi.dataSources(activeProjectId.value)
-        : Promise.resolve({ data: [] as DataSource[] }),
-    ])
-    standardTree.value = treeRes.data.standardTree || []
-    customTags.value = treeRes.data.customTags || []
-    sources.value = srcRes.data || []
-    const sourceIds = new Set(sources.value.map((s) => s.id))
-    if (sourceId.value && !sourceIds.has(sourceId.value)) sourceId.value = null
-    if (!activeProjectId.value || !sources.value.length) {
-      tables.value = []
-    } else {
-      const allTables = (await ingestionApi.tables()).data || []
-      tables.value = allTables.filter((t) => sourceIds.has(t.sourceId))
-    }
+    await loadTagTree()
+    await loadSystems()
   })
   tableTagLabels.value = {}
   await loadTableTagLabels(filteredTables.value.slice(0, 30))
 }
 
 watch(activeProjectId, () => {
+  systemId.value = null
   sourceId.value = null
   selectedTableId.value = null
   resetDraft()
-  void loadBase()
+  void withLoad(async () => {
+    await loadSystems()
+  }).then(() => loadTableTagLabels(filteredTables.value.slice(0, 30)))
+})
+
+watch(systemId, () => {
+  sourceId.value = null
+  selectedTableId.value = null
+  resetDraft()
+  void withLoad(async () => {
+    await loadSourcesAndTables()
+  }).then(() => loadTableTagLabels(filteredTables.value.slice(0, 30)))
 })
 
 async function loadTableTagLabels(rows: DataTable[]) {
@@ -362,156 +399,196 @@ watch(filteredTables, (list) => {
   void loadTableTagLabels(list.slice(0, 30))
 })
 
-onMounted(loadBase)
+watch(activeTab, (tab) => {
+  if (tab === 'manage') void loadBase()
+})
+
+onMounted(() => {
+  void loadBase()
+})
 </script>
 
 <template>
-  <div v-loading="loading">
-    <el-alert v-if="loadError" type="error" :title="loadError" show-icon :closable="false" style="margin-bottom:12px" />
-    <PageCard title="数据资产标签登记">
-      <p class="tag-desc">
-        在匹配抽屉中勾选标签仅为本地选择，不会立即保存；点击「完成登记」后才写入挂标，并询问是否生成识别规则。
-        <template v-if="canManageTagLibrary">
-          标签库维护请前往
-          <el-button link type="primary" @click="router.push('/system/tags')">系统管理 → 标签库</el-button>。
-        </template>
-        <template v-else>
-          标签库由系统管理员维护；本页仅做资产挂标登记。
-        </template>
-      </p>
+  <div>
+    <el-tabs v-model="activeTab" class="tag-tabs">
+      <el-tab-pane label="标签库" name="library">
+        <TagLibraryManage embedded />
+      </el-tab-pane>
+      <el-tab-pane label="标签管理" name="manage" lazy>
+        <div v-loading="loading">
+          <el-alert v-if="loadError" type="error" :title="loadError" show-icon :closable="false" style="margin-bottom:12px" />
+          <PageCard title="标签管理">
+            <p class="tag-desc">
+              依次选择项目、系统、数据源后匹配资产标签。在匹配抽屉中勾选标签仅为本地选择；点击抽屉内「完成登记」后才写入挂标，并询问是否生成识别规则。
+            </p>
 
-      <el-form inline class="portal-inline-form portal-inline-form--block">
-        <el-form-item label="当前项目" class="portal-field-xl">
-          <el-select
-            :model-value="activeProjectId ?? undefined"
-            filterable
-            placeholder="选择项目 / 系统"
-            style="width:100%"
-            @update:model-value="(v: number) => setActiveProjectId(v)"
+            <el-form inline class="portal-inline-form portal-inline-form--block">
+              <el-form-item label="项目" class="portal-field-lg">
+                <el-select
+                  :model-value="activeProjectId ?? undefined"
+                  filterable
+                  placeholder="选择项目"
+                  style="width:100%"
+                  @update:model-value="(v: number) => setActiveProjectId(v)"
+                >
+                  <el-option
+                    v-for="p in projects"
+                    :key="p.id"
+                    :label="p.projectName"
+                    :value="p.id"
+                  />
+                </el-select>
+              </el-form-item>
+              <el-form-item label="系统" class="portal-field-lg">
+                <el-select
+                  v-model="systemId"
+                  filterable
+                  clearable
+                  placeholder="选择系统"
+                  :disabled="!activeProjectId"
+                  style="width:100%"
+                >
+                  <el-option
+                    v-for="s in systems"
+                    :key="s.id"
+                    :label="s.systemName"
+                    :value="s.id"
+                  />
+                </el-select>
+              </el-form-item>
+              <el-form-item label="数据源" class="portal-field-lg">
+                <el-select
+                  v-model="sourceId"
+                  clearable
+                  filterable
+                  placeholder="全部数据源"
+                  :disabled="!systemId"
+                  style="width:100%"
+                >
+                  <el-option v-for="s in sources" :key="s.id" :label="s.sourceName" :value="s.id" />
+                </el-select>
+              </el-form-item>
+              <el-form-item label="检索" class="portal-field-xl">
+                <el-input
+                  v-model="assetKeyword"
+                  clearable
+                  placeholder="表名/编码/数据源模糊搜索"
+                  @keyup.enter="runAssetQuery"
+                />
+              </el-form-item>
+              <el-form-item class="portal-form-actions">
+                <el-button type="primary" @click="runAssetQuery">查询</el-button>
+              </el-form-item>
+            </el-form>
+
+            <el-table
+              :data="filteredTables"
+              stripe
+              highlight-current-row
+              :current-row-key="selectedTableId ?? undefined"
+              row-key="id"
+              @row-click="selectTable"
+            >
+              <el-table-column label="数据源" min-width="140" show-overflow-tooltip>
+                <template #default="{ row }">{{ sourceNameMap.get(row.sourceId) || row.sourceId }}</template>
+              </el-table-column>
+              <el-table-column prop="tableCode" label="表编码" width="140" show-overflow-tooltip />
+              <el-table-column prop="tableName" label="表名称" min-width="140" show-overflow-tooltip />
+              <el-table-column prop="columnCount" label="字段数" width="80" />
+              <el-table-column label="已挂标签" min-width="200" show-overflow-tooltip>
+                <template #default="{ row }">
+                  <template v-if="(tableTagLabels[row.id] || []).length">
+                    <el-tag
+                      v-for="(name, idx) in tableTagLabels[row.id]"
+                      :key="idx"
+                      size="small"
+                      style="margin: 0 4px 4px 0"
+                    >{{ name }}</el-tag>
+                  </template>
+                  <span v-else class="muted">未挂标</span>
+                </template>
+              </el-table-column>
+              <el-table-column label="操作" width="90" fixed="right">
+                <template #default="{ row }">
+                  <el-button link type="primary" @click.stop="selectTable(row)">匹配标签</el-button>
+                </template>
+              </el-table-column>
+            </el-table>
+          </PageCard>
+
+          <el-drawer
+            v-model="drawerVisible"
+            :title="selectedTable ? `匹配标签 · ${selectedTable.tableName || selectedTable.tableCode}` : '匹配标签'"
+            size="560px"
+            destroy-on-close
           >
-            <el-option
-              v-for="p in projects"
-              :key="p.id"
-              :label="projectOptionLabel(p)"
-              :value="p.id"
-            />
-          </el-select>
-        </el-form-item>
-        <el-form-item label="数据源" class="portal-field-xl">
-          <el-select v-model="sourceId" clearable filterable placeholder="全部数据源" :disabled="!activeProjectId">
-            <el-option v-for="s in sources" :key="s.id" :label="s.sourceName" :value="s.id" />
-          </el-select>
-        </el-form-item>
-        <el-form-item label="检索" class="portal-field-xl">
-          <el-input v-model="assetKeyword" clearable placeholder="表名/编码/数据源模糊搜索" />
-        </el-form-item>
-        <el-form-item class="portal-form-actions">
-          <el-button type="primary" :loading="finishing" @click="finishRegister">完成登记</el-button>
-        </el-form-item>
-      </el-form>
-
-      <el-table
-        :data="filteredTables"
-        stripe
-        highlight-current-row
-        :current-row-key="selectedTableId ?? undefined"
-        row-key="id"
-        @row-click="selectTable"
-      >
-        <el-table-column label="数据源" min-width="140" show-overflow-tooltip>
-          <template #default="{ row }">{{ sourceNameMap.get(row.sourceId) || row.sourceId }}</template>
-        </el-table-column>
-        <el-table-column prop="tableCode" label="表编码" width="140" show-overflow-tooltip />
-        <el-table-column prop="tableName" label="表名称" min-width="140" show-overflow-tooltip />
-        <el-table-column prop="columnCount" label="字段数" width="80" />
-        <el-table-column label="已挂标签" min-width="200" show-overflow-tooltip>
-          <template #default="{ row }">
-            <template v-if="(tableTagLabels[row.id] || []).length">
-              <el-tag
-                v-for="(name, idx) in tableTagLabels[row.id]"
-                :key="idx"
-                size="small"
-                style="margin: 0 4px 4px 0"
-              >{{ name }}</el-tag>
-            </template>
-            <span v-else class="muted">未挂标</span>
-          </template>
-        </el-table-column>
-        <el-table-column label="操作" width="90" fixed="right">
-          <template #default="{ row }">
-            <el-button link type="primary" @click.stop="selectTable(row)">匹配标签</el-button>
-          </template>
-        </el-table-column>
-      </el-table>
-    </PageCard>
-
-    <el-drawer
-      v-model="drawerVisible"
-      :title="selectedTable ? `匹配标签 · ${selectedTable.tableName || selectedTable.tableCode}` : '匹配标签'"
-      size="560px"
-      destroy-on-close
-    >
-      <template v-if="selectedTable">
-        <el-alert
-          :title="isDirty ? '当前为未保存的选择，需点击「完成登记」才会写入' : '可勾选标签进行匹配，完成后点击「完成登记」保存'"
-          :type="isDirty ? 'warning' : 'info'"
-          show-icon
-          :closable="false"
-          style="margin-bottom:12px"
-        />
-        <div class="bind-block">
-          <div class="bind-title">表级标签</div>
-          <el-tree-select
-            :model-value="draftTableTagIds"
-            multiple
-            filterable
-            clearable
-            show-checkbox
-            check-strictly
-            default-expand-all
-            :data="treeSelectData"
-            :filter-node-method="filterTagNode"
-            :render-after-expand="false"
-            placeholder="编码/名称模糊搜索后勾选二级类目"
-            style="width: 100%"
-            @update:model-value="onTableTagsChange"
-          />
-        </div>
-        <div class="bind-block">
-          <div class="bind-title">字段（数据项）标签</div>
-          <el-table :data="columns" stripe size="small" max-height="420">
-            <el-table-column prop="columnCode" label="编码" width="110" show-overflow-tooltip />
-            <el-table-column prop="columnName" label="名称" width="110" show-overflow-tooltip />
-            <el-table-column label="匹配标签" min-width="220">
-              <template #default="{ row }">
+            <template v-if="selectedTable">
+              <el-alert
+                :title="isDirty ? '当前为未保存的选择，需点击「完成登记」才会写入' : '可勾选标签进行匹配，完成后点击「完成登记」保存'"
+                :type="isDirty ? 'warning' : 'info'"
+                show-icon
+                :closable="false"
+                style="margin-bottom:12px"
+              />
+              <div class="bind-block">
+                <div class="bind-title">表级标签</div>
                 <el-tree-select
-                  :model-value="draftColumnTagMap[row.id] || []"
+                  :model-value="draftTableTagIds"
                   multiple
                   filterable
                   clearable
                   show-checkbox
                   check-strictly
+                  default-expand-all
                   :data="treeSelectData"
                   :filter-node-method="filterTagNode"
                   :render-after-expand="false"
-                  placeholder="模糊搜索标签"
+                  placeholder="编码/名称模糊搜索后勾选二级类目"
                   style="width: 100%"
-                  @update:model-value="(ids: number[]) => onColumnTagsChange(row.id, ids)"
+                  @update:model-value="onTableTagsChange"
                 />
-              </template>
-            </el-table-column>
-          </el-table>
+              </div>
+              <div class="bind-block">
+                <div class="bind-title">字段（数据项）标签</div>
+                <el-table :data="columns" stripe size="small" max-height="420">
+                  <el-table-column prop="columnCode" label="编码" width="110" show-overflow-tooltip />
+                  <el-table-column prop="columnName" label="名称" width="110" show-overflow-tooltip />
+                  <el-table-column label="匹配标签" min-width="220">
+                    <template #default="{ row }">
+                      <el-tree-select
+                        :model-value="draftColumnTagMap[row.id] || []"
+                        multiple
+                        filterable
+                        clearable
+                        show-checkbox
+                        check-strictly
+                        :data="treeSelectData"
+                        :filter-node-method="filterTagNode"
+                        :render-after-expand="false"
+                        placeholder="模糊搜索标签"
+                        style="width: 100%"
+                        @update:model-value="(ids: number[]) => onColumnTagsChange(row.id, ids)"
+                      />
+                    </template>
+                  </el-table-column>
+                </el-table>
+              </div>
+              <div class="drawer-actions">
+                <el-button @click="drawerVisible = false">取消</el-button>
+                <el-button type="primary" :loading="finishing" @click="finishRegister">完成登记</el-button>
+              </div>
+            </template>
+          </el-drawer>
         </div>
-        <div class="drawer-actions">
-          <el-button @click="drawerVisible = false">取消</el-button>
-          <el-button type="primary" :loading="finishing" @click="finishRegister">完成登记</el-button>
-        </div>
-      </template>
-    </el-drawer>
+      </el-tab-pane>
+    </el-tabs>
   </div>
 </template>
 
 <style scoped>
+.tag-tabs :deep(.el-tabs__header) {
+  margin-bottom: 12px;
+}
 .tag-desc { font-size: 13px; color: #606266; margin: 0 0 12px; line-height: 1.6; }
 .muted { color: #c0c4cc; font-size: 12px; }
 .bind-block { margin-bottom: 20px; }

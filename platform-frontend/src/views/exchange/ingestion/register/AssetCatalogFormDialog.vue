@@ -1,15 +1,20 @@
 <script setup lang="ts">
 import { computed, reactive, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
+import { useAuthStore } from '@/stores/auth'
 import {
   ingestionApi,
   type AssetCatalogReg,
+  type AssetTag,
+  type BizSystem,
   type DataColumn,
   type DataSource,
   type DataTable,
   type Project,
 } from '../useIngestionHub'
 import { loadRegisterLogs, registerStatusZh } from './register-workflow'
+
+const auth = useAuthStore()
 
 const props = defineProps<{
   modelValue: boolean
@@ -31,17 +36,19 @@ const readonly = computed(() => props.mode === 'view')
 const saving = ref(false)
 const loadingDetail = ref(false)
 const projects = ref<Project[]>([])
+const systems = ref<BizSystem[]>([])
 const sources = ref<DataSource[]>([])
 const tables = ref<DataTable[]>([])
 const columns = ref<DataColumn[]>([])
 const tagOptions = ref<{ id: number; tagName: string }[]>([])
 const orgOptions = ref<Array<{ id: number; orgCode?: string; orgName: string; parentId?: number; label: string }>>([])
-const contactOptions = ref<Array<{ phone: string; displayName: string; label: string }>>([])
 const auditLogs = ref<Record<string, unknown>[]>([])
 const auditLogsLoading = ref(false)
+/** 平台/超级管理员可选其它机构；部门管理员锁定本组织 */
+const canPickOtherOrg = ref(false)
 
-/** 机构下拉：选中值用 orgId（number）或自定义名称（string） */
-const orgSelectValue = ref<number | string | null>(null)
+/** 机构下拉：选中值用 orgId */
+const orgSelectValue = ref<number | null>(null)
 
 const form = reactive({
   assetName: '',
@@ -51,6 +58,7 @@ const form = reactive({
   orgId: null as number | null,
   orgName: '',
   projectId: null as number | null,
+  systemId: null as number | null,
   sourceId: null as number | null,
   tableId: null as number | null,
   accessMode: '',
@@ -102,6 +110,7 @@ function resetForm() {
   form.orgId = null
   form.orgName = ''
   form.projectId = null
+  form.systemId = null
   form.sourceId = null
   form.tableId = null
   form.accessMode = ''
@@ -121,10 +130,10 @@ function resetForm() {
   form.systemName = ''
   form.tableName = ''
   orgSelectValue.value = null
+  systems.value = []
   sources.value = []
   tables.value = []
   columns.value = []
-  contactOptions.value = []
   auditLogs.value = []
 }
 
@@ -161,12 +170,13 @@ function fillFromRecord(row: AssetCatalogReg) {
   form.orgId = row.orgId ?? null
   form.orgName = row.orgName || ''
   form.projectId = row.projectId ?? null
+  form.systemId = null
   form.sourceId = row.sourceId ?? null
   form.tableId = row.tableId ?? null
   form.accessMode = row.accessMode || ''
   form.formatType = row.formatType || ''
   form.transferMode = row.transferMode || ''
-  form.formatLocked = row.formatLocked || 0
+  form.formatLocked = 0
   form.bizPurpose = row.bizPurpose || ''
   form.bizScenario = row.bizScenario || ''
   form.accessScope = row.accessScope || ''
@@ -179,9 +189,7 @@ function fillFromRecord(row: AssetCatalogReg) {
   form.projectName = row.projectName || ''
   form.systemName = row.systemName || ''
   form.tableName = row.tableName || ''
-  if (form.orgId) orgSelectValue.value = form.orgId
-  else if (form.orgName) orgSelectValue.value = form.orgName
-  else orgSelectValue.value = null
+  orgSelectValue.value = form.orgId
 }
 
 async function loadMeta() {
@@ -199,15 +207,34 @@ async function loadMeta() {
     projects.value = []
   }
   try {
-    const tagRes = await ingestionApi.tags()
-    tagOptions.value = (tagRes.data || []).map((t) => ({ id: t.id, tagName: t.tagName }))
+    const tagRes = await ingestionApi.tagTree()
+    const list: { id: number; tagName: string }[] = []
+    const walk = (nodes: AssetTag[]) => {
+      for (const n of nodes) {
+        if (n.children?.length) walk(n.children)
+        else if (n.tagName) list.push({ id: n.id, tagName: n.stdCode ? `${n.stdCode} ${n.tagName}` : n.tagName })
+      }
+    }
+    walk(tagRes.data.standardTree || [])
+    for (const t of tagRes.data.customTags || []) {
+      if (t.tagName) list.push({ id: t.id, tagName: t.tagName })
+    }
+    tagOptions.value = list
   } catch {
     tagOptions.value = []
   }
 }
 
-async function loadSources(projectId: number) {
-  sources.value = (await ingestionApi.dataSources(projectId)).data || []
+async function loadSystems(projectId: number) {
+  systems.value = (await ingestionApi.systems(projectId)).data || []
+}
+
+async function loadSources(projectId: number, systemId?: number | null) {
+  if (systemId) {
+    sources.value = (await ingestionApi.dataSources(undefined, systemId)).data || []
+  } else {
+    sources.value = (await ingestionApi.dataSources(projectId)).data || []
+  }
 }
 
 async function loadTables(sourceId: number) {
@@ -218,31 +245,35 @@ async function loadColumns(tableId: number) {
   columns.value = (await ingestionApi.columns(tableId)).data || []
 }
 
-async function loadContacts(orgId: number | null, keepContact = false) {
-  contactOptions.value = []
-  if (!orgId) return
-  try {
-    contactOptions.value = (await ingestionApi.assetCatalogContacts(orgId)).data || []
-  } catch {
-    contactOptions.value = []
-  }
-  if (!keepContact && contactOptions.value.length === 1 && !form.contactInfo) {
-    form.contactInfo = contactOptions.value[0].phone
-  }
-}
-
 async function applyDefaults() {
-  // 所属机构、联系方式默认空，不自动带登录用户机构（避免出现 orgId=1 显示异常）
-  form.orgId = null
-  form.orgName = ''
-  form.contactInfo = ''
-  orgSelectValue.value = null
-  contactOptions.value = []
+  canPickOtherOrg.value = !!(
+    auth.isSystemAdmin
+    || auth.hasPermission('hub:ingestion:register:asset-catalog-mgmt')
+  )
+  try {
+    const d = (await ingestionApi.assetCatalogDefaults()).data || {}
+    if (typeof d.canPickOtherOrg === 'boolean') {
+      canPickOtherOrg.value = d.canPickOtherOrg || auth.isSystemAdmin
+    }
+    form.orgId = (d.orgId as number | null | undefined) ?? auth.user?.orgId ?? null
+    form.orgName = String(d.orgName || auth.user?.orgName || '')
+    form.contactInfo = String(d.contactInfo || auth.user?.phone || '')
+    orgSelectValue.value = form.orgId
+  } catch {
+    form.orgId = auth.user?.orgId ?? null
+    form.orgName = auth.user?.orgName || ''
+    form.contactInfo = auth.user?.phone || ''
+    orgSelectValue.value = form.orgId
+  }
 }
 
 async function openInit() {
   resetForm()
   await loadMeta()
+  canPickOtherOrg.value = !!(
+    auth.isSystemAdmin
+    || auth.hasPermission('hub:ingestion:register:asset-catalog-mgmt')
+  )
   if (props.mode === 'create') {
     await applyDefaults()
     return
@@ -252,8 +283,21 @@ async function openInit() {
   try {
     const row = (await ingestionApi.assetCatalogDetail(props.recordId)).data
     fillFromRecord(row)
-    if (form.orgId) await loadContacts(form.orgId, true)
-    if (form.projectId) await loadSources(form.projectId)
+    if (form.projectId) {
+      await loadSystems(form.projectId)
+      if (form.sourceId) {
+        const allSources = (await ingestionApi.dataSources(form.projectId)).data || []
+        const hit = allSources.find((s) => s.id === form.sourceId)
+        form.systemId = hit?.systemId ?? null
+        if (form.systemId) {
+          const sys = systems.value.find((s) => s.id === form.systemId)
+          form.systemName = sys?.systemName || form.systemName
+          await loadSources(form.projectId, form.systemId)
+        } else {
+          sources.value = allSources
+        }
+      }
+    }
     if (form.sourceId) await loadTables(form.sourceId)
     if (form.tableId) await loadColumns(form.tableId)
     if (props.mode === 'view') {
@@ -271,48 +315,30 @@ watch(
   },
 )
 
-async function onOrgChange(val: number | string | null) {
-  form.contactInfo = ''
-  contactOptions.value = []
-  if (val == null || val === '') {
+async function onOrgChange(val: number | null) {
+  if (val == null) {
     form.orgId = null
     form.orgName = ''
     return
   }
-  if (typeof val === 'number') {
-    const o = orgOptions.value.find((x) => x.id === val)
-    form.orgId = val
-    form.orgName = o?.orgName || ''
-    await loadContacts(val)
-    return
-  }
-  // 自定义输入：可能是手填名称，或输入了已有机构名
-  const matched = orgOptions.value.find((x) => x.orgName === val || x.label === val)
-  if (matched) {
-    form.orgId = matched.id
-    form.orgName = matched.orgName
-    orgSelectValue.value = matched.id
-    await loadContacts(matched.id)
-  } else {
-    form.orgId = null
-    form.orgName = String(val).trim()
-  }
+  const o = orgOptions.value.find((x) => x.id === val)
+  form.orgId = val
+  form.orgName = o?.orgName || ''
 }
 
 async function onProjectChange(projectId: number | null) {
+  form.systemId = null
   form.sourceId = null
   form.tableId = null
   form.systemName = ''
   form.tableName = ''
-  form.formatType = ''
-  form.formatLocked = 0
+  systems.value = []
   sources.value = []
   tables.value = []
   columns.value = []
   const p = projects.value.find((x) => x.id === projectId)
   form.projectName = p?.projectName || ''
-  // 所属机构由用户自行选择，不随项目自动带出
-  if (projectId) await loadSources(projectId)
+  if (projectId) await loadSystems(projectId)
 }
 
 function mapFormatFromSource(sourceType?: string): string | null {
@@ -325,20 +351,29 @@ function mapFormatFromSource(sourceType?: string): string | null {
   return null
 }
 
+async function onSystemChange(systemId: number | null) {
+  form.sourceId = null
+  form.tableId = null
+  form.tableName = ''
+  sources.value = []
+  tables.value = []
+  columns.value = []
+  const s = systems.value.find((x) => x.id === systemId)
+  form.systemName = s?.systemName || ''
+  if (form.projectId && systemId) await loadSources(form.projectId, systemId)
+}
+
 async function onSourceChange(sourceId: number | null) {
   form.tableId = null
   form.tableName = ''
   tables.value = []
   columns.value = []
   const s = sources.value.find((x) => x.id === sourceId)
-  form.systemName = s?.systemName || s?.sourceName || ''
+  if (!form.systemName) form.systemName = s?.systemName || ''
+  // 仅预填建议值，不锁定，用户可改
   const mapped = mapFormatFromSource(s?.sourceType)
-  if (mapped) {
-    form.formatType = mapped
-    form.formatLocked = 1
-  } else {
-    form.formatLocked = 0
-  }
+  if (mapped && !form.formatType) form.formatType = mapped
+  form.formatLocked = 0
   if (sourceId) await loadTables(sourceId)
 }
 
@@ -417,11 +452,11 @@ async function save() {
     return
   }
   if (!form.orgName.trim() && !form.orgId) {
-    ElMessage.warning('请选择或填写所属机构')
+    ElMessage.warning('请选择所属机构')
     return
   }
-  if (!form.projectId || !form.sourceId || !form.tableId) {
-    ElMessage.warning('请选择来源项目、数据源与数据表')
+  if (!form.projectId || !form.systemId || !form.sourceId || !form.tableId) {
+    ElMessage.warning('请选择来源项目、来源系统、数据库与数据表')
     return
   }
   saving.value = true
@@ -473,12 +508,10 @@ async function save() {
               <el-form-item label="所属机构" required>
                 <el-select
                   v-model="orgSelectValue"
-                  :disabled="readonly"
+                  :disabled="readonly || !canPickOtherOrg"
                   filterable
-                  allow-create
-                  default-first-option
                   clearable
-                  placeholder="选择组织机构，或直接输入"
+                  placeholder="选择组织机构"
                   style="width: 100%"
                   @change="onOrgChange"
                 >
@@ -496,23 +529,12 @@ async function save() {
             </el-col>
             <el-col :span="12">
               <el-form-item label="联系方式">
-                <el-select
+                <el-input
                   v-model="form.contactInfo"
                   :disabled="readonly"
-                  filterable
-                  allow-create
-                  default-first-option
                   clearable
-                  placeholder="选择本单位账号联系方式，或自定义"
-                  style="width: 100%"
-                >
-                  <el-option
-                    v-for="c in contactOptions"
-                    :key="c.phone"
-                    :label="c.phone"
-                    :value="c.phone"
-                  />
-                </el-select>
+                  placeholder="默认当前账号联系方式，可修改"
+                />
               </el-form-item>
             </el-col>
             <el-col :span="12">
@@ -522,11 +544,9 @@ async function save() {
                   :disabled="readonly"
                   multiple
                   filterable
-                  allow-create
-                  default-first-option
                   collapse-tags
                   collapse-tags-tooltip
-                  placeholder="选择或输入标签"
+                  placeholder="从标签库选择"
                   style="width: 100%"
                 >
                   <el-option v-for="t in tagOptions" :key="t.id" :label="t.tagName" :value="t.tagName" />
@@ -547,7 +567,7 @@ async function save() {
         <header class="section-head">
           <div>
             <h4>来源信息</h4>
-            <p>项目 → 数据源/系统 → 数据表（逐级选择）</p>
+            <p>项目 → 来源系统 → 数据库 → 数据表（逐级选择）</p>
           </div>
         </header>
 
@@ -575,19 +595,33 @@ async function save() {
               </el-form-item>
             </el-col>
             <el-col :span="8">
-              <el-form-item label="数据源" required>
+              <el-form-item label="来源系统" required>
                 <el-select
-                  v-model="form.sourceId"
+                  v-model="form.systemId"
                   :disabled="readonly || !form.projectId"
                   filterable
-                  placeholder="选择系统/数据源"
+                  placeholder="选择系统"
+                  style="width: 100%"
+                  @change="onSystemChange"
+                >
+                  <el-option v-for="s in systems" :key="s.id" :label="s.systemName" :value="s.id" />
+                </el-select>
+              </el-form-item>
+            </el-col>
+            <el-col :span="8">
+              <el-form-item label="数据库" required>
+                <el-select
+                  v-model="form.sourceId"
+                  :disabled="readonly || !form.systemId"
+                  filterable
+                  placeholder="选择数据库"
                   style="width: 100%"
                   @change="onSourceChange"
                 >
                   <el-option
                     v-for="s in sources"
                     :key="s.id"
-                    :label="`${s.systemName || '系统'} / ${s.sourceName}`"
+                    :label="s.sourceName"
                     :value="s.id"
                   />
                 </el-select>
@@ -623,7 +657,7 @@ async function save() {
               <el-form-item label="格式类型">
                 <el-select
                   v-model="form.formatType"
-                  :disabled="readonly || form.formatLocked === 1"
+                  :disabled="readonly"
                   placeholder="请选择"
                   style="width: 100%"
                 >
@@ -680,7 +714,7 @@ async function save() {
           <el-empty v-else description="暂无字段，请先在「数据库/表/项登记」完善表结构" :image-size="64" />
         </div>
         <div v-else class="field-placeholder">
-          请先完成上方项目、数据源、数据表选择，字段结构将在此展示
+          请先完成上方项目、来源系统、数据库、数据表选择，字段结构将在此展示
         </div>
       </section>
 

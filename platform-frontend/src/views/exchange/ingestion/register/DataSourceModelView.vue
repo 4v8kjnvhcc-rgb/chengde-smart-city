@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref, watch } from 'vue'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
+import { Delete, Edit } from '@element-plus/icons-vue'
 import PageCard from '@/components/common/PageCard.vue'
 import {
   activeProjectId,
@@ -33,12 +34,49 @@ const selectedTableId = ref<number>()
 const selectedProject = computed(() => projects.value.find((p) => p.id === selectedProjectId.value) || null)
 const selectedSystem = computed(() => bizSystems.value.find((s) => s.id === selectedSystemId.value) || null)
 const selectedSource = computed(() => dataSources.value.find((s) => s.id === selectedSourceId.value) || null)
+const selectedTable = computed(() => tables.value.find((t) => t.id === selectedTableId.value) || null)
+const isSelectedForwardTable = computed(() => selectedTable.value?.modelingMode === 'FORWARD')
 const projectSources = ref<DataSource[]>([])
+function resetColumnForm() {
+  columnForm.columnCode = ''
+  columnForm.columnName = ''
+  columnForm.dataType = 'VARCHAR'
+  columnForm.lengthVal = 64
+  columnForm.nullableFlag = 1
+  columnForm.pkFlag = 0
+  editingColumnId.value = null
+}
+
+function displayDataType(row: DataColumn) {
+  const raw = (row.dataType || '—').replace(/\(\d+\)/, '')
+  return raw || '—'
+}
+
+function displayLength(row: DataColumn) {
+  if (row.lengthVal != null && row.lengthVal > 0) return String(row.lengthVal)
+  const m = (row.dataType || '').match(/\((\d+)\)/)
+  return m ? m[1] : '—'
+}
 
 /** —— 登记弹窗（原向导） —— */
 const registerVisible = ref(false)
+const FORWARD_DATA_TYPES = [
+  'TINYINT', 'SMALLINT', 'MEDIUMINT', 'INT', 'BIGINT',
+  'FLOAT', 'DOUBLE', 'DECIMAL',
+  'CHAR', 'VARCHAR', 'TEXT', 'ENUM', 'SET', 'BLOB',
+  'DATE', 'TIME', 'DATETIME', 'TIMESTAMP', 'YEAR', 'JSON',
+] as const
+
 const tableForm = reactive({ tableName: '', modelingMode: 'REVERSE' as 'FORWARD' | 'REVERSE' })
-const columnForm = reactive({ columnCode: '', columnName: '', dataType: 'VARCHAR(64)', nullableFlag: 1 })
+const columnForm = reactive({
+  columnCode: '',
+  columnName: '',
+  dataType: 'VARCHAR',
+  lengthVal: 64 as number | null,
+  nullableFlag: 1,
+  pkFlag: 0,
+})
+const editingColumnId = ref<number | null>(null)
 const workflowStep = ref(0)
 const probing = ref(false)
 const registering = ref(false)
@@ -62,8 +100,13 @@ const regSource = computed(() => {
 const isForward = computed(() => tableForm.modelingMode === 'FORWARD')
 const isDbSource = computed(() => {
   const t = regSource.value?.sourceType
-  return t === 'MYSQL' || t === 'ORACLE'
+  return isDbSourceType(t)
 })
+
+function isDbSourceType(t?: string) {
+  const u = String(t || '').toUpperCase()
+  return ['MYSQL', 'ORACLE', 'POSTGRESQL', 'POSTGRES', 'CLICKHOUSE', 'HIVE', 'MONGODB'].includes(u)
+}
 const workflowSteps = computed(() => (isForward.value
   ? ['选择数据源', '定义物理表', '登记字段', '完成登记']
   : ['选择数据源', '扫描并勾选源表', '确认登记', '完成登记']))
@@ -184,6 +227,41 @@ function selectTable(row: DataTable) {
   void loadColumns()
 }
 
+async function editSelectedTable() {
+  const t = selectedTable.value
+  if (!t || t.modelingMode !== 'FORWARD') return
+  try {
+    const { value } = await ElMessageBox.prompt('请输入新的表名', '编辑表', {
+      inputValue: t.tableName,
+      confirmButtonText: '保存',
+      cancelButtonText: '取消',
+      inputValidator: (v) => (!!v?.trim() ? true : '表名不能为空'),
+    })
+    const name = String(value || '').trim()
+    await ingestionApi.updateTable(t.id, { tableName: name })
+    ElMessage.success('表已更新')
+    await loadTables(t.id)
+  } catch (e: unknown) {
+    if (e === 'cancel' || e === 'close') return
+    ElMessage.error(e instanceof Error ? e.message : '更新表失败')
+  }
+}
+
+async function deleteSelectedTable() {
+  const t = selectedTable.value
+  if (!t || t.modelingMode !== 'FORWARD') return
+  try {
+    await ElMessageBox.confirm(`确认删除正向建模表「${t.tableName}」及其字段？`, '删除确认', { type: 'warning' })
+    await ingestionApi.deleteTable(t.id)
+    ElMessage.success('表已删除')
+    selectedTableId.value = undefined
+    await loadTables()
+  } catch (e: unknown) {
+    if (e === 'cancel' || e === 'close') return
+    ElMessage.error(e instanceof Error ? e.message : '删除表失败')
+  }
+}
+
 watch(selectedProjectId, (id) => {
   if (id) setActiveProjectId(id)
 })
@@ -210,6 +288,7 @@ function openRegister() {
     regTableName.value = ''
     regTables.value = []
     regColumns.value = []
+    resetColumnForm()
     registerVisible.value = true
   })()
 }
@@ -283,20 +362,114 @@ async function createColumn() {
   }
   savingColumn.value = true
   try {
-    await ingestionApi.createColumn(regTableId.value, {
+    const payload = {
       columnCode: columnForm.columnCode.trim(),
       columnName: columnForm.columnName.trim(),
       dataType: columnForm.dataType,
+      lengthVal: columnForm.lengthVal ?? 64,
       nullableFlag: columnForm.nullableFlag,
-    })
-    columnForm.columnCode = ''
-    columnForm.columnName = ''
+      pkFlag: columnForm.pkFlag,
+    }
+    if (editingColumnId.value) {
+      await ingestionApi.updateColumn(editingColumnId.value, payload)
+      ElMessage.success('字段已更新')
+    } else {
+      await ingestionApi.createColumn(regTableId.value, payload)
+      ElMessage.success('字段已添加')
+    }
+    resetColumnForm()
     regColumns.value = (await ingestionApi.columns(regTableId.value)).data || []
-    ElMessage.success('字段已写入登记库')
   } catch (e: unknown) {
-    ElMessage.error(e instanceof Error ? e.message : '添加字段失败')
+    ElMessage.error(e instanceof Error ? e.message : (editingColumnId.value ? '更新字段失败' : '添加字段失败'))
   } finally {
     savingColumn.value = false
+  }
+}
+
+function startEditRegColumn(row: DataColumn) {
+  editingColumnId.value = row.id
+  columnForm.columnCode = row.columnCode
+  columnForm.columnName = row.columnName || ''
+  columnForm.dataType = displayDataType(row) === '—' ? 'VARCHAR' : displayDataType(row)
+  columnForm.lengthVal = row.lengthVal ?? (Number(displayLength(row)) || 64)
+  columnForm.nullableFlag = row.nullableFlag ?? 1
+  columnForm.pkFlag = row.pkFlag ?? 0
+}
+
+async function deleteRegColumn(row: DataColumn) {
+  try {
+    await ElMessageBox.confirm(`确认删除字段「${row.columnCode}」？`, '删除确认', { type: 'warning' })
+    await ingestionApi.deleteColumn(row.id)
+    if (editingColumnId.value === row.id) resetColumnForm()
+    if (regTableId.value) {
+      regColumns.value = (await ingestionApi.columns(regTableId.value)).data || []
+    }
+    ElMessage.success('字段已删除')
+  } catch (e: unknown) {
+    if (e === 'cancel' || e === 'close') return
+    ElMessage.error(e instanceof Error ? e.message : '删除字段失败')
+  }
+}
+
+const overviewColumnDialog = ref(false)
+const overviewColumnSaving = ref(false)
+const overviewColumnForm = reactive({
+  id: 0,
+  columnCode: '',
+  columnName: '',
+  dataType: 'VARCHAR',
+  lengthVal: 64 as number | null,
+  nullableFlag: 1,
+  pkFlag: 0,
+})
+function startEditOverviewColumn(row: DataColumn) {
+  if (!isSelectedForwardTable.value) return
+  overviewColumnForm.id = row.id
+  overviewColumnForm.columnCode = row.columnCode
+  overviewColumnForm.columnName = row.columnName || ''
+  overviewColumnForm.dataType = displayDataType(row) === '—' ? 'VARCHAR' : displayDataType(row)
+  overviewColumnForm.lengthVal = row.lengthVal ?? (Number(displayLength(row)) || 64)
+  overviewColumnForm.nullableFlag = row.nullableFlag ?? 1
+  overviewColumnForm.pkFlag = row.pkFlag ?? 0
+  overviewColumnDialog.value = true
+}
+
+async function saveOverviewColumn() {
+  if (!overviewColumnForm.columnCode.trim() || !overviewColumnForm.columnName.trim()) {
+    ElMessage.warning('请填写字段编码与字段名称')
+    return
+  }
+  overviewColumnSaving.value = true
+  try {
+    await ingestionApi.updateColumn(overviewColumnForm.id, {
+      columnCode: overviewColumnForm.columnCode.trim(),
+      columnName: overviewColumnForm.columnName.trim(),
+      dataType: overviewColumnForm.dataType,
+      lengthVal: overviewColumnForm.lengthVal ?? 64,
+      nullableFlag: overviewColumnForm.nullableFlag,
+      pkFlag: overviewColumnForm.pkFlag,
+    })
+    ElMessage.success('字段已更新')
+    overviewColumnDialog.value = false
+    await loadColumns()
+  } catch (e: unknown) {
+    ElMessage.error(e instanceof Error ? e.message : '更新字段失败')
+  } finally {
+    overviewColumnSaving.value = false
+  }
+}
+
+async function deleteOverviewColumn(row: DataColumn) {
+  if (!isSelectedForwardTable.value) return
+  try {
+    await ElMessageBox.confirm(`确认删除字段「${row.columnCode}」？`, '删除确认', { type: 'warning' })
+    await ingestionApi.deleteColumn(row.id)
+    ElMessage.success('字段已删除')
+    await loadColumns()
+    if (selectedSourceId.value) await loadTables(selectedTableId.value)
+  } catch (e: unknown) {
+    if (e === 'cancel' || e === 'close') return
+    ElMessage.error(e instanceof Error ? e.message : '删除字段失败')
   }
 }
 
@@ -348,23 +521,19 @@ async function finishRegister() {
       return
     }
     if (!regColumns.value.length) {
-      ElMessage.warning('请至少登记一个字段后再完成建表')
+      ElMessage.warning('请至少登记一个字段后再完成登记')
       return
     }
     finalizing.value = true
     try {
       const res = await ingestionApi.finalizeForwardTable(regTableId.value)
-      const msg = String(res.data?.message || '正向建模完成')
-      if (res.data?.physicalCreated === false) {
-        ElMessage.success(msg)
-      } else {
-        ElMessage.success(msg)
-      }
+      const msg = String(res.data?.message || '正向建模已完成平台登记').replace(/[（(][^）)]*[）)]/g, '').trim()
+      ElMessage.success(msg || '正向建模已完成平台登记')
       workflowStep.value = 3
       selectedSourceId.value = regSourceId.value
       await loadTables(regTableId.value)
     } catch (e: unknown) {
-      ElMessage.error(e instanceof Error ? e.message : '完成建表失败')
+      ElMessage.error(e instanceof Error ? e.message : '完成登记失败')
     } finally {
       finalizing.value = false
     }
@@ -480,7 +649,7 @@ onMounted(async () => {
                 <span class="lane-item__meta">
                   <el-tag size="small" effect="plain" type="info">{{ $statusLabel(s.sourceType) }}</el-tag>
                   <el-tag
-                    v-if="s.sourceType === 'MYSQL' || s.sourceType === 'ORACLE'"
+                    v-if="isDbSourceType(s.sourceType)"
                     size="small"
                     effect="plain"
                     :type="s.connStatus === 'OK' ? 'success' : s.connStatus === 'FAILED' ? 'danger' : 'warning'"
@@ -498,6 +667,10 @@ onMounted(async () => {
             <header class="lane-head">
               <span>表</span>
               <em>{{ tables.length }}</em>
+              <span v-if="isSelectedForwardTable" class="lane-head__actions">
+                <el-button link type="primary" :icon="Edit" title="编辑表" @click.stop="editSelectedTable" />
+                <el-button link type="danger" :icon="Delete" title="删除表" @click.stop="deleteSelectedTable" />
+              </span>
             </header>
             <div class="lane-body">
               <button
@@ -544,12 +717,30 @@ onMounted(async () => {
               <el-table-column prop="columnName" label="字段名称" min-width="120" show-overflow-tooltip>
                 <template #default="{ row }">{{ row.columnName || '—' }}</template>
               </el-table-column>
-              <el-table-column prop="dataType" label="类型" width="120" show-overflow-tooltip />
-              <el-table-column label="可空" width="72" align="center">
+              <el-table-column label="类型" width="100" show-overflow-tooltip>
+                <template #default="{ row }">{{ displayDataType(row) }}</template>
+              </el-table-column>
+              <el-table-column label="长度" width="72" align="center">
+                <template #default="{ row }">{{ displayLength(row) }}</template>
+              </el-table-column>
+              <el-table-column label="是否为空" width="88" align="center">
                 <template #default="{ row }">
                   <el-tag size="small" :type="row.nullableFlag ? 'info' : 'warning'" effect="plain">
                     {{ row.nullableFlag ? '是' : '否' }}
                   </el-tag>
+                </template>
+              </el-table-column>
+              <el-table-column label="是否主键" width="88" align="center">
+                <template #default="{ row }">
+                  <el-tag size="small" :type="row.pkFlag ? 'success' : 'info'" effect="plain">
+                    {{ row.pkFlag ? '是' : '否' }}
+                  </el-tag>
+                </template>
+              </el-table-column>
+              <el-table-column v-if="isSelectedForwardTable" label="操作" width="120" fixed="right">
+                <template #default="{ row }">
+                  <el-button link type="primary" @click="startEditOverviewColumn(row)">编辑</el-button>
+                  <el-button link type="danger" @click="deleteOverviewColumn(row)">删除</el-button>
                 </template>
               </el-table-column>
             </el-table>
@@ -661,25 +852,68 @@ onMounted(async () => {
       </div>
 
       <div v-show="workflowStep === 2 && isForward">
-        <p class="step-hint">当前表：{{ regTableName || regTables.find((t) => t.id === regTableId)?.tableName || '未选择' }}（字段写入平台登记库后，完成登记将在源库创建物理表）</p>
+        <p class="step-hint">当前表：{{ regTableName || regTables.find((t) => t.id === regTableId)?.tableName || '未选择' }}</p>
         <el-form inline size="small" class="portal-inline-form portal-inline-form--sm portal-inline-form--block">
-          <el-form-item label="字段编码" class="portal-field-xs"><el-input v-model="columnForm.columnCode" placeholder="如 user_id" /></el-form-item>
-          <el-form-item label="字段名称" class="portal-field-xs"><el-input v-model="columnForm.columnName" /></el-form-item>
-          <el-form-item label="类型" class="portal-field-xs"><el-input v-model="columnForm.dataType" /></el-form-item>
+          <el-form-item label="字段编码" class="portal-field-xs">
+            <el-input v-model="columnForm.columnCode" placeholder="如 user_id" />
+          </el-form-item>
+          <el-form-item label="字段名称" class="portal-field-xs">
+            <el-input v-model="columnForm.columnName" />
+          </el-form-item>
+          <el-form-item label="类型" class="portal-field-xs">
+            <el-select v-model="columnForm.dataType" filterable style="width:120px">
+              <el-option v-for="t in FORWARD_DATA_TYPES" :key="t" :label="t" :value="t" />
+            </el-select>
+          </el-form-item>
+          <el-form-item label="长度" class="portal-field-xs">
+            <el-input-number v-model="columnForm.lengthVal" :min="1" :max="65535" controls-position="right" />
+          </el-form-item>
+          <el-form-item label="是否为空" class="portal-field-xs">
+            <el-select v-model="columnForm.nullableFlag" style="width:88px">
+              <el-option :value="1" label="是" />
+              <el-option :value="0" label="否" />
+            </el-select>
+          </el-form-item>
+          <el-form-item label="是否主键" class="portal-field-xs">
+            <el-select v-model="columnForm.pkFlag" style="width:88px">
+              <el-option :value="0" label="否" />
+              <el-option :value="1" label="是" />
+            </el-select>
+          </el-form-item>
           <el-form-item class="portal-form-actions">
-            <el-button type="primary" size="small" :loading="savingColumn" @click="createColumn">添加字段</el-button>
+            <el-button type="primary" size="small" :loading="savingColumn" @click="createColumn">
+              {{ editingColumnId ? '保存字段' : '添加字段' }}
+            </el-button>
+            <el-button v-if="editingColumnId" size="small" @click="resetColumnForm">取消编辑</el-button>
           </el-form-item>
         </el-form>
-        <el-table :data="regColumns" stripe size="small" max-height="200" style="margin:8px 0">
-          <el-table-column prop="columnCode" label="字段编码" />
-          <el-table-column prop="columnName" label="字段名称" />
-          <el-table-column prop="dataType" label="类型" width="100" />
+        <el-table :data="regColumns" stripe size="small" max-height="220" style="margin:8px 0">
+          <el-table-column prop="columnCode" label="字段编码" min-width="100" />
+          <el-table-column prop="columnName" label="字段名称" min-width="100" />
+          <el-table-column label="类型" width="90">
+            <template #default="{ row }">{{ displayDataType(row) }}</template>
+          </el-table-column>
+          <el-table-column label="长度" width="70" align="center">
+            <template #default="{ row }">{{ displayLength(row) }}</template>
+          </el-table-column>
+          <el-table-column label="是否为空" width="88" align="center">
+            <template #default="{ row }">{{ row.nullableFlag ? '是' : '否' }}</template>
+          </el-table-column>
+          <el-table-column label="是否主键" width="88" align="center">
+            <template #default="{ row }">{{ row.pkFlag ? '是' : '否' }}</template>
+          </el-table-column>
+          <el-table-column label="操作" width="120" fixed="right">
+            <template #default="{ row }">
+              <el-button link type="primary" @click="startEditRegColumn(row)">编辑</el-button>
+              <el-button link type="danger" @click="deleteRegColumn(row)">删除</el-button>
+            </template>
+          </el-table-column>
         </el-table>
         <el-form inline class="portal-inline-form">
           <el-form-item class="portal-form-actions">
             <el-button @click="workflowStep = 1">上一步</el-button>
             <el-button type="success" :loading="finalizing" :disabled="!regColumns.length" @click="finishRegister">
-              完成登记并建物理表
+              完成登记
             </el-button>
           </el-form-item>
         </el-form>
@@ -703,9 +937,48 @@ onMounted(async () => {
       </div>
 
       <div v-show="workflowStep === 3">
-        <el-alert title="登记完成，可关闭窗口查看总览。" type="success" :closable="false" />
+        <el-alert
+          :title="isForward ? '正向建模已完成平台登记' : '登记完成，可关闭窗口查看总览。'"
+          type="success"
+          :closable="false"
+        />
         <el-button style="margin-top:12px" type="primary" @click="closeRegister">关闭并刷新总览</el-button>
       </div>
+    </el-dialog>
+
+    <el-dialog v-model="overviewColumnDialog" title="编辑字段" width="520px" destroy-on-close>
+      <el-form label-width="96px">
+        <el-form-item label="字段编码" required>
+          <el-input v-model="overviewColumnForm.columnCode" />
+        </el-form-item>
+        <el-form-item label="字段名称" required>
+          <el-input v-model="overviewColumnForm.columnName" />
+        </el-form-item>
+        <el-form-item label="类型" required>
+          <el-select v-model="overviewColumnForm.dataType" filterable style="width:100%">
+            <el-option v-for="t in FORWARD_DATA_TYPES" :key="t" :label="t" :value="t" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="长度">
+          <el-input-number v-model="overviewColumnForm.lengthVal" :min="1" :max="65535" />
+        </el-form-item>
+        <el-form-item label="是否为空">
+          <el-radio-group v-model="overviewColumnForm.nullableFlag">
+            <el-radio :value="1">是</el-radio>
+            <el-radio :value="0">否</el-radio>
+          </el-radio-group>
+        </el-form-item>
+        <el-form-item label="是否主键">
+          <el-radio-group v-model="overviewColumnForm.pkFlag">
+            <el-radio :value="0">否</el-radio>
+            <el-radio :value="1">是</el-radio>
+          </el-radio-group>
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="overviewColumnDialog = false">取消</el-button>
+        <el-button type="primary" :loading="overviewColumnSaving" @click="saveOverviewColumn">保存</el-button>
+      </template>
     </el-dialog>
   </div>
 </template>
@@ -813,6 +1086,12 @@ onMounted(async () => {
   letter-spacing: 0.04em;
   background: #f3f6fb;
   border-bottom: 1px solid var(--portal-border);
+}
+.lane-head__actions {
+  display: inline-flex;
+  align-items: center;
+  margin-left: auto;
+  gap: 0;
 }
 .lane-head em {
   font-style: normal;

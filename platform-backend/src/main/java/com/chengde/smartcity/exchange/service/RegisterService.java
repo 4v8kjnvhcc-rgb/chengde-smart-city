@@ -119,9 +119,7 @@ public class RegisterService {
             throw new BusinessException(404, "数据源不存在");
         }
         String modelingMode = str(body.get("modelingMode"), "FORWARD").toUpperCase(Locale.ROOT);
-        if ("FORWARD".equals(modelingMode)) {
-            throw new BusinessException(400, "数据表不可手工新增；请通过「数据库表登记」从源库登记");
-        }
+        // 正向建模允许登记元数据（表/字段），不在真实库中建表
         String tableNameRaw = required(body.get("tableName"), "tableName").toString().trim();
         String tableName = "FORWARD".equals(modelingMode)
                 ? JdbcProbeService.sanitizeIdent(tableNameRaw)
@@ -205,10 +203,11 @@ public class RegisterService {
         col.setTableId(tableId);
         col.setColumnCode(columnCode);
         col.setColumnName(required(body.get("columnName"), "columnName").toString().trim());
-        col.setDataType(str(body.get("dataType"), "VARCHAR(64)"));
+        col.setDataType(normalizeDataType(str(body.get("dataType"), "VARCHAR")));
         col.setNullableFlag(intVal(body.get("nullableFlag"), 1));
+        col.setPkFlag(intVal(body.get("pkFlag"), 0));
         col.setSemanticDesc(str(body.get("semanticDesc"), null));
-        col.setLengthVal(intVal(body.get("lengthVal"), null));
+        col.setLengthVal(resolveLengthVal(body.get("lengthVal"), col.getDataType()));
         col.setComponentType(str(body.get("componentType"), "INPUT"));
         col.setRequiredTip(str(body.get("requiredTip"), null));
         col.setBuiltInFlag(0);
@@ -219,12 +218,13 @@ public class RegisterService {
         columnMapper.insert(col);
         long colCnt = columnMapper.selectCount(new LambdaQueryWrapper<IngDataColumn>().eq(IngDataColumn::getTableId, tableId));
         table.setColumnCount((int) colCnt);
+        syncPrimaryKeyCols(table);
         tableMapper.updateById(table);
         return col.getId();
     }
 
     /**
-     * 正向建模完成：在源库创建物理表（JDBC 数据源），元数据已在 createTable/createColumn 落库。
+     * 正向建模完成：仅落平台元数据（表/字段），不在真实数据库执行 DDL。
      */
     @Transactional
     public Map<String, Object> finalizeForwardTable(UserPrincipal operator, Long tableId) {
@@ -234,55 +234,28 @@ public class RegisterService {
         }
         accessControlService.assertSourceAccess(operator, table.getSourceId());
         if (!"FORWARD".equalsIgnoreCase(table.getModelingMode())) {
-            throw new BusinessException(400, "仅正向建模表可执行物理建表");
+            throw new BusinessException(400, "仅正向建模表可完成登记");
         }
         List<IngDataColumn> columns = listColumns(tableId);
         if (columns.isEmpty()) {
-            throw new BusinessException(400, "请至少登记一个字段后再完成建表");
+            throw new BusinessException(400, "请至少登记一个字段后再完成登记");
         }
         IngDataSource ds = dataSourceMapper.selectById(table.getSourceId());
         if (ds == null) {
             throw new BusinessException(404, "数据源不存在");
         }
 
+        table.setColumnCount(columns.size());
+        table.setCollectStatus("PENDING");
+        tableMapper.updateById(table);
+
         Map<String, Object> out = new LinkedHashMap<>();
         out.put("tableId", tableId);
         out.put("tableName", table.getTableName());
         out.put("columnCount", columns.size());
         out.put("sourceType", ds.getSourceType());
-
-        String type = ds.getSourceType() == null ? "" : ds.getSourceType().toUpperCase(Locale.ROOT);
-        if (!"MYSQL".equals(type) && !"ORACLE".equals(type)) {
-            out.put("physicalCreated", false);
-            out.put("message", "当前数据源类型仅完成平台元数据登记；物理建表目前支持 MySQL/Oracle");
-            table.setColumnCount(columns.size());
-            table.setCollectStatus("PENDING");
-            tableMapper.updateById(table);
-            return out;
-        }
-
-        JdbcProbeService.ConnConfig conn = jdbcProbeService.parse(ds.getSourceType(), ds.getConnConfigJson());
-        String physical = JdbcProbeService.sanitizeIdent(
-                table.getPhysicalTableName() != null ? table.getPhysicalTableName() : table.getTableName());
-        if (jdbcProbeService.tableExists(conn, physical)) {
-            throw new BusinessException(409, "源库已存在同名物理表：" + physical + "，请更换表名或改用逆向登记");
-        }
-        String ddl = buildForwardCreateDdl(type, physical, columns);
-        jdbcProbeService.executeDdl(conn, ddl);
-
-        table.setPhysicalTableName(physical);
-        table.setSourceTable(physical);
-        table.setSourceSchema(conn.database);
-        table.setDdlSql(ddl);
-        table.setColumnCount(columns.size());
-        table.setCollectStatus("PENDING");
-        tableMapper.updateById(table);
-
-        out.put("physicalCreated", true);
-        out.put("physicalTable", physical);
-        out.put("schema", conn.database);
-        out.put("ddlSql", ddl);
-        out.put("message", "已在源库创建物理表，并完成平台登记");
+        out.put("physicalCreated", false);
+        out.put("message", "正向建模已完成平台登记");
         return out;
     }
 
@@ -365,23 +338,26 @@ public class RegisterService {
             throw new BusinessException(404, "表不存在");
         }
         accessControlService.assertSourceAccess(operator, table.getSourceId());
-        if (body != null && body.containsKey("columnName")) {
-            builtinAttrConfigService.assertEditable("columnName", "属性名称");
-        }
-        if (body != null && body.containsKey("dataType")) {
-            builtinAttrConfigService.assertEditable("dataType", "数据类型");
-        }
-        if (body != null && body.containsKey("lengthVal")) {
-            builtinAttrConfigService.assertEditable("lengthVal", "长度");
-        }
-        if (body != null && body.containsKey("componentType")) {
-            builtinAttrConfigService.assertEditable("componentType", "组件类型");
-        }
-        if (body != null && body.containsKey("nullableFlag")) {
-            builtinAttrConfigService.assertEditable("nullableFlag", "必填");
-        }
-        if (body != null && body.containsKey("columnCode")) {
-            builtinAttrConfigService.assertEditable("columnCode", "属性代码");
+        boolean forwardMeta = "FORWARD".equalsIgnoreCase(table.getModelingMode());
+        if (!forwardMeta) {
+            if (body != null && body.containsKey("columnName")) {
+                builtinAttrConfigService.assertEditable("columnName", "属性名称");
+            }
+            if (body != null && body.containsKey("dataType")) {
+                builtinAttrConfigService.assertEditable("dataType", "数据类型");
+            }
+            if (body != null && body.containsKey("lengthVal")) {
+                builtinAttrConfigService.assertEditable("lengthVal", "长度");
+            }
+            if (body != null && body.containsKey("componentType")) {
+                builtinAttrConfigService.assertEditable("componentType", "组件类型");
+            }
+            if (body != null && body.containsKey("nullableFlag")) {
+                builtinAttrConfigService.assertEditable("nullableFlag", "必填");
+            }
+            if (body != null && body.containsKey("columnCode")) {
+                builtinAttrConfigService.assertEditable("columnCode", "属性代码");
+            }
         }
         if (body.containsKey("columnName")) {
             String name = body.get("columnName") == null ? "" : String.valueOf(body.get("columnName")).trim();
@@ -390,14 +366,35 @@ public class RegisterService {
             }
             col.setColumnName(name);
         }
+        if (body.containsKey("columnCode")) {
+            if (!forwardMeta) {
+                throw new BusinessException(400, "逆向建模字段编码不可修改");
+            }
+            String code = JdbcProbeService.sanitizeIdent(required(body.get("columnCode"), "columnCode").toString());
+            IngDataColumn exist = columnMapper.selectOne(new LambdaQueryWrapper<IngDataColumn>()
+                    .eq(IngDataColumn::getTableId, col.getTableId())
+                    .eq(IngDataColumn::getColumnCode, code)
+                    .ne(IngDataColumn::getId, columnId)
+                    .last("LIMIT 1"));
+            if (exist != null) {
+                throw new BusinessException(409, "字段编码已存在：" + code);
+            }
+            col.setColumnCode(code);
+        }
         if (body.containsKey("dataType")) {
-            col.setDataType(str(body.get("dataType"), col.getDataType()));
+            col.setDataType(normalizeDataType(str(body.get("dataType"), col.getDataType())));
         }
         if (body.containsKey("lengthVal")) {
-            col.setLengthVal(intVal(body.get("lengthVal"), col.getLengthVal()));
+            col.setLengthVal(resolveLengthVal(body.get("lengthVal"), col.getDataType()));
         }
         if (body.containsKey("nullableFlag")) {
             col.setNullableFlag(intVal(body.get("nullableFlag"), col.getNullableFlag()));
+        }
+        if (body.containsKey("pkFlag")) {
+            if (!forwardMeta) {
+                throw new BusinessException(400, "逆向建模主键不可修改");
+            }
+            col.setPkFlag(intVal(body.get("pkFlag"), 0));
         }
         if (body.containsKey("semanticDesc")) {
             col.setSemanticDesc(str(body.get("semanticDesc"), null));
@@ -409,6 +406,83 @@ public class RegisterService {
             col.setRequiredTip(str(body.get("requiredTip"), null));
         }
         columnMapper.updateById(col);
+        if (forwardMeta) {
+            syncPrimaryKeyCols(table);
+            tableMapper.updateById(table);
+        }
+    }
+
+    @Transactional
+    public void deleteColumn(UserPrincipal operator, Long columnId) {
+        IngDataColumn col = columnMapper.selectById(columnId);
+        if (col == null) {
+            throw new BusinessException(404, "数据项不存在");
+        }
+        IngDataTable table = tableMapper.selectById(col.getTableId());
+        if (table == null) {
+            throw new BusinessException(404, "表不存在");
+        }
+        accessControlService.assertSourceAccess(operator, table.getSourceId());
+        if (!"FORWARD".equalsIgnoreCase(table.getModelingMode())) {
+            throw new BusinessException(400, "仅正向建模字段可删除");
+        }
+        columnMapper.deleteById(columnId);
+        long colCnt = columnMapper.selectCount(new LambdaQueryWrapper<IngDataColumn>().eq(IngDataColumn::getTableId, table.getId()));
+        table.setColumnCount((int) colCnt);
+        syncPrimaryKeyCols(table);
+        tableMapper.updateById(table);
+    }
+
+    @Transactional
+    public void updateTable(UserPrincipal operator, Long tableId, Map<String, Object> body) {
+        IngDataTable table = tableMapper.selectById(tableId);
+        if (table == null) {
+            throw new BusinessException(404, "表不存在");
+        }
+        accessControlService.assertSourceAccess(operator, table.getSourceId());
+        if (!"FORWARD".equalsIgnoreCase(table.getModelingMode())) {
+            throw new BusinessException(400, "仅正向建模表可编辑");
+        }
+        if (body.containsKey("tableName")) {
+            String tableName = JdbcProbeService.sanitizeIdent(required(body.get("tableName"), "tableName").toString());
+            if (tableName.isBlank()) {
+                throw new BusinessException(400, "表名不能为空");
+            }
+            IngDataTable dup = tableMapper.selectOne(new LambdaQueryWrapper<IngDataTable>()
+                    .eq(IngDataTable::getSourceId, table.getSourceId())
+                    .ne(IngDataTable::getId, tableId)
+                    .and(w -> w.eq(IngDataTable::getTableName, tableName)
+                            .or().eq(IngDataTable::getPhysicalTableName, tableName)
+                            .or().eq(IngDataTable::getSourceTable, tableName))
+                    .last("LIMIT 1"));
+            if (dup != null) {
+                throw new BusinessException(409, "该数据源下已登记同名表：" + tableName);
+            }
+            table.setTableName(tableName);
+            table.setPhysicalTableName(tableName);
+            table.setSourceTable(tableName);
+        }
+        tableMapper.updateById(table);
+    }
+
+    @Transactional
+    public void deleteTable(UserPrincipal operator, Long tableId) {
+        IngDataTable table = tableMapper.selectById(tableId);
+        if (table == null) {
+            throw new BusinessException(404, "表不存在");
+        }
+        accessControlService.assertSourceAccess(operator, table.getSourceId());
+        if (!"FORWARD".equalsIgnoreCase(table.getModelingMode())) {
+            throw new BusinessException(400, "仅正向建模表可删除");
+        }
+        columnMapper.delete(new LambdaQueryWrapper<IngDataColumn>().eq(IngDataColumn::getTableId, tableId));
+        tableMapper.deleteById(tableId);
+        IngDataSource ds = dataSourceMapper.selectById(table.getSourceId());
+        if (ds != null) {
+            Long cnt = tableMapper.selectCount(new LambdaQueryWrapper<IngDataTable>().eq(IngDataTable::getSourceId, ds.getId()));
+            ds.setTableCount(cnt == null ? 0 : cnt.intValue());
+            dataSourceMapper.updateById(ds);
+        }
     }
 
     @Transactional
@@ -582,6 +656,41 @@ public class RegisterService {
         if (body.containsKey("ruleExpr")) tag.setRuleExpr(body.get("ruleExpr").toString());
         if (body.containsKey("tagDesc")) tag.setTagDesc(body.get("tagDesc").toString());
         tagMapper.updateById(tag);
+    }
+
+    @Transactional
+    public void deleteTag(UserPrincipal operator, Long id) {
+        if (operator == null || !operator.isPlatformOrSystemAdmin()) {
+            throw new BusinessException(403, "仅平台管理员或超级管理员可删除数据标签");
+        }
+        IngAssetTag tag = tagMapper.selectById(id);
+        if (tag == null) {
+            throw new BusinessException(404, "标签不存在");
+        }
+        if ("STANDARD".equals(tag.getTagSource())) {
+            throw new BusinessException(400, "标准主题类目标签不可删除");
+        }
+        tagBindingMapper.delete(new LambdaQueryWrapper<IngAssetTagBinding>().eq(IngAssetTagBinding::getTagId, id));
+        tagMapper.deleteById(id);
+    }
+
+    @Transactional
+    public void deleteDicts(UserPrincipal operator, List<Long> ids) {
+        if (operator != null && !operator.isPlatformOrSystemAdmin()) {
+            // 部门管理员仅可删草稿/驳回；平台/超管可删任意
+            for (Long id : ids) {
+                IngDict d = dictMapper.selectById(id);
+                if (d == null) continue;
+                String st = d.getRegisterStatus() == null ? "DRAFT" : d.getRegisterStatus().trim().toUpperCase();
+                if (!"DRAFT".equals(st) && !"REJECTED".equals(st)) {
+                    throw new BusinessException(403, "仅草稿或驳回待提交的数据字典可删除；平台管理员或超级管理员可删除任意状态");
+                }
+            }
+        }
+        for (Long id : ids) {
+            dictItemMapper.delete(new LambdaQueryWrapper<IngDictItem>().eq(IngDictItem::getDictId, id));
+            dictMapper.deleteById(id);
+        }
     }
 
     @Transactional
@@ -938,14 +1047,6 @@ public class RegisterService {
         dictMapper.updateById(d);
     }
 
-    @Transactional
-    public void deleteDicts(UserPrincipal operator, List<Long> ids) {
-        for (Long id : ids) {
-            dictItemMapper.delete(new LambdaQueryWrapper<IngDictItem>().eq(IngDictItem::getDictId, id));
-            dictMapper.deleteById(id);
-        }
-    }
-
     public List<IngDictItem> listDictItems(Long dictId) {
         return dictItemMapper.selectList(new LambdaQueryWrapper<IngDictItem>()
                 .eq(IngDictItem::getDictId, dictId).orderByAsc(IngDictItem::getSortOrder));
@@ -1052,6 +1153,45 @@ public class RegisterService {
             d.setItemCount((int) cnt);
             dictMapper.updateById(d);
         }
+    }
+
+    private void syncPrimaryKeyCols(IngDataTable table) {
+        if (table == null || table.getId() == null) return;
+        List<String> pks = columnMapper.selectList(new LambdaQueryWrapper<IngDataColumn>()
+                        .eq(IngDataColumn::getTableId, table.getId())
+                        .eq(IngDataColumn::getPkFlag, 1)
+                        .orderByAsc(IngDataColumn::getSortOrder)
+                        .orderByAsc(IngDataColumn::getId))
+                .stream()
+                .map(IngDataColumn::getColumnCode)
+                .filter(Objects::nonNull)
+                .map(String::trim)
+                .filter(s -> !s.isEmpty())
+                .collect(Collectors.toList());
+        table.setPrimaryKeyCols(pks.isEmpty() ? null : String.join(",", pks));
+    }
+
+    private String normalizeDataType(String raw) {
+        if (raw == null || raw.isBlank()) return "VARCHAR";
+        String t = raw.trim().toUpperCase(Locale.ROOT);
+        int idx = t.indexOf('(');
+        if (idx > 0) t = t.substring(0, idx).trim();
+        return t;
+    }
+
+    private Integer resolveLengthVal(Object lengthRaw, String dataType) {
+        Integer len = intVal(lengthRaw, null);
+        if (len != null) return len;
+        if (dataType == null) return null;
+        Matcher m = Pattern.compile("\\((\\d+)").matcher(dataType);
+        if (m.find()) {
+            return Integer.valueOf(m.group(1));
+        }
+        String base = normalizeDataType(dataType);
+        if ("VARCHAR".equals(base) || "CHAR".equals(base) || "DECIMAL".equals(base)) {
+            return 64;
+        }
+        return null;
     }
 
     private String str(Object v, String def) {

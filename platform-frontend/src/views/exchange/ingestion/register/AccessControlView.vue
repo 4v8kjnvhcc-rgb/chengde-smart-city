@@ -73,8 +73,8 @@ async function loadOrgs() {
 
 async function loadUsers() {
   try {
-    const res = await api.get('/system/users', { params: { page: 1, size: 200 } })
-    users.value = (res.data?.records || res.data || []) as typeof users.value
+    const res = await api.get('/system/access/users-for-project-grant')
+    users.value = (res.data || []) as typeof users.value
   } catch {
     users.value = []
   }

@@ -95,6 +95,15 @@ public class UnifiedUserManageController {
         return ApiResponse.ok(uumService.systemConfigs());
     }
 
+    @PutMapping("/system-configs/{id}")
+    @PreAuthorize("hasAuthority('system:uum:view') or hasAuthority('system:user:list') or hasAuthority('system:dict:edit') or hasAuthority('hub:analytics:support:sys:general') or hasRole('SYSTEM_ADMIN')")
+    public ApiResponse<Void> updateSystemConfig(@AuthenticationPrincipal UserPrincipal principal,
+                                                @PathVariable Long id,
+                                                @RequestBody Map<String, Object> body) {
+        uumService.updateAuthConfig(principal, id, body);
+        return ApiResponse.ok(null);
+    }
+
     @GetMapping("/services")
     @PreAuthorize("isAuthenticated()")
     public ApiResponse<List<AnaPlatformService>> services() {

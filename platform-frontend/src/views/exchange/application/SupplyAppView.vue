@@ -21,7 +21,7 @@ const route = useRoute()
 const SupplyDemandView = defineAsyncComponent(() => import('./SupplyDemandView.vue'))
 const SupplyConfigView = defineAsyncComponent(() => import('@/views/system/SupplyConfigView.vue'))
 const MatterManageView = defineAsyncComponent(() => import('./MatterManageView.vue'))
-const { canAccessSection, isPlatformAdmin, isDemandDept, isProviderDept } = useSupplyRole()
+const { canAccessSection, defaultSection, isPlatformAdmin } = useSupplyRole()
 
 const section = ref('home')
 const kpi = ref({ preAudit: 0, confirm: 0, objection: 0, catalog: 0, supplyManifest: 0, objectionTotal: 0 })
@@ -65,20 +65,27 @@ const pageTitle = computed(
 
 const FLOW_STEPS = computed(() => {
   const all = [
-    { title: '需求填报', tone: 'blue', go: 'demand', need: () => isDemandDept.value },
-    { title: '需求预审', tone: 'blue', go: 'analysis', need: () => isPlatformAdmin.value },
-    { title: '需求确认', tone: 'blue', go: 'confirm', need: () => isProviderDept.value },
-    { title: '生成共享任务', tone: 'green', go: 'confirm', need: () => isProviderDept.value },
-    { title: '供给查看', tone: 'green', go: 'supply', need: () => isProviderDept.value },
-    { title: '清单监控', tone: 'amber', go: 'manifest-center', need: () => true },
+    { title: '需求填报', tone: 'blue', go: 'demand', need: () => canAccessSection('demand') },
+    { title: '需求预审', tone: 'blue', go: 'analysis', need: () => canAccessSection('analysis') },
+    { title: '需求确认', tone: 'blue', go: 'confirm', need: () => canAccessSection('confirm') },
+    { title: '生成共享任务', tone: 'green', go: 'confirm', need: () => canAccessSection('confirm') },
+    { title: '供给查看', tone: 'green', go: 'supply', need: () => canAccessSection('supply') },
+    { title: '清单监控', tone: 'amber', go: 'manifest-center', need: () => canAccessSection('manifest-center') },
   ]
   return all.filter((s) => s.need())
 })
 
 function syncFromRoute() {
-  const s = String(route.query.sdSection || route.query.section || 'home')
-  const next = leafKeys.has(s) ? s : 'home'
-  section.value = canAccessSection(next) ? next : 'home'
+  const raw = String(route.query.sdSection || route.query.section || '')
+  const fallback = defaultSection()
+  const next = leafKeys.has(raw) && canAccessSection(raw) ? raw : fallback
+  section.value = next
+  if (String(route.query.section || '') !== next || String(route.query.sdSection || '') !== next) {
+    router.replace({
+      path: '/exchange/application/supply',
+      query: { ...route.query, section: next, sdSection: next },
+    })
+  }
 }
 
 function goSection(key: string, extra: Record<string, string> = {}) {
@@ -167,7 +174,7 @@ onMounted(() => {
                 <div class="kpi-card__num">{{ kpi.preAudit }}</div>
               </div>
             </button>
-            <button v-if="isProviderDept" type="button" class="kpi-card tone-green" @click="goSection('confirm')">
+            <button v-if="canAccessSection('confirm')" type="button" class="kpi-card tone-green" @click="goSection('confirm')">
               <div class="kpi-card__icon"><el-icon :size="22"><CircleCheck /></el-icon></div>
               <div class="kpi-card__body">
                 <div class="kpi-card__lab">待确认</div>

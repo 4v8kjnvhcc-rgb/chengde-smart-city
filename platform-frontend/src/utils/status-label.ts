@@ -152,6 +152,11 @@ const STATUS_ZH: Record<string, string> = {
   FILE: '文件',
   API: '接口',
   DATA: '数据',
+  // 供需对接：期望共享数据提供方式（含历史细分码）
+  QUERY_API: '接口',
+  VERIFY_API: '接口',
+  TABLE_EXCHANGE: '库表',
+  FILE_EXCHANGE: '文件',
   // 安全分级
   PUBLIC: '公开',
   PRIVATE: '未公开',
@@ -312,6 +317,10 @@ const STATUS_ZH: Record<string, string> = {
   CLICKHOUSE: 'ClickHouse',
   MONGODB: 'MongoDB',
   REDIS: 'Redis',
+  CSV: 'CSV',
+  EXCEL: 'Excel',
+  JSON: 'JSON',
+  FILE: '文件',
   KAFKA: 'Kafka',
   ELASTICSEARCH: 'Elasticsearch',
   // 需求/任务类型
@@ -465,7 +474,7 @@ const STATUS_ZH: Record<string, string> = {
   QUERY: '在线查询',
   LIST: '列表',
   DETAIL: '详情',
-  API_SHARE: 'API共享',
+  API_SHARE: '接口',
   OPEN_DOWNLOAD: '开放下载',
   TEST_SYNC: '测试同步',
   LOG: '日志',

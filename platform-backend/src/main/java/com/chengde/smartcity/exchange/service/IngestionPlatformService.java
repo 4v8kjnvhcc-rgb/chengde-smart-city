@@ -325,8 +325,8 @@ public class IngestionPlatformService {
             throw new BusinessException(400, "平台默认项目「其他」不可删除");
         }
         String reg = p.getRegisterStatus() == null ? "" : p.getRegisterStatus().trim().toUpperCase();
-        if (("APPROVED".equals(reg) || "ARCHIVED".equals(reg)) && !operator.isSystemAdmin()) {
-            throw new BusinessException(403, "审核通过的项目仅超级管理员可删除");
+        if (("APPROVED".equals(reg) || "ARCHIVED".equals(reg)) && !operator.isPlatformOrSystemAdmin()) {
+            throw new BusinessException(403, "审核通过的项目仅平台管理员或超级管理员可删除");
         }
         Long sysCnt = bizSystemMapper.selectCount(new LambdaQueryWrapper<IngBizSystem>()
                 .eq(IngBizSystem::getProjectId, id));
@@ -519,8 +519,8 @@ public class IngestionPlatformService {
         if (ds == null) {
             throw new BusinessException(404, "数据源不存在");
         }
-        if ("FILE".equals(ds.getSourceType()) || "API".equals(ds.getSourceType())) {
-            throw new BusinessException(400, "FILE/API 数据源不支持 JDBC 连接测试");
+        if (isNonJdbcSourceType(ds.getSourceType())) {
+            throw new BusinessException(400, ds.getSourceType() + " 类型数据源不支持 JDBC 连接测试");
         }
         JdbcProbeService.ConnConfig conn = jdbcProbeService.parse(ds.getSourceType(), ds.getConnConfigJson());
         try {
@@ -633,6 +633,7 @@ public class IngestionPlatformService {
                 c.setColumnName(remarks != null && !remarks.isBlank() ? remarks.trim() : "");
                 c.setDataType(String.valueOf(col.get("dataType")));
                 c.setNullableFlag(Boolean.TRUE.equals(col.get("nullable")) ? 1 : 0);
+                c.setPkFlag(pks != null && pks.stream().anyMatch(pk -> physicalName.equalsIgnoreCase(String.valueOf(pk))) ? 1 : 0);
                 c.setSortOrder(intVal(col.get("sortOrder"), 0));
                 Object size = col.get("columnSize");
                 c.setLengthVal(size == null ? null : Integer.parseInt(String.valueOf(size)));
@@ -679,15 +680,15 @@ public class IngestionPlatformService {
         }
         ds.setSourceName(sourceName);
         ds.setSystemName(system.getSystemName());
-        ds.setSourceType(str(body.get("sourceType"), "MYSQL"));
+        ds.setSourceType(str(body.get("sourceType"), "MYSQL").toUpperCase(java.util.Locale.ROOT));
         ds.setConnConfigJson(buildConnConfigJson(body, null));
-        ds.setConnStatus("FILE".equalsIgnoreCase(ds.getSourceType()) || "API".equalsIgnoreCase(ds.getSourceType())
-                ? "OK" : "UNTESTED");
+        ds.setConnStatus(isFileSourceType(ds.getSourceType()) ? "OK" : "UNTESTED");
         ds.setRegisterStatus(com.chengde.smartcity.exchange.support.RegisterStatuses.DRAFT);
         ds.setTableCount(0);
         ds.setSyncStatus("PENDING");
-        if ("FILE".equalsIgnoreCase(ds.getSourceType()) && (ds.getConnConfigJson() == null || ds.getConnConfigJson().isBlank())) {
-            ds.setConnConfigJson("{\"channel\":\"MANUAL_UPLOAD\",\"odsDb\":\"smart_city_ods\"}");
+        if (isFileSourceType(ds.getSourceType()) && (ds.getConnConfigJson() == null || ds.getConnConfigJson().isBlank())) {
+            ds.setConnConfigJson("{\"channel\":\"MANUAL_UPLOAD\",\"odsDb\":\"smart_city_ods\",\"format\":\""
+                    + ds.getSourceType() + "\"}");
             ds.setSourceSchema("smart_city_ods");
         }
         dataSourceMapper.insert(ds);
@@ -726,7 +727,7 @@ public class IngestionPlatformService {
             }
         }
         ds.setConnConfigJson(buildConnConfigJson(body, ds));
-        if (!"FILE".equalsIgnoreCase(ds.getSourceType()) && !"API".equalsIgnoreCase(ds.getSourceType())) {
+        if (!isFileSourceType(ds.getSourceType())) {
             ds.setConnStatus("UNTESTED");
         }
         dataSourceMapper.updateById(ds);
@@ -1275,5 +1276,23 @@ public class IngestionPlatformService {
             return false;
         }
         return "DS_MANUAL_UPLOAD".equals(sourceCode) || sourceCode.startsWith("DS_MANUAL_UPLOAD_");
+    }
+
+    /** 文件型（含历史 FILE/API）：无需 JDBC 探测 */
+    private static boolean isFileSourceType(String sourceType) {
+        if (sourceType == null || sourceType.isBlank()) {
+            return false;
+        }
+        String t = sourceType.trim().toUpperCase(java.util.Locale.ROOT);
+        return Set.of("FILE", "CSV", "EXCEL", "JSON", "API").contains(t);
+    }
+
+    /** 非 JDBC 可测类型：文件 / Redis / MongoDB */
+    private static boolean isNonJdbcSourceType(String sourceType) {
+        if (sourceType == null || sourceType.isBlank()) {
+            return false;
+        }
+        String t = sourceType.trim().toUpperCase(java.util.Locale.ROOT);
+        return isFileSourceType(t) || "REDIS".equals(t) || "MONGODB".equals(t);
     }
 }

@@ -4,6 +4,17 @@ import api from '@/api/http'
 import { ElMessage } from 'element-plus'
 import { Plus } from '@element-plus/icons-vue'
 import { useAuthStore } from '@/stores/auth'
+import { statusLabel } from '@/utils/status-label'
+
+/** 选择目录列特殊值：门户中未找到所需目录 */
+const CATALOG_NOT_FOUND = '未找到所需目录'
+const DEFAULT_DEPT_PORTAL_PATH = '/exchange/analysis-portal/dept'
+
+const RESOURCE_TYPE_ZH: Record<string, string> = {
+  TABLE: '库表',
+  API: '接口',
+  FILE: '文件',
+}
 
 export interface DemandFormModel {
   id?: number
@@ -17,6 +28,7 @@ export interface DemandFormModel {
   serviceDemandType: 'GOV' | 'NON_GOV'
   matterIds: number[]
   matterNames: string[]
+  matterCodes: string[]
   matterMaterials: string
   usageScenario: string
   demandBasis: string
@@ -54,13 +66,33 @@ const emit = defineEmits<{
 
 const auth = useAuthStore()
 
+/** 期望共享数据提供方式：接口 / 库表 / 文件 */
 const SHARE_MODES = [
-  { value: 'QUERY_API', label: '信息查询接口' },
-  { value: 'VERIFY_API', label: '数据核验接口' },
-  { value: 'TABLE_EXCHANGE', label: '批量库表交换' },
-  { value: 'FILE_EXCHANGE', label: '文件下载交换' },
+  { value: 'API', label: '接口' },
+  { value: 'TABLE', label: '库表' },
+  { value: 'FILE', label: '文件' },
 ]
 const FREQ_OPTS = ['实时', '每日', '每周', '每月', '每季度', '每半年', '每年', '其他']
+
+/** 兼容历史细分取值 → 三类 */
+function normalizeShareProvideMode(raw: unknown): string {
+  const v = String(raw || '').trim().toUpperCase()
+  if (!v) return ''
+  if (['API', 'QUERY_API', 'VERIFY_API', 'API_SHARE'].includes(v)) return 'API'
+  if (['TABLE', 'TABLE_EXCHANGE', 'DB_SYNC', 'DATABASE'].includes(v)) return 'TABLE'
+  if (['FILE', 'FILE_EXCHANGE', 'FILE_SYNC'].includes(v)) return 'FILE'
+  return String(raw || '').trim()
+}
+
+function matterCodeOf(m: Record<string, unknown>): string {
+  return String(m.matterCode ?? m.matter_code ?? '').trim()
+}
+function matterNameOf(m: Record<string, unknown>): string {
+  return String(m.matterName ?? m.matter_name ?? '').trim()
+}
+function matterTypeOf(m: Record<string, unknown>): string {
+  return String(m.matterType ?? m.matter_type ?? '').trim()
+}
 
 const form = reactive<DemandFormModel>({
   providerOrg: '',
@@ -73,6 +105,7 @@ const form = reactive<DemandFormModel>({
   serviceDemandType: 'GOV',
   matterIds: [],
   matterNames: [],
+  matterCodes: [],
   matterMaterials: '',
   usageScenario: '',
   demandBasis: '',
@@ -87,6 +120,22 @@ const form = reactive<DemandFormModel>({
   demandContent: '',
 })
 
+/** 已选事项展示：编码 + 名称 */
+const matterDisplayText = computed(() => {
+  const names = form.matterNames || []
+  const codes = form.matterCodes || []
+  if (!names.length && !codes.length) return ''
+  const n = Math.max(names.length, codes.length)
+  const parts: string[] = []
+  for (let i = 0; i < n; i++) {
+    const code = String(codes[i] || '').trim()
+    const name = String(names[i] || '').trim()
+    if (code && name) parts.push(`${code} ${name}`)
+    else parts.push(code || name)
+  }
+  return parts.filter(Boolean).join('、')
+})
+
 const catalogDialog = ref(false)
 const matterDialog = ref(false)
 const dataItemInput = ref('')
@@ -99,9 +148,23 @@ const matterQ = ref('')
 const matterTypeQ = ref('')
 const selectedCatalogId = ref<number>()
 const selectedMatterIds = ref<number[]>([])
+const deptPortalUrl = ref(DEFAULT_DEPT_PORTAL_PATH)
 
 const selfOrgId = computed(() => Number(auth.user?.orgId || 0) || 0)
 const selfOrgName = computed(() => String(auth.user?.orgName || form.requesterOrg || '').trim())
+
+function resourceTypeText(row: Record<string, unknown>) {
+  const label = String(row.resourceTypeLabel || '').trim()
+  if (label) return label
+  const code = String(row.resourceType || '').trim().toUpperCase()
+  return RESOURCE_TYPE_ZH[code] || statusLabel(code) || code || '—'
+}
+
+function attrText(code: unknown) {
+  const v = String(code || '').trim()
+  if (!v) return '—'
+  return statusLabel(v) || v
+}
 
 /** 与目录编目一致的 TreeSelect 数据：value=单位名称 */
 const orgTreeSelectData = computed(() => {
@@ -194,21 +257,6 @@ async function loadProviderCatalogs() {
   }
 }
 
-const catalogSelectModel = computed({
-  get: () => form.targetCatalogId,
-  set: (id: number | undefined) => {
-    if (id == null) {
-      form.targetCatalogId = undefined
-      form.catalogTitle = ''
-      return
-    }
-    const hit = catalogs.value.find((c) => Number(c.id) === Number(id))
-    form.targetCatalogId = Number(id)
-    form.catalogTitle = String(hit?.title || '')
-    if (hit && !form.dataName) form.dataName = String(hit.title || '')
-  },
-})
-
 const catalogFiltered = computed(() => {
   const q = catalogQ.value.trim()
   if (!q) return catalogs.value
@@ -220,11 +268,11 @@ const matterFiltered = computed(() => {
   if (matterQ.value.trim()) {
     const q = matterQ.value.trim()
     list = list.filter(
-      (m) => String(m.matterName || '').includes(q) || String(m.matterCode || '').includes(q),
+      (m) => matterNameOf(m).includes(q) || matterCodeOf(m).includes(q),
     )
   }
   if (matterTypeQ.value.trim()) {
-    list = list.filter((m) => String(m.matterType || '') === matterTypeQ.value.trim())
+    list = list.filter((m) => matterTypeOf(m) === matterTypeQ.value.trim())
   }
   return list
 })
@@ -239,12 +287,33 @@ function syncFromProps() {
     dataItems: src.dataItems ? [...src.dataItems] : [],
     matterIds: src.matterIds ? [...src.matterIds] : [],
     matterNames: src.matterNames ? [...src.matterNames] : [],
+    matterCodes: src.matterCodes ? [...src.matterCodes] : [],
+    shareProvideMode: normalizeShareProvideMode(src.shareProvideMode),
   })
+  // 旧数据仅有 matterIds/names 时，从事项列表回填编码
+  if (form.matterIds.length && (!form.matterCodes.length || form.matterCodes.every((c) => !c))) {
+    fillMatterCodesFromIds()
+  }
   if (!form.requesterOrg) {
     form.requesterOrg = selfOrgName.value || '承德高新技术产业开发区管理委员会'
   }
   if (form.providerOrg) {
     void loadProviderCatalogs()
+  }
+}
+
+function fillMatterCodesFromIds() {
+  if (!form.matterIds.length || !matters.value.length) return
+  const codes: string[] = []
+  const names: string[] = []
+  for (const id of form.matterIds) {
+    const hit = matters.value.find((m) => Number(m.id) === Number(id))
+    codes.push(hit ? matterCodeOf(hit) : '')
+    names.push(hit ? matterNameOf(hit) : (form.matterNames[codes.length - 1] || ''))
+  }
+  form.matterCodes = codes
+  if (!form.matterNames.length || form.matterNames.every((n) => !n)) {
+    form.matterNames = names
   }
 }
 
@@ -262,13 +331,22 @@ async function loadRefs() {
       parentId: Number(o.parentId || 0),
       orgCode: o.orgCode ? String(o.orgCode) : undefined,
     }))
-    matters.value = matRes.data || []
+    matters.value = ((matRes.data || []) as Record<string, unknown>[]).map((m) => ({
+      ...m,
+      id: Number(m.id),
+      matterCode: matterCodeOf(m),
+      matterName: matterNameOf(m),
+      matterType: matterTypeOf(m) || 'OTHER',
+      status: String(m.status || 'ACTIVE'),
+    }))
+    if (form.matterIds.length) fillMatterCodesFromIds()
     if (!form.requesterOrg) {
       form.requesterOrg = selfOrgName.value || '承德高新技术产业开发区管理委员会'
     }
   } catch {
     // ignore
   }
+  await loadDeptPortalUrl()
 }
 
 function snapshot(): DemandFormModel {
@@ -278,12 +356,18 @@ function snapshot(): DemandFormModel {
     dataItems: [...form.dataItems],
     matterIds: [...form.matterIds],
     matterNames: [...form.matterNames],
+    matterCodes: [...(form.matterCodes || [])],
+    shareProvideMode: normalizeShareProvideMode(form.shareProvideMode),
   }
 }
 
 function validate(strict: boolean): boolean {
   if (!form.providerOrg) {
     ElMessage.warning('请选择数据提供单位')
+    return false
+  }
+  if (strict && !form.catalogTitle.trim()) {
+    ElMessage.warning('请选择目录，或点击「未找到所需目录」')
     return false
   }
   if (!form.dataName.trim()) {
@@ -359,8 +443,6 @@ async function openCatalogPick() {
 function confirmCatalog() {
   const hit = catalogs.value.find((c) => Number(c.id) === selectedCatalogId.value)
   if (!hit) {
-    form.targetCatalogId = undefined
-    form.catalogTitle = ''
     ElMessage.warning('请选择目录')
     return
   }
@@ -370,8 +452,27 @@ function confirmCatalog() {
   catalogDialog.value = false
 }
 
+function markCatalogNotFound() {
+  form.targetCatalogId = undefined
+  form.catalogTitle = CATALOG_NOT_FOUND
+  selectedCatalogId.value = undefined
+  catalogDialog.value = false
+}
+
 function pickCatalogRow(row: Record<string, unknown>) {
   selectedCatalogId.value = Number(row.id)
+}
+
+function resolvePortalHref(raw: string) {
+  const url = String(raw || '').trim() || DEFAULT_DEPT_PORTAL_PATH
+  if (/^https?:\/\//i.test(url)) return url
+  const path = url.startsWith('/') ? url : `/${url}`
+  return `${window.location.origin}${path}`
+}
+
+/** 跳转部门数据共享门户（链接来自系统管理 · 通用配置） */
+function openDeptPortalHome() {
+  window.open(resolvePortalHref(deptPortalUrl.value), '_blank', 'noopener,noreferrer')
 }
 
 /** 新开部门数据共享门户目录详情页 */
@@ -381,8 +482,22 @@ function openCatalogDetailPage(row?: Record<string, unknown> | null) {
     ElMessage.warning('请先选择目录')
     return
   }
-  const href = `${window.location.origin}/exchange/analysis-portal/dept?section=catalog&catalogId=${id}`
+  const base = resolvePortalHref(deptPortalUrl.value).split('?')[0]
+  const href = `${base}?section=catalog&catalogId=${id}`
   window.open(href, '_blank', 'noopener,noreferrer')
+}
+
+async function loadDeptPortalUrl() {
+  try {
+    const items = (await api.get('/system/dicts/code/SYSTEM/items')).data || []
+    const hit = (items as { itemKey?: string; itemValue?: string }[]).find(
+      (i) => String(i.itemKey || '') === 'DEPT_PORTAL_URL',
+    )
+    const v = String(hit?.itemValue || '').trim()
+    if (v) deptPortalUrl.value = v
+  } catch {
+    // 使用默认门户路径
+  }
 }
 
 function openMatterPick() {
@@ -393,7 +508,8 @@ function openMatterPick() {
 function confirmMatters() {
   const picked = matters.value.filter((m) => selectedMatterIds.value.includes(Number(m.id)))
   form.matterIds = picked.map((m) => Number(m.id))
-  form.matterNames = picked.map((m) => String(m.matterName || ''))
+  form.matterNames = picked.map((m) => matterNameOf(m))
+  form.matterCodes = picked.map((m) => matterCodeOf(m))
   matterDialog.value = false
 }
 
@@ -421,23 +537,13 @@ defineExpose({ snapshot, validate, form })
       </el-form-item>
       <el-form-item label="选择目录" required>
         <div class="pick-row">
-          <el-select
-            v-model="catalogSelectModel"
-            filterable
-            clearable
+          <el-input
+            :model-value="form.catalogTitle"
+            readonly
             :disabled="readonly || !form.providerOrg"
-            :loading="catalogLoading"
             :placeholder="form.providerOrg ? '请选择该单位在门户已发布的目录' : '请先选择数据提供单位'"
-            no-data-text="该单位暂无门户已发布目录"
             style="flex:1; min-width:0"
-          >
-            <el-option
-              v-for="c in catalogs"
-              :key="String(c.id)"
-              :label="String(c.title || c.id)"
-              :value="Number(c.id)"
-            />
-          </el-select>
+          />
           <el-button
             v-if="!readonly"
             type="primary"
@@ -488,7 +594,7 @@ defineExpose({ snapshot, validate, form })
       <template v-if="form.serviceDemandType === 'GOV'">
         <el-form-item label="产生该需求的事项名称" required>
           <div class="pick-row">
-            <el-input :model-value="form.matterNames.join('、') || ''" readonly placeholder="请选择事项（可多选）" />
+            <el-input :model-value="matterDisplayText" readonly placeholder="请选择事项（可多选，显示编码与名称）" />
             <el-button v-if="!readonly" type="primary" @click="openMatterPick">选择</el-button>
           </div>
         </el-form-item>
@@ -539,7 +645,7 @@ defineExpose({ snapshot, validate, form })
       <el-button @click="emit('cancel')">取消</el-button>
     </div>
 
-    <el-dialog v-model="catalogDialog" :title="`目录 · ${form.providerOrg || ''}`" width="900px" destroy-on-close>
+    <el-dialog v-model="catalogDialog" :title="`目录 · ${form.providerOrg || ''}`" width="980px" destroy-on-close>
       <el-alert
         type="info"
         :closable="false"
@@ -547,13 +653,16 @@ defineExpose({ snapshot, validate, form })
         style="margin-bottom:10px"
         :title="`展示「${form.providerOrg}」在部门数据共享门户已发布的数据目录。点击「详情」新开页面查看。`"
       />
-      <el-form inline>
-        <el-form-item label="目录名称">
-          <el-input v-model="catalogQ" clearable />
-        </el-form-item>
-        <el-button type="primary" @click="catalogQ = catalogQ">查询</el-button>
-        <el-button @click="catalogQ = ''">重置</el-button>
-      </el-form>
+      <div class="catalog-toolbar">
+        <el-form inline class="catalog-search">
+          <el-form-item label="目录名称">
+            <el-input v-model="catalogQ" clearable />
+          </el-form-item>
+          <el-button type="primary" @click="catalogQ = catalogQ">查询</el-button>
+          <el-button @click="catalogQ = ''">重置</el-button>
+        </el-form>
+        <el-button type="warning" plain @click="markCatalogNotFound">未找到所需目录</el-button>
+      </div>
       <el-table
         v-loading="catalogLoading"
         :data="catalogFiltered"
@@ -573,18 +682,35 @@ defineExpose({ snapshot, validate, form })
             >&nbsp;</el-radio>
           </template>
         </el-table-column>
-        <el-table-column prop="title" label="目录名称" min-width="180" show-overflow-tooltip />
-        <el-table-column prop="shareModes" label="共享方式" width="120" />
-        <el-table-column prop="providerOrg" label="提供方" width="160" show-overflow-tooltip />
-        <el-table-column label="操作" width="100" fixed="right">
+        <el-table-column prop="title" label="目录名称" min-width="160" show-overflow-tooltip />
+        <el-table-column label="资源类型" width="90">
+          <template #default="{ row }">{{ resourceTypeText(row) }}</template>
+        </el-table-column>
+        <el-table-column label="共享属性" width="120">
+          <template #default="{ row }">{{ attrText(row.shareAttr) }}</template>
+        </el-table-column>
+        <el-table-column label="开放属性" width="130">
+          <template #default="{ row }">{{ attrText(row.openAttr) }}</template>
+        </el-table-column>
+        <el-table-column prop="providerOrg" label="提供部门" min-width="140" show-overflow-tooltip />
+        <el-table-column label="操作" width="80" fixed="right">
           <template #default="{ row }">
             <el-button link type="primary" @click.stop="openCatalogDetailPage(row)">详情</el-button>
           </template>
         </el-table-column>
       </el-table>
       <template #footer>
-        <el-button @click="catalogDialog = false">取消</el-button>
-        <el-button type="primary" @click="confirmCatalog">确定选用</el-button>
+        <div class="catalog-footer">
+          <p class="catalog-tip">
+            请从上述目录中查找所需目录，如果存在，请从
+            <a class="catalog-tip-link" href="#" @click.prevent="openDeptPortalHome">部门数据共享门户</a>
+            申请，如果不存在，请选择「未找到所需目录」
+          </p>
+          <div class="catalog-footer-btns">
+            <el-button @click="catalogDialog = false">取消</el-button>
+            <el-button type="primary" @click="confirmCatalog">确定</el-button>
+          </div>
+        </div>
       </template>
     </el-dialog>
 
@@ -606,9 +732,15 @@ defineExpose({ snapshot, validate, form })
         @selection-change="(rows: Record<string, unknown>[]) => { selectedMatterIds = rows.map((r) => Number(r.id)) }"
       >
         <el-table-column type="selection" width="48" />
-        <el-table-column prop="matterCode" label="事项编码" width="140" />
-        <el-table-column prop="matterName" label="事项名称" min-width="160" />
-        <el-table-column prop="matterType" label="事项类型" width="120" />
+        <el-table-column label="事项编码" width="140" show-overflow-tooltip>
+          <template #default="{ row }">{{ matterCodeOf(row) || '—' }}</template>
+        </el-table-column>
+        <el-table-column label="事项名称" min-width="160" show-overflow-tooltip>
+          <template #default="{ row }">{{ matterNameOf(row) }}</template>
+        </el-table-column>
+        <el-table-column label="事项类型" width="120">
+          <template #default="{ row }">{{ matterTypeOf(row) }}</template>
+        </el-table-column>
       </el-table>
       <template #footer>
         <el-button @click="matterDialog = false">取消</el-button>
@@ -649,5 +781,38 @@ defineExpose({ snapshot, validate, form })
   margin-top: 20px;
   padding-top: 12px;
   border-top: 1px solid #eef2f7;
+}
+.catalog-toolbar {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 8px;
+}
+.catalog-search {
+  margin-bottom: 0;
+  flex: 1;
+}
+.catalog-footer {
+  width: 100%;
+  text-align: left;
+}
+.catalog-tip {
+  margin: 0 0 12px;
+  font-size: 13px;
+  line-height: 1.6;
+  color: #606266;
+}
+.catalog-tip-link {
+  color: #1677ff;
+  text-decoration: none;
+}
+.catalog-tip-link:hover {
+  text-decoration: underline;
+}
+.catalog-footer-btns {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
 }
 </style>

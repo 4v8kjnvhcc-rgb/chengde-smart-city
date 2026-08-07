@@ -84,11 +84,10 @@ export const REGISTER_MODULES: IngestionModuleMeta[] = [
   { key: 'm045', mCode: 'M045', label: '数据资产标签管理', subLabel: '标签体系', system: 'register', permission: 'hub:ingestion:register:m045' },
   { key: 'asset-catalog-mgmt', mCode: 'ACM', label: '资产目录管理', subLabel: '查看审核', system: 'register', permission: 'hub:ingestion:register:asset-catalog-mgmt' },
   { key: 'm046', mCode: 'M046', label: '数据资产报告', subLabel: '资产大屏', system: 'register', permission: 'hub:ingestion:register:m046' },
-  { key: 'm047', mCode: 'M047', label: '数据资产图谱分析', subLabel: '血缘图谱', system: 'register', permission: 'hub:ingestion:register:m047' },
+  { key: 'm047', mCode: 'M047', label: '数据资产图谱分析', subLabel: '资产鱼骨图谱', system: 'register', permission: 'hub:ingestion:register:m047' },
   { key: 'm048', mCode: 'M048', label: '访问控制管理', subLabel: '功能/资源/数据权限', system: 'register', permission: 'hub:ingestion:register:m048' },
   { key: 'm049', mCode: 'M049', label: '系统维护管理', subLabel: '外观/邮箱/账号安全', system: 'register', permission: 'hub:ingestion:register:m049' },
   { key: 'm050', mCode: 'M050', label: '数据字典管理', subLabel: '字典管理', system: 'register', permission: 'hub:ingestion:register:m050' },
-  { key: 'menu-mgmt', mCode: 'MMENU', label: '菜单管理', subLabel: '登记侧栏菜单', system: 'register', permission: 'hub:ingestion:register:menu-mgmt' },
 ]
 
 export const COLLECT_MODULES: IngestionModuleMeta[] = [
@@ -239,14 +238,7 @@ export function buildRegisterNavItems(
 ): HubNavItem[] {
   const base = filterIngestionModules(REGISTER_MODULES, opts)
   if (!dbMenus?.length) {
-    // 保证菜单管理在同级最底部
-    return [...base]
-      .sort((a, b) => {
-        if (a.key === 'menu-mgmt') return 1
-        if (b.key === 'menu-mgmt') return -1
-        return 0
-      })
-      .map(toNavItem)
+    return base.map(toNavItem)
   }
 
   const byPerm = new Map(
@@ -264,11 +256,8 @@ export function buildRegisterNavItems(
         byPerm.get(m.permission)
         || (m.key === 'm046' ? byPerm.get('hub:ingestion:register:m046:dept') : undefined)
         || (m.key === 'm047' ? byPerm.get('hub:ingestion:register:m047:dept') : undefined)
-      // 内置模块不因库表 visible=0 而丢掉 Hub 入口（避免「只剩菜单管理」）
-      const sort =
-        m.key === 'menu-mgmt'
-          ? 100_000
-          : (db?.sortOrder ?? staticIndex.get(m.key) ?? 0)
+      // 内置模块不因库表 visible=0 而丢掉 Hub 入口
+      const sort = db?.sortOrder ?? staticIndex.get(m.key) ?? 0
       const label = normalizeRegisterMenuLabel(db?.menuName || m.label)
       return { ...m, label, _sort: sort }
     })
@@ -284,6 +273,7 @@ export function buildRegisterNavItems(
         && m.menuType !== 3
         && Number(m.visible) !== 0
         && m.permission
+        && m.permission !== 'hub:ingestion:register:menu-mgmt'
         && !staticPerms.has(m.permission),
     )
     .sort((a, b) => (a.sortOrder ?? 0) - (b.sortOrder ?? 0) || a.id - b.id)

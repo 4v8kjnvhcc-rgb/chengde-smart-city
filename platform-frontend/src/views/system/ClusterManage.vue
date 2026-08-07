@@ -12,8 +12,6 @@ interface ClusterAccount {
   id: number
   clusterCode: string
   clusterName: string
-  accountName: string
-  accountPassword?: string
   endpoint?: string
   remark?: string
   status: number
@@ -32,8 +30,6 @@ const editingId = ref<number | null>(null)
 const form = reactive({
   clusterCode: '',
   clusterName: '',
-  accountName: '',
-  accountPassword: '',
   endpoint: '',
   remark: '',
   status: 1,
@@ -64,8 +60,6 @@ function openCreate() {
   Object.assign(form, {
     clusterCode: '',
     clusterName: '',
-    accountName: '',
-    accountPassword: '',
     endpoint: '',
     remark: '',
     status: 1,
@@ -78,8 +72,6 @@ function openEdit(row: ClusterAccount) {
   Object.assign(form, {
     clusterCode: row.clusterCode,
     clusterName: row.clusterName,
-    accountName: row.accountName,
-    accountPassword: '',
     endpoint: row.endpoint || '',
     remark: row.remark || '',
     status: row.status === 0 ? 0 : 1,
@@ -88,8 +80,8 @@ function openEdit(row: ClusterAccount) {
 }
 
 async function submit() {
-  if (!form.clusterCode.trim() || !form.clusterName.trim() || !form.accountName.trim()) {
-    ElMessage.warning('请填写编码、名称与账号')
+  if (!form.clusterCode.trim() || !form.clusterName.trim()) {
+    ElMessage.warning('请填写编码与名称')
     return
   }
   saving.value = true
@@ -97,8 +89,6 @@ async function submit() {
     const body = {
       clusterCode: form.clusterCode.trim(),
       clusterName: form.clusterName.trim(),
-      accountName: form.accountName.trim(),
-      accountPassword: form.accountPassword,
       endpoint: form.endpoint.trim(),
       remark: form.remark.trim(),
       status: form.status,
@@ -139,13 +129,13 @@ onMounted(load)
 
 <template>
   <div>
-    <PageHeader title="集群管理" description="维护集群账号台账（编码、名称、账号、地址等），供运维登记与查询。">
+    <PageHeader title="集群管理" description="维护集群台账（编码、名称、访问地址等），供运维登记与查询。">
       <el-button type="primary" @click="openCreate">新增集群</el-button>
     </PageHeader>
     <PageCard>
       <el-form inline class="portal-inline-form portal-inline-form--block">
         <el-form-item label="关键词" class="portal-field-xl">
-          <el-input v-model="keyword" clearable placeholder="编码/名称/账号/地址" @keyup.enter="load" />
+          <el-input v-model="keyword" clearable placeholder="编码/名称/地址" @keyup.enter="load" />
         </el-form-item>
         <el-form-item class="portal-form-actions">
           <el-button type="primary" @click="load">查询</el-button>
@@ -156,7 +146,6 @@ onMounted(load)
       <el-table class="portal-table" :data="paged" v-loading="loading" stripe border>
         <el-table-column prop="clusterCode" label="集群编码" min-width="120" show-overflow-tooltip />
         <el-table-column prop="clusterName" label="集群名称" min-width="140" show-overflow-tooltip />
-        <el-table-column prop="accountName" label="账号" min-width="120" show-overflow-tooltip />
         <el-table-column prop="endpoint" label="访问地址" min-width="180" show-overflow-tooltip>
           <template #default="{ row }">{{ row.endpoint || '—' }}</template>
         </el-table-column>
@@ -197,17 +186,6 @@ onMounted(load)
         </el-form-item>
         <el-form-item label="集群名称" required>
           <el-input v-model="form.clusterName" placeholder="显示名称" />
-        </el-form-item>
-        <el-form-item label="账号" required>
-          <el-input v-model="form.accountName" placeholder="登录账号" />
-        </el-form-item>
-        <el-form-item label="密码">
-          <el-input
-            v-model="form.accountPassword"
-            type="password"
-            show-password
-            :placeholder="editingId == null ? '可选' : '留空则不修改'"
-          />
         </el-form-item>
         <el-form-item label="访问地址">
           <el-input v-model="form.endpoint" placeholder="如 https://cluster.example.com" />

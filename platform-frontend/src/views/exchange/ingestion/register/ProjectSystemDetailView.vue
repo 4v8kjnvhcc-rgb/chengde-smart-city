@@ -13,10 +13,18 @@ import {
 } from '../useIngestionHub'
 import { ingestionRegisterCache } from '../ingestion-register-cache'
 import { loadRegisterLogs, registerStatusZh } from './register-workflow'
+import {
+  SOURCE_TYPE_GROUPS,
+  defaultPortFor,
+  isDbType,
+  isFileType,
+  isMemoryType,
+  needsConnConfig,
+} from './source-types'
 
 const props = defineProps<{
   project: Project
-  /** 审核查看：只读，不可新增/改名称；删除按规则保留 */
+  /** 审核查看：只读，不可新增/编辑；删除按规则保留 */
   readonly?: boolean
 }>()
 
@@ -27,9 +35,9 @@ const emit = defineEmits<{
 
 const auth = useAuthStore()
 const isReadonly = computed(() => !!props.readonly)
-/** 新增/改名：非只读；删除：非只读，或超级管理员（审核通过项目） */
+/** 新增/编辑：非只读；删除：非只读，或平台/超级管理员（管理端可删系统/数据源） */
 const canMutate = computed(() => !isReadonly.value)
-const canDeleteChild = computed(() => !isReadonly.value || !!auth.isSystemAdmin)
+const canDeleteChild = computed(() => !isReadonly.value || !!auth.isPlatformOrSystemAdmin)
 
 const { loading, loadError, withLoad } = useIngestionLoading()
 const systems = ref<BizSystem[]>([])
@@ -83,8 +91,8 @@ function isManualUploadSource(code?: string) {
   return !!code && (code === 'DS_MANUAL_UPLOAD' || code.startsWith('DS_MANUAL_UPLOAD_'))
 }
 
-function isDbType(type: string) {
-  return type === 'MYSQL' || type === 'ORACLE'
+function onAddDsTypeChange(type: string) {
+  addDsForm.port = defaultPortFor(type)
 }
 
 function connLabel(status?: string) {
@@ -259,6 +267,10 @@ async function submitAddDs() {
   }
   if (isDbType(addDsForm.sourceType) && !addDsForm.database.trim()) {
     ElMessage.warning('请填写库名')
+    return
+  }
+  if (isMemoryType(addDsForm.sourceType) && !addDsForm.host.trim()) {
+    ElMessage.warning('请填写主机地址')
     return
   }
   addDsSaving.value = true
@@ -457,7 +469,7 @@ onMounted(() => {
         </template>
         <template v-if="isReadonly">
           当前为只读查看，不可新增或修改；
-          <template v-if="canDeleteChild">超级管理员仍可删除无下级关联的系统/数据库。</template>
+          <template v-if="canDeleteChild">平台/超级管理员仍可删除无下级关联的系统/数据库。</template>
         </template>
       </p>
 
@@ -497,7 +509,7 @@ onMounted(() => {
                 </el-table-column>
                 <el-table-column label="连接状态" width="100">
                   <template #default="{ row: ds }">
-                    {{ isDbType(ds.sourceType) ? connLabel(ds.connStatus) : '—' }}
+                    {{ needsConnConfig(ds.sourceType) ? connLabel(ds.connStatus) : '—' }}
                   </template>
                 </el-table-column>
                 <el-table-column label="已登记表" width="90">
@@ -506,12 +518,15 @@ onMounted(() => {
                 <el-table-column v-if="canMutate || canDeleteChild" label="操作" min-width="260">
                   <template #default="{ row: ds }">
                     <template v-if="canMutate">
-                      <el-button link type="primary" @click="openEditMeta(ds)">改名称</el-button>
-                      <template v-if="isDbType(ds.sourceType)">
+                      <el-button link type="primary" @click="openEditMeta(ds)">编辑</el-button>
+                      <template v-if="needsConnConfig(ds.sourceType) && isDbType(ds.sourceType)">
                         <el-button link @click="openConn(ds)">配置连接</el-button>
                         <el-button link type="primary" @click="testDs(ds)">测试</el-button>
                       </template>
-                      <span v-else class="muted">文件源</span>
+                      <template v-else-if="isMemoryType(ds.sourceType)">
+                        <el-button link @click="openConn(ds)">配置连接</el-button>
+                      </template>
+                      <span v-else-if="isFileType(ds.sourceType)" class="muted">文件源</span>
                     </template>
                     <el-button
                       v-if="canDeleteChild"
@@ -548,7 +563,7 @@ onMounted(() => {
               link
               :disabled="isOtherSystem(row.systemCode)"
               @click="openRenameSystem(row)"
-            >改名称</el-button>
+            >编辑</el-button>
             <el-button
               v-if="canDeleteChild"
               link
@@ -616,7 +631,7 @@ onMounted(() => {
       </template>
     </el-dialog>
 
-    <el-dialog v-model="renameSystemDialog" title="修改系统名称" width="420px" destroy-on-close>
+    <el-dialog v-model="renameSystemDialog" title="编辑系统" width="420px" destroy-on-close>
       <el-form label-width="90px">
         <el-form-item label="系统名称" required>
           <el-input v-model="renameSystemName" />
@@ -630,23 +645,40 @@ onMounted(() => {
 
     <el-dialog v-model="addDsDialog" title="新增数据源" width="520px" destroy-on-close>
       <el-form label-width="100px">
-        <el-form-item label="数据源名" required>
-          <el-input v-model="addDsForm.sourceName" placeholder="如：业务库 / 手动上传-部门A" />
+        <el-form-item label="数据源" required>
+          <el-input v-model="addDsForm.sourceName" placeholder="如：业务库 / 部门上传文件" />
         </el-form-item>
         <el-form-item label="类型" required>
-          <el-select v-model="addDsForm.sourceType" style="width:100%">
-            <el-option label="MySQL" value="MYSQL" />
-            <el-option label="Oracle" value="ORACLE" />
-            <el-option label="文件(手动上传)" value="FILE" />
-            <el-option label="API" value="API" />
+          <el-select v-model="addDsForm.sourceType" style="width:100%" @change="onAddDsTypeChange">
+            <el-option-group
+              v-for="g in SOURCE_TYPE_GROUPS"
+              :key="g.label"
+              :label="g.label"
+            >
+              <el-option
+                v-for="o in g.options"
+                :key="o.value"
+                :label="o.label"
+                :value="o.value"
+              />
+            </el-option-group>
           </el-select>
         </el-form-item>
+        <p v-if="isFileType(addDsForm.sourceType)" class="form-hint">
+          文件型数据源无需填写连接信息，可在后续手动上传中归集资产。
+        </p>
         <template v-if="isDbType(addDsForm.sourceType)">
           <el-form-item label="主机"><el-input v-model="addDsForm.host" /></el-form-item>
           <el-form-item label="端口"><el-input-number v-model="addDsForm.port" :min="1" :max="65535" style="width:100%" /></el-form-item>
           <el-form-item label="库名" required><el-input v-model="addDsForm.database" /></el-form-item>
           <el-form-item label="用户名"><el-input v-model="addDsForm.username" /></el-form-item>
           <el-form-item label="密码"><el-input v-model="addDsForm.password" type="password" show-password /></el-form-item>
+        </template>
+        <template v-else-if="isMemoryType(addDsForm.sourceType)">
+          <el-form-item label="主机" required><el-input v-model="addDsForm.host" /></el-form-item>
+          <el-form-item label="端口"><el-input-number v-model="addDsForm.port" :min="1" :max="65535" style="width:100%" /></el-form-item>
+          <el-form-item label="库号"><el-input v-model="addDsForm.database" placeholder="可选，如 0" /></el-form-item>
+          <el-form-item label="密码"><el-input v-model="addDsForm.password" type="password" show-password placeholder="可选" /></el-form-item>
         </template>
       </el-form>
       <template #footer>
@@ -655,9 +687,9 @@ onMounted(() => {
       </template>
     </el-dialog>
 
-    <el-dialog v-model="editMetaDialog" title="修改数据源名称" width="420px" destroy-on-close>
+    <el-dialog v-model="editMetaDialog" title="编辑数据源" width="420px" destroy-on-close>
       <el-form label-width="100px">
-        <el-form-item label="数据源名" required>
+        <el-form-item label="数据源" required>
           <el-input v-model="editMetaName" />
         </el-form-item>
       </el-form>
@@ -686,6 +718,13 @@ onMounted(() => {
 
 <style scoped>
 .muted { font-size: 13px; color: #909399; }
+.form-hint {
+  margin: -4px 0 12px;
+  padding-left: 100px;
+  font-size: 12px;
+  color: #909399;
+  line-height: 1.5;
+}
 .section-head {
   display: flex;
   align-items: center;

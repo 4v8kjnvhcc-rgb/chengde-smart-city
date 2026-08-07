@@ -1,7 +1,6 @@
 package com.chengde.smartcity.exchange.controller;
 
 import com.chengde.smartcity.common.api.ApiResponse;
-import com.chengde.smartcity.exchange.entity.BizPortalSituation;
 import com.chengde.smartcity.exchange.service.PortalService;
 import com.chengde.smartcity.security.UserPrincipal;
 import java.util.List;
@@ -102,7 +101,7 @@ public class PortalController {
 
     @GetMapping("/situations")
     @PreAuthorize("isAuthenticated()")
-    public ApiResponse<List<BizPortalSituation>> situations() {
+    public ApiResponse<List<Map<String, Object>>> situations() {
         return ApiResponse.ok(service.listSituations());
     }
 

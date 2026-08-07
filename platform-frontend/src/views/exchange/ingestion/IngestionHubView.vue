@@ -64,11 +64,10 @@ const moduleComponents: Record<string, ReturnType<typeof defineAsyncComponent>> 
   m044: defineAsyncComponent(() => import('./register/DataItemView.vue')),
   m045: defineAsyncComponent(() => import('./register/TagManageView.vue')),
   m046: defineAsyncComponent(() => import('./register/AssetReportView.vue')),
-  m047: defineAsyncComponent(() => import('./register/LineageView.vue')),
+  m047: defineAsyncComponent(() => import('./register/AssetFishboneView.vue')),
   m048: defineAsyncComponent(() => import('./register/AccessControlView.vue')),
   m049: defineAsyncComponent(() => import('./register/SystemLinkView.vue')),
   m050: defineAsyncComponent(() => import('./register/DictRegisterView.vue')),
-  'menu-mgmt': defineAsyncComponent(() => import('./register/RegisterMenuManageView.vue')),
   'asset-catalog-reg': defineAsyncComponent(() => import('./register/AssetCatalogRegView.vue')),
   'asset-catalog-mgmt': defineAsyncComponent(() => import('./register/AssetCatalogMgmtView.vue')),
   upload: defineAsyncComponent(() => import('./collect/CollectIngestView.vue')),
@@ -113,13 +112,7 @@ const activeComponent = computed(() => {
   return moduleComponents[module.value]
 })
 const pageTitle = computed(() => `大数据归集平台 · ${systemTitle(system.value)} · ${moduleTitle(module.value)}`)
-const pageDesc = computed(() => {
-  // 填报指引页不展示副标题，避免与指引正文重复占位
-  if (system.value === 'register' && module.value === 'm039') return ''
-  return system.value === 'register'
-    ? '数据资产登记管理（切换系统请返回总览后重新进入）'
-    : '数据资源采集汇聚（切换系统请返回总览后重新进入）'
-})
+const pageDesc = computed(() => '')
 
 function isRegisterModuleAllowed(moduleKey: string, allowed: typeof allowedRegister.value): boolean {
   if (allowed.some((m) => m.key === moduleKey)) return true

@@ -1,16 +1,24 @@
 package com.chengde.smartcity.exchange.entity;
 
 import com.baomidou.mybatisplus.annotation.IdType;
+import com.baomidou.mybatisplus.annotation.TableField;
 import com.baomidou.mybatisplus.annotation.TableId;
 import com.baomidou.mybatisplus.annotation.TableName;
+import com.fasterxml.jackson.annotation.JsonProperty;
 import java.time.LocalDateTime;
 
 @TableName("biz_gov_matter")
 public class BizGovMatter {
     @TableId(type = IdType.AUTO)
     private Long id;
+    @TableField("matter_code")
+    @JsonProperty("matterCode")
     private String matterCode;
+    @TableField("matter_name")
+    @JsonProperty("matterName")
     private String matterName;
+    @TableField("matter_type")
+    @JsonProperty("matterType")
     private String matterType;
     private String regionScope;
     private String status;

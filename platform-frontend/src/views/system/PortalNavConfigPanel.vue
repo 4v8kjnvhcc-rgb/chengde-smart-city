@@ -238,7 +238,6 @@ onMounted(load)
       <el-button :disabled="!canEdit || !selectedRow" @click="openEdit()">修改</el-button>
       <el-button type="danger" plain :disabled="!canDelete || !selectedRow" @click="removeRow()">删除</el-button>
       <el-button @click="load">刷新</el-button>
-      <span class="hint">首页四平台卡片按本表渲染；侧栏权限仍走菜单授权。</span>
     </div>
 
     <el-table
@@ -358,11 +357,6 @@ onMounted(load)
   align-items: center;
   gap: 8px;
   margin-bottom: 12px;
-}
-.hint {
-  margin-left: 8px;
-  font-size: 12px;
-  color: var(--el-text-color-secondary);
 }
 .portal-table {
   width: 100%;

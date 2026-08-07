@@ -22,6 +22,7 @@ export interface UserInfo {
   displayName: string
   orgId: number
   orgName?: string
+  phone?: string
 }
 
 function readStoredUser(): UserInfo | null {
@@ -45,12 +46,30 @@ export const useAuthStore = defineStore('auth', {
     isLoggedIn: (s) => !!s.accessToken,
     /** 超级管理员：按约定账号放行（与后端 SYSTEM_ADMIN 对齐） */
     isSystemAdmin: (s) => s.user?.username === 'sys_admin',
-    /** 平台管理员能力（供需：数据主管部门） */
+    /**
+     * 平台管理员：含数据资产「管理」菜单权限，或供需主管部门权限；
+     * 超级管理员一并视为具备平台管理能力。
+     */
     isPlatformAdmin: (s) =>
       s.user?.username === 'sys_admin'
       || (Array.isArray(s.permissions) && (
         s.permissions.includes('portal:supply:approve')
         || s.permissions.includes('system:exchange:supply-config')
+        || s.permissions.includes('hub:ingestion:register:project-system-mgmt')
+        || s.permissions.includes('hub:ingestion:register:asset-catalog-mgmt')
+        || s.permissions.includes('hub:ingestion:register:m050')
+        || s.permissions.includes('hub:ingestion:register:m045')
+      )),
+    /** 平台管理员或超级管理员（强制删除等） */
+    isPlatformOrSystemAdmin: (s) =>
+      s.user?.username === 'sys_admin'
+      || (Array.isArray(s.permissions) && (
+        s.permissions.includes('portal:supply:approve')
+        || s.permissions.includes('system:exchange:supply-config')
+        || s.permissions.includes('hub:ingestion:register:project-system-mgmt')
+        || s.permissions.includes('hub:ingestion:register:asset-catalog-mgmt')
+        || s.permissions.includes('hub:ingestion:register:m050')
+        || s.permissions.includes('hub:ingestion:register:m045')
       )),
   },
   actions: {

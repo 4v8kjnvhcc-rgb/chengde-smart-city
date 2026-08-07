@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import { useAuthStore } from '@/stores/auth'
 import PageCard from '@/components/common/PageCard.vue'
 import PortalPagination from '@/components/common/PortalPagination.vue'
@@ -100,6 +100,36 @@ function openAudit(row: Project) {
   auditVisible.value = true
 }
 
+async function doDelete(row: Project) {
+  if (!auth.isPlatformOrSystemAdmin) {
+    ElMessage.warning('仅平台管理员或超级管理员可删除项目')
+    return
+  }
+  if (String(row.projectCode || '').toUpperCase() === 'OTHER' || row.projectName === '其他') {
+    ElMessage.warning('「其他」为系统初始化项目，不可删除')
+    return
+  }
+  try {
+    const systems = (await ingestionApi.systems(row.id)).data || []
+    if (systems.length) {
+      await ElMessageBox.alert(
+        `该项目下已关联 ${systems.length} 个系统，无法删除，请先删除系统后再删项目。`,
+        '删除校验',
+        { type: 'warning' },
+      )
+      return
+    }
+    await ElMessageBox.confirm(`确认删除项目「${row.projectName}」？`, '删除确认', { type: 'warning' })
+    await ingestionApi.deleteProject(row.id)
+    ElMessage.success('项目已删除')
+    if (detailProjectId.value === row.id) detailProjectId.value = null
+    await reload()
+  } catch (e: unknown) {
+    if (e === 'cancel' || e === 'close') return
+    ElMessage.error(e instanceof Error ? e.message : '删除失败')
+  }
+}
+
 async function submitAudit() {
   if (!auditTarget.value) return
   if (auditDecision.value === 'REJECT' && !rejectReason.value.trim()) {
@@ -183,10 +213,7 @@ onMounted(reload)
               </el-tag>
             </template>
           </el-table-column>
-          <el-table-column label="驳回原因" min-width="140" show-overflow-tooltip>
-            <template #default="{ row }">{{ row.rejectReason || '—' }}</template>
-          </el-table-column>
-          <el-table-column label="操作" width="140" fixed="right">
+          <el-table-column label="操作" width="180" fixed="right">
             <template #default="{ row }">
               <el-button link type="primary" @click="openView(row)">查看</el-button>
               <el-button
@@ -196,6 +223,14 @@ onMounted(reload)
                 @click="openAudit(row)"
               >
                 审核
+              </el-button>
+              <el-button
+                v-if="auth.isPlatformOrSystemAdmin"
+                link
+                type="danger"
+                @click="doDelete(row)"
+              >
+                删除
               </el-button>
             </template>
           </el-table-column>

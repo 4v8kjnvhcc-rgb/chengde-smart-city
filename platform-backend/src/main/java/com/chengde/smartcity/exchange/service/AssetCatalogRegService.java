@@ -77,11 +77,28 @@ public class AssetCatalogRegService {
     }
 
     public Map<String, Object> defaults(UserPrincipal operator) {
-        // 新增表单所属机构、联系方式默认留空，由用户选择
         Map<String, Object> m = new LinkedHashMap<>();
-        m.put("orgId", null);
-        m.put("orgName", "");
-        m.put("contactInfo", "");
+        Long orgId = operator != null ? operator.getOrgId() : null;
+        String orgName = "";
+        if (orgId != null) {
+            SysOrg org = orgMapper.selectById(orgId);
+            if (org != null && org.getOrgName() != null) {
+                orgName = org.getOrgName();
+            }
+        }
+        String contactInfo = "";
+        if (operator != null && operator.getUserId() != null) {
+            SysUser user = userMapper.selectById(operator.getUserId());
+            if (user != null && user.getPhone() != null && !user.getPhone().isBlank()) {
+                contactInfo = user.getPhone().trim();
+            }
+        }
+        boolean canPickOtherOrg = operator != null
+                && (operator.isSystemAdmin() || operator.isPlatformAdmin());
+        m.put("orgId", orgId);
+        m.put("orgName", orgName);
+        m.put("contactInfo", contactInfo);
+        m.put("canPickOtherOrg", canPickOtherOrg);
         return m;
     }
 
@@ -213,16 +230,13 @@ public class AssetCatalogRegService {
     public void delete(UserPrincipal operator, Long id) {
         IngAssetCatalogReg e = get(id);
         String st = norm(e.getStatus());
-        boolean approved = STATUS_APPROVED.equals(st) || STATUS_ARCHIVED.equals(st);
-        if (approved) {
-            if (operator == null || !operator.isSystemAdmin()) {
-                throw new BusinessException(403, "审核通过的资产目录仅超级管理员可删除");
-            }
-        } else if (!STATUS_DRAFT.equals(st) && !STATUS_REJECTED.equals(st)) {
-            throw new BusinessException(400, "仅草稿、驳回待提交可删除；审核通过仅超级管理员可删");
+        boolean platformOrSys = operator != null && operator.isPlatformOrSystemAdmin();
+        boolean draftLike = STATUS_DRAFT.equals(st) || STATUS_REJECTED.equals(st);
+        if (!draftLike && !platformOrSys) {
+            throw new BusinessException(403, "仅草稿、驳回待提交可删除；平台管理员或超级管理员可删除任意状态");
         }
         catalogMapper.deleteById(id);
-        log.info("asset catalog reg deleted id={} status={} by={}", id, st, operator.getUsername());
+        log.info("asset catalog reg deleted id={} status={} by={}", id, st, operator != null ? operator.getUsername() : "?");
     }
 
     /** 提交审核（兼容旧 /report 接口） */

@@ -5,13 +5,13 @@ import { ElMessage } from 'element-plus'
 import PageCard from '@/components/common/PageCard.vue'
 import {
   activeProjectId,
-  projectOptionLabel,
   setActiveProjectId,
   syncActiveProject,
 } from '../ingestion-project-scope'
 import {
   ingestionApi,
   useIngestionLoading,
+  type BizSystem,
   type DataColumn,
   type DataSource,
   type DataTable,
@@ -41,9 +41,13 @@ const route = useRoute()
 const router = useRouter()
 const { loading, loadError, withLoad } = useIngestionLoading()
 const projects = ref<Project[]>([])
+const systems = ref<BizSystem[]>([])
 const sources = ref<DataSource[]>([])
 const tables = ref<DataTable[]>([])
 const columns = ref<DataColumn[]>([])
+const selectedProjectId = ref<number>()
+const selectedSystemId = ref<number>()
+const selectedSourceId = ref<number>()
 const selectedTableId = ref<number>()
 const dialogVisible = ref(false)
 const editingCol = ref<DataColumn | null>(null)
@@ -130,18 +134,54 @@ async function refreshColumns() {
   columns.value = (await ingestionApi.columns(selectedTableId.value)).data || []
 }
 
-async function resolveTableContext(preferTableId?: number) {
-  sources.value = (await ingestionApi.dataSources(activeProjectId.value!)).data || []
-  const sourceIds = new Set(sources.value.map((s) => s.id))
-  if (!sources.value.length) {
+async function loadSystems() {
+  if (!selectedProjectId.value) {
+    systems.value = []
+    selectedSystemId.value = undefined
+    sources.value = []
+    selectedSourceId.value = undefined
     tables.value = []
-    columns.value = []
     selectedTableId.value = undefined
+    columns.value = []
     return
   }
-  const allTables = (await ingestionApi.tables()).data || []
-  tables.value = allTables.filter((t) => sourceIds.has(t.sourceId))
+  systems.value = (await ingestionApi.systems(selectedProjectId.value)).data || []
+  if (selectedSystemId.value && !systems.value.some((s) => s.id === selectedSystemId.value)) {
+    selectedSystemId.value = undefined
+  }
+  if (!selectedSystemId.value && systems.value.length) {
+    selectedSystemId.value = systems.value[0].id
+  }
+  await loadSources()
+}
 
+async function loadSources() {
+  if (!selectedSystemId.value) {
+    sources.value = []
+    selectedSourceId.value = undefined
+    tables.value = []
+    selectedTableId.value = undefined
+    columns.value = []
+    return
+  }
+  sources.value = (await ingestionApi.dataSources(undefined, selectedSystemId.value)).data || []
+  if (selectedSourceId.value && !sources.value.some((s) => s.id === selectedSourceId.value)) {
+    selectedSourceId.value = undefined
+  }
+  if (!selectedSourceId.value && sources.value.length) {
+    selectedSourceId.value = sources.value[0].id
+  }
+  await loadTables()
+}
+
+async function loadTables(preferTableId?: number) {
+  if (!selectedSourceId.value) {
+    tables.value = []
+    selectedTableId.value = undefined
+    columns.value = []
+    return
+  }
+  tables.value = (await ingestionApi.tables(selectedSourceId.value)).data || []
   if (preferTableId && tables.value.some((t) => t.id === preferTableId)) {
     selectedTableId.value = preferTableId
   } else if (selectedTableId.value && !tables.value.some((t) => t.id === selectedTableId.value)) {
@@ -162,9 +202,16 @@ async function applyPreferTableId(preferTableId: number) {
   const allSources = (await ingestionApi.dataSources()).data || []
   const src = allSources.find((s) => s.id === hit.sourceId)
   if (src?.projectId) {
+    selectedProjectId.value = src.projectId
     setActiveProjectId(src.projectId)
   }
-  await resolveTableContext(preferTableId)
+  await loadSystems()
+  if (src?.systemId) {
+    selectedSystemId.value = src.systemId
+    await loadSources()
+  }
+  selectedSourceId.value = hit.sourceId
+  await loadTables(preferTableId)
   await clearRouteTableId()
 }
 
@@ -173,27 +220,50 @@ async function reload() {
     projects.value = (await ingestionApi.projects()).data || []
     syncActiveProject(projects.value)
     await loadEditCtrl()
+    if (activeProjectId.value && projects.value.some((p) => p.id === activeProjectId.value)) {
+      selectedProjectId.value = activeProjectId.value
+    } else if (projects.value.length && !selectedProjectId.value) {
+      selectedProjectId.value = projects.value[0].id
+      setActiveProjectId(projects.value[0].id)
+    }
     const preferTableId = parseRouteTableId()
     if (preferTableId) {
       await applyPreferTableId(preferTableId)
       return
     }
-    if (!activeProjectId.value) {
+    if (!selectedProjectId.value) {
+      systems.value = []
       sources.value = []
       tables.value = []
       columns.value = []
       selectedTableId.value = undefined
       return
     }
-    await resolveTableContext()
+    await loadSystems()
   })
 }
 
-watch(activeProjectId, () => {
-  if (parseRouteTableId()) return
+async function onProjectChange(id: number) {
+  selectedProjectId.value = id
+  setActiveProjectId(id)
+  selectedSystemId.value = undefined
+  selectedSourceId.value = undefined
   selectedTableId.value = undefined
-  void reload()
-})
+  await loadSystems()
+}
+
+async function onSystemChange(id: number) {
+  selectedSystemId.value = id
+  selectedSourceId.value = undefined
+  selectedTableId.value = undefined
+  await loadSources()
+}
+
+async function onSourceChange(id: number) {
+  selectedSourceId.value = id
+  selectedTableId.value = undefined
+  await loadTables()
+}
 
 async function onTableChange(id: number) {
   selectedTableId.value = id
@@ -202,7 +272,7 @@ async function onTableChange(id: number) {
 
 function openCreate() {
   if (!selectedTableId.value) {
-    ElMessage.warning('请先选择物理表')
+    ElMessage.warning('请先选择数据表')
     return
   }
   editingCol.value = null
@@ -271,6 +341,17 @@ async function saveColumn() {
   }
 }
 
+watch(activeProjectId, (id) => {
+  if (parseRouteTableId()) return
+  if (id && id !== selectedProjectId.value) {
+    selectedProjectId.value = id
+    selectedSystemId.value = undefined
+    selectedSourceId.value = undefined
+    selectedTableId.value = undefined
+    void loadSystems()
+  }
+})
+
 onMounted(reload)
 </script>
 
@@ -279,37 +360,63 @@ onMounted(reload)
     <el-alert v-if="loadError" type="error" :title="loadError" show-icon :closable="false" style="margin-bottom:12px" />
     <PageCard title="数据项管理">
       <p class="hint">
-        按当前项目过滤物理表。属性是否可编辑由平台管理 · 系统管理 ·「内置属性管理」统一配置。
+        依次选择项目、系统、数据库、数据表。属性是否可编辑由平台管理 · 系统管理 ·「内置属性管理」统一配置。
       </p>
       <el-form inline class="portal-inline-form portal-inline-form--block">
-        <el-form-item label="当前项目" class="portal-field-xl">
+        <el-form-item label="项目" class="portal-field-lg">
           <el-select
-            :model-value="activeProjectId ?? undefined"
+            :model-value="selectedProjectId"
             filterable
-            placeholder="选择项目 / 系统"
+            placeholder="选择项目"
             style="width:100%"
-            @update:model-value="(v: number) => setActiveProjectId(v)"
+            @update:model-value="onProjectChange"
           >
             <el-option
               v-for="p in projects"
               :key="p.id"
-              :label="projectOptionLabel(p)"
+              :label="p.projectName"
               :value="p.id"
             />
           </el-select>
         </el-form-item>
-        <el-form-item label="物理表" class="portal-field-xl">
+        <el-form-item label="系统" class="portal-field-lg">
+          <el-select
+            :model-value="selectedSystemId"
+            filterable
+            placeholder="选择系统"
+            :disabled="!selectedProjectId"
+            style="width:100%"
+            @update:model-value="onSystemChange"
+          >
+            <el-option v-for="s in systems" :key="s.id" :label="s.systemName" :value="s.id" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="数据库" class="portal-field-lg">
+          <el-select
+            :model-value="selectedSourceId"
+            filterable
+            placeholder="选择数据库"
+            :disabled="!selectedSystemId"
+            style="width:100%"
+            @update:model-value="onSourceChange"
+          >
+            <el-option v-for="s in sources" :key="s.id" :label="s.sourceName" :value="s.id" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="数据表" class="portal-field-lg">
           <el-select
             :model-value="selectedTableId"
-            :disabled="!activeProjectId"
-            placeholder="选择表"
+            :disabled="!selectedSourceId"
+            filterable
+            placeholder="选择数据表"
+            style="width:100%"
             @change="onTableChange"
           >
             <el-option v-for="t in tables" :key="t.id" :label="t.tableName" :value="t.id" />
           </el-select>
         </el-form-item>
         <el-form-item class="portal-form-actions">
-          <el-button type="primary" :disabled="!selectedTableId" @click="openCreate">新建</el-button>
+          <el-button type="primary" :disabled="!selectedTableId" @click="openCreate">新增</el-button>
         </el-form-item>
       </el-form>
 

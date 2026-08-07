@@ -13,6 +13,9 @@ public record TokenResponse(
         this(accessToken, refreshToken, accessTokenExpiresInSeconds, user, null, null, null);
     }
 
-    public record UserInfo(Long id, String username, String displayName, Long orgId, String orgName) {
+    public record UserInfo(Long id, String username, String displayName, Long orgId, String orgName, String phone) {
+        public UserInfo(Long id, String username, String displayName, Long orgId, String orgName) {
+            this(id, username, displayName, orgId, orgName, null);
+        }
     }
 }

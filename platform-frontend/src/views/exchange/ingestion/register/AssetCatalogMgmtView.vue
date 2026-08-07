@@ -1,9 +1,15 @@
 <script setup lang="ts">
 import { onMounted, reactive, ref } from 'vue'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import PageCard from '@/components/common/PageCard.vue'
 import { statusTagType } from '@/utils/status-label'
-import { ingestionApi, useIngestionLoading, type AssetCatalogReg } from '../useIngestionHub'
+import { useAuthStore } from '@/stores/auth'
+import {
+  ingestionApi,
+  useIngestionLoading,
+  type AssetCatalogReg,
+  type Project,
+} from '../useIngestionHub'
 import {
   approveRegister,
   canAuditRegister,
@@ -11,6 +17,8 @@ import {
   rejectRegister,
 } from './register-workflow'
 import AssetCatalogFormDialog from './AssetCatalogFormDialog.vue'
+
+const auth = useAuthStore()
 
 defineProps<{ module: string }>()
 
@@ -31,6 +39,8 @@ const auditTarget = ref<AssetCatalogReg | null>(null)
 const auditDecision = ref<'APPROVE' | 'REJECT'>('APPROVE')
 const rejectReason = ref('')
 const acting = ref(false)
+const orgOptions = ref<Array<{ id: number; orgName: string; label: string }>>([])
+const projectOptions = ref<Project[]>([])
 
 async function reload() {
   await withLoad(async () => {
@@ -91,12 +101,42 @@ async function submitAudit() {
   }
 }
 
+async function doDelete(row: AssetCatalogReg) {
+  if (!auth.isPlatformOrSystemAdmin) {
+    ElMessage.warning('仅平台管理员或超级管理员可删除资产目录')
+    return
+  }
+  try {
+    await ElMessageBox.confirm(`确认删除资产「${row.assetName}」？`, '删除确认', { type: 'warning' })
+    await ingestionApi.assetCatalogDelete(row.id)
+    ElMessage.success('已删除')
+    await reload()
+  } catch (e: unknown) {
+    if (e === 'cancel' || e === 'close') return
+    ElMessage.error(e instanceof Error ? e.message : '删除失败')
+  }
+}
+
 function formatTime(v?: string) {
   if (!v) return '—'
   return String(v).replace('T', ' ').slice(0, 19)
 }
 
+async function loadFilterOptions() {
+  try {
+    orgOptions.value = (await ingestionApi.assetCatalogOrgOptions()).data || []
+  } catch {
+    orgOptions.value = []
+  }
+  try {
+    projectOptions.value = (await ingestionApi.projects()).data || []
+  } catch {
+    projectOptions.value = []
+  }
+}
+
 onMounted(() => {
+  void loadFilterOptions()
   void reload()
 })
 </script>
@@ -116,10 +156,24 @@ onMounted(() => {
           <el-input v-model="query.assetName" clearable placeholder="资产名称" @keyup.enter="reload" />
         </el-form-item>
         <el-form-item label="所属机构" class="portal-field-md">
-          <el-input v-model="query.orgName" clearable placeholder="所属机构" @keyup.enter="reload" />
+          <el-select v-model="query.orgName" clearable filterable placeholder="全部机构" style="width:100%">
+            <el-option
+              v-for="o in orgOptions"
+              :key="o.id"
+              :label="o.orgName || o.label"
+              :value="o.orgName || o.label"
+            />
+          </el-select>
         </el-form-item>
         <el-form-item label="来源项目" class="portal-field-md">
-          <el-input v-model="query.projectName" clearable placeholder="来源项目" @keyup.enter="reload" />
+          <el-select v-model="query.projectName" clearable filterable placeholder="全部项目" style="width:100%">
+            <el-option
+              v-for="p in projectOptions"
+              :key="p.id"
+              :label="p.projectName"
+              :value="p.projectName"
+            />
+          </el-select>
         </el-form-item>
         <el-form-item label="状态" class="portal-field-sm">
           <el-select v-model="query.status" clearable placeholder="全部">
@@ -156,10 +210,7 @@ onMounted(() => {
             </el-tag>
           </template>
         </el-table-column>
-        <el-table-column label="驳回原因" min-width="140" show-overflow-tooltip>
-          <template #default="{ row }">{{ row.rejectReason || '—' }}</template>
-        </el-table-column>
-        <el-table-column label="操作" width="140" fixed="right">
+        <el-table-column label="操作" width="180" fixed="right">
           <template #default="{ row }">
             <el-button link type="primary" @click="openView(row)">查看</el-button>
             <el-button
@@ -169,6 +220,14 @@ onMounted(() => {
               @click="openAudit(row)"
             >
               审核
+            </el-button>
+            <el-button
+              v-if="auth.isPlatformOrSystemAdmin"
+              link
+              type="danger"
+              @click="doDelete(row)"
+            >
+              删除
             </el-button>
           </template>
         </el-table-column>

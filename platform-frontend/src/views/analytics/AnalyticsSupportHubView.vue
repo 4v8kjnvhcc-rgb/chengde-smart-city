@@ -60,6 +60,7 @@ const navItems: HubNavItem[] = [
         key: 'sys.cfg',
         label: '系统配置',
         children: [
+          { key: 'sys.cfg.general', label: '通用配置' },
           { key: 'sys.cfg.appearance', label: '基础信息' },
           { key: 'sys.cfg.mail', label: '系统邮箱' },
           { key: 'sys.cfg.cron', label: '执行周期管理' },
@@ -106,8 +107,10 @@ const OLD_TAB_MAP: Record<string, string> = {
   m141: 'auth',
   services: 'services',
   m142: 'services',
-  config: 'sys.cfg.appearance',
+  config: 'sys.cfg.general',
   m143: 'sys.cfg.appearance',
+  general: 'sys.cfg.general',
+  'sys.cfg': 'sys.cfg.general',
   audit: 'audit.log',
   m144: 'audit.log',
   integration: 'apps.integration',
@@ -157,6 +160,7 @@ const uumIntegrations = ref<Record<string, unknown>[]>([])
 const apps = ref<Record<string, unknown>[]>([])
 const appGrants = ref<Record<string, unknown>[]>([])
 const authConfigs = ref<Record<string, unknown>[]>([])
+const systemConfigs = ref<Record<string, unknown>[]>([])
 const services = ref<Record<string, unknown>[]>([])
 const serviceStats = ref<Record<string, unknown>[]>([])
 const approvals = ref<Record<string, unknown>[]>([])
@@ -251,6 +255,10 @@ async function loadAuthTab() {
   authConfigs.value = (await api.get('/system/uum/auth-configs')).data || []
 }
 
+async function loadSystemConfigs() {
+  systemConfigs.value = (await api.get('/system/uum/system-configs')).data || []
+}
+
 async function loadServicesTab() {
   const [s, st, ap] = await Promise.all([
     api.get('/system/uum/services'),
@@ -315,6 +323,7 @@ async function loadTabData() {
     if (tab.value === 'apps.manage') await loadAppsTab()
     else if (tab.value === 'apps.integration') await loadUumIntegrations()
     else if (tab.value === 'auth') await loadAuthTab()
+    else if (tab.value === 'sys.cfg.general') await loadSystemConfigs()
     else if (tab.value === 'services') await loadServicesTab()
     else if (tab.value === 'other.probe') await loadProbe()
     else if (tab.value === 'other.roleMenus') await loadRoleMenusTab()
@@ -342,6 +351,10 @@ async function removeGrant(id: number) {
 }
 async function saveAuthConfig(row: Record<string, unknown>) {
   await api.put(`/system/uum/auth-configs/${row.id}`, { configValue: row.configValue })
+  ElMessage.success('已保存')
+}
+async function saveSystemConfig(row: Record<string, unknown>) {
+  await api.put(`/system/uum/system-configs/${row.id}`, { configValue: row.configValue })
   ElMessage.success('已保存')
 }
 async function createService() {
@@ -563,6 +576,28 @@ onMounted(() => {
         <div v-else-if="tab === 'sys.menus'" class="support-embed"><MenuManage /></div>
         <PageCard v-else-if="tab === 'sys.dict'" title="系统数据字典">
           <SysDictManagePanel />
+        </PageCard>
+        <PageCard v-else-if="tab === 'sys.cfg.general'" title="通用配置">
+          <el-alert
+            type="info"
+            :closable="false"
+            style="margin-bottom:12px"
+            title="系统级通用参数。其中「部门数据共享门户地址」用于供需对接「选择目录」提示中的跳转链接，支持相对路径（如 /exchange/analysis-portal/dept）或完整 URL。"
+          />
+          <el-table :data="systemConfigs" stripe size="small" v-loading="loading">
+            <el-table-column prop="configKey" label="配置项" width="200" />
+            <el-table-column prop="description" label="说明" min-width="220" />
+            <el-table-column label="值" min-width="280">
+              <template #default="{ row }">
+                <el-input v-model="row.configValue" size="small" placeholder="请输入配置值" />
+              </template>
+            </el-table-column>
+            <el-table-column label="操作" width="80">
+              <template #default="{ row }">
+                <el-button link type="primary" @click="saveSystemConfig(row)">保存</el-button>
+              </template>
+            </el-table-column>
+          </el-table>
         </PageCard>
         <PageCard v-else-if="tab === 'sys.cfg.appearance'" title="基础信息">
           <SystemMaintenanceView embed />

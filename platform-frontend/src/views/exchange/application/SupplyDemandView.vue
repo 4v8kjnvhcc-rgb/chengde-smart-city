@@ -14,6 +14,8 @@ import {
 } from './application-nav'
 import DemandApplyForm, { type DemandFormModel } from './DemandApplyForm.vue'
 import { useAuthStore } from '@/stores/auth'
+import { statusLabel } from '@/utils/status-label'
+import { formatDateTime, formatMaybeDateTime, sortByTimeDesc } from '@/utils/datetime'
 
 const props = defineProps<{ mode?: 'front' | 'config'; embedded?: boolean }>()
 
@@ -46,6 +48,18 @@ const objectionManifestSections = MANIFEST_CENTER_SECTIONS.filter((s) => s.group
 
 function isObjectionListSub(key = listCenterSub.value) {
   return String(key).startsWith('objection')
+}
+
+function asRows(data: unknown): Record<string, unknown>[] {
+  return Array.isArray(data) ? (data as Record<string, unknown>[]) : []
+}
+
+function assignDemands(data: unknown) {
+  demands.value = sortByTimeDesc(asRows(data))
+}
+
+async function reloadDemands() {
+  assignDemands((await api.get('/exchange/supply/demands')).data)
 }
 const exchangeJobs = ref<Record<string, unknown>[]>([])
 const apiEndpoints = ref<Record<string, unknown>[]>([])
@@ -96,7 +110,53 @@ const editDialog = reactive({
   assigneeOrg: '',
   fulfillPath: 'NEED_COLLECT' as FulfillPath,
 })
-const objectionForm = reactive({ catalogId: undefined as number | undefined, objectionType: 'QUALITY', content: '' })
+const objectionForm = reactive({
+  demandId: undefined as number | undefined,
+  catalogId: undefined as number | undefined,
+  objectionType: 'QUALITY',
+  content: '',
+  title: '',
+})
+const objectionCreateVisible = ref(false)
+
+/** 异议六态展示（不覆盖全局 APPROVED/SUBMITTED 等字典） */
+const OBJECTION_STATUS_ZH: Record<string, string> = {
+  DRAFT: '草稿',
+  SUBMITTED: '已提交',
+  APPROVED: '已通过待处理',
+  REJECTED: '已驳回',
+  PROCESSED: '已处理',
+  CLOSED: '已办结',
+  OPEN: '已提交',
+  PROCESSING: '已通过待处理',
+}
+function objectionStatusLabel(s: unknown) {
+  const k = String(s || '').toUpperCase()
+  return OBJECTION_STATUS_ZH[k] || statusLabel(s)
+}
+
+/** 可供异议挂载的已通过需求 */
+const objectionEligibleDemands = computed(() =>
+  demands.value.filter((d) => ['CONFIRMED', 'COMPLETED'].includes(String(d.status))),
+)
+
+function openObjectionCreate() {
+  objectionForm.demandId = undefined
+  objectionForm.catalogId = undefined
+  objectionForm.objectionType = 'QUALITY'
+  objectionForm.content = ''
+  objectionForm.title = ''
+  objectionCreateVisible.value = true
+  void reloadDemands()
+}
+
+function resetObjectionForm() {
+  objectionForm.demandId = undefined
+  objectionForm.catalogId = undefined
+  objectionForm.objectionType = 'QUALITY'
+  objectionForm.content = ''
+  objectionForm.title = ''
+}
 
 const demandFilter = reactive({ title: '', demandType: '', status: '' })
 const demandPage = ref(1)
@@ -105,9 +165,16 @@ const createVisible = ref(false)
 const applyMode = ref<'create' | 'edit' | 'view'>('create')
 const applyFormModel = ref<Partial<DemandFormModel> | null>(null)
 const editingDemandId = ref<number>(0)
-const trackDrawer = reactive<{ visible: boolean; row: Record<string, unknown> | null }>({
+const trackDrawer = reactive<{
+  visible: boolean
+  row: Record<string, unknown> | null
+  stages: { status: string; result: string; createdAt?: string }[]
+  loading: boolean
+}>({
   visible: false,
   row: null,
+  stages: [],
+  loading: false,
 })
 
 /** 需求分析（front） */
@@ -133,20 +200,19 @@ const feedbackDrawer = reactive<{ visible: boolean; row: Record<string, unknown>
   row: null,
 })
 
-/** 清单中心 KPI */
-const manifestCounts = reactive({ catalog: 0, supply: 0, objection: 0 })
+/** 清单中心筛选 */
 const listFilter = reactive({ code: '', title: '', status: '' })
 const listPage = ref(1)
 const listPageSize = ref(10)
 const objectionFilter = reactive({ title: '', object: '', provider: '', status: '' })
 
 const filteredDemands = computed(() => {
-  return demands.value.filter((d) => {
+  return sortByTimeDesc(demands.value.filter((d) => {
     if (demandFilter.title && !String(d.demandTitle || '').includes(demandFilter.title.trim())) return false
     if (demandFilter.demandType && String(d.demandType) !== demandFilter.demandType) return false
     if (demandFilter.status && String(d.status) !== demandFilter.status) return false
     return true
-  })
+  }))
 })
 const pagedDemands = computed(() => {
   const start = (demandPage.value - 1) * demandPageSize.value
@@ -184,6 +250,7 @@ function parseFormPayload(row: Record<string, unknown>): Partial<DemandFormModel
     serviceDemandType: (payload.serviceDemandType as 'GOV' | 'NON_GOV') || 'GOV',
     matterIds: Array.isArray(payload.matterIds) ? (payload.matterIds as number[]) : [],
     matterNames: Array.isArray(payload.matterNames) ? (payload.matterNames as string[]) : [],
+    matterCodes: Array.isArray(payload.matterCodes) ? (payload.matterCodes as string[]) : [],
     matterMaterials: String(payload.matterMaterials || ''),
     usageScenario: String(payload.usageScenario || ''),
     demandBasis: String(payload.demandBasis || row.demandContent || ''),
@@ -220,6 +287,7 @@ function buildDemandBody(v: DemandFormModel, draft: boolean) {
       serviceDemandType: v.serviceDemandType,
       matterIds: v.matterIds,
       matterNames: v.matterNames,
+      matterCodes: v.matterCodes,
       matterMaterials: v.matterMaterials,
       usageScenario: v.usageScenario,
       demandBasis: v.demandBasis,
@@ -243,6 +311,7 @@ function openCreateDemand() {
     dataItems: [],
     matterIds: [],
     matterNames: [],
+    matterCodes: [],
     demandType: 'STRUCTURED',
   }
   createVisible.value = true
@@ -262,9 +331,34 @@ function openEditDemandForm(row: Record<string, unknown>) {
   createVisible.value = true
 }
 
-function openTrack(row: Record<string, unknown>) {
+async function openTrack(row: Record<string, unknown>) {
   trackDrawer.row = row
+  trackDrawer.stages = []
   trackDrawer.visible = true
+  trackDrawer.loading = true
+  try {
+    const id = Number(row.id)
+    if (!id) return
+    const res = await api.get(`/exchange/supply/demands/${id}/track`)
+    const data = res.data || {}
+    trackDrawer.row = {
+      ...row,
+      demandTitle: data.demandTitle ?? row.demandTitle,
+      requesterOrg: data.requesterOrg ?? row.requesterOrg,
+      status: data.status ?? row.status,
+      stage: data.stage ?? row.stage,
+    }
+    trackDrawer.stages = sortByTimeDesc(Array.isArray(data.stages) ? data.stages : [])
+  } catch {
+    // 接口失败时用本地字段兜底一条
+    trackDrawer.stages = [{
+      status: statusLabel(row.status),
+      result: String(row.analysisNote || row.confirmNote || row.superviseNote || '—'),
+      createdAt: formatDateTime(row.updatedAt || row.createdAt, ''),
+    }]
+  } finally {
+    trackDrawer.loading = false
+  }
 }
 
 function demandOps(status: string) {
@@ -282,7 +376,7 @@ function importHint() {
 
 async function exportDemandsCsv() {
   const rows = filteredDemands.value
-  const header = ['需求标题', '需求单位', '类型', '状态', '阶段']
+  const header = ['需求名称', '需求单位', '类型', '状态', '阶段']
   const lines = rows.map((r) => [
     r.demandTitle, r.requesterOrg, r.demandType, r.status, r.stage,
   ].map((x) => `"${String(x ?? '').replace(/"/g, '""')}"`).join(','))
@@ -313,12 +407,12 @@ function canProviderConfirm(row: Record<string, unknown>) {
   return false
 }
 const filteredAnalysis = computed(() =>
-  analysisPending.value.filter((d) => {
+  sortByTimeDesc(analysisPending.value.filter((d) => {
     if (analysisFilter.title && !String(d.demandTitle || '').includes(analysisFilter.title.trim())) return false
     if (analysisFilter.org && !String(d.requesterOrg || '').includes(analysisFilter.org.trim())) return false
     if (analysisFilter.evalStatus && String(d.evalStatus || '') !== analysisFilter.evalStatus) return false
     return true
-  }),
+  })),
 )
 const pagedAnalysis = computed(() => {
   const start = (analysisPage.value - 1) * analysisPageSize.value
@@ -429,17 +523,19 @@ const supplyKpi = computed(() => {
     fail: tasks.filter((t) => ['FAILED', 'ERROR', 'FAIL'].includes(String(t.status))).length,
   }
 })
-const supplyShareRows = computed(() => supplyTasks.value)
+const supplyShareRows = computed(() => sortByTimeDesc(supplyTasks.value))
 const supplyExchangeRows = computed(() =>
-  exchangeJobs.value.length
-    ? exchangeJobs.value
-    : supplyTasks.value.filter((t) => ['EXCHANGE', 'COLLECT'].includes(String(t.taskType))),
+  sortByTimeDesc(
+    exchangeJobs.value.length
+      ? exchangeJobs.value
+      : supplyTasks.value.filter((t) => ['EXCHANGE', 'COLLECT'].includes(String(t.taskType))),
+  ),
 )
 
 const superviseRows = computed(() =>
-  demands.value.filter((d) =>
+  sortByTimeDesc(demands.value.filter((d) =>
     ['SUBMITTED', 'PRE_AUDITING', 'ANALYZING', 'DISPATCHED', 'RETURNED', 'SUPERVISING', 'CORRECTION', 'PROVIDER_RETURNED', 'CONFIRMED'].includes(String(d.status)),
-  ),
+  )),
 )
 const superviseKpi = computed(() => {
   const now = Date.now()
@@ -478,41 +574,29 @@ const filteredListItems = computed(() => {
   if (listCenterSub.value === 'objection-stats') {
     return listCenterItems.value
   }
+  let rows: Record<string, unknown>[]
   if (isObjectionListSub()) {
-    return listCenterItems.value.filter((r) => {
+    rows = listCenterItems.value.filter((r) => {
       if (objectionFilter.title && !String(r.title || '').includes(objectionFilter.title.trim())) return false
       if (objectionFilter.object && !String(r.objectName || r.catalogId || '').includes(objectionFilter.object.trim())) return false
       if (objectionFilter.provider && !String(r.providerOrg || '').includes(objectionFilter.provider.trim())) return false
       if (objectionFilter.status && String(r.status) !== objectionFilter.status) return false
       return true
     })
+  } else {
+    rows = listCenterItems.value.filter((r) => {
+      if (listFilter.code && !String(r.code || r.catalogCode || r.id || '').includes(listFilter.code.trim())) return false
+      if (listFilter.title && !String(r.title || r.catalogName || r.demandCatalog || '').includes(listFilter.title.trim())) return false
+      if (listFilter.status && String(r.status || r.publishStatus || '') !== listFilter.status) return false
+      return true
+    })
   }
-  return listCenterItems.value.filter((r) => {
-    if (listFilter.code && !String(r.code || r.catalogCode || r.id || '').includes(listFilter.code.trim())) return false
-    if (listFilter.title && !String(r.title || r.catalogName || r.demandCatalog || '').includes(listFilter.title.trim())) return false
-    if (listFilter.status && String(r.status || r.publishStatus || '') !== listFilter.status) return false
-    return true
-  })
+  return sortByTimeDesc(rows)
 })
 const pagedListItems = computed(() => {
   const start = (listPage.value - 1) * listPageSize.value
   return filteredListItems.value.slice(start, start + listPageSize.value)
 })
-
-async function refreshManifestCounts() {
-  try {
-    const [cat, dem, obj] = await Promise.all([
-      api.get('/exchange/supply/list-center', { params: { listType: 'catalog-published' } }),
-      api.get('/exchange/supply/list-center', { params: { listType: 'sd-joint-audit' } }),
-      api.get('/exchange/supply/list-center', { params: { listType: 'objection-history' } }),
-    ])
-    manifestCounts.catalog = (cat.data?.items || []).length
-    manifestCounts.supply = (dem.data?.items || []).length
-    manifestCounts.objection = (obj.data?.items || []).length
-  } catch {
-    // ignore
-  }
-}
 
 function shortManifestLabel(label: string) {
   return label
@@ -551,25 +635,6 @@ function showObjectionContent(row: Record<string, unknown>) {
   openListDetail(row)
 }
 
-async function closeObjectionFromList(id: number) {
-  await api.post(`/exchange/supply/objections/${id}/process`, {
-    action: 'CLOSE',
-    handlerNote: '清单中心办结',
-  })
-  ElMessage.success('异议已办结')
-  await loadListCenter()
-  await refreshManifestCounts()
-}
-
-async function startObjectionProcess(id: number) {
-  await api.post(`/exchange/supply/objections/${id}/process`, {
-    action: 'PROCESSING',
-    handlerNote: '清单中心转入处理',
-  })
-  ElMessage.success('已转入处理')
-  await loadListCenter()
-}
-
 const EVAL_STATUS_OPTIONS = [
   { value: 'PENDING', label: '待评估' },
   { value: 'MATCHED', label: '已匹配' },
@@ -586,6 +651,7 @@ const RESOURCE_TYPE_LABEL: Record<string, string> = {
   CATALOG: '目录',
   TABLE: '库表',
   API: '接口',
+  FILE: '文件',
   DEMAND: '需求',
 }
 
@@ -646,6 +712,25 @@ function shareLabel(v: unknown) {
 
 function resourceTypeLabel(v: unknown) {
   return RESOURCE_TYPE_LABEL[String(v)] || String(v || '-')
+}
+
+/** 清单中心「共享属性」：支持 TABLE/API/FILE 及逗号分隔组合，显示中文字典值 */
+function catalogShareAttrLabel(v: unknown) {
+  if (v == null || v === '' || v === '—') return '—'
+  const raw = String(v).trim()
+  if (raw.includes(',') || raw.includes('，')) {
+    return raw
+      .split(/[,，]/)
+      .map((s) => s.trim())
+      .filter(Boolean)
+      .map((s) => catalogShareAttrLabel(s))
+      .join('、')
+  }
+  const key = raw.toUpperCase()
+  const fromShare = SHARE_ATTR_OPTIONS.find((o) => o.value === key)?.label
+  if (fromShare) return fromShare
+  if (RESOURCE_TYPE_LABEL[key]) return RESOURCE_TYPE_LABEL[key]
+  return statusLabel(key)
 }
 
 function syncRoute() {
@@ -781,9 +866,9 @@ async function loadSection() {
         api.get('/exchange/supply/demands'),
       ])
       templates.value = tp.data
-      demands.value = dm.data
+      assignDemands(dm.data)
     } else if (section.value === 'analysis' || section.value === 'confirm' || section.value === 'supervise') {
-      demands.value = (await api.get('/exchange/supply/demands')).data
+      await reloadDemands()
       if (section.value === 'analysis') {
         await loadAnalysisOrgs()
         if (!analyzingId.value && analysisPending.value.length) {
@@ -797,8 +882,8 @@ async function loadSection() {
         api.get('/exchange/supply/demands'),
         api.get('/exchange/supply/supply-tasks'),
       ])
-      demands.value = dm.data
-      supplyTasks.value = tasks.data || []
+      assignDemands(dm.data)
+      supplyTasks.value = sortByTimeDesc(asRows(tasks.data))
       exchangeJobs.value = supplyTasks.value.filter((t) => ['EXCHANGE', 'COLLECT'].includes(String(t.taskType)))
       if (!selectedDemandId.value && supplyViewDemands.value.length) {
         selectedDemandId.value = Number(supplyViewDemands.value[0].id)
@@ -811,19 +896,21 @@ async function loadSection() {
         duties.value = []
       }
     } else if (section.value === 'manifest-center') {
-      await Promise.all([loadListCenter(), refreshManifestCounts()])
+      await Promise.all([loadListCenter(), reloadDemands()])
       listPage.value = 1
     } else if (section.value === 'catalog') {
-      catalogs.value = (await api.get('/exchange/supply/catalog-manifest', { params: { scope: 'published' } })).data
+      catalogs.value = sortByTimeDesc(asRows(
+        (await api.get('/exchange/supply/catalog-manifest', { params: { scope: 'published' } })).data,
+      ))
     } else if (section.value === 'objection') {
       const [cat, obj] = await Promise.all([
         api.get('/exchange/supply/catalog-manifest', { params: { scope: 'published' } }),
         api.get('/exchange/supply/objections'),
       ])
-      catalogs.value = cat.data
-      objections.value = obj.data
+      catalogs.value = sortByTimeDesc(asRows(cat.data))
+      objections.value = sortByTimeDesc(asRows(obj.data))
     } else if (section.value === 'manifest') {
-      manifests.value = (await api.get('/exchange/supply/manifests')).data
+      manifests.value = sortByTimeDesc(asRows((await api.get('/exchange/supply/manifests')).data))
     }
   } catch {
     ElMessage.error('加载失败')
@@ -834,16 +921,18 @@ async function loadSection() {
 
 async function loadListCenter() {
   const res = await api.get('/exchange/supply/list-center', { params: { listType: listCenterSub.value } })
-  listCenterItems.value = res.data.items || []
+  listCenterItems.value = sortByTimeDesc(asRows(res.data.items))
   listCenterStats.value = (res.data.stats as Record<string, unknown>) || null
   if (isObjectionListSub()) {
     objections.value = listCenterItems.value
-    catalogs.value = (await api.get('/exchange/supply/catalog-manifest', { params: { scope: 'published' } })).data
+    catalogs.value = sortByTimeDesc(asRows(
+      (await api.get('/exchange/supply/catalog-manifest', { params: { scope: 'published' } })).data,
+    ))
   }
 }
 
 async function submitDemand() {
-  if (!demandForm.demandTitle) return ElMessage.warning('请填写需求标题')
+  if (!demandForm.demandTitle) return ElMessage.warning('请填写需求名称')
   if (demandForm.demandType === 'UNSTRUCTURED' && !demandForm.demandContent) {
     return ElMessage.warning('请填写非结构化需求内容')
   }
@@ -856,7 +945,7 @@ async function submitDemand() {
   demandForm.demandContent = ''
   Object.keys(modelFieldValues).forEach((k) => { modelFieldValues[k] = '' })
   createVisible.value = false
-  demands.value = (await api.get('/exchange/supply/demands')).data
+  await reloadDemands()
   demandPage.value = 1
 }
 
@@ -869,7 +958,7 @@ async function saveApplyDraft(v: DemandFormModel) {
   }
   ElMessage.success('已暂存草稿')
   createVisible.value = false
-  demands.value = (await api.get('/exchange/supply/demands')).data
+  await reloadDemands()
   demandPage.value = 1
 }
 
@@ -882,26 +971,26 @@ async function saveApplySubmit(v: DemandFormModel) {
   }
   ElMessage.success('已提交，待数据主管部门审核')
   createVisible.value = false
-  demands.value = (await api.get('/exchange/supply/demands')).data
+  await reloadDemands()
   demandPage.value = 1
 }
 
 async function submitExistingDemand(id: number) {
   await api.post(`/exchange/supply/demands/${id}/submit`)
   ElMessage.success('已提交，待数据主管部门审核')
-  demands.value = (await api.get('/exchange/supply/demands')).data
+  await reloadDemands()
 }
 
 async function deleteDemandRow(id: number) {
   await api.post(`/exchange/supply/demands/${id}/delete`)
   ElMessage.success('已删除')
-  demands.value = (await api.get('/exchange/supply/demands')).data
+  await reloadDemands()
 }
 
 async function withdrawDemand(id: number) {
   await api.post(`/exchange/supply/demands/${id}/withdraw`)
   ElMessage.success('已撤销，状态为撤销待提交')
-  demands.value = (await api.get('/exchange/supply/demands')).data
+  await reloadDemands()
 }
 
 async function analyzeDemand(id: number) {
@@ -927,7 +1016,7 @@ async function analyzeDemand(id: number) {
   if (analysisResult.value?.shareAttr) {
     quickSet.shareAttr = String(analysisResult.value.shareAttr)
   }
-  demands.value = (await api.get('/exchange/supply/demands')).data
+  await reloadDemands()
   ElMessage.success('门户目录智能匹配完成')
 }
 
@@ -942,7 +1031,7 @@ async function dispatchDemand(id: number) {
     })
     ElMessage.success('已分发到对应部门')
     analyzingId.value = undefined
-    demands.value = (await api.get('/exchange/supply/demands')).data
+    await reloadDemands()
   } catch (e: unknown) {
     ElMessage.error((e as Error)?.message || '分发失败')
   }
@@ -957,7 +1046,7 @@ async function returnToPortalApply(id: number) {
   })
   ElMessage.success('已退回需求部门，请其前往门户申请')
   analyzingId.value = undefined
-  demands.value = (await api.get('/exchange/supply/demands')).data
+  await reloadDemands()
 }
 
 async function adminAgreeProviderReturn(id: number) {
@@ -969,7 +1058,7 @@ async function adminAgreeProviderReturn(id: number) {
   })
   ElMessage.success('已同意退回需求部门')
   analyzingId.value = undefined
-  demands.value = (await api.get('/exchange/supply/demands')).data
+  await reloadDemands()
 }
 
 async function adminRefuseProviderReturn(id: number) {
@@ -981,7 +1070,7 @@ async function adminRefuseProviderReturn(id: number) {
   })
   ElMessage.success('已打回提供部门重新确认')
   analyzingId.value = undefined
-  demands.value = (await api.get('/exchange/supply/demands')).data
+  await reloadDemands()
 }
 
 async function markCatalogMounted(id: number) {
@@ -994,7 +1083,7 @@ async function markCatalogMounted(id: number) {
     confirmNote: '目录已挂载至部门数据共享门户',
   })
   ElMessage.success('已标记目录挂载')
-  demands.value = (await api.get('/exchange/supply/demands')).data
+  await reloadDemands()
 }
 
 function openReturnDialog(id: number) {
@@ -1011,7 +1100,7 @@ async function confirmReturnDemandAnalysis() {
   returnDialog.visible = false
   ElMessage.success('已退回数据提交部门')
   analyzingId.value = undefined
-  demands.value = (await api.get('/exchange/supply/demands')).data
+  await reloadDemands()
 }
 
 function openSuperviseDialog(id: number) {
@@ -1026,7 +1115,7 @@ async function confirmSuperviseDemand() {
   })
   superviseDialog.visible = false
   ElMessage.success('已发起督查督办')
-  demands.value = (await api.get('/exchange/supply/demands')).data
+  await reloadDemands()
 }
 
 async function returnDemand(id: number) {
@@ -1046,7 +1135,7 @@ async function applyQuickSettings(id?: number) {
     fulfillPath: dispatchForm.fulfillPath,
   })
   ElMessage.success(`已设置：评估=${evalLabel(res.data.evalStatus)}，共享=${shareLabel(res.data.shareAttr)}`)
-  demands.value = (await api.get('/exchange/supply/demands')).data
+  await reloadDemands()
 }
 
 async function applyCandidate(row: Record<string, unknown>) {
@@ -1068,7 +1157,7 @@ async function applyCandidate(row: Record<string, unknown>) {
   quickSet.shareAttr = String(res.data.shareAttr)
   if (res.data.fulfillPath) dispatchForm.fulfillPath = res.data.fulfillPath as FulfillPath
   ElMessage.success(`已一键绑定「${row.title}」`)
-  demands.value = (await api.get('/exchange/supply/demands')).data
+  await reloadDemands()
 }
 
 async function bindResourceToDemand(row: Record<string, unknown>) {
@@ -1094,7 +1183,7 @@ async function confirmDemand(id: number, row: Record<string, unknown>) {
   ElMessage.success(`已同意提供：数据责任 #${res.data.dutyId}，生成 ${taskCount} 项共享任务；请在 10 个工作日内挂载目录至门户`)
   selectedDemandId.value = id
   confirmDrawer.visible = false
-  demands.value = (await api.get('/exchange/supply/demands')).data
+  await reloadDemands()
 }
 
 const confirmReturnDialog = reactive({ visible: false, id: 0 })
@@ -1118,7 +1207,7 @@ async function submitConfirmReturn() {
   confirmReturnDialog.visible = false
   confirmDrawer.visible = false
   ElMessage.success('已提交平台管理员裁决（提供方不同意提供）')
-  demands.value = (await api.get('/exchange/supply/demands')).data
+  await reloadDemands()
 }
 
 async function rejectDemand(id: number) {
@@ -1126,7 +1215,7 @@ async function rejectDemand(id: number) {
     confirmNote: confirmNote.value || '不符合共享范围',
   })
   ElMessage.success('已驳回')
-  demands.value = (await api.get('/exchange/supply/demands')).data
+  await reloadDemands()
 }
 
 async function submitConfirmFeedback(id: number) {
@@ -1135,7 +1224,7 @@ async function submitConfirmFeedback(id: number) {
     confirmFeedback: confirmFeedback.value,
   })
   ElMessage.success('督查反馈已提交')
-  demands.value = (await api.get('/exchange/supply/demands')).data
+  await reloadDemands()
 }
 
 async function completeDemand(id: number) {
@@ -1145,7 +1234,7 @@ async function completeDemand(id: number) {
   })
   confirmDrawer.visible = false
   ElMessage.success('需求已办结，可在「数据供给查看」中查看共享方式')
-  demands.value = (await api.get('/exchange/supply/demands')).data
+  await reloadDemands()
   selectedDemandId.value = id
   await loadSupplyView(id)
   setSection('supply')
@@ -1157,7 +1246,7 @@ async function cancelDemand(id: number) {
   })
   confirmDrawer.visible = false
   ElMessage.success('需求已撤销')
-  demands.value = (await api.get('/exchange/supply/demands')).data
+  await reloadDemands()
 }
 
 function openEdit(row: Record<string, unknown>) {
@@ -1179,28 +1268,28 @@ async function saveEdit() {
   })
   editDialog.visible = false
   ElMessage.success('需求已修改')
-  demands.value = (await api.get('/exchange/supply/demands')).data
+  await reloadDemands()
 }
 
 /** 已分发至供数部门、待确认（含督办/补正；挂载超时督办归入已确认台账处理） */
 const confirmPending = computed(() =>
-  demands.value.filter((d) => {
+  sortByTimeDesc(demands.value.filter((d) => {
     const s = String(d.status)
     if (s === 'DISPATCHED' || s === 'CORRECTION') return true
     if (s === 'SUPERVISING' && !d.catalogMountDeadline) return true
     return false
-  }),
+  })),
 )
 /** 已确认 / 挂载督办 / 办结 / 退回 / 撤销等台账（提供方退回待裁决在「数据分析」由管理员处理） */
 const confirmManaged = computed(() =>
-  demands.value.filter((d) =>
+  sortByTimeDesc(demands.value.filter((d) =>
     ['CONFIRMED', 'COMPLETED', 'CANCELLED', 'REJECTED', 'RETURNED'].includes(String(d.status))
     || (String(d.status) === 'SUPERVISING' && !!d.catalogMountDeadline),
-  ),
+  )),
 )
 /** 数据供给查看：仅已办结 */
 const supplyViewDemands = computed(() =>
-  demands.value.filter((d) => String(d.status) === 'COMPLETED'),
+  sortByTimeDesc(demands.value.filter((d) => String(d.status) === 'COMPLETED')),
 )
 const confirmRows = computed(() => {
   const ids = new Set<number>()
@@ -1214,11 +1303,11 @@ const confirmRows = computed(() => {
   return out
 })
 const filteredConfirm = computed(() =>
-  confirmRows.value.filter((d) => {
+  sortByTimeDesc(confirmRows.value.filter((d) => {
     if (confirmFilter.title && !String(d.demandTitle || '').includes(confirmFilter.title.trim())) return false
     if (confirmFilter.status && String(d.status) !== confirmFilter.status) return false
     return true
-  }),
+  })),
 )
 const pagedConfirm = computed(() => {
   const start = (confirmPage.value - 1) * confirmPageSize.value
@@ -1228,38 +1317,82 @@ const pagedConfirm = computed(() => {
 async function loadSupplyView(id: number) {
   selectedDemandId.value = id
   supplyView.value = (await api.get(`/exchange/supply/supply-view/${id}`)).data
-  supplyTasks.value = (supplyView.value?.tasks as Record<string, unknown>[])
-    || (await api.get('/exchange/supply/supply-tasks', { params: { demandId: id } })).data
-  duties.value = (supplyView.value?.duties as Record<string, unknown>[])
-    || (await api.get('/exchange/supply/duties', { params: { demandId: id } })).data
-  exchangeJobs.value = (supplyView.value?.exchangeJobs as Record<string, unknown>[]) || []
-  apiEndpoints.value = (supplyView.value?.apiEndpoints as Record<string, unknown>[]) || []
-  sharePages.value = (supplyView.value?.sharePages as Record<string, unknown>[]) || []
+  supplyTasks.value = sortByTimeDesc(asRows(
+    (supplyView.value?.tasks as Record<string, unknown>[])
+    || (await api.get('/exchange/supply/supply-tasks', { params: { demandId: id } })).data,
+  ))
+  duties.value = sortByTimeDesc(asRows(
+    (supplyView.value?.duties as Record<string, unknown>[])
+    || (await api.get('/exchange/supply/duties', { params: { demandId: id } })).data,
+  ))
+  exchangeJobs.value = sortByTimeDesc(asRows(supplyView.value?.exchangeJobs as Record<string, unknown>[]))
+  apiEndpoints.value = asRows(supplyView.value?.apiEndpoints as Record<string, unknown>[])
+  sharePages.value = asRows(supplyView.value?.sharePages as Record<string, unknown>[])
 }
 
 async function onSupplyDemandPick(v: number | undefined) {
   if (v) await loadSupplyView(v)
 }
 
-async function submitObjection() {
-  if (!objectionForm.catalogId || !objectionForm.content) return ElMessage.warning('请填写异议')
-  await api.post('/exchange/supply/objections', objectionForm)
+async function submitObjection(draft = false) {
+  if (!objectionForm.demandId || !objectionForm.content) {
+    return ElMessage.warning('请选择已通过的需求并填写异议内容')
+  }
+  const demand = demands.value.find((d) => Number(d.id) === Number(objectionForm.demandId))
+  const catalogId = objectionForm.catalogId
+    || Number(demand?.matchedCatalogId || demand?.targetCatalogId || 0)
+    || undefined
+  await api.post('/exchange/supply/objections', {
+    demandId: objectionForm.demandId,
+    catalogId,
+    objectionType: objectionForm.objectionType,
+    content: objectionForm.content,
+    title: objectionForm.title || undefined,
+    draft,
+  })
   objectionForm.content = ''
-  ElMessage.success('异议已登记')
+  objectionForm.title = ''
+  objectionForm.demandId = undefined
+  objectionCreateVisible.value = false
+  ElMessage.success(draft ? '异议已暂存草稿' : '异议已提交')
   listCenterSub.value = 'objection-apply'
   listCenterGroup.value = '异议清单'
   await loadListCenter()
-  await refreshManifestCounts()
 }
 
-async function reopenObjectionAudit(id: number) {
-  await api.post(`/exchange/supply/objections/${id}/process`, {
-    action: 'REOPEN_AUDIT',
-    handlerNote: '发现数据问题，回流需求审核',
-  })
-  ElMessage.success('已回流需求审核')
+async function objectionAction(id: number, action: string, needReason = false) {
+  let handlerNote = ''
+  if (needReason) {
+    const { value } = await ElMessageBox.prompt(
+      action === 'REJECT' ? '请填写驳回理由' : '请填写处理说明（可选）',
+      '异议操作',
+      {
+        confirmButtonText: '确定',
+        cancelButtonText: '取消',
+        inputPattern: action === 'REJECT' ? /\S+/ : undefined,
+        inputErrorMessage: '驳回理由不能为空',
+      },
+    )
+    handlerNote = String(value || '')
+  }
+  await api.post(`/exchange/supply/objections/${id}/process`, { action, handlerNote })
+  const tip: Record<string, string> = {
+    SUBMIT: '已提交',
+    APPROVE: '已通过，待处理',
+    REJECT: '已驳回',
+    PROCESS: '已处理',
+    CLOSE: '已办结',
+  }
+  ElMessage.success(tip[action] || '操作成功')
   await loadListCenter()
-  demands.value = (await api.get('/exchange/supply/demands')).data
+}
+
+async function closeObjectionFromList(id: number) {
+  await objectionAction(id, 'CLOSE')
+}
+
+async function startObjectionProcess(id: number) {
+  await objectionAction(id, 'PROCESS')
 }
 
 watch(() => [route.query.module, route.query.section, route.query.tab, route.query.sdSection, route.query.listGroup], () => {
@@ -1301,8 +1434,8 @@ onMounted(() => {
       <template v-if="mode === 'front'">
         <div class="sd-filter-card">
           <el-form inline class="portal-inline-form portal-inline-form--block">
-            <el-form-item label="需求标题" class="portal-field-lg">
-              <el-input v-model="demandFilter.title" placeholder="请输入需求标题" clearable />
+            <el-form-item label="需求名称" class="portal-field-lg">
+              <el-input v-model="demandFilter.title" placeholder="请输入需求名称" clearable />
             </el-form-item>
             <el-form-item label="需求类型" class="portal-field-md">
               <el-select v-model="demandFilter.demandType" clearable placeholder="请选择需求类型">
@@ -1338,20 +1471,18 @@ onMounted(() => {
 
         <div class="sd-table-card">
           <el-table :data="pagedDemands" stripe size="small">
-            <el-table-column prop="demandTitle" label="需求标题" min-width="180" show-overflow-tooltip />
+            <el-table-column prop="demandTitle" label="需求名称" min-width="180" show-overflow-tooltip />
             <el-table-column prop="requesterOrg" label="需求单位" width="140" />
-            <el-table-column label="类型" width="100">
+            <el-table-column label="类型" width="90">
               <template #default="{ row }">{{ $statusLabel(row.demandType) }}</template>
             </el-table-column>
-            <el-table-column label="状态" width="110">
+            <el-table-column label="状态" width="180" show-overflow-tooltip>
               <template #default="{ row }">
                 <el-tag :type="$statusTagType(row.status)" size="small">{{ $statusLabel(row.status) }}</el-tag>
               </template>
             </el-table-column>
             <el-table-column label="更新时间" width="170">
-              <template #default="{ row }">
-                {{ row.updatedAt ? String(row.updatedAt).replace('T', ' ').slice(0, 19) : '—' }}
-              </template>
+              <template #default="{ row }">{{ formatDateTime(row.updatedAt || row.createdAt) }}</template>
             </el-table-column>
             <el-table-column label="操作" width="280" fixed="right">
               <template #default="{ row }">
@@ -1390,19 +1521,24 @@ onMounted(() => {
           />
         </el-dialog>
 
-        <el-drawer v-model="trackDrawer.visible" title="需求跟踪" size="420px">
-          <template v-if="trackDrawer.row">
-            <el-descriptions :column="1" border size="small">
-              <el-descriptions-item label="需求标题">{{ trackDrawer.row.demandTitle }}</el-descriptions-item>
-              <el-descriptions-item label="申请单位">{{ trackDrawer.row.requesterOrg || '—' }}</el-descriptions-item>
-              <el-descriptions-item label="阶段">{{ $statusLabel(trackDrawer.row.stage) }}</el-descriptions-item>
-              <el-descriptions-item label="状态">{{ $statusLabel(trackDrawer.row.status) }}</el-descriptions-item>
-              <el-descriptions-item label="匹配度">{{ trackDrawer.row.matchScore ?? '—' }}</el-descriptions-item>
-              <el-descriptions-item label="分发单位">{{ trackDrawer.row.assigneeOrg || '—' }}</el-descriptions-item>
-              <el-descriptions-item label="分析说明">{{ trackDrawer.row.analysisNote || '—' }}</el-descriptions-item>
-              <el-descriptions-item label="督办说明">{{ trackDrawer.row.superviseNote || '—' }}</el-descriptions-item>
-            </el-descriptions>
-          </template>
+        <el-drawer v-model="trackDrawer.visible" title="需求跟踪" size="520px">
+          <div v-loading="trackDrawer.loading">
+            <template v-if="trackDrawer.row">
+              <el-descriptions :column="1" border size="small" class="track-summary">
+                <el-descriptions-item label="需求名称">{{ trackDrawer.row.demandTitle || '—' }}</el-descriptions-item>
+                <el-descriptions-item label="申请单位">{{ trackDrawer.row.requesterOrg || '—' }}</el-descriptions-item>
+                <el-descriptions-item label="目前状态">{{ $statusLabel(trackDrawer.row.status) }}</el-descriptions-item>
+              </el-descriptions>
+              <div class="track-stage-title">阶段流水</div>
+              <el-table :data="trackDrawer.stages" stripe size="small" empty-text="暂无阶段记录">
+                <el-table-column prop="status" label="状态" width="140" show-overflow-tooltip />
+                <el-table-column prop="result" label="结果" min-width="160" show-overflow-tooltip />
+                <el-table-column label="创建时间" width="170">
+                  <template #default="{ row }">{{ formatDateTime(row.createdAt) }}</template>
+                </el-table-column>
+              </el-table>
+            </template>
+          </div>
         </el-drawer>
       </template>
 
@@ -1426,7 +1562,7 @@ onMounted(() => {
             <el-radio-button value="UNSTRUCTURED">非结构化</el-radio-button>
           </el-radio-group>
         </el-form-item>
-        <el-form-item label="需求标题">
+        <el-form-item label="需求名称">
           <el-input v-model="demandForm.demandTitle" placeholder="模型化需求名称" />
         </el-form-item>
         <el-form-item label="申请方">
@@ -1473,7 +1609,7 @@ onMounted(() => {
             <div class="sd-card-title">待分析需求（已提交待审核）</div>
             <el-form inline class="portal-inline-form portal-inline-form--sm" size="small">
               <el-form-item class="portal-field-md">
-                <el-input v-model="analysisFilter.title" placeholder="请输入需求标题" clearable />
+                <el-input v-model="analysisFilter.title" placeholder="请输入需求名称" clearable />
               </el-form-item>
               <el-form-item class="portal-field-sm">
                 <el-input v-model="analysisFilter.org" placeholder="需求部门" clearable />
@@ -1498,7 +1634,7 @@ onMounted(() => {
               <div class="sd-demand-card__title">{{ row.demandTitle }}</div>
               <div class="sd-demand-card__meta">
                 <span>{{ row.requesterOrg || '—' }}</span>
-                <span>{{ row.updatedAt ? String(row.updatedAt).replace('T', ' ').slice(0, 16) : '—' }}</span>
+                <span>{{ formatDateTime(row.updatedAt || row.createdAt) }}</span>
               </div>
               <div class="sd-demand-card__score">匹配度 {{ row.matchScore != null ? row.matchScore : '—' }}%</div>
             </button>
@@ -1521,7 +1657,7 @@ onMounted(() => {
               <el-descriptions :column="2" size="small" class="sd-detail-desc">
                 <el-descriptions-item label="需求部门">{{ selectedAnalysis.requesterOrg || '—' }}</el-descriptions-item>
                 <el-descriptions-item label="提出时间">
-                  {{ selectedAnalysis.createdAt ? String(selectedAnalysis.createdAt).replace('T', ' ').slice(0, 16) : '—' }}
+                  {{ formatDateTime(selectedAnalysis.createdAt) }}
                 </el-descriptions-item>
                 <el-descriptions-item label="评估状态">
                   <el-tag size="small" type="success">{{ evalLabel(selectedAnalysis.evalStatus) }}</el-tag>
@@ -1878,6 +2014,9 @@ onMounted(() => {
                 <el-tag :type="$statusTagType(row.status)" size="small">{{ $statusLabel(row.status) }}</el-tag>
               </template>
             </el-table-column>
+            <el-table-column label="更新时间" width="170">
+              <template #default="{ row }">{{ formatDateTime(row.updatedAt || row.createdAt) }}</template>
+            </el-table-column>
             <el-table-column prop="superviseNote" label="督办说明" min-width="140" show-overflow-tooltip />
             <el-table-column label="操作" width="160" fixed="right">
               <template #default="{ row }">
@@ -1913,7 +2052,7 @@ onMounted(() => {
         </el-form-item>
       </el-form>
       <el-table
-        :data="demands.filter(d => ['SUBMITTED','PRE_AUDITING','ANALYZING','DISPATCHED','RETURNED','SUPERVISING'].includes(String(d.status)))"
+        :data="superviseRows"
         stripe
         size="small"
       >
@@ -1924,6 +2063,9 @@ onMounted(() => {
           <template #default="{ row }">
             <el-tag :type="$statusTagType(row.status)" size="small">{{ $statusLabel(row.status) }}</el-tag>
           </template>
+        </el-table-column>
+        <el-table-column label="更新时间" width="170">
+          <template #default="{ row }">{{ formatDateTime(row.updatedAt || row.createdAt) }}</template>
         </el-table-column>
         <el-table-column prop="superviseNote" label="督办说明" min-width="160" show-overflow-tooltip />
         <el-table-column label="操作" width="160" fixed="right">
@@ -1940,8 +2082,8 @@ onMounted(() => {
       <template v-if="mode === 'front'">
         <div class="sd-filter-card">
           <el-form inline class="portal-inline-form portal-inline-form--block">
-            <el-form-item label="需求标题" class="portal-field-lg">
-              <el-input v-model="confirmFilter.title" placeholder="请输入需求标题" clearable />
+            <el-form-item label="需求名称" class="portal-field-lg">
+              <el-input v-model="confirmFilter.title" placeholder="请输入需求名称" clearable />
             </el-form-item>
             <el-form-item label="状态" class="portal-field-md">
               <el-select v-model="confirmFilter.status" clearable placeholder="全部状态">
@@ -1962,7 +2104,7 @@ onMounted(() => {
         </div>
         <div class="sd-table-card">
           <el-table :data="pagedConfirm" stripe size="small" @row-click="openConfirmDrawer">
-            <el-table-column prop="demandTitle" label="需求标题" min-width="160" show-overflow-tooltip />
+            <el-table-column prop="demandTitle" label="需求名称" min-width="160" show-overflow-tooltip />
             <el-table-column prop="requesterOrg" label="需求单位" width="120" />
             <el-table-column prop="assigneeOrg" label="供数单位" width="120" />
             <el-table-column label="匹配目录" width="100">
@@ -1972,6 +2114,9 @@ onMounted(() => {
               <template #default="{ row }">
                 <el-tag :type="$statusTagType(row.status)" size="small">{{ $statusLabel(row.status) }}</el-tag>
               </template>
+            </el-table-column>
+            <el-table-column label="更新时间" width="170">
+              <template #default="{ row }">{{ formatDateTime(row.updatedAt || row.createdAt) }}</template>
             </el-table-column>
             <el-table-column label="操作" width="360" fixed="right">
               <template #default="{ row }">
@@ -2020,8 +2165,8 @@ onMounted(() => {
               <el-descriptions-item label="申请单位">{{ confirmDrawer.row.requesterOrg || '—' }}</el-descriptions-item>
               <el-descriptions-item label="供数单位">{{ confirmDrawer.row.assigneeOrg || '—' }}</el-descriptions-item>
               <el-descriptions-item label="状态">{{ $statusLabel(confirmDrawer.row.status) }}</el-descriptions-item>
-              <el-descriptions-item v-if="confirmDrawer.row.catalogMountDeadline" label="挂载截止">{{ confirmDrawer.row.catalogMountDeadline }}</el-descriptions-item>
-              <el-descriptions-item v-if="confirmDrawer.row.catalogMountedAt" label="已挂载时间">{{ confirmDrawer.row.catalogMountedAt }}</el-descriptions-item>
+              <el-descriptions-item v-if="confirmDrawer.row.catalogMountDeadline" label="挂载截止">{{ formatDateTime(confirmDrawer.row.catalogMountDeadline) }}</el-descriptions-item>
+              <el-descriptions-item v-if="confirmDrawer.row.catalogMountedAt" label="已挂载时间">{{ formatDateTime(confirmDrawer.row.catalogMountedAt) }}</el-descriptions-item>
               <el-descriptions-item v-if="confirmDrawer.row.superviseNote" label="督办说明">{{ confirmDrawer.row.superviseNote }}</el-descriptions-item>
             </el-descriptions>
             <h4 class="confirm-h">匹配信息</h4>
@@ -2107,6 +2252,9 @@ onMounted(() => {
         <el-table-column label="状态" width="110">
           <template #default="{ row }"><el-tag :type="$statusTagType(row.status)" size="small">{{ $statusLabel(row.status) }}</el-tag></template>
         </el-table-column>
+        <el-table-column label="更新时间" width="170">
+          <template #default="{ row }">{{ formatDateTime(row.updatedAt || row.createdAt) }}</template>
+        </el-table-column>
         <el-table-column label="操作" width="400" fixed="right">
           <template #default="{ row }">
             <el-button link type="success" @click="confirmDemand(Number(row.id), row)">同意并生成共享任务</el-button>
@@ -2122,7 +2270,9 @@ onMounted(() => {
       <el-table :data="confirmManaged" stripe size="small">
         <el-table-column prop="demandTitle" label="需求" min-width="140" />
         <el-table-column prop="confirmNote" label="确认说明" min-width="160" show-overflow-tooltip />
-        <el-table-column prop="catalogMountDeadline" label="挂载截止" width="160" show-overflow-tooltip />
+        <el-table-column label="挂载截止" width="170" show-overflow-tooltip>
+          <template #default="{ row }">{{ formatDateTime(row.catalogMountDeadline) }}</template>
+        </el-table-column>
         <el-table-column label="挂载" width="90">
           <template #default="{ row }">{{ row.catalogMountedAt ? '已挂载' : '未挂载' }}</template>
         </el-table-column>
@@ -2244,9 +2394,7 @@ onMounted(() => {
               </template>
             </el-table-column>
             <el-table-column label="更新时间" width="170">
-              <template #default="{ row }">
-                {{ row.updatedAt ? String(row.updatedAt).replace('T', ' ').slice(0, 19) : (row.createdAt ? String(row.createdAt).replace('T', ' ').slice(0, 19) : '—') }}
-              </template>
+              <template #default="{ row }">{{ formatDateTime(row.updatedAt || row.createdAt) }}</template>
             </el-table-column>
             <el-table-column label="操作" width="100" fixed="right">
               <template #default="{ row }">
@@ -2361,7 +2509,7 @@ onMounted(() => {
     <PageCard v-else-if="section === 'manifest-center'" :title="mode === 'front' ? '' : '数据清单中心'" class="sd-panel">
       <div v-if="mode === 'front'" class="sd-manifest-cards">
         <div class="sd-mcard tone-blue">
-          <div class="sd-mcard__top"><span>目录清单</span><b>{{ manifestCounts.catalog }}</b></div>
+          <div class="sd-mcard__top"><span>目录清单</span></div>
           <div class="sd-mcard__grid">
             <button
               v-for="s in catalogManifestSections"
@@ -2374,7 +2522,7 @@ onMounted(() => {
           </div>
         </div>
         <div class="sd-mcard tone-green">
-          <div class="sd-mcard__top"><span>供需清单</span><b>{{ manifestCounts.supply }}</b></div>
+          <div class="sd-mcard__top"><span>供需清单</span></div>
           <div class="sd-mcard__grid">
             <button
               v-for="s in supplyManifestSections"
@@ -2387,7 +2535,7 @@ onMounted(() => {
           </div>
         </div>
         <div class="sd-mcard tone-amber">
-          <div class="sd-mcard__top"><span>异议清单</span><b>{{ manifestCounts.objection }}</b></div>
+          <div class="sd-mcard__top"><span>异议清单</span></div>
           <div class="sd-mcard__grid">
             <button
               v-for="s in objectionManifestSections"
@@ -2414,15 +2562,24 @@ onMounted(() => {
       <div class="sd-table-card">
         <div class="sd-card-title" style="display:flex;justify-content:space-between;align-items:center;gap:12px">
           <span>{{ listCenterGroup }} · {{ manifestCenterSections.find(s => s.key === listCenterSub)?.label || '' }}</span>
-          <el-button size="small" @click="exportListCenterCsv">导出 CSV</el-button>
+          <div style="display:flex;gap:8px;align-items:center">
+            <el-button
+              v-if="listCenterSub === 'objection-apply'"
+              type="primary"
+              size="small"
+              @click="openObjectionCreate"
+            >新增</el-button>
+            <el-button size="small" @click="exportListCenterCsv">导出 CSV</el-button>
+          </div>
         </div>
 
         <!-- 异议统计 -->
         <template v-if="listCenterSub === 'objection-stats'">
           <div class="sd-kpi-row" style="display:flex;gap:12px;margin-bottom:14px;flex-wrap:wrap">
             <div class="sd-kpi"><div class="sd-kpi__lab">异议总数</div><div class="sd-kpi__num">{{ listCenterStats?.total ?? 0 }}</div></div>
-            <div class="sd-kpi"><div class="sd-kpi__lab">待核查</div><div class="sd-kpi__num">{{ listCenterStats?.open ?? 0 }}</div></div>
-            <div class="sd-kpi"><div class="sd-kpi__lab">处理中</div><div class="sd-kpi__num">{{ listCenterStats?.processing ?? 0 }}</div></div>
+            <div class="sd-kpi"><div class="sd-kpi__lab">已提交</div><div class="sd-kpi__num">{{ listCenterStats?.submitted ?? listCenterStats?.open ?? 0 }}</div></div>
+            <div class="sd-kpi"><div class="sd-kpi__lab">待处理</div><div class="sd-kpi__num">{{ listCenterStats?.approved ?? 0 }}</div></div>
+            <div class="sd-kpi"><div class="sd-kpi__lab">已处理</div><div class="sd-kpi__num">{{ listCenterStats?.processed ?? 0 }}</div></div>
             <div class="sd-kpi"><div class="sd-kpi__lab">已办结</div><div class="sd-kpi__num">{{ listCenterStats?.closed ?? 0 }}</div></div>
           </div>
           <el-row :gutter="12">
@@ -2459,8 +2616,11 @@ onMounted(() => {
             </el-form-item>
             <el-form-item label="状态" class="portal-field-sm">
               <el-select v-model="objectionFilter.status" clearable placeholder="全部">
-                <el-option label="待核查" value="OPEN" />
-                <el-option label="核查中" value="PROCESSING" />
+                <el-option label="草稿" value="DRAFT" />
+                <el-option label="已提交" value="SUBMITTED" />
+                <el-option label="已通过待处理" value="APPROVED" />
+                <el-option label="已驳回" value="REJECTED" />
+                <el-option label="已处理" value="PROCESSED" />
                 <el-option label="已办结" value="CLOSED" />
               </el-select>
             </el-form-item>
@@ -2469,54 +2629,51 @@ onMounted(() => {
               <el-button @click="resetObjectionFilter">重置</el-button>
             </el-form-item>
           </el-form>
-          <el-form v-if="listCenterSub === 'objection-apply'" inline class="portal-inline-form portal-inline-form--block">
-            <el-form-item label="登记目录" class="portal-field-default">
-              <el-select v-model="objectionForm.catalogId" filterable placeholder="统一编目已发布目录">
-                <el-option v-for="c in catalogs" :key="String(c.id)" :label="String(c.title)" :value="Number(c.id)" />
-              </el-select>
-            </el-form-item>
-            <el-form-item label="类型" class="portal-field-sm">
-              <el-select v-model="objectionForm.objectionType">
-                <el-option label="质量" value="QUALITY" />
-                <el-option label="完整性" value="COMPLETENESS" />
-                <el-option label="授权" value="AUTH" />
-              </el-select>
-            </el-form-item>
-            <el-form-item label="内容" class="portal-field-lg"><el-input v-model="objectionForm.content" /></el-form-item>
-            <el-form-item class="portal-form-actions"><el-button type="primary" @click="submitObjection">登记异议</el-button></el-form-item>
-          </el-form>
           <el-table :data="pagedListItems" stripe size="small">
             <el-table-column prop="title" label="异议标题" min-width="140" show-overflow-tooltip />
             <el-table-column prop="objectName" label="异议对象" min-width="120" show-overflow-tooltip />
             <el-table-column prop="serviceName" label="服务名称" width="120" show-overflow-tooltip />
             <el-table-column prop="providerOrg" label="异议提供单位" width="120" show-overflow-tooltip />
             <el-table-column prop="verifyOrg" label="异议核查单位" width="120" show-overflow-tooltip />
-            <el-table-column label="状态" width="100">
+            <el-table-column label="状态" width="130">
               <template #default="{ row }">
-                <el-tag :type="$statusTagType(row.status)" size="small">{{ $statusLabel(row.status) }}</el-tag>
+                <el-tag :type="$statusTagType(row.status)" size="small">{{ objectionStatusLabel(row.status) }}</el-tag>
               </template>
             </el-table-column>
-            <el-table-column prop="createdAt" label="创建时间" width="160" />
-            <el-table-column label="操作" width="220" fixed="right">
+            <el-table-column label="创建时间" width="170">
+              <template #default="{ row }">{{ formatDateTime(row.createdAt || row.updatedAt) }}</template>
+            </el-table-column>
+            <el-table-column label="操作" width="260" fixed="right">
               <template #default="{ row }">
                 <el-button link type="primary" @click="openListDetail(row)">查看</el-button>
                 <el-button
-                  v-if="row.status === 'OPEN'"
+                  v-if="row.status === 'DRAFT' || row.status === 'REJECTED'"
+                  link
+                  @click="objectionAction(Number(row.id), 'SUBMIT')"
+                >提交</el-button>
+                <el-button
+                  v-if="row.status === 'SUBMITTED' && (listCenterSub === 'objection-audit' || listCenterSub === 'objection-apply')"
+                  link
+                  type="success"
+                  @click="objectionAction(Number(row.id), 'APPROVE')"
+                >通过</el-button>
+                <el-button
+                  v-if="row.status === 'SUBMITTED'"
+                  link
+                  type="danger"
+                  @click="objectionAction(Number(row.id), 'REJECT', true)"
+                >驳回</el-button>
+                <el-button
+                  v-if="row.status === 'APPROVED'"
                   link
                   @click="startObjectionProcess(Number(row.id))"
-                >转处理</el-button>
+                >完成处理</el-button>
                 <el-button
-                  v-if="row.status === 'PROCESSING'"
+                  v-if="row.status === 'PROCESSED'"
                   link
                   type="success"
                   @click="closeObjectionFromList(Number(row.id))"
                 >办结</el-button>
-                <el-button
-                  v-if="row.status !== 'CLOSED'"
-                  link
-                  type="warning"
-                  @click="reopenObjectionAudit(Number(row.id))"
-                >回流审核</el-button>
               </template>
             </el-table-column>
           </el-table>
@@ -2525,7 +2682,7 @@ onMounted(() => {
         <!-- 目录 / 供需清单 -->
         <template v-else>
           <el-form inline class="portal-inline-form portal-inline-form--block">
-            <el-form-item :label="listCenterGroup === '目录清单' ? '目录代码' : '编码'" class="portal-field-md">
+            <el-form-item v-if="listCenterGroup !== '目录清单'" label="编码" class="portal-field-md">
               <el-input v-model="listFilter.code" clearable />
             </el-form-item>
             <el-form-item :label="listCenterGroup === '目录清单' ? '目录名称' : '名称'" class="portal-field-lg">
@@ -2541,14 +2698,22 @@ onMounted(() => {
           </el-form>
 
           <el-table v-if="listCenterGroup === '目录清单'" :data="pagedListItems" stripe size="small">
-            <el-table-column label="目录代码" width="140">
-              <template #default="{ row }">{{ row.catalogCode || row.code || row.id }}</template>
+            <el-table-column prop="catalogCode" label="目录代码" width="140" show-overflow-tooltip>
+              <template #default="{ row }">{{ row.catalogCode || row.code || '—' }}</template>
             </el-table-column>
             <el-table-column label="目录名称" min-width="160" show-overflow-tooltip>
               <template #default="{ row }">{{ row.catalogName || row.title }}</template>
             </el-table-column>
             <el-table-column prop="providerOrg" label="提供方" width="120" show-overflow-tooltip />
-            <el-table-column prop="shareAttr" label="共享属性" width="120" show-overflow-tooltip />
+            <el-table-column label="共享属性" width="140" show-overflow-tooltip>
+              <template #default="{ row }">{{ catalogShareAttrLabel(row.shareAttr) }}</template>
+            </el-table-column>
+            <el-table-column label="目录来源" width="110">
+              <template #default="{ row }">{{ row.catalogOriginLabel || '—' }}</template>
+            </el-table-column>
+            <el-table-column label="版本" width="80">
+              <template #default="{ row }">{{ row.versionNo ?? '—' }}</template>
+            </el-table-column>
             <el-table-column label="状态" width="110">
               <template #default="{ row }">
                 <el-tag :type="$statusTagType(row.status || row.publishStatus)" size="small">
@@ -2556,7 +2721,9 @@ onMounted(() => {
                 </el-tag>
               </template>
             </el-table-column>
-            <el-table-column prop="createdAt" label="创建时间" width="160" />
+            <el-table-column label="创建时间" width="170">
+              <template #default="{ row }">{{ formatDateTime(row.createdAt || row.updatedAt || row.publishedAt) }}</template>
+            </el-table-column>
             <el-table-column label="操作" width="140" fixed="right">
               <template #default="{ row }">
                 <el-button link type="primary" @click="openListDetail(row)">查看</el-button>
@@ -2581,7 +2748,9 @@ onMounted(() => {
                 <el-tag :type="$statusTagType(row.status)" size="small">{{ $statusLabel(row.status) }}</el-tag>
               </template>
             </el-table-column>
-            <el-table-column prop="createdAt" label="创建时间" width="160" />
+            <el-table-column label="创建时间" width="170">
+              <template #default="{ row }">{{ formatDateTime(row.createdAt || row.updatedAt) }}</template>
+            </el-table-column>
             <el-table-column label="操作" width="160" fixed="right">
               <template #default="{ row }">
                 <el-button link type="primary" @click="openListDetail(row)">查看</el-button>
@@ -2610,10 +2779,57 @@ onMounted(() => {
               v-for="(val, key) in listDetail.row"
               :key="String(key)"
               :label="String(key)"
-            >{{ val == null || Array.isArray(val) ? (Array.isArray(val) ? val.join(',') : '—') : String(val) }}</el-descriptions-item>
+            >{{ formatMaybeDateTime(String(key), val) }}</el-descriptions-item>
           </el-descriptions>
         </template>
       </el-drawer>
+
+      <el-dialog
+        v-model="objectionCreateVisible"
+        title="新增异议"
+        width="560px"
+        destroy-on-close
+        @closed="resetObjectionForm"
+      >
+        <el-form label-width="110px">
+          <el-form-item label="已通过需求" required>
+            <el-select
+              v-model="objectionForm.demandId"
+              filterable
+              clearable
+              placeholder="选择已确认/已办结需求"
+              style="width:100%"
+            >
+              <el-option
+                v-for="d in objectionEligibleDemands"
+                :key="String(d.id)"
+                :label="String(d.demandTitle || d.id)"
+                :value="Number(d.id)"
+              />
+            </el-select>
+          </el-form-item>
+          <el-form-item label="类型">
+            <el-select v-model="objectionForm.objectionType" style="width:100%">
+              <el-option label="质量" value="QUALITY" />
+              <el-option label="完整性" value="COMPLETENESS" />
+              <el-option label="授权" value="AUTH" />
+            </el-select>
+          </el-form-item>
+          <el-form-item label="内容" required>
+            <el-input
+              v-model="objectionForm.content"
+              type="textarea"
+              :rows="4"
+              placeholder="请描述异议内容"
+            />
+          </el-form-item>
+        </el-form>
+        <template #footer>
+          <el-button @click="objectionCreateVisible = false">取消</el-button>
+          <el-button @click="submitObjection(true)">暂存草稿</el-button>
+          <el-button type="primary" @click="submitObjection(false)">提交异议</el-button>
+        </template>
+      </el-dialog>
     </PageCard>
 
     <el-dialog v-model="confirmReturnDialog.visible" title="不同意提供 / 退回" width="480px">
@@ -2678,6 +2894,17 @@ onMounted(() => {
   font-weight: 600;
   color: #1f2d3d;
   margin-bottom: 10px;
+  padding-left: 8px;
+  border-left: 3px solid #1677ff;
+}
+.track-summary {
+  margin-bottom: 16px;
+}
+.track-stage-title {
+  font-size: 14px;
+  font-weight: 600;
+  color: #1f2d3d;
+  margin: 4px 0 10px;
   padding-left: 8px;
   border-left: 3px solid #1677ff;
 }

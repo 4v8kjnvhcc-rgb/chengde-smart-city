@@ -108,10 +108,10 @@ const CockpitView = defineAsyncComponent(() => import('./CockpitView.vue'))
 }
 .share-main {
   flex: 1;
-  max-width: 1280px;
+  max-width: 1360px;
   width: 100%;
   margin: 0 auto;
-  padding: 16px 20px 32px;
+  padding: 28px 28px 40px;
   box-sizing: border-box;
 }
 </style>

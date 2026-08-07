@@ -99,7 +99,12 @@ public class ClusterAccountService {
     private void apply(SysClusterAccount row, ClusterAccountRequest req, boolean creating) {
         row.setClusterCode(req.getClusterCode().trim());
         row.setClusterName(req.getClusterName().trim());
-        row.setAccountName(req.getAccountName().trim());
+        // 账号/密码已从前端表单移除；保留字段兼容旧数据，未传时置空且不覆盖已有密码
+        if (req.getAccountName() != null && StringUtils.hasText(req.getAccountName())) {
+            row.setAccountName(req.getAccountName().trim());
+        } else if (creating) {
+            row.setAccountName("");
+        }
         if (creating) {
             row.setAccountPassword(blankToNull(req.getAccountPassword()));
         } else if (req.getAccountPassword() != null && !req.getAccountPassword().isBlank()) {

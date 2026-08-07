@@ -48,8 +48,10 @@ public class AccessControlController {
 
     @GetMapping("/users-for-project-grant")
     @PreAuthorize("isAuthenticated()")
-    public ApiResponse<List<Map<String, Object>>> usersForProjectGrant(@AuthenticationPrincipal UserPrincipal principal) {
-        return ApiResponse.ok(accessControlService.listUsersForProjectGrant(principal));
+    public ApiResponse<List<Map<String, Object>>> usersForProjectGrant(
+            @AuthenticationPrincipal UserPrincipal principal,
+            @RequestParam(required = false) Long projectId) {
+        return ApiResponse.ok(accessControlService.listUsersForProjectGrant(principal, projectId));
     }
 
     @PostMapping("/project-grants")

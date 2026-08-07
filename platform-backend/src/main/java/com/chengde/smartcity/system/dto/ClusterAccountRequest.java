@@ -9,7 +9,6 @@ public class ClusterAccountRequest {
     private String clusterCode;
     @NotBlank
     private String clusterName;
-    @NotBlank
     private String accountName;
     private String accountPassword;
     private String endpoint;

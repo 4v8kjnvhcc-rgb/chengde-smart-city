@@ -1,10 +1,12 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from 'vue'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import { useRouter } from 'vue-router'
 import PageCard from '@/components/common/PageCard.vue'
 import { useAuthStore } from '@/stores/auth'
 import { ingestionApi, type AssetTag } from '@/views/exchange/ingestion/useIngestionHub'
+
+const props = withDefaults(defineProps<{ embedded?: boolean }>(), { embedded: false })
 
 const router = useRouter()
 const auth = useAuthStore()
@@ -18,14 +20,23 @@ const tagForm = reactive({ tagCode: '', tagName: '', ruleExpr: '', tagDesc: '' }
 const denied = ref(false)
 
 const canAccess = computed(() =>
-  auth.hasPermission('system:tag:list')
+  props.embedded
+  || auth.hasPermission('system:tag:list')
   || auth.hasPermission('system:tag:edit')
   || auth.hasPermission('system:tag:query')
   || auth.isSystemAdmin
   || auth.permissions.length === 0,
 )
-/** 能进标签库页即可维护扩展标签 */
-const canEdit = computed(() => canAccess.value)
+/** 嵌入登记页或具备系统标签权限时可维护扩展标签 */
+const canEdit = computed(() =>
+  props.embedded
+  || auth.hasPermission('system:tag:edit')
+  || auth.hasPermission('system:tag:list')
+  || auth.isSystemAdmin
+  || auth.permissions.length === 0,
+)
+/** 平台/超级管理员可删除扩展标签 */
+const canDelete = computed(() => !!auth.isPlatformOrSystemAdmin)
 
 const filteredTree = computed(() => {
   const kw = keyword.value.trim().toLowerCase()
@@ -89,6 +100,22 @@ function openDialog(row?: AssetTag) {
   dialogVisible.value = true
 }
 
+async function deleteCustomTag(row: AssetTag) {
+  if (!canDelete.value) {
+    ElMessage.warning('仅平台管理员或超级管理员可删除数据标签')
+    return
+  }
+  try {
+    await ElMessageBox.confirm(`确认删除扩展标签「${row.tagName}」？`, '删除确认', { type: 'warning' })
+    await ingestionApi.deleteTag(row.id)
+    ElMessage.success('已删除')
+    await reload()
+  } catch (e: unknown) {
+    if (e === 'cancel' || e === 'close') return
+    ElMessage.error(e instanceof Error ? e.message : '删除失败')
+  }
+}
+
 async function saveTag() {
   if (!canEdit.value) {
     ElMessage.warning('无权维护标签库')
@@ -147,19 +174,23 @@ onMounted(async () => {
   }
   if (!canAccess.value) {
     denied.value = true
-    ElMessage.warning('无权访问标签库，已返回工作台')
-    router.replace('/dashboard')
+    if (!props.embedded) {
+      ElMessage.warning('无权访问标签库，已返回工作台')
+      router.replace('/dashboard')
+    }
     return
   }
   await reload()
 })
+
+defineExpose({ reload })
 </script>
 
 <template>
   <div v-loading="loading">
     <el-empty v-if="denied" description="无权访问标签库" />
-    <PageCard v-else title="标签管理">
-      <p class="hint">维护 GB/T 21063.4 标准主题类目（只读）与扩展标签。挂标及规则生成请在「数据资产标签登记」完成登记时确认。</p>
+    <PageCard v-else-if="!embedded" title="标签管理">
+      <p class="hint">维护 GB/T 21063.4 标准主题类目（只读）与扩展标签。资产挂标请在「数据资产标签登记 → 标签管理」完成。</p>
       <el-form inline class="portal-inline-form portal-inline-form--block">
         <el-form-item label="检索" class="portal-field-xl">
           <el-input v-model="keyword" clearable placeholder="编码/名称/描述模糊搜索" />
@@ -169,7 +200,6 @@ onMounted(async () => {
           <el-button @click="reload">刷新</el-button>
         </el-form-item>
       </el-form>
-
       <el-row :gutter="16">
         <el-col :xs="24" :md="14">
           <div class="block-title">标准主题类目</div>
@@ -200,15 +230,67 @@ onMounted(async () => {
             <el-table-column prop="tagCode" label="编码" width="120" show-overflow-tooltip />
             <el-table-column prop="tagName" label="名称" min-width="100" />
             <el-table-column prop="ruleExpr" label="识别规则" min-width="120" show-overflow-tooltip />
-            <el-table-column v-if="canEdit" label="操作" width="70" fixed="right">
+            <el-table-column v-if="canEdit || canDelete" label="操作" width="120" fixed="right">
               <template #default="{ row }">
-                <el-button link type="primary" @click="openDialog(row)">编辑</el-button>
+                <el-button v-if="canEdit" link type="primary" @click="openDialog(row)">编辑</el-button>
+                <el-button v-if="canDelete" link type="danger" @click="deleteCustomTag(row)">删除</el-button>
               </template>
             </el-table-column>
           </el-table>
         </el-col>
       </el-row>
     </PageCard>
+    <div v-else>
+      <p class="hint">维护 GB/T 21063.4 标准主题类目（只读）与扩展标签。资产挂标请切换到「标签管理」页签。</p>
+      <el-form inline class="portal-inline-form portal-inline-form--block">
+        <el-form-item label="检索" class="portal-field-xl">
+          <el-input v-model="keyword" clearable placeholder="编码/名称/描述模糊搜索" />
+        </el-form-item>
+        <el-form-item class="portal-form-actions">
+          <el-button v-if="canEdit" type="primary" @click="openDialog()">新建扩展标签</el-button>
+          <el-button @click="reload">刷新</el-button>
+        </el-form-item>
+      </el-form>
+      <el-row :gutter="16">
+        <el-col :xs="24" :md="14">
+          <div class="block-title">标准主题类目</div>
+          <el-tree
+            :data="filteredTree"
+            node-key="id"
+            :props="{ label: 'tagName', children: 'children' }"
+            default-expand-all
+          >
+            <template #default="{ data }">
+              <span class="tree-node">
+                <span class="tree-code">{{ data.stdCode }}</span>
+                <span>{{ data.tagName }}</span>
+                <el-button
+                  v-if="canEdit && data.level === 2"
+                  link
+                  type="primary"
+                  style="margin-left:8px"
+                  @click.stop="openDialog(data)"
+                >规则</el-button>
+              </span>
+            </template>
+          </el-tree>
+        </el-col>
+        <el-col :xs="24" :md="10">
+          <div class="block-title">扩展标签</div>
+          <el-table :data="filteredCustom" stripe size="small">
+            <el-table-column prop="tagCode" label="编码" width="120" show-overflow-tooltip />
+            <el-table-column prop="tagName" label="名称" min-width="100" />
+            <el-table-column prop="ruleExpr" label="识别规则" min-width="120" show-overflow-tooltip />
+            <el-table-column v-if="canEdit || canDelete" label="操作" width="120" fixed="right">
+              <template #default="{ row }">
+                <el-button v-if="canEdit" link type="primary" @click="openDialog(row)">编辑</el-button>
+                <el-button v-if="canDelete" link type="danger" @click="deleteCustomTag(row)">删除</el-button>
+              </template>
+            </el-table-column>
+          </el-table>
+        </el-col>
+      </el-row>
+    </div>
 
     <el-dialog
       v-model="dialogVisible"

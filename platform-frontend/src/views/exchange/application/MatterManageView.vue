@@ -5,6 +5,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import PageCard from '@/components/common/PageCard.vue'
 import PortalPagination from '@/components/common/PortalPagination.vue'
 import { useClientPager } from '@/composables/useClientPager'
+import { formatDateTime, sortByTimeDesc } from '@/utils/datetime'
 
 const loading = ref(false)
 const rows = ref<Record<string, unknown>[]>([])
@@ -32,7 +33,7 @@ async function load() {
         matterType: matterType.value || undefined,
       },
     })
-    rows.value = res.data || []
+    rows.value = sortByTimeDesc(res.data || [])
   } catch (e: unknown) {
     ElMessage.error((e as Error)?.message || '加载事项失败')
   } finally {
@@ -113,13 +114,6 @@ onMounted(load)
 <template>
   <div v-loading="loading" class="matter-manage">
     <PageCard title="事项管理">
-      <el-alert
-        type="info"
-        :closable="false"
-        show-icon
-        style="margin-bottom:12px"
-        title="维护政务服务事项（编码/名称/类型）。已内置国家、河北省及承德市示例事项，可增删改查。"
-      />
       <div class="toolbar">
         <el-input v-model="keyword" clearable placeholder="事项编码/名称" style="width:220px" @keyup.enter="load" />
         <el-input v-model="matterType" clearable placeholder="事项类型" style="width:160px" />
@@ -128,14 +122,23 @@ onMounted(load)
         <el-button type="primary" @click="openCreate">新建事项</el-button>
       </div>
       <el-table :data="paged" stripe size="small" empty-text="暂无事项数据（若刚部署请重启后端以执行内置事项初始化）">
-        <el-table-column prop="matterCode" label="事项编码" width="140" />
-        <el-table-column prop="matterName" label="事项名称" min-width="180" show-overflow-tooltip />
-        <el-table-column prop="matterType" label="事项类型" width="120" />
+        <el-table-column label="事项编码" width="140" show-overflow-tooltip>
+          <template #default="{ row }">{{ row.matterCode || row.matter_code || '—' }}</template>
+        </el-table-column>
+        <el-table-column label="事项名称" min-width="180" show-overflow-tooltip>
+          <template #default="{ row }">{{ row.matterName || row.matter_name || '—' }}</template>
+        </el-table-column>
+        <el-table-column label="事项类型" width="120">
+          <template #default="{ row }">{{ row.matterType || row.matter_type || '—' }}</template>
+        </el-table-column>
         <el-table-column label="范围" width="90">
           <template #default="{ row }">{{ scopeLabel(row.regionScope) }}</template>
         </el-table-column>
         <el-table-column label="状态" width="90">
           <template #default="{ row }">{{ $statusLabel(row.status) }}</template>
+        </el-table-column>
+        <el-table-column label="更新时间" width="170">
+          <template #default="{ row }">{{ formatDateTime(row.updatedAt || row.createdAt) }}</template>
         </el-table-column>
         <el-table-column label="操作" width="140" fixed="right">
           <template #default="{ row }">

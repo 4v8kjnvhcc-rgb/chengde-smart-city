@@ -1,9 +1,12 @@
 <script setup lang="ts">
-import { onMounted, reactive, ref } from 'vue'
-import { ElMessage } from 'element-plus'
+import { computed, onMounted, reactive, ref } from 'vue'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import PageCard from '@/components/common/PageCard.vue'
+import { useAuthStore } from '@/stores/auth'
 import { ingestionApi, useIngestionLoading, type AssetTag } from '../useIngestionHub'
 
+const auth = useAuthStore()
+const canDelete = computed(() => !!auth.isPlatformOrSystemAdmin)
 const { loading, loadError, withLoad } = useIngestionLoading()
 const tags = ref<AssetTag[]>([])
 const dialogVisible = ref(false)
@@ -45,6 +48,26 @@ async function saveTag() {
   await reload()
 }
 
+async function deleteTag(row: AssetTag) {
+  if (!canDelete.value) {
+    ElMessage.warning('仅平台管理员或超级管理员可删除数据标签')
+    return
+  }
+  if (row.tagSource === 'STANDARD') {
+    ElMessage.warning('标准主题类目标签不可删除')
+    return
+  }
+  try {
+    await ElMessageBox.confirm(`确认删除标签「${row.tagName}」？`, '删除确认', { type: 'warning' })
+    await ingestionApi.deleteTag(row.id)
+    ElMessage.success('已删除')
+    await reload()
+  } catch (e: unknown) {
+    if (e === 'cancel' || e === 'close') return
+    ElMessage.error(e instanceof Error ? e.message : '删除失败')
+  }
+}
+
 /** 智能识别：仅触发识别统计，不写挂标绑定 */
 async function runSmartMatch() {
   matching.value = true
@@ -84,9 +107,17 @@ onMounted(reload)
         <el-table-column label="状态" width="90">
           <template #default="{ row }">{{ $statusLabel(row.status) }}</template>
         </el-table-column>
-        <el-table-column label="操作" width="90" fixed="right">
+        <el-table-column label="操作" width="140" fixed="right">
           <template #default="{ row }">
             <el-button link type="primary" @click="openDialog(row)">编辑</el-button>
+            <el-button
+              v-if="canDelete && row.tagSource !== 'STANDARD'"
+              link
+              type="danger"
+              @click="deleteTag(row)"
+            >
+              删除
+            </el-button>
           </template>
         </el-table-column>
       </el-table>

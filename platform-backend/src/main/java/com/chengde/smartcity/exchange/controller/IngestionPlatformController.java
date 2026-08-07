@@ -24,6 +24,7 @@ import com.chengde.smartcity.exchange.entity.IngResourceRegistry;
 import com.chengde.smartcity.exchange.entity.IngStatsMetric;
 import com.chengde.smartcity.exchange.entity.IngUploadRecord;
 import com.chengde.smartcity.exchange.entity.IngUploadTemplate;
+import com.chengde.smartcity.exchange.service.AssetFishboneService;
 import com.chengde.smartcity.exchange.service.AssetReportService;
 import com.chengde.smartcity.exchange.service.CollectUploadService;
 import com.chengde.smartcity.exchange.service.ExcelManualUploadService;
@@ -62,6 +63,7 @@ public class IngestionPlatformController {
     private final IngestionPlatformService service;
     private final RegisterService registerService;
     private final AssetReportService assetReportService;
+    private final AssetFishboneService assetFishboneService;
     private final LineageService lineageService;
     private final CollectUploadService collectUploadService;
     private final ExcelManualUploadService excelManualUploadService;
@@ -75,6 +77,7 @@ public class IngestionPlatformController {
 
     public IngestionPlatformController(IngestionPlatformService service, RegisterService registerService,
                                        AssetReportService assetReportService,
+                                       AssetFishboneService assetFishboneService,
                                        LineageService lineageService,
                                        CollectUploadService collectUploadService,
                                        ExcelManualUploadService excelManualUploadService,
@@ -88,6 +91,7 @@ public class IngestionPlatformController {
         this.service = service;
         this.registerService = registerService;
         this.assetReportService = assetReportService;
+        this.assetFishboneService = assetFishboneService;
         this.lineageService = lineageService;
         this.collectUploadService = collectUploadService;
         this.excelManualUploadService = excelManualUploadService;
@@ -545,6 +549,13 @@ public class IngestionPlatformController {
         return ApiResponse.ok(assetReportService.workflowRunMonitor(runId));
     }
 
+    @GetMapping("/register/asset-fishbone")
+    @PreAuthorize("isAuthenticated()")
+    public ApiResponse<Map<String, Object>> assetFishbone(@AuthenticationPrincipal UserPrincipal principal,
+                                                          @RequestParam(required = false) Long orgId) {
+        return ApiResponse.ok(assetFishboneService.overview(principal, orgId));
+    }
+
     @GetMapping("/register/lineage")
     @PreAuthorize("isAuthenticated()")
     public ApiResponse<Map<String, Object>> lineage(@AuthenticationPrincipal UserPrincipal principal,
@@ -591,6 +602,23 @@ public class IngestionPlatformController {
         return ApiResponse.ok(registerService.createTable(principal, body));
     }
 
+    @PutMapping("/register/tables/{id}")
+    @PreAuthorize("isAuthenticated()")
+    public ApiResponse<Void> updateTable(@AuthenticationPrincipal UserPrincipal principal,
+                                         @PathVariable Long id,
+                                         @RequestBody Map<String, Object> body) {
+        registerService.updateTable(principal, id, body);
+        return ApiResponse.ok(null);
+    }
+
+    @DeleteMapping("/register/tables/{id}")
+    @PreAuthorize("isAuthenticated()")
+    public ApiResponse<Void> deleteTable(@AuthenticationPrincipal UserPrincipal principal,
+                                         @PathVariable Long id) {
+        registerService.deleteTable(principal, id);
+        return ApiResponse.ok(null);
+    }
+
     @PostMapping("/register/tables/{id}/finalize-forward")
     @PreAuthorize("isAuthenticated()")
     public ApiResponse<Map<String, Object>> finalizeForwardTable(@AuthenticationPrincipal UserPrincipal principal,
@@ -628,6 +656,14 @@ public class IngestionPlatformController {
         return ApiResponse.ok(null);
     }
 
+    @DeleteMapping("/register/columns/{id}")
+    @PreAuthorize("isAuthenticated()")
+    public ApiResponse<Void> deleteColumn(@AuthenticationPrincipal UserPrincipal principal,
+                                          @PathVariable Long id) {
+        registerService.deleteColumn(principal, id);
+        return ApiResponse.ok(null);
+    }
+
     @GetMapping("/register/metadata/template")
     public ApiResponse<String> metadataTemplate() {
         return ApiResponse.ok(registerService.metadataTemplateCsv());
@@ -658,6 +694,14 @@ public class IngestionPlatformController {
                                        @PathVariable Long id,
                                        @RequestBody Map<String, Object> body) {
         registerService.updateTag(principal, id, body);
+        return ApiResponse.ok(null);
+    }
+
+    @DeleteMapping("/register/tags/{id}")
+    @PreAuthorize("hasAnyRole('SYSTEM_ADMIN','PLATFORM_ADMIN') or hasAuthority('hub:ingestion:register:m045') or hasAuthority('system:tag:edit')")
+    public ApiResponse<Void> deleteTag(@AuthenticationPrincipal UserPrincipal principal,
+                                       @PathVariable Long id) {
+        registerService.deleteTag(principal, id);
         return ApiResponse.ok(null);
     }
 
@@ -1028,6 +1072,15 @@ public class IngestionPlatformController {
         var t = RegisterWorkflowService.parseTarget(body);
         String reason = body.get("reason") == null ? null : String.valueOf(body.get("reason"));
         registerWorkflowService.reject(principal, t.getKey(), t.getValue(), reason);
+        return ApiResponse.ok(null);
+    }
+
+    @PostMapping("/register/workflow/withdraw")
+    @PreAuthorize("isAuthenticated()")
+    public ApiResponse<Void> registerWithdraw(@AuthenticationPrincipal UserPrincipal principal,
+                                              @RequestBody Map<String, Object> body) {
+        var t = RegisterWorkflowService.parseTarget(body);
+        registerWorkflowService.withdraw(principal, t.getKey(), t.getValue());
         return ApiResponse.ok(null);
     }
 

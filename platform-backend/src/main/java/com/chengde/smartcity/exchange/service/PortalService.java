@@ -19,7 +19,9 @@ import com.chengde.smartcity.masterdata.mapper.GovCatalogCategoryMapper;
 import com.chengde.smartcity.masterdata.mapper.GovCatalogResourceMapper;
 import com.chengde.smartcity.masterdata.service.CatalogSubscriptionService;
 import com.chengde.smartcity.security.UserPrincipal;
+import com.chengde.smartcity.system.entity.PortalNavNode;
 import com.chengde.smartcity.system.entity.SysOrg;
+import com.chengde.smartcity.system.mapper.PortalNavNodeMapper;
 import com.chengde.smartcity.system.mapper.SysOrgMapper;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -57,6 +59,7 @@ public class PortalService {
     private final GovCatalogResourceMapper govResourceMapper;
     private final GovCatalogCategoryMapper govCategoryMapper;
     private final SysOrgMapper orgMapper;
+    private final PortalNavNodeMapper portalNavNodeMapper;
     private final AuditService auditService;
     private final IntegrationProperties integrationProperties;
     private final StorageIntegrationClient storageClient;
@@ -69,6 +72,7 @@ public class PortalService {
                          GovCatalogResourceMapper govResourceMapper,
                          GovCatalogCategoryMapper govCategoryMapper,
                          SysOrgMapper orgMapper,
+                         PortalNavNodeMapper portalNavNodeMapper,
                          AuditService auditService,
                          IntegrationProperties integrationProperties,
                          StorageIntegrationClient storageClient,
@@ -80,6 +84,7 @@ public class PortalService {
         this.govResourceMapper = govResourceMapper;
         this.govCategoryMapper = govCategoryMapper;
         this.orgMapper = orgMapper;
+        this.portalNavNodeMapper = portalNavNodeMapper;
         this.auditService = auditService;
         this.integrationProperties = integrationProperties;
         this.storageClient = storageClient;
@@ -486,9 +491,40 @@ public class PortalService {
         }
     }
 
-    public List<BizPortalSituation> listSituations() {
-        return situationMapper.selectList(new LambdaQueryWrapper<BizPortalSituation>()
+    /**
+     * 八态势卡片：名称来自 biz_portal_situation；跳转地址来自门户配置
+     * （portal_nav_node.remark = SITUATION:CODE，url 默认为空）。
+     */
+    public List<Map<String, Object>> listSituations() {
+        List<BizPortalSituation> situations = situationMapper.selectList(new LambdaQueryWrapper<BizPortalSituation>()
                 .orderByAsc(BizPortalSituation::getSortOrder));
+        Map<String, PortalNavNode> linkByCode = new HashMap<>();
+        for (PortalNavNode n : portalNavNodeMapper.selectList(new LambdaQueryWrapper<PortalNavNode>()
+                .eq(PortalNavNode::getStatus, 1)
+                .likeRight(PortalNavNode::getRemark, "SITUATION:"))) {
+            String remark = n.getRemark() == null ? "" : n.getRemark().trim();
+            if (remark.regionMatches(true, 0, "SITUATION:", 0, "SITUATION:".length())) {
+                String code = remark.substring("SITUATION:".length()).trim().toUpperCase(Locale.ROOT);
+                if (!code.isEmpty()) {
+                    linkByCode.put(code, n);
+                }
+            }
+        }
+        List<Map<String, Object>> rows = new ArrayList<>();
+        for (BizPortalSituation s : situations) {
+            Map<String, Object> row = new LinkedHashMap<>();
+            row.put("id", s.getId());
+            row.put("situationCode", s.getSituationCode());
+            row.put("situationName", s.getSituationName());
+            row.put("sortOrder", s.getSortOrder());
+            PortalNavNode link = linkByCode.get(
+                    s.getSituationCode() == null ? "" : s.getSituationCode().trim().toUpperCase(Locale.ROOT));
+            String jumpUrl = link != null && link.getUrl() != null ? link.getUrl().trim() : "";
+            row.put("jumpUrl", jumpUrl);
+            row.put("openMode", link != null && link.getOpenMode() != null ? link.getOpenMode() : "new_tab");
+            rows.add(row);
+        }
+        return rows;
     }
 
     @Transactional
