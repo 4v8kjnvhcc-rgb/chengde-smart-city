@@ -10,6 +10,12 @@ import type { CatalogRow as ShareCatalogRow } from './ShareCatalogPanel.vue'
 import SubscribeApplyPanel from './SubscribeApplyPanel.vue'
 import PortalPagination from '@/components/common/PortalPagination.vue'
 import { statusLabel } from '@/utils/status-label'
+import {
+  favoriteCount,
+  listFavorites,
+  removeFavorite,
+  type PortalFavorite,
+} from './portal-favorites'
 
 interface CatalogRow {
   id: number | string
@@ -78,9 +84,14 @@ const catalogView = ref<'table' | 'card'>('table')
 const catalogRows = ref<CatalogRow[]>([])
 const subscriptions = ref<Subscription[]>([])
 const pendingSubsList = ref<Subscription[]>([])
+const myFavorites = ref<PortalFavorite[]>([])
 const catalogOptions = ref<CatalogRow[]>([])
 const preview = reactive<{ visible: boolean; row: CatalogRow | null }>({ visible: false, row: null })
-const shareCatalogRef = ref<{ loadCatalog: () => Promise<void>; openDetail?: (row: ShareCatalogRow) => void | Promise<void> } | null>(null)
+const shareCatalogRef = ref<{
+  loadCatalog: () => Promise<void>
+  openDetail?: (row: ShareCatalogRow) => void | Promise<void>
+  applyKeyword?: (kw?: string) => Promise<void>
+} | null>(null)
 /** 首页点资源后，切到政务共享资源再打开详情 */
 const pendingCatalogId = ref<number | string | null>(null)
 
@@ -152,6 +163,7 @@ async function loadSubscriptions() {
   ])
   subscriptions.value = mineRes.data || []
   pendingSubsList.value = pendingRes.data || []
+  myFavorites.value = listFavorites('PORTAL')
 }
 
 const shareBrowseMode = ref<'theme' | 'dept'>('theme')
@@ -211,12 +223,15 @@ function openProvider(name: string) {
 
 async function doBannerSearch() {
   setTab('catalog')
-  await loadCatalog()
+  await nextTick()
+  if (shareCatalogRef.value?.applyKeyword) {
+    await shareCatalogRef.value.applyKeyword(searchQ.value)
+  }
 }
 
 function clickHotKeyword(kw: string) {
   searchQ.value = kw
-  doBannerSearch()
+  void doBannerSearch()
 }
 
 function openPreview(row: CatalogRow) {
@@ -276,29 +291,31 @@ function openSubDetail(row: Subscription, mode: 'mine' | 'pending') {
   subDetail.visible = true
 }
 
-function payloadEntries(row: Subscription | null): { label: string; value: string }[] {
+function payloadEntries(row: Subscription | null): { label: string; value: string; section?: string }[] {
   if (!row) return []
-  const base: { label: string; value: string }[] = [
-    { label: '资源名称', value: String(row.catalogTitle || row.catalogId || '—') },
-    { label: '资源编码', value: String(row.catalogCode || '—') },
-    { label: '共享方式', value: shareLabel(row.resourceType) },
-    { label: '申请单位', value: row.applicantOrg || '—' },
-    { label: '提供方', value: row.providerOrg || '—' },
-    { label: '用途/场景', value: row.purpose || '—' },
-    { label: '状态', value: statusLabel(row.status) },
-    { label: '申请人', value: row.createdBy || '—' },
-    { label: '申请时间', value: row.createdAt ? String(row.createdAt).replace('T', ' ').slice(0, 19) : '—' },
+  const base: { label: string; value: string; section?: string }[] = [
+    { label: '资源名称', value: String(row.catalogTitle || row.catalogId || '—'), section: 'base' },
+    { label: '资源编码', value: String(row.catalogCode || '—'), section: 'base' },
+    { label: '共享方式', value: shareLabel(row.resourceType), section: 'base' },
+    { label: '申请单位', value: row.applicantOrg || '—', section: 'base' },
+    { label: '提供方', value: row.providerOrg || '—', section: 'base' },
+    { label: '用途/场景', value: row.purpose || '—', section: 'base' },
+    { label: '状态', value: statusLabel(row.status), section: 'base' },
+    { label: '申请人', value: row.createdBy || '—', section: 'base' },
+    { label: '申请时间', value: row.createdAt ? String(row.createdAt).replace('T', ' ').slice(0, 19) : '—', section: 'base' },
   ]
-  if (row.approverNote) base.push({ label: '审批意见', value: row.approverNote })
-  if (row.taskId) base.push({ label: '交换任务', value: `#${row.taskId} ${row.taskStatus || ''}` })
+  if (row.approverNote) base.push({ label: '审批意见', value: row.approverNote, section: 'base' })
+  if (row.taskId) base.push({ label: '交换任务', value: `#${row.taskId} ${row.taskStatus || ''}`, section: 'base' })
 
   const p = row.applyPayload
   const obj = typeof p === 'string' ? (() => { try { return JSON.parse(p) as Record<string, unknown> } catch { return null } })() : p
   if (obj && typeof obj === 'object') {
-    const map: Record<string, string> = {
+    const contactMap: Record<string, string> = {
       contactName: '联系人',
       contactPhone: '联系电话',
       contactEmail: '联系邮箱',
+    }
+    const applyMap: Record<string, string> = {
       scene: '使用办事场景',
       systemName: '应用系统名称',
       timeRange: '使用时间范围',
@@ -310,9 +327,14 @@ function payloadEntries(row: Subscription | null): { label: string; value: strin
       applyBasis: '申请依据',
       techReq: '其他技术需求',
     }
-    for (const [k, label] of Object.entries(map)) {
+    for (const [k, label] of Object.entries(contactMap)) {
       if (obj[k] != null && String(obj[k]).trim() !== '') {
-        base.push({ label, value: String(obj[k]) })
+        base.push({ label, value: String(obj[k]), section: 'contact' })
+      }
+    }
+    for (const [k, label] of Object.entries(applyMap)) {
+      if (obj[k] != null && String(obj[k]).trim() !== '') {
+        base.push({ label, value: String(obj[k]), section: 'apply' })
       }
     }
   }
@@ -321,14 +343,19 @@ function payloadEntries(row: Subscription | null): { label: string; value: strin
 
 const pendingSubs = computed(() => pendingSubsList.value)
 const mySubs = computed(() => subscriptions.value)
-const myspaceInnerTab = ref<'mine' | 'pending'>('mine')
+const myspaceInnerTab = ref<'mine' | 'pending' | 'favorites'>('mine')
 const myspacePage = ref(1)
 const myspacePageSize = ref(10)
 const pendingPage = ref(1)
 const pendingPageSize = ref(10)
+const favoritesPage = ref(1)
+const favoritesPageSize = ref(10)
 
-function setMyspaceInnerTab(tab: 'mine' | 'pending') {
+function setMyspaceInnerTab(tab: 'mine' | 'pending' | 'favorites') {
   myspaceInnerTab.value = tab
+  if (tab === 'favorites') {
+    myFavorites.value = listFavorites('PORTAL')
+  }
 }
 const pagedMySubs = computed(() => {
   const start = (myspacePage.value - 1) * myspacePageSize.value
@@ -338,6 +365,26 @@ const pagedPendingSubs = computed(() => {
   const start = (pendingPage.value - 1) * pendingPageSize.value
   return pendingSubs.value.slice(start, start + pendingPageSize.value)
 })
+const pagedFavorites = computed(() => {
+  const start = (favoritesPage.value - 1) * favoritesPageSize.value
+  return myFavorites.value.slice(start, start + favoritesPageSize.value)
+})
+
+function favoriteShareLabel(f: PortalFavorite) {
+  if (f.resourceTypeLabel) return f.resourceTypeLabel
+  return shareLabel(f.resourceType)
+}
+
+async function cancelFavorite(row: PortalFavorite) {
+  removeFavorite(row.catalogId, 'PORTAL')
+  myFavorites.value = listFavorites('PORTAL')
+  ElMessage.success('已取消订阅')
+}
+
+async function openFavoriteDetail(row: PortalFavorite) {
+  pendingCatalogId.value = row.catalogId
+  setTab('catalog')
+}
 
 // themeTree reserved for future grouping
 
@@ -361,6 +408,9 @@ watch(
 
 onMounted(() => {
   syncTab()
+  if (route.query.q != null && String(route.query.q) !== '') {
+    searchQ.value = String(route.query.q)
+  }
   const cid = route.query.catalogId
   if (cid != null && cid !== '') {
     pendingCatalogId.value = String(cid)
@@ -538,6 +588,7 @@ onMounted(() => {
           ref="shareCatalogRef"
           :themes="home?.themes || []"
           :providers="home?.providers || []"
+          :initial-keyword="searchQ"
           @submitted="loadSubscriptions"
         />
       </div>
@@ -574,6 +625,15 @@ onMounted(() => {
             >
               <b>{{ pendingSubs.length }}</b>
               <span>待我审批</span>
+            </button>
+            <button
+              type="button"
+              class="myspace-stat"
+              :class="{ 'is-active': myspaceInnerTab === 'favorites' }"
+              @click="setMyspaceInnerTab('favorites')"
+            >
+              <b>{{ myFavorites.length || favoriteCount() }}</b>
+              <span>我的订阅</span>
             </button>
           </div>
         </header>
@@ -665,18 +725,81 @@ onMounted(() => {
                 />
               </template>
             </el-tab-pane>
+
+            <el-tab-pane name="favorites">
+              <template #label>
+                <span>我的订阅</span>
+                <span v-if="myFavorites.length" class="myspace-tab-count">{{ myFavorites.length }}</span>
+              </template>
+              <el-empty v-if="!myFavorites.length" description="暂无订阅，可在资源详情页点击「订阅」收藏" :image-size="72" />
+              <template v-else>
+                <el-table :data="pagedFavorites" stripe class="clickable-table">
+                  <el-table-column label="资源" min-width="180">
+                    <template #default="{ row }">
+                      <button type="button" class="link-title" @click.stop="openFavoriteDetail(row)">
+                        {{ row.title || row.catalogId }}
+                      </button>
+                    </template>
+                  </el-table-column>
+                  <el-table-column label="编码" width="140" show-overflow-tooltip>
+                    <template #default="{ row }">{{ row.catalogCode || '—' }}</template>
+                  </el-table-column>
+                  <el-table-column label="提供方" width="140" show-overflow-tooltip>
+                    <template #default="{ row }">{{ row.providerOrg || '—' }}</template>
+                  </el-table-column>
+                  <el-table-column label="类型" width="100">
+                    <template #default="{ row }">{{ favoriteShareLabel(row) }}</template>
+                  </el-table-column>
+                  <el-table-column label="订阅时间" width="170">
+                    <template #default="{ row }">
+                      {{ row.followedAt ? String(row.followedAt).replace('T', ' ').slice(0, 19) : '—' }}
+                    </template>
+                  </el-table-column>
+                  <el-table-column label="操作" width="160" fixed="right">
+                    <template #default="{ row }">
+                      <el-button link type="primary" @click.stop="openFavoriteDetail(row)">查看</el-button>
+                      <el-button link type="danger" @click.stop="cancelFavorite(row)">取消订阅</el-button>
+                    </template>
+                  </el-table-column>
+                </el-table>
+                <PortalPagination
+                  v-model:page="favoritesPage"
+                  v-model:page-size="favoritesPageSize"
+                  :total="myFavorites.length"
+                />
+              </template>
+            </el-tab-pane>
           </el-tabs>
         </div>
       </div>
     </div>
 
-    <el-drawer v-model="subDetail.visible" :title="subDetail.mode === 'mine' ? '申请详情' : '审批详情'" size="520px">
+    <el-drawer v-model="subDetail.visible" :title="subDetail.mode === 'mine' ? '申请详情' : '审批详情'" size="640px">
       <template v-if="subDetail.row">
-        <el-descriptions :column="1" border size="small">
-          <el-descriptions-item v-for="(it, i) in payloadEntries(subDetail.row)" :key="i" :label="it.label">
-            {{ it.value }}
-          </el-descriptions-item>
-        </el-descriptions>
+        <section class="detail-block">
+          <h4>资源与办理</h4>
+          <el-descriptions :column="1" border size="small">
+            <el-descriptions-item v-for="(it, i) in payloadEntries(subDetail.row).filter(e => !e.section || e.section === 'base')" :key="'b'+i" :label="it.label">
+              {{ it.value }}
+            </el-descriptions-item>
+          </el-descriptions>
+        </section>
+        <section v-if="payloadEntries(subDetail.row).some(e => e.section === 'contact')" class="detail-block">
+          <h4>申请方信息</h4>
+          <el-descriptions :column="1" border size="small">
+            <el-descriptions-item v-for="(it, i) in payloadEntries(subDetail.row).filter(e => e.section === 'contact')" :key="'c'+i" :label="it.label">
+              {{ it.value }}
+            </el-descriptions-item>
+          </el-descriptions>
+        </section>
+        <section v-if="payloadEntries(subDetail.row).some(e => e.section === 'apply')" class="detail-block">
+          <h4>申请内容</h4>
+          <el-descriptions :column="1" border size="small">
+            <el-descriptions-item v-for="(it, i) in payloadEntries(subDetail.row).filter(e => e.section === 'apply')" :key="'a'+i" :label="it.label">
+              {{ it.value }}
+            </el-descriptions-item>
+          </el-descriptions>
+        </section>
         <div v-if="subDetail.mode === 'pending' && subDetail.row.status === 'PENDING'" class="sub-detail-ops">
           <el-input
             v-model="reviewNote"
@@ -832,6 +955,15 @@ onMounted(() => {
 .link-title:hover { text-decoration: underline; }
 .clickable-table :deep(tbody tr) { cursor: pointer; }
 .sub-detail-ops { margin-top: 16px; }
+.detail-block { margin-bottom: 16px; }
+.detail-block h4 {
+  margin: 0 0 8px;
+  font-size: 14px;
+  font-weight: 600;
+  color: #1f2329;
+  padding-left: 8px;
+  border-left: 3px solid #1677ff;
+}
 .muted { color: #c0c4cc; }
 
 @media (max-width: 960px) {

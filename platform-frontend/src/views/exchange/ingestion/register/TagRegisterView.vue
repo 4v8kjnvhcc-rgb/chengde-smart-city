@@ -418,10 +418,6 @@ onMounted(() => {
         <div v-loading="loading">
           <el-alert v-if="loadError" type="error" :title="loadError" show-icon :closable="false" style="margin-bottom:12px" />
           <PageCard title="标签管理">
-            <p class="tag-desc">
-              依次选择项目、系统、数据源后匹配资产标签。在匹配抽屉中勾选标签仅为本地选择；点击抽屉内「完成登记」后才写入挂标，并询问是否生成识别规则。
-            </p>
-
             <el-form inline class="portal-inline-form portal-inline-form--block">
               <el-form-item label="项目" class="portal-field-lg">
                 <el-select
@@ -589,7 +585,6 @@ onMounted(() => {
 .tag-tabs :deep(.el-tabs__header) {
   margin-bottom: 12px;
 }
-.tag-desc { font-size: 13px; color: #606266; margin: 0 0 12px; line-height: 1.6; }
 .muted { color: #c0c4cc; font-size: 12px; }
 .bind-block { margin-bottom: 20px; }
 .bind-title { font-size: 13px; font-weight: 600; margin-bottom: 8px; }

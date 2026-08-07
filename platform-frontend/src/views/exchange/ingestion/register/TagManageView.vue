@@ -91,7 +91,6 @@ onMounted(reload)
   <div v-loading="loading">
     <el-alert v-if="loadError" type="error" :title="loadError" show-icon :closable="false" style="margin-bottom:12px" />
     <PageCard title="数据资产标签管理">
-      <p class="tag-desc">根据业务含义维护数据标签与识别规则；智能识别仅更新命中统计，不写入挂标绑定。</p>
       <el-form inline class="portal-inline-form portal-inline-form--block">
         <el-form-item class="portal-form-actions">
           <el-button type="primary" @click="openDialog()">新建标签</el-button>
@@ -150,7 +149,3 @@ onMounted(reload)
     </el-dialog>
   </div>
 </template>
-
-<style scoped>
-.tag-desc { font-size: 13px; color: #606266; margin: 0 0 12px; line-height: 1.6; }
-</style>

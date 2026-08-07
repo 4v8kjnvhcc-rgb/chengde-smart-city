@@ -278,13 +278,6 @@ onMounted(() => {
 
 <template>
   <component :is="props.embedded ? 'div' : PageCard" v-bind="props.embedded ? {} : { title: '数据融合处理 · 脚本开发' }">
-    <el-alert
-      type="info"
-      :closable="false"
-      show-icon
-      style="margin-bottom: 12px"
-      title="脚本用于分层库校验/受控更新；多表融合成主题库请用「任务执行·加工共享」。脚本结果本身不是目录资源。"
-    />
     <el-tabs v-model="activeTab" @tab-change="(name: string | number) => { if (name === 'runs') void loadRuns() }">
       <el-tab-pane label="脚本列表" name="list" />
       <el-tab-pane label="运行记录" name="runs" />

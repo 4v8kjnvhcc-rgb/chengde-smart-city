@@ -93,9 +93,6 @@ onMounted(() => {
             <el-button @click="enableAll">全部启用</el-button>
           </el-form-item>
         </el-form>
-        <p class="hint">
-          {{ props.contextHint || '勾选「启用到画布」后，对应组件会出现在可视化开发左侧工具栏。执行统一由 Kettle Carte 完成。' }}
-        </p>
       </div>
 
       <div class="comp-list">

@@ -407,16 +407,6 @@ onMounted(async () => {
     </div>
 
     <PageCard title="元数据目录">
-      <el-alert
-        type="info"
-        :closable="false"
-        show-icon
-        style="margin-bottom:12px"
-        :title="catalogKind === 'source'
-          ? '数据源目录：治理前数据家底，按业务系统 → 数据源 → 数据库层层展开。仅定版元数据可见。'
-          : '数据资产目录：治理后资产成果，按数仓层级 → 主题域两级展示。仅定版元数据可见。'"
-      />
-
       <el-form inline class="portal-inline-form portal-inline-form--block">
         <el-form-item label="目录" class="portal-field-md">
           <el-radio-group v-model="catalogKind" size="default">

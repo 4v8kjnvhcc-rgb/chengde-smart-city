@@ -163,13 +163,6 @@ onMounted(async () => {
 <template>
   <div v-loading="loading">
     <PageCard title="加工共享黄金路径（多表）">
-      <el-alert
-        title="选择源表并配置声明式加工（白名单表达式），预检通过后写入主题/专题落地表，再完成二次元数据、质量、编目与授权。"
-        type="info"
-        :closable="false"
-        show-icon
-        style="margin-bottom: 16px"
-      />
       <el-form inline class="portal-inline-form portal-inline-form--block">
         <el-form-item label="源表" class="portal-field-xl">
           <el-select v-model="tableId" filterable>

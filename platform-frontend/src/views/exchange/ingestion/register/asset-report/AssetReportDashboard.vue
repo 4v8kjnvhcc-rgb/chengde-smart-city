@@ -247,11 +247,6 @@ onBeforeUnmount(() => {
   <div v-loading="loading">
     <el-alert v-if="loadError" type="error" :title="loadError" show-icon :closable="false" style="margin-bottom:12px" />
     <PageCard title="数据资产报告">
-      <p class="hint">
-        登记项目、物理表、数据库、热门表及表新增趋势、热门项目（名称/表数）来自实际登记数据；
-        存储量、脚本/工作流/接入任务及相关图表为演示模拟数据。
-      </p>
-
       <el-row v-if="report" :gutter="12" class="stat-row">
         <el-col :xs="12" :sm="8" :md="4"><el-statistic title="登记项目" :value="Number(report.projectCount || 0)" /></el-col>
         <el-col :xs="12" :sm="8" :md="4"><el-statistic title="物理表" :value="Number(report.tableCount || 0)" /></el-col>

@@ -599,15 +599,6 @@ defineExpose({ reload: load })
 
 <template>
   <PageCard :title="pageTitle">
-    <el-alert
-      :type="isFusion ? 'success' : 'info'"
-      :closable="false"
-      show-icon
-      style="margin-bottom: 12px"
-      :title="isFusion
-        ? '融合任务域：源=DWD 过程层 → 目标=DWS/ADS 主题或专题。本列表不含数据治理任务。'
-        : '治理任务域：源=ODS/登记源 → 目标=DWD 过程层。主题/专题请到数据融合·数据清洗。'"
-    />
     <el-form inline class="portal-inline-form portal-inline-form--block">
       <el-form-item class="portal-form-actions">
         <el-button v-if="mode === 'mgmt'" type="primary" @click="openCreate">

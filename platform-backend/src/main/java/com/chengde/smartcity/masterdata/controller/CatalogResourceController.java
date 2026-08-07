@@ -46,9 +46,11 @@ public class CatalogResourceController {
                                                       @RequestParam(required = false) String providerOrg,
                                                       @RequestParam(required = false) Boolean unboundOnly,
                                                       @RequestParam(required = false) String catalogOrigin,
-                                                      @RequestParam(required = false) String shareType) {
+                                                      @RequestParam(required = false) String shareType,
+                                                      @RequestParam(required = false) String resourceFormat,
+                                                      @RequestParam(required = false) Boolean excludeApprovalDraft) {
         return ApiResponse.ok(service.list(categoryId, resourceType, publishStatus, approvalStatus, keyword,
-                sourcePathType, providerOrg, unboundOnly, catalogOrigin, shareType));
+                sourcePathType, providerOrg, unboundOnly, catalogOrigin, shareType, excludeApprovalDraft, resourceFormat));
     }
 
     @GetMapping("/eligible-metadata")
@@ -203,6 +205,14 @@ public class CatalogResourceController {
                                                   @PathVariable Long id,
                                                   @RequestBody(required = false) Map<String, Object> body) {
         return ApiResponse.ok(service.submit(principal, id, body == null ? Map.of() : body));
+    }
+
+    /** 编目「提交」：草稿进入注册发布可见；不发起审批 */
+    @PostMapping("/{id}/submit-register")
+    @PreAuthorize("isAuthenticated()")
+    public ApiResponse<GovCatalogResource> submitToRegister(@AuthenticationPrincipal UserPrincipal principal,
+                                                            @PathVariable Long id) {
+        return ApiResponse.ok(service.submitToRegister(principal, id));
     }
 
     @PostMapping("/{id}/publish")

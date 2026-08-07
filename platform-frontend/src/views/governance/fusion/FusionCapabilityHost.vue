@@ -3,7 +3,7 @@
  * V3.0「数据融合处理」子能力宿主。
  * 数据清洗 / 调度 / 执行：仅融合任务（DWD→DWS/ADS），与数据治理任务隔离；不含组件勾选页。
  */
-import { computed, defineAsyncComponent, ref, watch } from 'vue'
+import { defineAsyncComponent, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import GovernanceEtlPanel from '../etl/GovernanceEtlPanel.vue'
 
@@ -24,31 +24,6 @@ const emit = defineEmits<{
 
 const route = useRoute()
 const router = useRouter()
-
-const META: Record<string, { title: string; impl: string }> = {
-  script: {
-    title: '脚本开发',
-    impl: '分层库脚本校验；多表成主题库请用「数据清洗」融合任务。',
-  },
-  clean: {
-    title: '数据清洗（融合加工）',
-    impl: '仅融合任务：源=DWD 过程层，目标=DWS/ADS 主题或专题。与数据治理任务（ODS→DWD）完全隔离，本页不出现组件库。',
-  },
-  schedule: {
-    title: '工作流调度',
-    impl: '仅调度融合任务（DWD→DWS/ADS）。',
-  },
-  execute: {
-    title: '任务执行',
-    impl: '加工共享落主题/专题；或运行融合任务。治理任务请到「数据治理」。',
-  },
-  version: {
-    title: '版本管理',
-    impl: '融合脚本发布/回滚。',
-  },
-}
-
-const meta = computed(() => META[props.capability] || META.script)
 
 const executeTab = ref('processed-share')
 watch(
@@ -87,15 +62,6 @@ const taskId = computed(() => props.etlTaskId ?? null)
 
 <template>
   <div class="fusion-cap-host">
-    <el-alert
-      type="success"
-      :closable="false"
-      show-icon
-      style="margin-bottom: 12px"
-      :title="`V3.0「数据融合处理」→ ${meta.title}`"
-      :description="meta.impl"
-    />
-
     <FusionScriptView v-if="capability === 'script' || capability === 'version'" embedded />
 
     <GovernanceEtlPanel

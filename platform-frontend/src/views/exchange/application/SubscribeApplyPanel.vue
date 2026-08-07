@@ -7,6 +7,7 @@ import { statusLabel } from '@/utils/status-label'
 import PortalPagination from '@/components/common/PortalPagination.vue'
 import ResourceApplyDialog from './ResourceApplyDialog.vue'
 import type { ApplyResource } from './ResourceApplyDialog.vue'
+import { addFavorite, isFavorited, removeFavorite } from './portal-favorites'
 
 export interface CatalogFacet {
   code?: string
@@ -68,15 +69,12 @@ const RESOURCE_TYPE_OPTS = [
   { value: 'FILE', label: '文件' },
 ]
 
-/** 基础资源六库兜底（无 API 数据时） */
-const FALLBACK_LIBS: CatalogFacet[] = [
-  { code: '人口库', name: '人口库' },
-  { code: '法人库', name: '法人库' },
-  { code: '电子证照库', name: '电子证照库' },
-  { code: '空间地理库', name: '空间地理库' },
-  { code: '宏观经济库', name: '宏观经济库' },
-  { code: '公共信用库', name: '公共信用库' },
-]
+/** 基础库图标条：仅用门户 home.baseLibraries（来自归集「数据资源分类」），禁止写死兜底 */
+const libraries = computed(() => {
+  const omitRoot = (list: CatalogFacet[]) =>
+    list.filter((t) => t.name && t.name !== '基础资源目录')
+  return omitRoot(props.baseLibraries || [])
+})
 
 const loading = ref(false)
 const keyword = ref('')
@@ -107,40 +105,6 @@ const applySubmitting = ref(false)
 const applyTarget = ref<ApplyResource | null>(null)
 const subscribed = ref(false)
 const followSubId = ref<number | null>(null)
-
-const FOLLOW_KEY = 'portal-catalog-follow'
-
-function followSet(): Set<string> {
-  try {
-    const raw = localStorage.getItem(FOLLOW_KEY)
-    const arr = raw ? (JSON.parse(raw) as string[]) : []
-    return new Set(Array.isArray(arr) ? arr.map(String) : [])
-  } catch {
-    return new Set()
-  }
-}
-
-function isFollowed(id: number | string) {
-  return followSet().has(String(id))
-}
-
-function setFollowed(id: number | string, on: boolean) {
-  const s = followSet()
-  if (on) s.add(String(id))
-  else s.delete(String(id))
-  localStorage.setItem(FOLLOW_KEY, JSON.stringify([...s]))
-}
-
-const libraries = computed(() => {
-  const omitRoot = (list: CatalogFacet[]) =>
-    list.filter((t) => t.name && t.name !== '基础资源目录')
-  if (props.baseLibraries?.length) return omitRoot(props.baseLibraries)
-  // 主题里若已含六库名称，优先用主题 facet
-  const names = new Set(FALLBACK_LIBS.map((x) => x.name))
-  const fromThemes = (props.themes || []).filter((t) => names.has(t.name))
-  if (fromThemes.length) return omitRoot(fromThemes)
-  return FALLBACK_LIBS
-})
 
 const activeLib = computed(() => {
   if (!filterTheme.value) return null
@@ -269,7 +233,7 @@ async function openDetail(row: CatalogRow) {
       (s) => String(s.catalogId) === String(row.id) && ['APPROVED', 'READY', 'PENDING'].includes(String(s.status || '')),
     )
     followSubId.value = hit?.id ?? null
-    subscribed.value = !!hit || isFollowed(row.id)
+    subscribed.value = !!hit || isFavorited(row.id)
     const idx = rows.value.findIndex((r) => String(r.id) === String(row.id))
     if (idx >= 0 && res.data?.visitCount != null) {
       rows.value[idx] = { ...rows.value[idx], visitCount: Number(res.data.visitCount) }
@@ -333,12 +297,22 @@ function toggleSubscribe() {
   if (!detail.value) return
   const id = detail.value.id as number | string
   if (!subscribed.value) {
+    addFavorite({
+      catalogId: String(id),
+      title: String(detail.value.title || ''),
+      catalogCode: detail.value.catalogCode as string | undefined,
+      providerOrg: detail.value.providerOrg as string | undefined,
+      resourceType: detail.value.resourceType as string | undefined,
+      resourceTypeLabel: detail.value.resourceTypeLabel as string | undefined,
+      shareAttr: detail.value.shareAttr as string | undefined,
+      openAttr: detail.value.openAttr as string | undefined,
+      updatedAt: detail.value.updatedAt as string | undefined,
+    })
     subscribed.value = true
-    setFollowed(id, true)
-    ElMessage.success('已订阅该资源')
+    ElMessage.success('已订阅，可在「个人空间 · 我的订阅」查看')
     return
   }
-  void ElMessageBox.confirm('确认取消订阅该资源？', '取消订阅', {
+  void ElMessageBox.confirm('确认取消订阅该资源？取消后「我的订阅」中将不再显示。', '取消订阅', {
     type: 'warning',
     confirmButtonText: '取消订阅',
     cancelButtonText: '再想想',
@@ -352,7 +326,7 @@ function toggleSubscribe() {
       }
       followSubId.value = null
     }
-    setFollowed(id, false)
+    removeFavorite(id)
     subscribed.value = false
     ElMessage.success('已取消订阅')
   }).catch(() => undefined)
@@ -770,7 +744,7 @@ defineExpose({ loadCatalog, openDetail })
       :resource="applyTarget"
       :share-attr-label="shareAttrLabel"
       :open-attr-label="openAttrLabel"
-      :default-applicant-org="applicantOrg || '承德高新技术产业开发区管理委员会'"
+      :default-applicant-org="applicantOrg"
       @submit="submitApplyPayload"
     />
   </div>

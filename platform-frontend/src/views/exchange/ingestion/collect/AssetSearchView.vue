@@ -313,10 +313,6 @@ onMounted(reload)
 <template>
   <div v-loading="loading">
     <PageCard title="数据搜索">
-      <p class="hint">
-        元数据驱动的统一检索门户：业务知识 + 搜索引擎 + 人机交互。支持智能模糊 / 精确标识 / 元数据找表 / 多维组合，
-        以及全局条件复用、条件浏览与合规下载申请。
-      </p>
       <el-descriptions v-if="overview" :column="4" border size="small" class="mb">
         <el-descriptions-item label="索引文档">{{ overview.docCount }}</el-descriptions-item>
         <el-descriptions-item label="同步策略">{{ overview.syncPolicies }}</el-descriptions-item>

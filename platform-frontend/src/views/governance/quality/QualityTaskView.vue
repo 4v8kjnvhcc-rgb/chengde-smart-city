@@ -297,13 +297,6 @@ onMounted(loadTasks)
 
 <template>
   <PageCard title="数据质量任务">
-    <el-alert
-      type="warning"
-      :closable="false"
-      show-icon
-      style="margin-bottom: 12px"
-      title="任务绑定来源库即选定稽核层级：源层服务直通共享门禁；DWD 过程层只服务治理/融合；DWS/ADS 资源层服务加工共享编目前门禁。"
-    />
     <el-form inline class="portal-inline-form portal-inline-form--block">
       <el-form-item class="portal-form-actions">
         <el-button type="primary" @click="openCreate">新建任务</el-button>

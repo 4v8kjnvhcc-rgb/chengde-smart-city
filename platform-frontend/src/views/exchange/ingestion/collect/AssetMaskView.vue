@@ -355,13 +355,6 @@ onMounted(reload)
 
 <template>
   <div v-loading="loading">
-    <el-alert
-      type="info"
-      :closable="false"
-      show-icon
-      style="margin-bottom:12px"
-      title="对齐 GB/T 43697（分级决定强度）与 GB/T 37964（去标识化）：规则→策略→场景绑定→发布执行→审计。可逆还原仅系统管理员并记高敏审计。加密仅存密钥别名，对接 KMS。"
-    />
     <el-row v-if="overview" :gutter="12" style="margin-bottom:12px">
       <el-col :span="6"><el-statistic title="启用规则" :value="Number(overview.ruleCount || 0)" /></el-col>
       <el-col :span="6"><el-statistic title="已发布策略" :value="Number(overview.policyActive || 0)" /></el-col>
@@ -410,7 +403,6 @@ onMounted(reload)
     </PageCard>
 
     <PageCard v-else-if="tab === 'policies'" title="脱敏策略编排">
-      <p class="hint">按场景 + 级别/角色匹配；优先级数值越小越优先，冲突时取更严策略。发布后立即生效。</p>
       <el-button type="primary" style="margin-bottom:12px" @click="openPolicy()">新建策略</el-button>
       <el-table :data="policies" stripe border>
         <el-table-column prop="policyCode" label="编码" width="160" />
@@ -498,7 +490,6 @@ onMounted(reload)
     </PageCard>
 
     <PageCard v-else-if="tab === 'crypto'" title="密钥引用（KMS 对接）">
-      <el-alert type="warning" :closable="false" style="margin-bottom:12px" title="禁止硬编码密钥材料；仅维护别名与轮换策略，生产对接 KMS。" />
       <el-button type="primary" style="margin-bottom:12px" @click="openCrypto()">新增引用</el-button>
       <el-table :data="cryptos" stripe border>
         <el-table-column prop="refCode" label="编码" width="140" />

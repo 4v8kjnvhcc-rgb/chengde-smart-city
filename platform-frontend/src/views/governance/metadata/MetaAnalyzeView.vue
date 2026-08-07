@@ -436,31 +436,6 @@ onBeforeUnmount(() => {
         </el-form-item>
       </el-form>
 
-      <el-alert
-        v-if="activeTab === 'assoc'"
-        type="info"
-        :closable="false"
-        show-icon
-        style="margin-bottom:12px"
-        title="基于主外键自动解析，可视化表间关联；可手工维护关联关系，支撑业务梳理。"
-      />
-      <el-alert
-        v-else-if="activeTab === 'lineage'"
-        type="info"
-        :closable="false"
-        show-icon
-        style="margin-bottom:12px"
-        :title="`反映数据来源与加工过程。上游 ${lineageMeta.upstreamCount} · 下游 ${lineageMeta.downstreamCount}${fieldDrill ? ' · 当前为字段级视图' : ''}`"
-      />
-      <el-alert
-        v-else
-        type="warning"
-        :closable="false"
-        show-icon
-        style="margin-bottom:12px"
-        title="从选定实体出发递归查找下游依赖，评估变更风险，支撑资产清理与维护。"
-      />
-
       <div v-if="activeTab === 'impact' && impactRisk" class="manalyze-impact-bar">
         <el-tag :type="riskTagType(impactRisk)" size="small">风险 {{ statusLabel(impactRisk) }}</el-tag>
         <span>影响节点 {{ impactDetails.length }} · 最大跳数 {{ impactMaxHop }}</span>

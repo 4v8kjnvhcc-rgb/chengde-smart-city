@@ -363,10 +363,6 @@ onMounted(reload)
 <template>
   <div v-loading="loading">
     <PageCard title="数据标签管理">
-      <p class="hint">
-        按业务含义维护标签体系与智能识别规则；支持快速打标、建议确认、按标签检索导航与覆盖率治理。
-        侧重业务语义定位，可与分级分类/脱敏联动，不等同于安全分级。
-      </p>
       <el-descriptions v-if="overview" :column="4" border size="small" class="mb">
         <el-descriptions-item label="启用标签">{{ overview.activeTags }}</el-descriptions-item>
         <el-descriptions-item label="业务标签">{{ overview.customTags }}</el-descriptions-item>
@@ -406,8 +402,6 @@ onMounted(reload)
             <el-button @click="mergeDialog = true">合并标签</el-button>
           </el-form-item>
         </el-form>
-        <el-alert type="info" :closable="false" show-icon class="mb"
-          title="维度可配置（业务域/主题/对象等）；国标类目仅可维护规则与同义词。受控词表优先，同义词便于检索命中。" />
         <el-table :data="pagedTags" stripe>
           <el-table-column prop="tagCode" label="编码" width="120" show-overflow-tooltip />
           <el-table-column prop="tagName" label="名称" width="140" show-overflow-tooltip />
@@ -451,8 +445,6 @@ onMounted(reload)
             <el-button type="warning" @click="runAllRules">全量识别</el-button>
           </el-form-item>
         </el-form>
-        <el-alert type="info" :closable="false" show-icon class="mb"
-          title="条件 JSON 支持 nameRegex、commentKeywords、dataTypes、assetTypes、minConfidence。默认冲突策略：不覆盖人工标签。" />
         <el-table :data="rules" stripe>
           <el-table-column prop="ruleCode" label="编码" width="130" show-overflow-tooltip />
           <el-table-column prop="ruleName" label="名称" width="150" show-overflow-tooltip />

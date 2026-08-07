@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, onActivated, onMounted, reactive, ref, watch } from 'vue'
+import { useRouter } from 'vue-router'
 import api from '@/api/http'
 import { ElMessage, ElMessageBox, type InputInstance } from 'element-plus'
 import PageCard from '@/components/common/PageCard.vue'
@@ -7,6 +8,8 @@ import PortalPagination from '@/components/common/PortalPagination.vue'
 import { useClientPager } from '@/composables/useClientPager'
 import { statusLabel, statusTagType } from '@/utils/status-label'
 import { ingestionApi } from '@/views/exchange/ingestion/useIngestionHub'
+
+const router = useRouter()
 
 interface CategoryNode {
   id: number
@@ -301,6 +304,8 @@ const addDsStep = ref(0)
 const addDsSaving = ref(false)
 const addDsTesting = ref(false)
 const addDsAdapter = ref('MYSQL')
+/** 编辑已有数据源时非空；新增时为 null */
+const editingDsId = ref<number | null>(null)
 const addDsProjects = ref<Array<{ id: number; projectName: string }>>([])
 const addDsSystems = ref<Array<{ id: number; systemName: string; projectId: number }>>([])
 const addDsForm = reactive({
@@ -318,6 +323,7 @@ const addDsForm = reactive({
   username: '',
   password: '',
 })
+const addDsDialogTitle = computed(() => (editingDsId.value != null ? '编辑数据源' : '新增数据源'))
 
 function dataTypeToZh(dt: string): string {
   const u = (dt || '').toUpperCase()
@@ -367,11 +373,6 @@ const form = reactive({
 
 const pageTitle = computed(() =>
   props.catalogOrigin === 'INGEST' ? '数据资源编目管理' : '资源目录编制',
-)
-const pageAlert = computed(() =>
-  props.catalogOrigin === 'INGEST'
-    ? '手动新增仅保存草稿；关联分类与发布请到「资源目录注册发布」，审批在「数据资源目录审批」。过程层 DWD 不可编目。'
-    : '手动新增仅保存草稿；关联分类与发布请到「目录注册发布」，审批在「资源目录审批」。过程层 DWD 不可编目；仅挂载直通源或加工主题/专题资源。',
 )
 const publishEntryName = computed(() =>
   props.catalogOrigin === 'INGEST' ? '资源目录注册发布' : '目录注册发布',
@@ -1257,9 +1258,10 @@ async function loadBindColumns(tableName: string) {
   }
 }
 
-function openAddDsWizard() {
+function resetAddDsForm() {
   addDsStep.value = 0
   addDsAdapter.value = 'MYSQL'
+  editingDsId.value = null
   addDsForm.sortOrder = 0
   addDsForm.sourceName = ''
   addDsForm.deptName = form.providerOrg || ''
@@ -1273,8 +1275,54 @@ function openAddDsWizard() {
   addDsForm.database = ''
   addDsForm.username = ''
   addDsForm.password = ''
+}
+
+function openAddDsWizard() {
+  resetAddDsForm()
   addDsVisible.value = true
   void loadAddDsProjects()
+}
+
+/** 编辑已有登记数据源（平台分层库不可编辑） */
+async function openEditDs(row: BindSource) {
+  if (row.platformLayer) {
+    ElMessage.warning('平台分层库不可在此编辑，请到数据源登记维护')
+    return
+  }
+  resetAddDsForm()
+  editingDsId.value = row.id
+  addDsAdapter.value = (row.sourceType || 'MYSQL').toUpperCase()
+  addDsForm.sourceName = row.sourceName || ''
+  addDsForm.deptName = form.providerOrg || row.providerOrg || row.systemName || ''
+  addDsForm.categoryName = row.categoryName || '来源'
+  addDsForm.database = row.databaseName || ''
+  addDsVisible.value = true
+  await loadAddDsProjects()
+  try {
+    const list = (await ingestionApi.dataSources()).data || []
+    const ds = list.find((d) => d.id === row.id)
+    if (!ds) {
+      ElMessage.error('未找到该数据源详情')
+      addDsVisible.value = false
+      return
+    }
+    addDsForm.systemId = ds.systemId
+    addDsForm.sourceName = ds.sourceName || row.sourceName
+    try {
+      const cfg = JSON.parse(ds.connConfigJson || '{}') as Record<string, unknown>
+      addDsForm.host = String(cfg.host || '')
+      addDsForm.port = Number(cfg.port || 3306)
+      addDsForm.database = String(cfg.database || row.databaseName || '')
+      addDsForm.username = String(cfg.username || '')
+    } catch {
+      /* keep defaults */
+    }
+    addDsForm.password = ''
+    addDsStep.value = 1
+  } catch (e: any) {
+    ElMessage.error(e?.response?.data?.message || e?.message || '加载数据源失败')
+    addDsVisible.value = false
+  }
 }
 
 async function loadAddDsProjects() {
@@ -1312,68 +1360,113 @@ function addDsGoNext() {
   addDsStep.value = 1
 }
 
-async function submitAddDs(andTest: boolean) {
+function validateAddDsForm(requirePassword: boolean): boolean {
   if (!addDsForm.sourceName.trim()) {
     ElMessage.warning('请填写名称')
-    return
+    return false
   }
   if (!addDsForm.deptName.trim()) {
     ElMessage.warning('请填写部门名称')
-    return
+    return false
   }
   if (!addDsForm.systemId) {
     ElMessage.warning('请选择所属系统（须挂到已登记项目系统下）')
-    return
+    return false
   }
   if (!addDsForm.host.trim()) {
     ElMessage.warning('请填写数据库连接地址')
-    return
+    return false
   }
   if (!addDsForm.port) {
     ElMessage.warning('请填写数据库端口')
-    return
+    return false
   }
   if (!addDsForm.username.trim()) {
     ElMessage.warning('请填写用户名')
-    return
+    return false
   }
+  if (requirePassword && !addDsForm.password) {
+    ElMessage.warning(editingDsId.value != null ? '请填写密码后再测试连接' : '请填写密码')
+    return false
+  }
+  return true
+}
+
+/** 仅探测连通性，不落库创建/更新 */
+async function testAddDsConnection() {
+  const editKeepPwd = editingDsId.value != null && !addDsForm.password
+  if (!validateAddDsForm(!editKeepPwd)) return
+  addDsTesting.value = true
+  try {
+    if (editKeepPwd && editingDsId.value != null) {
+      const tr = await ingestionApi.testDataSource(editingDsId.value)
+      const ok = tr.data?.ok !== false && tr.data?.connStatus !== 'FAILED'
+      ElMessage[ok ? 'success' : 'warning'](
+        ok
+          ? `连接成功${tr.data?.tableCount != null ? `，表数 ${tr.data.tableCount}` : ''}`
+          : `连接失败：${tr.data?.message || ''}`,
+      )
+      return
+    }
+    const tr = await ingestionApi.testDataSourceConnection({
+      sourceType: addDsAdapter.value,
+      host: addDsForm.host.trim(),
+      port: addDsForm.port,
+      database: addDsForm.database,
+      username: addDsForm.username.trim(),
+      password: addDsForm.password,
+    })
+    const ok = tr.data?.ok !== false
+    ElMessage[ok ? 'success' : 'warning'](
+      ok
+        ? `连接成功${tr.data?.tableCount != null ? `，表数 ${tr.data.tableCount}` : ''}（未保存，请点确定）`
+        : `连接失败：${tr.data?.message || ''}`,
+    )
+  } catch (e: any) {
+    ElMessage.error(e?.response?.data?.message || e?.message || '连接测试失败')
+  } finally {
+    addDsTesting.value = false
+  }
+}
+
+/** 确定后才创建/更新数据源 */
+async function submitAddDs() {
+  const isEdit = editingDsId.value != null
+  if (!validateAddDsForm(!isEdit)) return
   const sys = addDsSystems.value.find((s) => s.id === addDsForm.systemId)
   addDsSaving.value = true
-  addDsTesting.value = andTest
   try {
-    const id = (
-      await ingestionApi.createDataSource({
-        systemId: addDsForm.systemId,
-        projectId: sys?.projectId,
-        sourceName: addDsForm.sourceName.trim(),
-        sourceType: addDsAdapter.value,
-        host: addDsForm.host.trim(),
-        port: addDsForm.port,
-        database: addDsForm.database,
-        username: addDsForm.username.trim(),
-        password: addDsForm.password,
-        remark: addDsForm.remark,
-      })
-    ).data
-    if (andTest && id) {
-      const tr = await ingestionApi.testDataSource(id)
-      const ok = tr.data?.ok !== false
-      ElMessage[ok ? 'success' : 'warning'](ok ? '连接成功，数据源已创建' : `已创建但连接失败：${tr.data?.message || ''}`)
+    const body: Record<string, unknown> = {
+      systemId: addDsForm.systemId,
+      projectId: sys?.projectId,
+      sourceName: addDsForm.sourceName.trim(),
+      sourceType: addDsAdapter.value,
+      host: addDsForm.host.trim(),
+      port: addDsForm.port,
+      database: addDsForm.database,
+      username: addDsForm.username.trim(),
+      remark: addDsForm.remark,
+    }
+    if (addDsForm.password) body.password = addDsForm.password
+    let id = editingDsId.value
+    if (isEdit && id != null) {
+      await ingestionApi.updateDataSource(id, body)
+      ElMessage.success('数据源已更新')
     } else {
+      id = (await ingestionApi.createDataSource(body)).data
       ElMessage.success('数据源已创建')
     }
     addDsVisible.value = false
     await loadBindSources()
-    const created = dsPickerRows.value.find((r) => r.id === id)
-    if (created) {
-      dsPickerSelected.value = created
+    const selected = dsPickerRows.value.find((r) => r.id === id)
+    if (selected) {
+      dsPickerSelected.value = selected
       dsPickerCat.value = 'SOURCE'
     }
   } catch (e: any) {
-    ElMessage.error(e?.response?.data?.message || e?.message || '创建数据源失败')
+    ElMessage.error(e?.response?.data?.message || e?.message || (isEdit ? '更新数据源失败' : '创建数据源失败'))
   } finally {
     addDsSaving.value = false
-    addDsTesting.value = false
   }
 }
 
@@ -1427,13 +1520,20 @@ function onFileSelected(uploadFile: { name?: string; size?: number; raw?: File }
 }
 
 async function removeOne(row: CatalogRes) {
+  if (!canDeleteRow(row)) {
+    ElMessage.warning(row.approvalStatus === 'PENDING' ? '审批中不可删除' : '已发布请先下线后再删除')
+    return
+  }
+  const draft = isDraftRow(row)
   await ElMessageBox.confirm(
-    `确认提交删除「${row.resourceName}」的审批？通过后才会删除。`,
-    '删除审批',
+    draft
+      ? `确认删除草稿「${row.resourceName}」？删除后不可恢复。`
+      : `确认提交删除「${row.resourceName}」的审批？通过后才会删除。`,
+    draft ? '删除草稿' : '删除审批',
     { type: 'warning' },
   )
   await api.delete(`/governance/catalog/resources-mgmt/${row.id}`)
-  ElMessage.success('已提交删除审批')
+  ElMessage.success(draft ? '已删除' : '已提交删除审批')
   await loadResources()
 }
 
@@ -1442,15 +1542,25 @@ async function batchDelete() {
     ElMessage.warning('请先勾选资源')
     return
   }
-  await ElMessageBox.confirm(
-    `确认提交批量删除审批 ${selectedRows.value.length} 条？`,
-    '批量删除审批',
-    { type: 'warning' },
-  )
+  const deletable = selectedRows.value.filter(canDeleteRow)
+  if (!deletable.length) {
+    ElMessage.warning('所选记录均不可删除（审批中或已发布）')
+    return
+  }
+  const draftCount = deletable.filter(isDraftRow).length
+  const approvalCount = deletable.length - draftCount
+  const tip =
+    approvalCount > 0 && draftCount > 0
+      ? `将直接删除 ${draftCount} 条草稿，并提交 ${approvalCount} 条删除审批，确认继续？`
+      : draftCount > 0
+        ? `确认直接删除 ${draftCount} 条草稿？删除后不可恢复。`
+        : `确认提交 ${approvalCount} 条删除审批？通过后才会删除。`
+  await ElMessageBox.confirm(tip, '批量删除', { type: 'warning' })
   await api.post('/governance/catalog/resources-mgmt/batch-delete', {
-    ids: selectedRows.value.map((r) => r.id),
+    ids: deletable.map((r) => r.id),
   })
-  ElMessage.success('已提交批量删除审批')
+  ElMessage.success('批量删除已处理')
+  selectedRows.value = []
   await loadResources()
 }
 
@@ -1464,12 +1574,48 @@ async function submitOffline(row: CatalogRes) {
   await loadResources()
 }
 
+/** 提交：草稿进入注册发布可见范围，并跳转目录注册发布页 */
 async function tipGoPublish(row: CatalogRes) {
-  if (!row.categoryId) {
-    ElMessage.info(`请先到「${publishEntryName.value}」关联分类后再发布`)
-  } else {
-    ElMessage.info(`请到「${publishEntryName.value}」的「分类下已关联资源」中点击发布`)
+  const st = (row.approvalStatus || '').toUpperCase()
+  try {
+    if (st === 'DRAFT' || st === 'REJECTED' || st === 'WITHDRAWN' || st === 'APPROVED') {
+      await api.post(`/governance/catalog/resources-mgmt/${row.id}/submit-register`)
+      ElMessage.success(`已提交，可在「${publishEntryName.value}」关联分类并发布`)
+      await loadResources()
+    }
+  } catch (e: any) {
+    ElMessage.error(e?.response?.data?.message || e?.message || '提交失败')
+    return
   }
+  if (props.catalogOrigin === 'INGEST') {
+    await router.push({
+      path: '/exchange/ingestion',
+      query: { system: 'collect', module: 'catalog.publish' },
+    })
+  } else {
+    await router.push({
+      path: '/governance',
+      query: { tab: 'catalog', cSub: 'publish' },
+    })
+  }
+}
+
+function canSubmitToRegister(row: CatalogRes) {
+  if (row.publishStatus === 'PUBLISHED') return false
+  if (row.approvalStatus === 'PENDING') return false
+  return true
+}
+
+/** 草稿：可直接删除 */
+function isDraftRow(row: CatalogRes) {
+  return (row.approvalStatus || 'DRAFT').toUpperCase() === 'DRAFT'
+}
+
+/** 草稿可删；审批中/已发布不可删；已通过等走删除审批 */
+function canDeleteRow(row: CatalogRes) {
+  if (row.approvalStatus === 'PENDING') return false
+  if (row.publishStatus === 'PUBLISHED') return false
+  return true
 }
 
 async function openVersions(row: CatalogRes) {
@@ -1569,14 +1715,6 @@ onActivated(async () => {
 
 <template>
   <PageCard :title="pageTitle">
-    <el-alert
-      type="info"
-      :closable="false"
-      show-icon
-      :title="pageAlert"
-      style="margin-bottom: 12px"
-    />
-
     <el-form inline class="portal-inline-form portal-inline-form--block">
       <el-form-item label="资源名称" class="portal-field-lg">
         <el-input
@@ -1600,6 +1738,7 @@ onActivated(async () => {
       <el-form-item label="审核状态" class="portal-field-md">
         <el-select v-model="query.approvalStatus" clearable placeholder="全部">
           <el-option label="草稿" value="DRAFT" />
+          <el-option label="待注册发布" value="TO_REGISTER" />
           <el-option label="待审批" value="PENDING" />
           <el-option label="已通过" value="APPROVED" />
           <el-option label="已拒绝" value="REJECTED" />
@@ -1671,17 +1810,17 @@ onActivated(async () => {
           <el-button link type="primary" @click="openEdit(row)">编辑</el-button>
           <el-button link @click="openVersions(row)">版本</el-button>
           <el-button
-            v-if="row.publishStatus !== 'PUBLISHED' && row.approvalStatus !== 'PENDING'"
+            v-if="canSubmitToRegister(row)"
             link
             type="primary"
             @click="tipGoPublish(row)"
-          >去发布</el-button>
+          >提交</el-button>
           <el-button
             v-if="row.publishStatus === 'PUBLISHED' && row.approvalStatus !== 'PENDING'"
             link
             @click="submitOffline(row)"
           >提交下线</el-button>
-          <el-button link type="danger" @click="removeOne(row)">删除</el-button>
+          <el-button v-if="canDeleteRow(row)" link type="danger" @click="removeOne(row)">删除</el-button>
         </template>
       </el-table-column>
     </el-table>
@@ -2182,7 +2321,7 @@ onActivated(async () => {
             </el-table-column>
             <el-table-column label="操作" width="70">
               <template #default="{ row }">
-                <el-button link type="primary" @click.stop="onDsPickerRowClick(row)">选择</el-button>
+                <el-button link type="primary" @click.stop="openEditDs(row)">编辑</el-button>
               </template>
             </el-table-column>
           </el-table>
@@ -2231,10 +2370,10 @@ onActivated(async () => {
       </template>
     </el-dialog>
 
-    <!-- 新增数据源：适配器 → 连接信息 -->
+    <!-- 新增/编辑数据源：适配器 → 连接信息 -->
     <el-dialog
       v-model="addDsVisible"
-      title="新增数据源"
+      :title="addDsDialogTitle"
       width="720px"
       destroy-on-close
       append-to-body
@@ -2308,7 +2447,12 @@ onActivated(async () => {
             <el-input v-model="addDsForm.username" />
           </el-form-item>
           <el-form-item label="password(密码)">
-            <el-input v-model="addDsForm.password" type="password" show-password />
+            <el-input
+              v-model="addDsForm.password"
+              type="password"
+              show-password
+              :placeholder="editingDsId != null ? '留空则保持原密码；测试连接须填写' : ''"
+            />
           </el-form-item>
         </el-form>
       </template>
@@ -2317,8 +2461,8 @@ onActivated(async () => {
         <el-button v-if="addDsStep === 1" @click="addDsStep = 0">上一步</el-button>
         <el-button v-if="addDsStep === 0" type="primary" @click="addDsGoNext">下一步</el-button>
         <template v-if="addDsStep === 1">
-          <el-button type="primary" :loading="addDsTesting" @click="submitAddDs(true)">测试连接</el-button>
-          <el-button type="primary" :loading="addDsSaving && !addDsTesting" @click="submitAddDs(false)">确定</el-button>
+          <el-button type="primary" :loading="addDsTesting" @click="testAddDsConnection">测试连接</el-button>
+          <el-button type="primary" :loading="addDsSaving" @click="submitAddDs">确定</el-button>
         </template>
       </template>
     </el-dialog>

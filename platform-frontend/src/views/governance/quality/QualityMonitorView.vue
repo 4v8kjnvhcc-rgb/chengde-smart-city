@@ -164,13 +164,6 @@ onBeforeUnmount(() => {
 
 <template>
   <div v-loading="loading">
-    <el-alert
-      type="warning"
-      :closable="false"
-      show-icon
-      style="margin-bottom: 12px"
-      title="数据质量监控：源层门禁→直通编目；资源层门禁→加工编目；过程层(DWD)问题驱动整改，默认不进目录门户。"
-    />
     <el-row :gutter="12" style="margin-bottom: 12px">
       <el-col :xs="12" :sm="6">
         <PageCard title="任务总数">

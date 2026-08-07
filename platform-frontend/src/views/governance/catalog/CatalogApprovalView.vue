@@ -45,6 +45,29 @@ interface ApprovalRow {
   submittedAt?: string
   reviewedBy?: string
   reviewedAt?: string
+  payloadJson?: string
+}
+
+interface DetailColumn {
+  columnName?: string
+  columnNameZh?: string
+  dataType?: string
+  dataTypeZh?: string
+  sensLevel?: string
+  shareLevel?: string
+  displayFlag?: boolean
+  searchFlag?: boolean
+  statFlag?: boolean
+  sortFlag?: boolean
+  required?: boolean
+  description?: string
+}
+
+interface DetailParam {
+  name?: string
+  type?: string
+  required?: boolean
+  description?: string
 }
 
 const ACTION_ZH: Record<string, string> = {
@@ -91,7 +114,40 @@ const reviewForm = reactive({
   comment: '',
 })
 
+/** 审批数据详情（查看 / 审核入口） */
+const detailVisible = ref(false)
+const detailRow = ref<ApprovalRow | null>(null)
+const detailAllowAudit = ref(false)
+const detailLoading = ref(false)
+const detailResource = ref<Record<string, unknown> | null>(null)
+
+const SHARE_ZH: Record<string, string> = {
+  OPEN: '无条件共享',
+  CONDITIONAL: '有条件共享',
+  NOT_SHARE: '不予共享',
+}
+const FORMAT_ZH: Record<string, string> = {
+  DATABASE: '库表',
+  FILE: '文件',
+  API: '接口',
+  OTHER: '其他',
+}
+const SHARE_LEVEL_ZH: Record<string, string> = {
+  OPEN: '无条件共享',
+  CONDITIONAL: '有条件共享',
+  NOT_SHARE: '不予共享',
+}
+const OPEN_ZH: Record<string, string> = {
+  OPEN: '是',
+  NOT_OPEN: '否',
+  CONDITIONAL: '有条件开放',
+}
+
 const reviewTitle = computed(() => (reviewMode.value === 'batch' ? '批量审核' : '审核'))
+const detailTitle = computed(() => {
+  if (!detailRow.value) return '审批详情'
+  return detailAllowAudit.value ? '审核 · 数据详情' : '查看 · 数据详情'
+})
 const pendingCount = computed(() => rows.value.filter((r) => r.status === 'PENDING').length)
 const selectedPendingCount = computed(
   () => selected.value.filter((r) => r.status === 'PENDING').length,
@@ -183,9 +239,44 @@ function actionLabel(type: string) {
   return ACTION_ZH[type] || statusLabel(type)
 }
 
-function openReview(row: ApprovalRow) {
+async function loadDetailResource(row: ApprovalRow) {
+  detailResource.value = null
+  if (!row.resourceId) return
+  detailLoading.value = true
+  try {
+    const res = await api.get(`/governance/catalog/resources-mgmt/${row.resourceId}`)
+    detailResource.value = (res.data || null) as Record<string, unknown> | null
+  } catch {
+    detailResource.value = null
+  } finally {
+    detailLoading.value = false
+  }
+}
+
+/** 查看：只读详情 */
+async function openDetail(row: ApprovalRow) {
+  detailRow.value = row
+  detailAllowAudit.value = false
+  detailVisible.value = true
+  await loadDetailResource(row)
+}
+
+/**
+ * 审核：先打开数据详情，详情内再点「审核」进入通过/驳回。
+ * 批量审核仍直接打开决策弹窗。
+ */
+async function openReview(row: ApprovalRow) {
+  detailRow.value = row
+  detailAllowAudit.value = row.status === 'PENDING'
+  detailVisible.value = true
+  await loadDetailResource(row)
+}
+
+/** 从详情进入单条审核决策 */
+function openReviewFromDetail() {
+  if (!detailRow.value || detailRow.value.status !== 'PENDING') return
   reviewMode.value = 'single'
-  reviewTarget.value = row
+  reviewTarget.value = detailRow.value
   reviewForm.decision = 'APPROVE'
   reviewForm.comment = ''
   reviewVisible.value = true
@@ -201,6 +292,101 @@ function openBatchReview() {
   reviewForm.decision = 'APPROVE'
   reviewForm.comment = ''
   reviewVisible.value = true
+}
+
+function detailField(key: string): string {
+  const r = detailResource.value
+  if (!r) return '—'
+  const v = r[key]
+  if (v == null || v === '') return '—'
+  return String(v)
+}
+
+function detailShareLabel(): string {
+  const raw = detailField('shareType')
+  if (raw === '—') return raw
+  return SHARE_ZH[raw] || statusLabel(raw)
+}
+
+function detailFormatLabel(): string {
+  const raw = detailField('resourceFormat')
+  if (raw === '—') return raw
+  return FORMAT_ZH[raw] || statusLabel(raw)
+}
+
+function detailOpenLabel(): string {
+  const raw = detailField('openType')
+  if (raw === '—') return raw
+  return OPEN_ZH[raw] || statusLabel(raw)
+}
+
+function parseExt(): Record<string, unknown> | null {
+  const raw = detailResource.value?.extJson
+  if (raw == null || raw === '') return null
+  if (typeof raw === 'object') return raw as Record<string, unknown>
+  try {
+    return JSON.parse(String(raw)) as Record<string, unknown>
+  } catch {
+    return null
+  }
+}
+
+const detailExt = computed(() => parseExt())
+const detailFormat = computed(() => {
+  const f = detailField('resourceFormat')
+  return f === '—' ? '' : f
+})
+const detailBindSourceName = computed(() => {
+  const ext = detailExt.value
+  if (!ext) return '—'
+  return String(ext.bindSourceName || '—')
+})
+const detailBindTableName = computed(() => {
+  const ext = detailExt.value
+  if (!ext) return detailField('physicalTableName')
+  return String(ext.bindTableName || detailField('physicalTableName'))
+})
+const detailColumnList = computed((): DetailColumn[] => {
+  const ext = detailExt.value
+  const list = ext?.columnList
+  return Array.isArray(list) ? (list as DetailColumn[]) : []
+})
+const detailApi = computed(() => {
+  const api = detailExt.value?.api
+  return api && typeof api === 'object' ? (api as Record<string, unknown>) : null
+})
+const detailApiRequestParams = computed((): DetailParam[] => {
+  const list = detailApi.value?.requestParams
+  return Array.isArray(list) ? (list as DetailParam[]) : []
+})
+const detailApiResponseParams = computed((): DetailParam[] => {
+  const list = detailApi.value?.responseParams
+  return Array.isArray(list) ? (list as DetailParam[]) : []
+})
+const detailFile = computed(() => {
+  const file = detailExt.value?.file
+  return file && typeof file === 'object' ? (file as Record<string, unknown>) : null
+})
+const detailFileColumns = computed((): DetailColumn[] => {
+  const list = detailFile.value?.columnList
+  return Array.isArray(list) ? (list as DetailColumn[]) : []
+})
+const hasStep2Content = computed(() => {
+  if (detailFormat.value === 'DATABASE') return !!detailExt.value || detailField('physicalTableName') !== '—'
+  if (detailFormat.value === 'API') return !!detailApi.value
+  if (detailFormat.value === 'FILE') return !!detailFile.value
+  return false
+})
+
+function yesNo(v: unknown): string {
+  if (v === true || v === 1 || v === '1' || v === 'true') return '是'
+  if (v === false || v === 0 || v === '0' || v === 'false') return '否'
+  return '—'
+}
+
+function shareLevelLabel(v?: string): string {
+  if (!v) return '—'
+  return SHARE_LEVEL_ZH[v] || statusLabel(v)
 }
 
 async function submitReview() {
@@ -249,6 +435,7 @@ async function submitReview() {
       selected.value = []
     }
     reviewVisible.value = false
+    detailVisible.value = false
     await load()
   } catch (e: unknown) {
     ElMessage.error((e as Error)?.message || '审核失败')
@@ -412,8 +599,9 @@ onActivated(() => {
         <el-table-column prop="submittedBy" label="提交人" width="100" />
         <el-table-column prop="submittedAt" label="提交时间" width="166" />
         <el-table-column prop="reviewComment" label="审批意见" min-width="120" show-overflow-tooltip />
-        <el-table-column label="操作" width="160" fixed="right" align="center">
+        <el-table-column label="操作" width="200" fixed="right" align="center">
           <template #default="{ row }">
+            <el-button link type="primary" @click="openDetail(row)">查看</el-button>
             <template v-if="row.status === 'PENDING'">
               <el-button link type="primary" @click="openReview(row)">审核</el-button>
               <el-button link type="info" @click="withdraw(row)">撤回</el-button>
@@ -422,7 +610,6 @@ onActivated(() => {
               <el-button v-if="canAdminOffline(row)" link type="warning" @click="adminOffline(row)">下线</el-button>
               <el-button v-if="canAdminDelete(row)" link type="danger" @click="adminDelete(row)">删除</el-button>
             </template>
-            <span v-else class="muted">—</span>
           </template>
         </el-table-column>
       </el-table>
@@ -434,6 +621,217 @@ onActivated(() => {
       />
     </PageCard>
 
+    <!-- 数据详情：查看只读；审核入口在详情内再点「审核」；含手动新建「下一步」关联资源内容 -->
+    <el-drawer
+      v-model="detailVisible"
+      :title="detailTitle"
+      size="720px"
+      destroy-on-close
+      append-to-body
+    >
+      <div v-loading="detailLoading" class="detail-body">
+        <template v-if="detailRow">
+          <el-descriptions :column="1" border size="small" title="审批信息">
+            <el-descriptions-item label="审核对象">{{ displayName(detailRow) }}</el-descriptions-item>
+            <el-descriptions-item label="编码">{{ displayCode(detailRow) }}</el-descriptions-item>
+            <el-descriptions-item label="操作类型">{{ actionLabel(detailRow.actionType) }}</el-descriptions-item>
+            <el-descriptions-item label="审批状态">
+              <el-tag size="small" :type="statusTagType(detailRow.status)">{{ statusLabel(detailRow.status) }}</el-tag>
+            </el-descriptions-item>
+            <el-descriptions-item label="提交说明">{{ detailRow.submitComment || '—' }}</el-descriptions-item>
+            <el-descriptions-item label="提交人">{{ detailRow.submittedBy || '—' }}</el-descriptions-item>
+            <el-descriptions-item label="提交时间">{{ detailRow.submittedAt || '—' }}</el-descriptions-item>
+            <el-descriptions-item v-if="detailRow.reviewComment" label="审批意见">
+              {{ detailRow.reviewComment }}
+            </el-descriptions-item>
+            <el-descriptions-item v-if="detailRow.reviewedBy" label="审批人">
+              {{ detailRow.reviewedBy }}
+              <span v-if="detailRow.reviewedAt"> · {{ detailRow.reviewedAt }}</span>
+            </el-descriptions-item>
+          </el-descriptions>
+
+          <el-descriptions
+            v-if="detailRow.resourceId"
+            :column="1"
+            border
+            size="small"
+            title="基本信息（新建第一步）"
+            class="detail-resource"
+          >
+            <el-descriptions-item label="资源名称">{{ detailField('resourceName') }}</el-descriptions-item>
+            <el-descriptions-item label="资源代码">{{ detailField('resourceCode') }}</el-descriptions-item>
+            <el-descriptions-item label="资源类型">{{ statusLabel(detailField('resourceType')) }}</el-descriptions-item>
+            <el-descriptions-item label="提供方">{{ detailField('providerOrg') }}</el-descriptions-item>
+            <el-descriptions-item label="资源格式">{{ detailFormatLabel() }}</el-descriptions-item>
+            <el-descriptions-item label="共享方式">{{ detailShareLabel() }}</el-descriptions-item>
+            <el-descriptions-item label="共享条件">{{ detailField('shareCondition') }}</el-descriptions-item>
+            <el-descriptions-item label="不予共享原因">{{ detailField('notShareReason') }}</el-descriptions-item>
+            <el-descriptions-item label="是否开放">{{ detailOpenLabel() }}</el-descriptions-item>
+            <el-descriptions-item label="开放条件">{{ detailField('openCondition') }}</el-descriptions-item>
+            <el-descriptions-item label="联系人">{{ detailField('contactName') }}</el-descriptions-item>
+            <el-descriptions-item label="联系电话">{{ detailField('contactPhone') }}</el-descriptions-item>
+            <el-descriptions-item label="更新周期">{{ statusLabel(detailField('updateCycle')) }}</el-descriptions-item>
+            <el-descriptions-item label="发布状态">
+              <el-tag size="small" :type="statusTagType(String(detailResource?.publishStatus || detailRow.publishStatus || ''))">
+                {{ statusLabel(detailField('publishStatus') !== '—' ? detailField('publishStatus') : detailRow.publishStatus) }}
+              </el-tag>
+            </el-descriptions-item>
+            <el-descriptions-item label="分类路径">{{ detailField('categoryPath') }}</el-descriptions-item>
+            <el-descriptions-item label="描述">{{ detailField('description') }}</el-descriptions-item>
+          </el-descriptions>
+
+          <!-- 下一步：关联资源 -->
+          <template v-if="detailRow.resourceId && hasStep2Content">
+            <div class="detail-section-title">关联资源（新建下一步）</div>
+
+            <template v-if="detailFormat === 'DATABASE'">
+              <el-descriptions :column="1" border size="small" class="detail-resource">
+                <el-descriptions-item label="数据源">{{ detailBindSourceName }}</el-descriptions-item>
+                <el-descriptions-item label="数据表">{{ detailBindTableName }}</el-descriptions-item>
+                <el-descriptions-item label="元数据条目">{{ detailField('metadataEntryCode') }}</el-descriptions-item>
+                <el-descriptions-item label="来源路径">
+                  {{ detailField('sourcePathType') === 'PROCESSED' ? '加工共享' : detailField('sourcePathType') === 'DIRECT' ? '直通共享' : detailField('sourcePathType') }}
+                </el-descriptions-item>
+              </el-descriptions>
+              <el-table
+                v-if="detailColumnList.length"
+                :data="detailColumnList"
+                size="small"
+                stripe
+                border
+                class="detail-table"
+                max-height="360"
+              >
+                <el-table-column prop="columnName" label="名称" width="120" show-overflow-tooltip />
+                <el-table-column prop="columnNameZh" label="中文名称" min-width="110" show-overflow-tooltip />
+                <el-table-column label="类型" width="90">
+                  <template #default="{ row }">{{ row.dataTypeZh || row.dataType || '—' }}</template>
+                </el-table-column>
+                <el-table-column prop="sensLevel" label="敏感级别" width="90" />
+                <el-table-column label="共享类型" width="110">
+                  <template #default="{ row }">{{ shareLevelLabel(row.shareLevel) }}</template>
+                </el-table-column>
+                <el-table-column label="展示" width="60" align="center">
+                  <template #default="{ row }">{{ yesNo(row.displayFlag) }}</template>
+                </el-table-column>
+                <el-table-column label="搜索" width="60" align="center">
+                  <template #default="{ row }">{{ yesNo(row.searchFlag) }}</template>
+                </el-table-column>
+                <el-table-column label="统计" width="60" align="center">
+                  <template #default="{ row }">{{ yesNo(row.statFlag) }}</template>
+                </el-table-column>
+                <el-table-column label="排序" width="60" align="center">
+                  <template #default="{ row }">{{ yesNo(row.sortFlag) }}</template>
+                </el-table-column>
+              </el-table>
+              <el-empty v-else description="暂无字段清单" :image-size="56" />
+            </template>
+
+            <template v-else-if="detailFormat === 'API' && detailApi">
+              <el-descriptions :column="1" border size="small" class="detail-resource">
+                <el-descriptions-item label="接口名称">{{ detailApi.apiName || '—' }}</el-descriptions-item>
+                <el-descriptions-item label="接口版本">{{ detailApi.apiVersion || '—' }}</el-descriptions-item>
+                <el-descriptions-item label="目标地址">{{ detailApi.apiUrl || '—' }}</el-descriptions-item>
+                <el-descriptions-item label="请求路径">{{ detailApi.apiPath || '—' }}</el-descriptions-item>
+                <el-descriptions-item label="请求方式">{{ detailApi.apiMethod || '—' }}</el-descriptions-item>
+                <el-descriptions-item label="超时(ms)">{{ detailApi.apiTimeout ?? '—' }}</el-descriptions-item>
+                <el-descriptions-item label="注册时间">{{ detailApi.registerAt || '—' }}</el-descriptions-item>
+                <el-descriptions-item label="失效时间">{{ detailApi.expireAt || '—' }}</el-descriptions-item>
+                <el-descriptions-item label="接口描述">{{ detailApi.apiDescription || '—' }}</el-descriptions-item>
+                <el-descriptions-item label="返回示例">
+                  <pre class="detail-pre">{{ detailApi.apiResultJson || '—' }}</pre>
+                </el-descriptions-item>
+              </el-descriptions>
+              <div class="detail-sub-title">请求参数</div>
+              <el-table
+                v-if="detailApiRequestParams.length"
+                :data="detailApiRequestParams"
+                size="small"
+                stripe
+                border
+                class="detail-table"
+              >
+                <el-table-column prop="name" label="参数名" min-width="120" />
+                <el-table-column label="必填" width="70" align="center">
+                  <template #default="{ row }">{{ yesNo(row.required) }}</template>
+                </el-table-column>
+                <el-table-column prop="type" label="类型" width="100" />
+                <el-table-column prop="description" label="简介" min-width="140" show-overflow-tooltip />
+              </el-table>
+              <el-empty v-else description="无请求参数" :image-size="48" />
+              <div class="detail-sub-title">响应参数</div>
+              <el-table
+                v-if="detailApiResponseParams.length"
+                :data="detailApiResponseParams"
+                size="small"
+                stripe
+                border
+                class="detail-table"
+              >
+                <el-table-column prop="name" label="参数名" min-width="120" />
+                <el-table-column label="必须" width="70" align="center">
+                  <template #default="{ row }">{{ yesNo(row.required) }}</template>
+                </el-table-column>
+                <el-table-column prop="type" label="类型" width="100" />
+                <el-table-column prop="description" label="简介" min-width="140" show-overflow-tooltip />
+              </el-table>
+              <el-empty v-else description="无响应参数" :image-size="48" />
+            </template>
+
+            <template v-else-if="detailFormat === 'FILE' && detailFile">
+              <el-descriptions :column="1" border size="small" class="detail-resource">
+                <el-descriptions-item label="文件名称">{{ detailFile.fileName || '—' }}</el-descriptions-item>
+                <el-descriptions-item label="工作表">{{ detailFile.sheetName || '—' }}</el-descriptions-item>
+                <el-descriptions-item label="文件大小">
+                  {{ detailFile.fileSize ? `${Math.round(Number(detailFile.fileSize) / 1024)} KB` : '—' }}
+                </el-descriptions-item>
+                <el-descriptions-item label="文件说明">{{ detailFile.fileRemark || '—' }}</el-descriptions-item>
+              </el-descriptions>
+              <div class="detail-sub-title">文件列信息</div>
+              <el-table
+                v-if="detailFileColumns.length"
+                :data="detailFileColumns"
+                size="small"
+                stripe
+                border
+                class="detail-table"
+              >
+                <el-table-column prop="columnName" label="列名" min-width="110" />
+                <el-table-column prop="columnNameZh" label="中文名称" min-width="110" />
+                <el-table-column label="必填" width="70" align="center">
+                  <template #default="{ row }">{{ yesNo(row.required) }}</template>
+                </el-table-column>
+                <el-table-column prop="dataType" label="类型" width="100" />
+                <el-table-column prop="description" label="简介" min-width="140" show-overflow-tooltip />
+              </el-table>
+              <el-empty v-else description="无列信息" :image-size="48" />
+            </template>
+          </template>
+
+          <el-alert
+            v-else-if="detailRow.categoryId && !detailRow.resourceId"
+            type="info"
+            :closable="false"
+            show-icon
+            title="本单为资源分类审批，无资源目录实体详情。"
+            class="detail-resource"
+          />
+        </template>
+      </div>
+      <template #footer>
+        <div class="detail-footer">
+          <el-button @click="detailVisible = false">关闭</el-button>
+          <el-button
+            v-if="detailAllowAudit && detailRow?.status === 'PENDING'"
+            type="primary"
+            @click="openReviewFromDetail"
+          >
+            审核
+          </el-button>
+        </div>
+      </template>
+    </el-drawer>
+
     <el-dialog
       v-model="reviewVisible"
       :title="reviewTitle"
@@ -441,6 +839,7 @@ onActivated(() => {
       class="review-dialog"
       align-center
       destroy-on-close
+      append-to-body
     >
       <div v-if="reviewMode === 'batch'" class="review-subject">
         <span class="review-subject__badge">批量</span>
@@ -632,6 +1031,50 @@ onActivated(() => {
 
 .muted {
   color: #c0c4cc;
+}
+
+.detail-body {
+  min-height: 120px;
+}
+
+.detail-resource {
+  margin-top: 16px;
+}
+
+.detail-section-title {
+  margin: 18px 0 10px;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--portal-text);
+}
+
+.detail-sub-title {
+  margin: 12px 0 8px;
+  font-size: 13px;
+  font-weight: 500;
+  color: var(--portal-text-secondary);
+}
+
+.detail-table {
+  width: 100%;
+  margin-bottom: 4px;
+}
+
+.detail-pre {
+  margin: 0;
+  max-height: 160px;
+  overflow: auto;
+  white-space: pre-wrap;
+  word-break: break-all;
+  font-size: 12px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  color: var(--portal-text-secondary);
+}
+
+.detail-footer {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
 }
 
 .review-subject {

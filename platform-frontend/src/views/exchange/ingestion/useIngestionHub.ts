@@ -399,6 +399,9 @@ export const ingestionApi = {
   createDataSource: (body: Record<string, unknown>) => api.post<number>('/exchange/ingestion/data-sources', body),
   updateDataSource: (id: number, body: Record<string, unknown>) => api.put<void>(`/exchange/ingestion/data-sources/${id}`, body),
   deleteDataSource: (id: number) => api.delete<void>(`/exchange/ingestion/data-sources/${id}`),
+  /** 未落库连接探测，仅返回结果，不创建数据源 */
+  testDataSourceConnection: (body: Record<string, unknown>) =>
+    api.post<Record<string, unknown>>('/exchange/ingestion/data-sources/test-connection', body),
   testDataSource: (id: number) => api.post<Record<string, unknown>>(`/exchange/ingestion/data-sources/${id}/test`),
   probeDataSource: (id: number) => api.post<{ sourceId: number; schema: string; tableCount: number; tables: ProbeTable[] }>(`/exchange/ingestion/data-sources/${id}/probe`),
   registerTables: (id: number, body: Record<string, unknown>) => api.post<Record<string, unknown>>(`/exchange/ingestion/data-sources/${id}/register-tables`, body),

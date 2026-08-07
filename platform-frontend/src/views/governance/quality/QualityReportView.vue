@@ -166,13 +166,6 @@ onBeforeUnmount(() => {
 <template>
   <div>
     <PageCard title="数据质量分析报告">
-      <el-alert
-        type="info"
-        :closable="false"
-        show-icon
-        style="margin-bottom: 12px"
-        title="分析报告服务问题定位与知识沉淀。面向目录发布请选用源层或资源层任务运行结果；过程层报告仅用于治理整改闭环。"
-      />
       <el-form inline class="portal-inline-form portal-inline-form--block">
         <el-form-item class="portal-form-actions">
           <el-button type="primary" @click="generate">生成报告</el-button>

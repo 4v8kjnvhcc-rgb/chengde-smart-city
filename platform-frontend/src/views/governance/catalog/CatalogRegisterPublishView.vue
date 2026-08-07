@@ -136,13 +136,18 @@ async function loadBound() {
         categoryId: filterCategoryId.value,
         catalogOrigin: props.catalogOrigin,
         keyword,
+        excludeApprovalDraft: true,
       },
     })
     boundAll.value = res.data || []
     return
   }
   const res = await api.get('/governance/catalog/resources-mgmt', {
-    params: { catalogOrigin: props.catalogOrigin, keyword },
+    params: {
+      catalogOrigin: props.catalogOrigin,
+      keyword,
+      excludeApprovalDraft: true,
+    },
   })
   const all = (res.data || []) as CatalogRes[]
   boundAll.value = all.filter((r) => r.categoryId != null && Number(r.categoryId) > 0)
@@ -151,7 +156,12 @@ async function loadBound() {
 async function loadUnbound() {
   const keyword = query.resourceName.trim() || undefined
   const res = await api.get('/governance/catalog/resources-mgmt', {
-    params: { unboundOnly: true, catalogOrigin: props.catalogOrigin, keyword },
+    params: {
+      unboundOnly: true,
+      catalogOrigin: props.catalogOrigin,
+      keyword,
+      excludeApprovalDraft: true,
+    },
   })
   unboundAll.value = res.data || []
 }
@@ -310,14 +320,6 @@ onActivated(() => {
 
 <template>
   <PageCard :title="pageTitle">
-    <el-alert
-      type="info"
-      :closable="false"
-      show-icon
-      :title="`编目时已选「信息资源分类」的进入「分类下已关联资源」；未选分类的进入「未挂载资源」。关联/解除分类立即生效；在已关联列表点「发布」后才进入「${approvalEntryName}」。`"
-      style="margin-bottom: 12px"
-    />
-
     <el-form inline class="portal-inline-form portal-inline-form--block">
       <el-form-item label="名称" class="portal-field-lg">
         <el-input

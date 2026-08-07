@@ -116,13 +116,6 @@ onMounted(async () => {
 <template>
   <div v-loading="loading">
     <PageCard title="直通共享黄金路径（多表）">
-      <el-alert
-        title="选择任意已登记且已汇聚表，按顺序完成：元数据 → 质量 → 编目发布 → 订阅授权。"
-        type="info"
-        :closable="false"
-        show-icon
-        style="margin-bottom: 16px"
-      />
       <el-form inline class="portal-inline-form portal-inline-form--block">
         <el-form-item label="汇聚表" class="portal-field-xl">
           <el-select v-model="tableId" filterable placeholder="选择已汇聚表">

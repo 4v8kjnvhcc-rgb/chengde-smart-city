@@ -359,9 +359,6 @@ onMounted(reload)
   <div v-loading="loading">
     <el-alert v-if="loadError" type="error" :title="loadError" show-icon :closable="false" style="margin-bottom:12px" />
     <PageCard title="数据项管理">
-      <p class="hint">
-        依次选择项目、系统、数据库、数据表。属性是否可编辑由平台管理 · 系统管理 ·「内置属性管理」统一配置。
-      </p>
       <el-form inline class="portal-inline-form portal-inline-form--block">
         <el-form-item label="项目" class="portal-field-lg">
           <el-select

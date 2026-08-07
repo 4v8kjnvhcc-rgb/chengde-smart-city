@@ -86,15 +86,6 @@ const isolatedTables = computed(() =>
   nodes.value.filter((n) => n.type === 'TABLE' && n.isolated),
 )
 
-const hintText = computed(() => {
-  if (viewMode.value === 'drill') {
-    return drillSubTab.value === 'field'
-      ? '字段血缘仅基于当前表；上游字段 → 本表字段 → 下游字段。'
-      : '仅展示当前表的一级上游与下游；继续点击邻居可逐级下钻。'
-  }
-  return '连线表示表间血缘；右侧「独立表」与其他表无关系。点击有血缘的表可下钻。'
-})
-
 function computeLayers(nodeList: GraphNode[], edgeList: GraphEdge[]) {
   const ids = nodeList.map((n) => n.id)
   const idSet = new Set(ids)
@@ -395,8 +386,6 @@ onMounted(async () => {
   <div v-loading="loading" class="lineage-page">
     <el-alert v-if="loadError" type="error" :title="loadError" show-icon :closable="false" style="margin-bottom:12px" />
     <PageCard title="数据资产图谱分析">
-      <p class="hint">{{ hintText }}</p>
-
       <el-form inline class="portal-inline-form portal-inline-form--block">
         <el-form-item label="当前项目" class="portal-field-xl">
           <el-select

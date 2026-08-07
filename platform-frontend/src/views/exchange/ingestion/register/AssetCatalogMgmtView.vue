@@ -143,13 +143,6 @@ onMounted(() => {
 
 <template>
   <div>
-    <el-alert
-      type="info"
-      :closable="false"
-      style="margin-bottom:12px"
-      title="展示登记页已提交的资产目录。点「审核」通过或驳回；点「查看」可看登记详情与提交/审核记录（只读）。"
-    />
-
     <PageCard title="资产目录管理">
       <el-form inline class="portal-inline-form portal-inline-form--block">
         <el-form-item label="资产名称" class="portal-field-md">
