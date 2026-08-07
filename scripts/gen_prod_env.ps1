@@ -1,11 +1,10 @@
-# 生成本地生产 env（gitignored）：compose/prod-mid.env + compose/prod-app.env
-# 两机密码一致；已有文件默认复用，-Force 才重新随机
-param(
+﻿param(
   [switch]$Force,
-  [string]$MidHost = "10.10.10.51",
-  [string]$AppHost = "10.10.10.55"
+  [string]$MidHost = '10.10.10.51',
+  [string]$AppHost = '10.10.10.55'
 )
-
+# Generate local prod env files: compose/prod-mid.env + compose/prod-app.env
+# Reuse existing files by default; -Force to regenerate secrets
 $ErrorActionPreference = "Stop"
 $Root = Split-Path -Parent $PSScriptRoot
 $Compose = Join-Path $Root "compose"
@@ -88,7 +87,7 @@ $appLines = @(
   "INTEGRATION_ENABLED=true",
   "",
   "OM_URL=http://${MidHost}:8585/api/v1",
-  "OM_USER=admin@open-metadata.org",
+  "OM_USER=admin@openmetadata.org",
   "OM_PASSWORD=admin",
   "DE_URL=http://${MidHost}:8100",
   "DS_URL=http://${MidHost}:12345/dolphinscheduler",
