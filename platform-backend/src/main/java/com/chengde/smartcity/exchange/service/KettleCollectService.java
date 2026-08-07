@@ -18,6 +18,7 @@ import com.chengde.smartcity.integration.kettle.KettleClient;
 import com.chengde.smartcity.integration.kettle.KettleKtrCompiler;
 import com.chengde.smartcity.masterdata.service.MetadataSubsystemService;
 import com.chengde.smartcity.masterdata.support.DataLayerSupport;
+import com.chengde.smartcity.masterdata.support.LayerJdbcSupport;
 import com.chengde.smartcity.masterdata.service.DsOrchestrationService;
 import com.chengde.smartcity.security.UserPrincipal;
 import java.sql.Connection;
@@ -27,7 +28,6 @@ import java.time.LocalDateTime;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import javax.sql.DataSource;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
@@ -52,7 +52,7 @@ public class KettleCollectService {
     private final JdbcProbeService jdbcProbeService;
     private final KettleKtrCompiler ktrCompiler;
     private final KettleClient kettleClient;
-    private final DataSource platformDataSource;
+    private final LayerJdbcSupport layerJdbc;
     private final AuditService auditService;
     private final DsOrchestrationService dsOrchestrationService;
     private final MetadataSubsystemService metadataSubsystemService;
@@ -61,7 +61,7 @@ public class KettleCollectService {
                                 IngDataColumnMapper dataColumnMapper, IngIngestTaskMapper ingestTaskMapper,
                                 IngIngestChannelMapper channelMapper, JdbcProbeService jdbcProbeService,
                                 KettleKtrCompiler ktrCompiler, KettleClient kettleClient,
-                                DataSource platformDataSource, AuditService auditService,
+                                LayerJdbcSupport layerJdbc, AuditService auditService,
                                 DsOrchestrationService dsOrchestrationService,
                                 MetadataSubsystemService metadataSubsystemService) {
         this.dataSourceMapper = dataSourceMapper;
@@ -72,7 +72,7 @@ public class KettleCollectService {
         this.jdbcProbeService = jdbcProbeService;
         this.ktrCompiler = ktrCompiler;
         this.kettleClient = kettleClient;
-        this.platformDataSource = platformDataSource;
+        this.layerJdbc = layerJdbc;
         this.auditService = auditService;
         this.dsOrchestrationService = dsOrchestrationService;
         this.metadataSubsystemService = metadataSubsystemService;
@@ -367,7 +367,7 @@ public class KettleCollectService {
             ddl.append('\n');
         }
         ddl.append(") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='真实汇聚 ODS 落地表'");
-        try (Connection conn = platformDataSource.getConnection(); Statement st = conn.createStatement()) {
+        try (Connection conn = layerJdbc.open(odsDb); Statement st = conn.createStatement()) {
             st.execute("CREATE DATABASE IF NOT EXISTS `" + odsDb + "`");
             if (recreate) {
                 st.execute("DROP TABLE IF EXISTS " + qualified);
@@ -482,7 +482,7 @@ public class KettleCollectService {
             ddl.append('\n');
         }
         ddl.append(") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='真实汇聚 ODS 落地表'");
-        try (Connection conn = platformDataSource.getConnection(); Statement st = conn.createStatement()) {
+        try (Connection conn = layerJdbc.open(odsDb); Statement st = conn.createStatement()) {
             st.execute("CREATE DATABASE IF NOT EXISTS `" + odsDb + "`");
             st.execute("DROP TABLE IF EXISTS " + qualified);
             st.execute(ddl.toString());
@@ -503,7 +503,7 @@ public class KettleCollectService {
 
     private long countPlatformRows(String table) throws Exception {
         String qualified = DataLayerSupport.qualify(DataLayerSupport.ODS, sanitize(table));
-        try (Connection conn = platformDataSource.getConnection();
+        try (Connection conn = layerJdbc.open(DataLayerSupport.ODS);
              Statement st = conn.createStatement();
              ResultSet rs = st.executeQuery("SELECT COUNT(*) FROM " + qualified)) {
             return rs.next() ? rs.getLong(1) : 0L;

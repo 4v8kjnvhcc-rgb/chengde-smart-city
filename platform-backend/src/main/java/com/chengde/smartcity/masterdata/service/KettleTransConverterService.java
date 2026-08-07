@@ -2,6 +2,8 @@ package com.chengde.smartcity.masterdata.service;
 
 import com.chengde.smartcity.integration.config.IntegrationProperties;
 import com.chengde.smartcity.integration.kettle.KettleConnectionService;
+import com.chengde.smartcity.masterdata.support.DataLayerSupport;
+import com.chengde.smartcity.masterdata.support.LayerJdbcSupport;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
@@ -36,11 +38,14 @@ public class KettleTransConverterService {
 
     private final IntegrationProperties integrationProperties;
     private final KettleConnectionService connectionService;
+    private final LayerJdbcSupport layerJdbc;
 
     public KettleTransConverterService(IntegrationProperties integrationProperties,
-                                       KettleConnectionService connectionService) {
+                                       KettleConnectionService connectionService,
+                                       LayerJdbcSupport layerJdbc) {
         this.integrationProperties = integrationProperties;
         this.connectionService = connectionService;
+        this.layerJdbc = layerJdbc;
     }
 
     private static final Map<String, String> NODE_TO_KETTLE = Map.ofEntries(
@@ -371,17 +376,23 @@ public class KettleTransConverterService {
             return "";
         }
         StringBuilder sb = new StringBuilder();
-        String host = k.getTargetHost() != null ? k.getTargetHost() : "host.docker.internal";
-        int port = k.getTargetPort();
-        String user = k.getTargetUser() != null ? k.getTargetUser() : "root";
-        String pass = k.getTargetPassword() != null ? k.getTargetPassword() : "";
-        // 默认连接名
-        sb.append(connectionService.toConnectionXml("default", host, port,
-                k.getTargetDatabase() != null ? k.getTargetDatabase() : "smart_city_ods", user, pass));
-        sb.append(connectionService.toConnectionXml("PLATFORM", host, port,
-                k.getTargetDatabase() != null ? k.getTargetDatabase() : "smart_city_ods", user, pass));
-        for (String db : List.of("smart_city", "smart_city_ods", "smart_city_dwd", "smart_city_dws", "smart_city_ads")) {
-            sb.append(connectionService.toConnectionXml(db, host, port, db, user, pass));
+        LayerJdbcSupport.ResolvedEndpoint ods = layerJdbc.resolve(DataLayerSupport.ODS);
+        sb.append(connectionService.toConnectionXml("default", ods.host(), ods.port(),
+                ods.database(), ods.username(), ods.password()));
+        sb.append(connectionService.toConnectionXml("PLATFORM", ods.host(), ods.port(),
+                ods.database(), ods.username(), ods.password()));
+        // 控制面：沿用 kettle 默认目标凭据 + 主库名（与分层可分机）
+        String controlHost = k.getTargetHost() != null ? k.getTargetHost() : ods.host();
+        int controlPort = k.getTargetPort() > 0 ? k.getTargetPort() : ods.port();
+        String controlUser = k.getTargetUser() != null ? k.getTargetUser() : ods.username();
+        String controlPass = k.getTargetPassword() != null ? k.getTargetPassword() : ods.password();
+        sb.append(connectionService.toConnectionXml(DataLayerSupport.CONTROL, controlHost, controlPort,
+                DataLayerSupport.CONTROL, controlUser, controlPass));
+        for (String db : List.of(DataLayerSupport.ODS, DataLayerSupport.DWD,
+                DataLayerSupport.DWS, DataLayerSupport.ADS)) {
+            LayerJdbcSupport.ResolvedEndpoint ep = layerJdbc.resolve(db);
+            sb.append(connectionService.toConnectionXml(db, ep.host(), ep.port(),
+                    ep.database(), ep.username(), ep.password()));
         }
         return sb.toString();
     }

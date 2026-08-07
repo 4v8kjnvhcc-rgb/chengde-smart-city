@@ -11,6 +11,7 @@ import com.chengde.smartcity.masterdata.mapper.GovFusionScriptMapper;
 import com.chengde.smartcity.masterdata.mapper.GovFusionScriptRunMapper;
 import com.chengde.smartcity.masterdata.mapper.GovFusionScriptVersionMapper;
 import com.chengde.smartcity.masterdata.support.DataLayerSupport;
+import com.chengde.smartcity.masterdata.support.LayerJdbcSupport;
 import com.chengde.smartcity.security.UserPrincipal;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -27,10 +28,8 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.regex.Pattern;
-import javax.sql.DataSource;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -53,18 +52,18 @@ public class FusionScriptService {
     private final GovFusionScriptVersionMapper versionMapper;
     private final GovFusionScriptRunMapper runMapper;
     private final IngDataSourceMapper dataSourceMapper;
-    private final DataSource platformDataSource;
+    private final LayerJdbcSupport layerJdbc;
 
     public FusionScriptService(GovFusionScriptMapper scriptMapper,
                                GovFusionScriptVersionMapper versionMapper,
                                GovFusionScriptRunMapper runMapper,
                                IngDataSourceMapper dataSourceMapper,
-                               @Autowired(required = false) DataSource platformDataSource) {
+                               LayerJdbcSupport layerJdbc) {
         this.scriptMapper = scriptMapper;
         this.versionMapper = versionMapper;
         this.runMapper = runMapper;
         this.dataSourceMapper = dataSourceMapper;
-        this.platformDataSource = platformDataSource;
+        this.layerJdbc = layerJdbc;
     }
 
     public List<Map<String, Object>> list() {
@@ -330,14 +329,7 @@ public class FusionScriptService {
 
     private Connection openConnection(Long datasourceId) throws Exception {
         if (isPlatformLayerId(datasourceId)) {
-            if (platformDataSource == null) {
-                throw new BusinessException(500, "平台库数据源不可用");
-            }
-            Connection conn = platformDataSource.getConnection();
-            String catalog = platformLayerDatabase(datasourceId);
-            requireIdent(catalog, "database");
-            conn.setCatalog(catalog);
-            return conn;
+            return layerJdbc.open(platformLayerDatabase(datasourceId));
         }
         if (datasourceId != null) {
             IngDataSource ds = dataSourceMapper.selectById(datasourceId);
@@ -357,10 +349,7 @@ public class FusionScriptService {
                     + "?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai";
             return DriverManager.getConnection(url, username == null ? "" : username, password == null ? "" : password);
         }
-        if (platformDataSource != null) {
-            return platformDataSource.getConnection();
-        }
-        throw new BusinessException(500, "无可用 JDBC 数据源，请选择平台分层库或登记源");
+        return layerJdbc.open(DataLayerSupport.ODS);
     }
 
     private static boolean isPlatformLayerId(Long id) {

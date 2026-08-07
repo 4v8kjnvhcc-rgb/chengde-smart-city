@@ -1,20 +1,23 @@
 package com.chengde.smartcity.integration.kettle;
 
 import com.chengde.smartcity.integration.config.IntegrationProperties;
+import com.chengde.smartcity.masterdata.support.LayerJdbcSupport;
 import org.springframework.stereotype.Service;
 
 /**
  * 生成真实可执行的 Kettle 转换（.ktr XML）：Table Input(源) -> Table Output(目标 ODS/DWS)。
  * 内嵌 SRC/TGT 两个 MySQL 连接；源库 host:port 依据 host-map 翻译为 Carte 容器可达地址，
- * 目标库使用平台配置的 Carte 可达地址（host-gateway）。绝不写入明文占位，密码来自解密后的真实凭据。
+ * 目标分层库按 {@link LayerJdbcSupport} 解析（同机或 S6/S7 分机）。
  */
 @Service
 public class KettleKtrCompiler {
 
     private final IntegrationProperties props;
+    private final LayerJdbcSupport layerJdbc;
 
-    public KettleKtrCompiler(IntegrationProperties props) {
+    public KettleKtrCompiler(IntegrationProperties props, LayerJdbcSupport layerJdbc) {
         this.props = props;
+        this.layerJdbc = layerJdbc;
     }
 
     /** 源连接参数（真实值，密码已解密）。 */
@@ -48,10 +51,11 @@ public class KettleKtrCompiler {
         String[] srcHostPort = translate(src.host, src.port);
         String tgtDb = targetDatabase == null || targetDatabase.isBlank()
                 ? props.getKettle().getTargetDatabase() : targetDatabase;
+        LayerJdbcSupport.ResolvedEndpoint tgt = layerJdbc.resolve(tgtDb);
+        String[] tgtHostPort = translate(tgt.host(), tgt.port());
         String srcConn = connectionXml("SRC", srcHostPort[0], srcHostPort[1], src.database, src.username, src.password);
-        String tgtConn = connectionXml("TGT", props.getKettle().getTargetHost(),
-                String.valueOf(props.getKettle().getTargetPort()), tgtDb,
-                props.getKettle().getTargetUser(), props.getKettle().getTargetPassword());
+        String tgtConn = connectionXml("TGT", tgtHostPort[0], tgtHostPort[1], tgt.database(),
+                tgt.username(), tgt.password());
 
         String input = tableInputStep("src_input", "SRC", selectSql);
         String output = tableOutputStep("tgt_output", "TGT", targetTable, truncate);

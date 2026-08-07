@@ -30,6 +30,7 @@ services:
       --log-bin=mysql-bin
       --binlog-format=ROW
       --binlog_row_image=FULL
+      --log_bin_trust_function_creators=1
       --bind-address=0.0.0.0
     volumes:
       - sc_mid_mysql_data:/var/lib/mysql
@@ -130,6 +131,7 @@ services:
       DB_USE_SSL: "false"
       DB_USER: root
       DB_USER_PASSWORD: ${OSS_MYSQL_ROOT_PASSWORD:-oss_root}
+      MYSQL_USER_PASSWORD: ${OSS_MYSQL_ROOT_PASSWORD:-oss_root}
       DB_HOST: oss-mysql
       DB_PORT: 3306
       ELASTICSEARCH_HOST: oss-elasticsearch
@@ -155,6 +157,7 @@ services:
       DB_USE_SSL: "false"
       DB_USER: root
       DB_USER_PASSWORD: ${OSS_MYSQL_ROOT_PASSWORD:-oss_root}
+      MYSQL_USER_PASSWORD: ${OSS_MYSQL_ROOT_PASSWORD:-oss_root}
       DB_HOST: oss-mysql
       DB_PORT: 3306
       ELASTICSEARCH_HOST: oss-elasticsearch
@@ -191,17 +194,19 @@ services:
     image: mysql:8.0
     container_name: sc_mid_ds_schema_init
     profiles: [sched]
+    environment:
+      OSS_MYSQL_ROOT_PASSWORD: ${OSS_MYSQL_ROOT_PASSWORD:-oss_root}
     volumes:
       - ./libs/ds/dolphinscheduler_mysql.sql:/schema.sql:ro
     entrypoint:
       - sh
       - -c
       - |
-        mysql -h oss-mysql -uroot -poss_root -e "CREATE DATABASE IF NOT EXISTS dolphinscheduler" &&
-        if mysql -h oss-mysql -uroot -poss_root dolphinscheduler -e "SHOW TABLES LIKE 't_ds_user'" | grep -q t_ds_user; then
+        mysql -h oss-mysql -uroot -p"$OSS_MYSQL_ROOT_PASSWORD" -e "CREATE DATABASE IF NOT EXISTS dolphinscheduler" &&
+        if mysql -h oss-mysql -uroot -p"$OSS_MYSQL_ROOT_PASSWORD" dolphinscheduler -e "SHOW TABLES LIKE 't_ds_user'" | grep -q t_ds_user; then
           echo "dolphinscheduler schema already present"
         else
-          mysql -h oss-mysql -uroot -poss_root dolphinscheduler < /schema.sql
+          mysql -h oss-mysql -uroot -p"$OSS_MYSQL_ROOT_PASSWORD" dolphinscheduler < /schema.sql
         fi
     depends_on:
       oss-mysql:

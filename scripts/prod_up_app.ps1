@@ -1,4 +1,4 @@
-﻿# 在 10.10.10.55 上执行：启动门户（需已安装 Docker，且 .51 库已就绪，见 D23）
+# 在 10.10.10.55 上执行：启动门户（需已安装 Docker，且 .51 库已就绪，见 D23）
 $ErrorActionPreference = "Stop"
 $Root = Split-Path -Parent $PSScriptRoot
 Set-Location $Root
@@ -21,6 +21,7 @@ if (-not (Test-Path $EnvFile)) {
   Write-Host "已生成 compose/prod-app.env，请填写与 .51 一致的密码后再执行。"
   exit 1
 }
-Invoke-Compose -f compose/prod-app.yml --env-file $EnvFile up -d --build
+# 现场只 load 预构建镜像，不带 --build（代码包不含 platform-* 源码）
+Invoke-Compose -f compose/prod-app.yml --env-file $EnvFile up -d
 Write-Host "门户: http://10.10.10.55/"
 Write-Host "健康: http://10.10.10.55/actuator/health"

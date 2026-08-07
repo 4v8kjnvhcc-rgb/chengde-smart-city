@@ -2645,7 +2645,7 @@ public class ResourceCenterPlatformService {
         List<Map<String, Object>> out = new ArrayList<>();
         for (RcBackupArtifact art : backupArtifactMapper.selectList(
                 new LambdaQueryWrapper<RcBackupArtifact>().orderByDesc(RcBackupArtifact::getId)
-                        .last("LIMIT " + Math.max(1, Math.min(limit, 50)))))) {
+                        .last("LIMIT " + Math.max(1, Math.min(limit, 50))))) {
             Map<String, Object> row = new LinkedHashMap<>();
             row.put("id", art.getId());
             row.put("physicalTable", art.getPhysicalTable());

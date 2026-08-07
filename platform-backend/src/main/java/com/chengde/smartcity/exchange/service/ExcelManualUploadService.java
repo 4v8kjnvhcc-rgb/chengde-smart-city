@@ -18,6 +18,8 @@ import com.chengde.smartcity.exchange.mapper.IngProjectMapper;
 import com.chengde.smartcity.exchange.mapper.IngUploadRecordMapper;
 import com.chengde.smartcity.exchange.mapper.IngUploadTemplateMapper;
 import com.chengde.smartcity.masterdata.service.MetadataSubsystemService;
+import com.chengde.smartcity.masterdata.support.DataLayerSupport;
+import com.chengde.smartcity.masterdata.support.LayerJdbcSupport;
 import com.chengde.smartcity.security.UserPrincipal;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -30,7 +32,6 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.sql.Connection;
-import java.sql.DriverManager;
 import java.sql.PreparedStatement;
 import java.sql.Statement;
 import java.time.LocalDateTime;
@@ -43,7 +44,6 @@ import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
-import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 import org.apache.poi.ss.usermodel.Cell;
@@ -67,7 +67,6 @@ public class ExcelManualUploadService {
 
     private static final Logger log = LoggerFactory.getLogger(ExcelManualUploadService.class);
     private static final ObjectMapper OM = new ObjectMapper();
-    private static final Pattern DB_IN_URL = Pattern.compile("(jdbc:mysql://[^/]+/)([^?]+)(\\?.*)?", Pattern.CASE_INSENSITIVE);
     private static final int PREVIEW_LIMIT = 50;
     private static final int MAX_COMMIT_ROWS = 100_000;
 
@@ -80,9 +79,7 @@ public class ExcelManualUploadService {
     private final IngProjectMapper projectMapper;
     private final AuditService auditService;
     private final MetadataSubsystemService metadataSubsystemService;
-    private final String datasourceUrl;
-    private final String datasourceUser;
-    private final String datasourcePassword;
+    private final LayerJdbcSupport layerJdbc;
     private final ConcurrentHashMap<String, PendingFile> pending = new ConcurrentHashMap<>();
 
     public ExcelManualUploadService(IngUploadRecordMapper uploadMapper,
@@ -94,9 +91,7 @@ public class ExcelManualUploadService {
                                     IngProjectMapper projectMapper,
                                     AuditService auditService,
                                     MetadataSubsystemService metadataSubsystemService,
-                                    @Value("${spring.datasource.url}") String datasourceUrl,
-                                    @Value("${spring.datasource.username}") String datasourceUser,
-                                    @Value("${spring.datasource.password:}") String datasourcePassword) {
+                                    LayerJdbcSupport layerJdbc) {
         this.uploadMapper = uploadMapper;
         this.templateMapper = templateMapper;
         this.dataTableMapper = dataTableMapper;
@@ -106,9 +101,7 @@ public class ExcelManualUploadService {
         this.projectMapper = projectMapper;
         this.auditService = auditService;
         this.metadataSubsystemService = metadataSubsystemService;
-        this.datasourceUrl = datasourceUrl;
-        this.datasourceUser = datasourceUser;
-        this.datasourcePassword = datasourcePassword == null ? "" : datasourcePassword;
+        this.layerJdbc = layerJdbc;
     }
 
     public Map<String, Object> inspect(UserPrincipal operator, MultipartFile file) {
@@ -679,12 +672,11 @@ public class ExcelManualUploadService {
      * 字段不一致已在上层 assertSchemaMatch 拦截。
      */
     private void writeToOds(String table, SheetData data, String writeMode) throws Exception {
-        String url = toOdsJdbcUrl(datasourceUrl);
         List<String> colIdents = data.columns().stream().map(this::sanitizeIdent).toList();
-        try (Connection conn = DriverManager.getConnection(url, datasourceUser, datasourcePassword)) {
+        try (Connection conn = layerJdbc.open(DataLayerSupport.ODS)) {
             conn.setAutoCommit(false);
             try (Statement st = conn.createStatement()) {
-                st.execute("CREATE DATABASE IF NOT EXISTS smart_city_ods DEFAULT CHARACTER SET utf8mb4");
+                st.execute("CREATE DATABASE IF NOT EXISTS `" + DataLayerSupport.ODS + "` DEFAULT CHARACTER SET utf8mb4");
             }
             StringBuilder ddl = new StringBuilder();
             ddl.append("CREATE TABLE IF NOT EXISTS `").append(table).append("` (");
@@ -729,15 +721,6 @@ public class ExcelManualUploadService {
             }
             conn.commit();
         }
-    }
-
-    private String toOdsJdbcUrl(String url) {
-        Matcher m = DB_IN_URL.matcher(url);
-        if (m.find()) {
-            String qs = m.group(3) != null ? m.group(3) : "";
-            return m.group(1) + "smart_city_ods" + qs;
-        }
-        return url;
     }
 
     private static String cellText(Cell cell, DataFormatter fmt) {

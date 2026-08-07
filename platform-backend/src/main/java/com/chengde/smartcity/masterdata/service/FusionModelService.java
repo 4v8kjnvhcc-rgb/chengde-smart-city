@@ -15,6 +15,7 @@ import com.chengde.smartcity.masterdata.mapper.GovFusionLogicEntityMapper;
 import com.chengde.smartcity.masterdata.mapper.GovFusionPhysicalMapper;
 import com.chengde.smartcity.masterdata.mapper.GovFusionRelationMapper;
 import com.chengde.smartcity.masterdata.support.DataLayerSupport;
+import com.chengde.smartcity.masterdata.support.LayerJdbcSupport;
 import com.chengde.smartcity.security.UserPrincipal;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -32,10 +33,8 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.regex.Pattern;
-import javax.sql.DataSource;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -58,7 +57,7 @@ public class FusionModelService {
     private final GovFusionRelationMapper relationMapper;
     private final GovFusionPhysicalMapper physicalMapper;
     private final IngDataSourceMapper dataSourceMapper;
-    private final DataSource platformDataSource;
+    private final LayerJdbcSupport layerJdbc;
 
     public FusionModelService(GovFusionDomainMapper domainMapper,
                               GovFusionLogicEntityMapper entityMapper,
@@ -66,14 +65,14 @@ public class FusionModelService {
                               GovFusionRelationMapper relationMapper,
                               GovFusionPhysicalMapper physicalMapper,
                               IngDataSourceMapper dataSourceMapper,
-                              @Autowired(required = false) DataSource platformDataSource) {
+                              LayerJdbcSupport layerJdbc) {
         this.domainMapper = domainMapper;
         this.entityMapper = entityMapper;
         this.fieldMapper = fieldMapper;
         this.relationMapper = relationMapper;
         this.physicalMapper = physicalMapper;
         this.dataSourceMapper = dataSourceMapper;
-        this.platformDataSource = platformDataSource;
+        this.layerJdbc = layerJdbc;
     }
 
     public List<Map<String, Object>> listDomains() {
@@ -454,12 +453,7 @@ public class FusionModelService {
 
     private Connection openConnection(Long datasourceId) throws Exception {
         if (isPlatformLayerId(datasourceId)) {
-            if (platformDataSource == null) {
-                throw new BusinessException(500, "平台库数据源不可用");
-            }
-            Connection conn = platformDataSource.getConnection();
-            conn.setCatalog(platformLayerDatabase(datasourceId));
-            return conn;
+            return layerJdbc.open(platformLayerDatabase(datasourceId));
         }
         if (datasourceId != null) {
             IngDataSource ds = dataSourceMapper.selectById(datasourceId);

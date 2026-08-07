@@ -17,6 +17,7 @@ import com.chengde.smartcity.masterdata.mapper.GovQualityTaskDetailMapper;
 import com.chengde.smartcity.masterdata.mapper.GovQualityTaskMapper;
 import com.chengde.smartcity.masterdata.mapper.GovQualityTaskRunMapper;
 import com.chengde.smartcity.masterdata.support.DataLayerSupport;
+import com.chengde.smartcity.masterdata.support.LayerJdbcSupport;
 import com.chengde.smartcity.security.UserPrincipal;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -61,6 +62,7 @@ public class QualityExecuteService {
     private final GovQualityRuleConfigMapper configMapper;
     private final IngDataSourceMapper dataSourceMapper;
     private final GovMetadataRegistryMapper metadataRegistryMapper;
+    private final LayerJdbcSupport layerJdbc;
     private final DataSource platformDataSource;
 
     public QualityExecuteService(GovQualityTaskMapper taskMapper,
@@ -70,6 +72,7 @@ public class QualityExecuteService {
                                  GovQualityRuleConfigMapper configMapper,
                                  IngDataSourceMapper dataSourceMapper,
                                  GovMetadataRegistryMapper metadataRegistryMapper,
+                                 LayerJdbcSupport layerJdbc,
                                  @Autowired(required = false) DataSource platformDataSource) {
         this.taskMapper = taskMapper;
         this.detailMapper = detailMapper;
@@ -78,6 +81,7 @@ public class QualityExecuteService {
         this.configMapper = configMapper;
         this.dataSourceMapper = dataSourceMapper;
         this.metadataRegistryMapper = metadataRegistryMapper;
+        this.layerJdbc = layerJdbc;
         this.platformDataSource = platformDataSource;
     }
 
@@ -481,12 +485,7 @@ public class QualityExecuteService {
             catalogHint = firstNonBlank(taskEntry.getDatabaseName(), taskEntry.getSchemaName());
         }
         if (isPlatformLayerId(dsId)) {
-            if (platformDataSource == null) {
-                throw new BusinessException(500, "平台库数据源不可用");
-            }
-            Connection conn = platformDataSource.getConnection();
-            applyCatalog(conn, platformLayerDatabase(dsId));
-            return conn;
+            return layerJdbc.open(platformLayerDatabase(dsId));
         }
         if (dsId != null) {
             IngDataSource ds = dataSourceMapper.selectById(dsId);
@@ -513,7 +512,8 @@ public class QualityExecuteService {
         if (platformDataSource != null) {
             Connection conn = platformDataSource.getConnection();
             if (catalogHint != null && isKnownLayerDb(catalogHint)) {
-                applyCatalog(conn, catalogHint);
+                conn.close();
+                return layerJdbc.open(catalogHint);
             }
             return conn;
         }

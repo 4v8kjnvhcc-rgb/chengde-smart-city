@@ -21,6 +21,7 @@ if [[ ! -f "$ENV_FILE" ]]; then
   echo "已生成 compose/prod-app.env，请填写与 .51 一致的密码后再执行。"
   exit 1
 fi
-dc -f compose/prod-app.yml --env-file "$ENV_FILE" up -d --build
+# 现场只 load 预构建镜像，不带 --build（代码包不含 platform-* 源码）
+dc -f compose/prod-app.yml --env-file "$ENV_FILE" up -d
 echo "门户: http://10.10.10.55/"
 echo "健康: http://10.10.10.55/actuator/health"

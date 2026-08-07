@@ -61,3 +61,25 @@ app:
       seaweed-bucket: ${SEAWEED_S3_BUCKET:smartcity-docs}
       mongo-url: ${MONGO_URL:mongodb://mongodb:27017}
       canal-url: ${CANAL_URL:http://canal:11111}
+  # 方案 B：分层库可分机。host 留空则 LayerJdbcSupport 回落 kettle.target-* / MYSQL（方案 A）
+  data-layer:
+    ods:
+      host: ${LAYER_ODS_HOST:}
+      port: ${LAYER_ODS_PORT:0}
+      username: ${LAYER_ODS_USER:}
+      password: ${LAYER_ODS_PASSWORD:}
+    dwd:
+      host: ${LAYER_DWD_HOST:}
+      port: ${LAYER_DWD_PORT:0}
+      username: ${LAYER_DWD_USER:}
+      password: ${LAYER_DWD_PASSWORD:}
+    dws:
+      host: ${LAYER_DWS_HOST:}
+      port: ${LAYER_DWS_PORT:0}
+      username: ${LAYER_DWS_USER:}
+      password: ${LAYER_DWS_PASSWORD:}
+    ads:
+      host: ${LAYER_ADS_HOST:}
+      port: ${LAYER_ADS_PORT:0}
+      username: ${LAYER_ADS_USER:}
+      password: ${LAYER_ADS_PASSWORD:}

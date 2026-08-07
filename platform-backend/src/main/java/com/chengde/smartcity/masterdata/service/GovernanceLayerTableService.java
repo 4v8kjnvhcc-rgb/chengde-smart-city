@@ -2,6 +2,7 @@ package com.chengde.smartcity.masterdata.service;
 
 import com.chengde.smartcity.common.exception.BusinessException;
 import com.chengde.smartcity.masterdata.support.DataLayerSupport;
+import com.chengde.smartcity.masterdata.support.LayerJdbcSupport;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.sql.Connection;
@@ -15,13 +16,13 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
-import javax.sql.DataSource;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
 /**
  * 治理落层建表与输出表样例预览：ODS 治理写入 DWD/DWS/ADS 时，平台主动按源表结构创建目标表（Carte 不负责 DDL）。
+ * 支持同机 LIKE 与跨机（S6/S7）SHOW CREATE 拷贝。
  */
 @Service
 public class GovernanceLayerTableService {
@@ -31,10 +32,10 @@ public class GovernanceLayerTableService {
     private static final int DEFAULT_PREVIEW_LIMIT = 100;
     private static final int MAX_PREVIEW_LIMIT = 500;
 
-    private final DataSource platformDataSource;
+    private final LayerJdbcSupport layerJdbc;
 
-    public GovernanceLayerTableService(DataSource platformDataSource) {
-        this.platformDataSource = platformDataSource;
+    public GovernanceLayerTableService(LayerJdbcSupport layerJdbc) {
+        this.layerJdbc = layerJdbc;
     }
 
     /**
@@ -80,29 +81,23 @@ public class GovernanceLayerTableService {
                 return created;
             }
 
-            try (Connection conn = platformDataSource.getConnection(); Statement st = conn.createStatement()) {
-                if (!tableExists(conn, sourceDb, sourceTable)) {
-                    throw new IllegalStateException("源表不存在: " + DataLayerSupport.qualify(sourceDb, sourceTable)
-                            + "，无法按源结构创建目标表");
-                }
-                String sourceQualified = DataLayerSupport.qualify(sourceDb, sourceTable);
-
-                for (Map<String, String> target : targets) {
-                    String targetDb = target.get("database");
-                    String targetTable = target.get("table");
-                    st.execute("CREATE DATABASE IF NOT EXISTS `" + targetDb + "`");
-                    String targetQualified = DataLayerSupport.qualify(targetDb, targetTable);
-                    if (!tableExists(conn, targetDb, targetTable)) {
-                        String ddl = "CREATE TABLE IF NOT EXISTS " + targetQualified
-                                + " LIKE " + sourceQualified;
-                        st.execute(ddl);
-                        created.add(targetQualified);
-                        log.info("governance auto-created target table: {} LIKE {}", targetQualified, sourceQualified);
-                    }
-                }
-                // 脱敏写新列时补 VARCHAR，避免 MD5 字符串写入 DATE 原列失败
-                ensureMaskResultColumns(conn, st, nodes, targets);
+            if (!layerJdbc.tableExists(sourceDb, sourceTable)) {
+                throw new IllegalStateException("源表不存在: " + DataLayerSupport.qualify(sourceDb, sourceTable)
+                        + "，无法按源结构创建目标表");
             }
+
+            for (Map<String, String> target : targets) {
+                String targetDb = target.get("database");
+                String targetTable = target.get("table");
+                String targetQualified = DataLayerSupport.qualify(targetDb, targetTable);
+                if (!layerJdbc.tableExists(targetDb, targetTable)) {
+                    layerJdbc.createTableLike(sourceDb, sourceTable, targetDb, targetTable);
+                    created.add(targetQualified);
+                    log.info("governance auto-created target table: {} from {}.{}",
+                            targetQualified, sourceDb, sourceTable);
+                }
+            }
+            ensureMaskResultColumns(nodes, targets);
             return created;
         } catch (IllegalStateException e) {
             throw e;
@@ -114,8 +109,7 @@ public class GovernanceLayerTableService {
     /**
      * 为 MASK 新列（含 MD5 强制新列、日期类字段强制新列）在目标表补充 VARCHAR 列。
      */
-    private void ensureMaskResultColumns(Connection conn, Statement st, JsonNode nodes,
-                                         List<Map<String, String>> targets) throws Exception {
+    private void ensureMaskResultColumns(JsonNode nodes, List<Map<String, String>> targets) throws Exception {
         Set<String> newCols = collectMaskNewColumns(nodes);
         if (newCols.isEmpty() || targets.isEmpty()) {
             return;
@@ -123,17 +117,19 @@ public class GovernanceLayerTableService {
         for (Map<String, String> target : targets) {
             String db = target.get("database");
             String table = target.get("table");
-            if (!isGovernedResultLayer(target.get("layer")) || !tableExists(conn, db, table)) {
+            if (!isGovernedResultLayer(target.get("layer")) || !layerJdbc.tableExists(db, table)) {
                 continue;
             }
-            for (String col : newCols) {
-                if (!isSafeIdent(col) || columnExists(conn, db, table, col)) {
-                    continue;
+            try (Connection conn = layerJdbc.open(db); Statement st = conn.createStatement()) {
+                for (String col : newCols) {
+                    if (!isSafeIdent(col) || columnExists(conn, db, table, col)) {
+                        continue;
+                    }
+                    String q = DataLayerSupport.qualify(db, table);
+                    String ddl = "ALTER TABLE " + q + " ADD COLUMN `" + col + "` VARCHAR(64) NULL";
+                    st.execute(ddl);
+                    log.info("governance added mask column {}.{} {}", db, table, col);
                 }
-                String q = DataLayerSupport.qualify(db, table);
-                String ddl = "ALTER TABLE " + q + " ADD COLUMN `" + col + "` VARCHAR(64) NULL";
-                st.execute(ddl);
-                log.info("governance added mask column {}.{} {}", db, table, col);
             }
         }
     }
@@ -216,7 +212,6 @@ public class GovernanceLayerTableService {
                 throw new BusinessException(400, "任务尚未配置输出表");
             }
             allTargets = resolveOutputTargets(nodes);
-            // 「查看数据」只展示治理后的明细/汇总/应用层，排除 ODS 原始层
             targets = allTargets.stream()
                     .filter(t -> isGovernedResultLayer(t.get("layer")))
                     .toList();
@@ -248,8 +243,8 @@ public class GovernanceLayerTableService {
         out.put("limit", lim);
         out.put("previewKind", "GOVERNED_RESULT");
 
-        try (Connection conn = platformDataSource.getConnection()) {
-            if (!tableExists(conn, database, table)) {
+        try (Connection conn = layerJdbc.open(database)) {
+            if (!LayerJdbcSupport.tableExists(conn, database, table)) {
                 out.put("tableExists", false);
                 out.put("columns", List.of());
                 out.put("rows", List.of());
@@ -258,7 +253,7 @@ public class GovernanceLayerTableService {
                         + DataLayerSupport.qualify(database, table));
                 return out;
             }
-            String sql = "SELECT * FROM " + DataLayerSupport.qualify(database, table) + " LIMIT " + lim;
+            String sql = "SELECT * FROM `" + table + "` LIMIT " + lim;
             try (Statement st = conn.createStatement(); ResultSet rs = st.executeQuery(sql)) {
                 List<String> columns = new ArrayList<>();
                 ResultSetMetaData meta = rs.getMetaData();
@@ -301,7 +296,6 @@ public class GovernanceLayerTableService {
         for (JsonNode n : nodes) {
             JsonNode data = n.path("data");
             String type = data.path("nodeType").asText("");
-            // 只认输出节点，绝不读 INPUT 源表
             if (!"OUTPUT".equals(type) && !"INSERT_UPDATE".equals(type)) {
                 continue;
             }
@@ -335,7 +329,6 @@ public class GovernanceLayerTableService {
         return targets;
     }
 
-    /** 治理结果层：DWD/DWS/ADS（不含 ODS 原始层） */
     private static boolean isGovernedResultLayer(String layer) {
         if (layer == null || layer.isBlank()) {
             return false;
@@ -355,7 +348,6 @@ public class GovernanceLayerTableService {
             }
             throw new BusinessException(400, "指定输出表不在治理结果层（DWD/DWS/ADS）中: " + preferredTable);
         }
-        // 默认优先 DWD，再 DWS、ADS
         for (String prefer : List.of("DWD", "DWS", "ADS")) {
             for (Map<String, String> t : targets) {
                 if (prefer.equalsIgnoreCase(t.get("layer"))) {
@@ -371,12 +363,6 @@ public class GovernanceLayerTableService {
             return DEFAULT_PREVIEW_LIMIT;
         }
         return Math.min(limit, MAX_PREVIEW_LIMIT);
-    }
-
-    private static boolean tableExists(Connection conn, String db, String table) throws Exception {
-        try (ResultSet rs = conn.getMetaData().getTables(db, null, table, new String[]{"TABLE"})) {
-            return rs.next();
-        }
     }
 
     private static String resolveDb(String connectionName, String tableName) {

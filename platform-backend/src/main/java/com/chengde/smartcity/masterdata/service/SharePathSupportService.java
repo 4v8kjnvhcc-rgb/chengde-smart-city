@@ -9,6 +9,7 @@ import com.chengde.smartcity.exchange.mapper.IngDataSourceMapper;
 import com.chengde.smartcity.exchange.mapper.IngDataTableMapper;
 import com.chengde.smartcity.exchange.mapper.IngIngestTaskMapper;
 import com.chengde.smartcity.masterdata.support.DataLayerSupport;
+import com.chengde.smartcity.masterdata.support.LayerJdbcSupport;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.sql.Connection;
@@ -21,7 +22,6 @@ import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.regex.Pattern;
-import javax.sql.DataSource;
 import org.springframework.stereotype.Service;
 
 /**
@@ -35,16 +35,16 @@ public class SharePathSupportService {
     private final IngDataSourceMapper dataSourceMapper;
     private final IngDataTableMapper dataTableMapper;
     private final IngIngestTaskMapper ingestTaskMapper;
-    private final DataSource platformDataSource;
+    private final LayerJdbcSupport layerJdbc;
 
     public SharePathSupportService(IngDataSourceMapper dataSourceMapper,
                                    IngDataTableMapper dataTableMapper,
                                    IngIngestTaskMapper ingestTaskMapper,
-                                   DataSource platformDataSource) {
+                                   LayerJdbcSupport layerJdbc) {
         this.dataSourceMapper = dataSourceMapper;
         this.dataTableMapper = dataTableMapper;
         this.ingestTaskMapper = ingestTaskMapper;
-        this.platformDataSource = platformDataSource;
+        this.layerJdbc = layerJdbc;
     }
 
     public List<Map<String, Object>> listEligibleTables() {
@@ -169,7 +169,7 @@ public class SharePathSupportService {
         String table = requireIdentifier(tableName, "physicalTableName");
         String db = resolveDatabase(database, tableName);
         List<ColumnDef> columns = new ArrayList<>();
-        try (Connection connection = platformDataSource.getConnection()) {
+        try (Connection connection = layerJdbc.open(db)) {
             DatabaseMetaData metadata = connection.getMetaData();
             try (ResultSet tables = metadata.getTables(db, null, table, new String[]{"TABLE"})) {
                 if (!tables.next()) {
@@ -225,9 +225,9 @@ public class SharePathSupportService {
         String table = requireIdentifier(tableName, "physicalTableName");
         String db = resolveDatabase(database, tableName);
         String qualified = DataLayerSupport.qualify(db, table);
-        try (Connection connection = platformDataSource.getConnection();
+        try (Connection connection = layerJdbc.open(db);
              Statement statement = connection.createStatement();
-             ResultSet rs = statement.executeQuery("SELECT COUNT(*) FROM " + qualified)) {
+             ResultSet rs = statement.executeQuery("SELECT COUNT(*) FROM `" + table + "`")) {
             return rs.next() ? rs.getLong(1) : 0;
         } catch (Exception ex) {
             throw new BusinessException(500, "读取表失败: " + ex.getMessage());
@@ -255,14 +255,7 @@ public class SharePathSupportService {
             return false;
         }
         String db = resolveDatabase(database, tableName);
-        try (Connection connection = platformDataSource.getConnection()) {
-            DatabaseMetaData metadata = connection.getMetaData();
-            try (ResultSet tables = metadata.getTables(db, null, tableName, new String[]{"TABLE"})) {
-                return tables.next();
-            }
-        } catch (Exception ex) {
-            return false;
-        }
+        return layerJdbc.tableExists(db, tableName);
     }
 
     public String requireIdentifier(String value, String field) {

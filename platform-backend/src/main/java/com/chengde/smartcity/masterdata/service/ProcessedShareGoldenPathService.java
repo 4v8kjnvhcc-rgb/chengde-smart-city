@@ -44,6 +44,7 @@ import com.chengde.smartcity.masterdata.service.FusionSqlCompiler.CompileResult;
 import com.chengde.smartcity.masterdata.service.SharePathSupportService.ColumnDef;
 import com.chengde.smartcity.masterdata.service.SharePathSupportService.EligibleTable;
 import com.chengde.smartcity.masterdata.support.DataLayerSupport;
+import com.chengde.smartcity.masterdata.support.LayerJdbcSupport;
 import com.chengde.smartcity.security.UserPrincipal;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.math.BigDecimal;
@@ -55,7 +56,6 @@ import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import javax.sql.DataSource;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
@@ -95,7 +95,7 @@ public class ProcessedShareGoldenPathService {
     private final CatalogResourceService catalogResourceService;
     private final CatalogSubscriptionService catalogSubscriptionService;
     private final ResourceCenterPlatformService resourceCenterPlatformService;
-    private final DataSource platformDataSource;
+    private final LayerJdbcSupport layerJdbc;
     private final KettleClient kettleClient;
     private final KettleKtrCompiler ktrCompiler;
     private final IntegrationProperties integrationProperties;
@@ -125,7 +125,7 @@ public class ProcessedShareGoldenPathService {
                                            CatalogResourceService catalogResourceService,
                                            CatalogSubscriptionService catalogSubscriptionService,
                                            ResourceCenterPlatformService resourceCenterPlatformService,
-                                           DataSource platformDataSource,
+                                           LayerJdbcSupport layerJdbc,
                                            KettleClient kettleClient,
                                            KettleKtrCompiler ktrCompiler,
                                            IntegrationProperties integrationProperties,
@@ -154,7 +154,7 @@ public class ProcessedShareGoldenPathService {
         this.catalogResourceService = catalogResourceService;
         this.catalogSubscriptionService = catalogSubscriptionService;
         this.resourceCenterPlatformService = resourceCenterPlatformService;
-        this.platformDataSource = platformDataSource;
+        this.layerJdbc = layerJdbc;
         this.kettleClient = kettleClient;
         this.ktrCompiler = ktrCompiler;
         this.integrationProperties = integrationProperties;
@@ -637,30 +637,39 @@ public class ProcessedShareGoldenPathService {
     }
 
     private long executeCompiled(CompileResult compiled) {
-        String targetQ = DataLayerSupport.qualify(compiled.targetDatabase(), compiled.targetTable());
-        try (Connection connection = platformDataSource.getConnection();
+        String targetDb = compiled.targetDatabase();
+        String sourceDb = compiled.sourceDatabase();
+        String targetTable = compiled.targetTable();
+        if (!layerJdbc.sameInstance(sourceDb, targetDb)) {
+            throw new BusinessException(500,
+                    "源库与目标库不在同一 MySQL 实例，无法用 JDBC 直写融合；请确保 INTEGRATION_ENABLED 且走 Kettle 引擎");
+        }
+        try (Connection connection = layerJdbc.open(targetDb);
              Statement statement = connection.createStatement()) {
-            statement.executeUpdate("DROP TABLE IF EXISTS " + targetQ);
+            statement.executeUpdate("DROP TABLE IF EXISTS `" + targetTable + "`");
             statement.executeUpdate(compiled.ddlSql());
             statement.executeUpdate(compiled.insertSql());
-            try (ResultSet rs = statement.executeQuery("SELECT COUNT(*) FROM " + targetQ)) {
+            try (ResultSet rs = statement.executeQuery("SELECT COUNT(*) FROM `" + targetTable + "`")) {
                 return rs.next() ? rs.getLong(1) : 0;
             }
+        } catch (BusinessException ex) {
+            throw ex;
         } catch (Exception ex) {
             throw new BusinessException(500, "融合入库执行失败: " + ex.getMessage());
         }
     }
 
     /**
-     * 由 Carte 真实执行加工：平台侧先建 DWS 目标表 DDL，Carte 完成 ODS(源) -> DWS(目标) 的
+     * 由 Carte 真实执行加工：平台侧先建目标表 DDL，Carte 完成 源分层库 -> 目标分层库 的
      * TableInput(白名单 SELECT) -> TableOutput(TRUNCATE 写入)。失败即抛出真实原因。
      */
     private long executeCompiledViaKettle(UserPrincipal operator, CompileResult compiled, String transName, GovGovernanceTaskRun run) {
-        String targetQ = DataLayerSupport.qualify(compiled.targetDatabase(), compiled.targetTable());
+        String targetDb = compiled.targetDatabase();
+        String targetTable = compiled.targetTable();
         // 1) 平台侧建目标表结构（Carte 不负责建表）
-        try (Connection connection = platformDataSource.getConnection();
+        try (Connection connection = layerJdbc.open(targetDb);
              Statement statement = connection.createStatement()) {
-            statement.executeUpdate("DROP TABLE IF EXISTS " + targetQ);
+            statement.executeUpdate("DROP TABLE IF EXISTS `" + targetTable + "`");
             statement.executeUpdate(compiled.ddlSql());
         } catch (Exception ex) {
             throw new BusinessException(500, "创建目标表失败: " + ex.getMessage());
@@ -668,14 +677,14 @@ public class ProcessedShareGoldenPathService {
         if (!kettleClient.isHealthy()) {
             throw new BusinessException(502, "Kettle Carte 不可用，无法以 KETTLE 引擎执行加工");
         }
-        // 2) 源=ODS 分层库，目标=DWS 等分层库（Carte 可达地址）
+        // 2) 源/目标按分层端点解析（支持 S6/S7 分机）
+        LayerJdbcSupport.ResolvedEndpoint srcEp = layerJdbc.resolve(compiled.sourceDatabase());
         KettleKtrCompiler.SourceConn src = new KettleKtrCompiler.SourceConn();
-        src.host = integrationProperties.getKettle().getTargetHost();
-        src.port = integrationProperties.getKettle().getTargetPort();
-        src.database = compiled.sourceDatabase();
-        src.username = integrationProperties.getKettle().getTargetUser();
-        src.password = integrationProperties.getKettle().getTargetPassword();
-        // selectSql 已含全限定 FROM，但 Table Input 连接在源库时可改用裸表名；保留编译结果
+        src.host = srcEp.host();
+        src.port = srcEp.port();
+        src.database = srcEp.database();
+        src.username = srcEp.username();
+        src.password = srcEp.password();
         String selectSql = compiled.selectSql();
         String ktr = ktrCompiler.compileCopy(transName, src, selectSql,
                 compiled.targetDatabase(), compiled.targetTable(), true);
@@ -686,7 +695,6 @@ public class ProcessedShareGoldenPathService {
         if (!"SUCCESS".equals(add.get("status"))) {
             throw new BusinessException(502, "注册加工转换失败: " + add.get("message"));
         }
-        // 通过 DS SHELL 启动并等待 Carte trans 完成
         dsOrchestrationService.runKettleTrans(operator, transName, "FUSION_" + run.getTaskId());
 
         Map<String, Object> st = kettleClient.getTransStatus(transName);
@@ -696,10 +704,9 @@ public class ProcessedShareGoldenPathService {
         if (!"FINISHED".equals(status)) {
             throw new BusinessException(502, "Carte 加工未成功，状态=" + status);
         }
-        // 3) 回读真实产出行数
-        try (Connection connection = platformDataSource.getConnection();
+        try (Connection connection = layerJdbc.open(targetDb);
              Statement statement = connection.createStatement();
-             ResultSet rs = statement.executeQuery("SELECT COUNT(*) FROM " + targetQ)) {
+             ResultSet rs = statement.executeQuery("SELECT COUNT(*) FROM `" + targetTable + "`")) {
             return rs.next() ? rs.getLong(1) : 0;
         } catch (Exception ex) {
             throw new BusinessException(500, "回读产出行数失败: " + ex.getMessage());
