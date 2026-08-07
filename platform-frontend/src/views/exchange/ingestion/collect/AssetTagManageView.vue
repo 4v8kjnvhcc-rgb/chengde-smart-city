@@ -2,6 +2,8 @@
 import { onMounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import PageCard from '@/components/common/PageCard.vue'
+import PortalPagination from '@/components/common/PortalPagination.vue'
+import { useClientPager } from '@/composables/useClientPager'
 import api from '@/api/http'
 import { statusLabel } from '@/utils/status-label'
 
@@ -11,6 +13,7 @@ const loading = ref(false)
 const overview = ref<Record<string, unknown> | null>(null)
 const dims = ref<Record<string, unknown>[]>([])
 const tags = ref<Record<string, unknown>[]>([])
+const { page: tagPage, pageSize: tagPageSize, paged: pagedTags, total: tagTotal, resetPage: resetTagPage } = useClientPager(tags)
 const rules = ref<Record<string, unknown>[]>([])
 const pending = ref<Record<string, unknown>[]>([])
 const bindings = ref<Record<string, unknown>[]>([])
@@ -111,6 +114,12 @@ async function loadTags() {
   tags.value = (await api.get(`${BASE}/tags`, {
     params: { keyword: tagKw.value || undefined, dimType: tagDim.value || undefined },
   })).data || []
+}
+function onResetTags() {
+  tagKw.value = ''
+  tagDim.value = ''
+  resetTagPage()
+  void loadTags()
 }
 async function loadRules() {
   rules.value = (await api.get(`${BASE}/rules`)).data || []
@@ -392,13 +401,14 @@ onMounted(reload)
           </el-form-item>
           <el-form-item class="portal-form-actions">
             <el-button type="primary" @click="loadTags">查询</el-button>
+            <el-button @click="onResetTags">重置</el-button>
             <el-button type="primary" @click="openTag()">新建标签</el-button>
             <el-button @click="mergeDialog = true">合并标签</el-button>
           </el-form-item>
         </el-form>
         <el-alert type="info" :closable="false" show-icon class="mb"
           title="维度可配置（业务域/主题/对象等）；国标类目仅可维护规则与同义词。受控词表优先，同义词便于检索命中。" />
-        <el-table :data="tags" stripe>
+        <el-table :data="pagedTags" stripe>
           <el-table-column prop="tagCode" label="编码" width="120" show-overflow-tooltip />
           <el-table-column prop="tagName" label="名称" width="140" show-overflow-tooltip />
           <el-table-column label="维度" width="100">
@@ -425,6 +435,12 @@ onMounted(reload)
             </template>
           </el-table-column>
         </el-table>
+        <PortalPagination
+          v-if="tags.length"
+          v-model:page="tagPage"
+          v-model:page-size="tagPageSize"
+          :total="tagTotal"
+        />
       </div>
 
       <!-- 规则 -->

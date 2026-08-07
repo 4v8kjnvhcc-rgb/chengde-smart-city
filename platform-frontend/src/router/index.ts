@@ -214,10 +214,22 @@ const router = createRouter({
           meta: { title: '大数据资源中心', hubLayout: true },
         },
         {
+          path: 'analytics/general-support',
+          name: 'analytics-general-support',
+          component: () => import('@/views/analytics/GeneralSupportLandingView.vue'),
+          meta: { title: '通用支撑平台', hubLayout: true, hideAppHeader: true, flushMain: true },
+        },
+        {
+          path: 'analytics/business-support',
+          name: 'analytics-business-support',
+          component: () => import('@/views/analytics/BusinessSupportLandingView.vue'),
+          meta: { title: '业务支撑平台', hubLayout: true, hideAppHeader: true, flushMain: true },
+        },
+        {
           path: 'analytics/support',
           name: 'analytics-support',
           component: () => import('@/views/analytics/AnalyticsSupportHubView.vue'),
-          meta: { title: '通用支撑平台', hubLayout: true },
+          meta: { title: '统一用户管理系统', hubLayout: true },
         },
         {
           path: 'analytics/bi',
@@ -225,6 +237,7 @@ const router = createRouter({
           component: () => import('@/views/analytics/AnalyticsBiHubView.vue'),
           meta: { title: '智能BI', hubLayout: true },
         },
+
         {
           path: 'analytics/population',
           name: 'analytics-population',

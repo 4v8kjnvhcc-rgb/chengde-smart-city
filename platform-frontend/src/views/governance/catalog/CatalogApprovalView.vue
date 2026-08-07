@@ -6,12 +6,14 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import PageCard from '@/components/common/PageCard.vue'
 import PortalPagination from '@/components/common/PortalPagination.vue'
 import { statusLabel, statusTagType } from '@/utils/status-label'
+import { useAuthStore } from '@/stores/auth'
 
 const props = withDefaults(defineProps<{ catalogOrigin?: 'INGEST' | 'GOVERNANCE' }>(), {
   catalogOrigin: 'GOVERNANCE',
 })
 
 const route = useRoute()
+const auth = useAuthStore()
 
 const pageTitle = computed(() =>
   props.catalogOrigin === 'INGEST' ? '数据资源目录审批' : '资源目录审批',
@@ -19,6 +21,9 @@ const pageTitle = computed(() =>
 
 /** 治理侧仅审批资源目录；归集侧仍含资源分类审批 */
 const showCategoryScope = computed(() => props.catalogOrigin === 'INGEST')
+
+/** 超级管理员：已通过记录可下线、删除（与后端 SYSTEM_ADMIN / PLATFORM_ADMIN 对齐，UI 以 sys_admin 为准） */
+const isCatalogAdmin = computed(() => auth.isSystemAdmin)
 
 interface ApprovalRow {
   id: number
@@ -30,6 +35,8 @@ interface ApprovalRow {
   categoryCode?: string
   resourceType?: string
   publishStatus?: string
+  approvalStatus?: string
+  resourceAlive?: boolean
   actionType: string
   status: string
   submitComment?: string
@@ -69,7 +76,7 @@ const ACTION_TAG: Record<string, string> = {
 const rows = ref<ApprovalRow[]>([])
 const loading = ref(false)
 const submitting = ref(false)
-const statusFilter = ref('PENDING')
+const statusFilter = ref('')
 const selected = ref<ApprovalRow[]>([])
 /** RESOURCE=资源目录；CATEGORY=资源分类 */
 const activeScope = ref<'RESOURCE' | 'CATEGORY'>('RESOURCE')
@@ -98,11 +105,34 @@ const CHECK_ITEMS = ['唯一性', '完整性', '关联性', '表述性'] as cons
 const introDesc = computed(() =>
   activeScope.value === 'CATEGORY'
     ? '审核资源分类的新增、编辑、删除。驳回须填写审批意见。'
-    : '审核编目新增/变更/删除，以及发布、下线。关联/解绑分类已即时生效，不在此审批。驳回须填写审批意见。',
+    : '审核编目新增/变更/删除，以及发布、下线。关联/解绑分类已即时生效，不在此审批。驳回须填写审批意见。平台管理员对已通过且仍存在的目录可下线或删除；下线后回到编目管理。',
 )
 const emptyText = computed(() =>
   activeScope.value === 'CATEGORY' ? '暂无资源分类审批记录' : '暂无资源目录审批记录',
 )
+
+function canAdminOffline(row: ApprovalRow) {
+  return (
+    isCatalogAdmin.value
+    && activeScope.value === 'RESOURCE'
+    && row.status === 'APPROVED'
+    && row.resourceAlive !== false
+    && !!row.resourceId
+    && row.publishStatus === 'PUBLISHED'
+    && row.approvalStatus !== 'PENDING'
+  )
+}
+
+function canAdminDelete(row: ApprovalRow) {
+  return (
+    isCatalogAdmin.value
+    && activeScope.value === 'RESOURCE'
+    && row.status === 'APPROVED'
+    && row.resourceAlive !== false
+    && !!row.resourceId
+    && row.approvalStatus !== 'PENDING'
+  )
+}
 
 async function load() {
   loading.value = true
@@ -131,6 +161,12 @@ function onScopeChange() {
 }
 
 function onQuery() {
+  page.value = 1
+  void load()
+}
+
+function onReset() {
+  statusFilter.value = ''
   page.value = 1
   void load()
 }
@@ -234,6 +270,34 @@ async function withdraw(row: ApprovalRow) {
   await load()
 }
 
+async function adminOffline(row: ApprovalRow) {
+  if (!row.resourceId) return
+  await ElMessageBox.confirm(
+    `确认下线「${displayName(row)}」？下线后将从门户移除，目录回到「数据资源编目管理」可再编辑/发布。`,
+    '下线目录',
+    { type: 'warning' },
+  )
+  await api.post(`/governance/catalog/resources-mgmt/${row.resourceId}/admin-offline`, {
+    comment: '管理员从审批页下线',
+  })
+  ElMessage.success('已下线，可在编目管理中查看')
+  await load()
+}
+
+async function adminDelete(row: ApprovalRow) {
+  if (!row.resourceId) return
+  await ElMessageBox.confirm(
+    `确认删除「${displayName(row)}」？删除后不可恢复。`,
+    '删除目录',
+    { type: 'warning', confirmButtonText: '确认删除' },
+  )
+  await api.post(`/governance/catalog/resources-mgmt/${row.resourceId}/admin-delete`, {
+    comment: '管理员从审批页删除',
+  })
+  ElMessage.success('已删除')
+  await load()
+}
+
 watch(
   () => [route.query.cSub, route.query.module, props.catalogOrigin] as const,
   ([cSub, module]) => {
@@ -305,6 +369,7 @@ onActivated(() => {
         </el-form-item>
         <el-form-item class="portal-form-actions">
           <el-button type="primary" @click="onQuery">查询</el-button>
+          <el-button @click="onReset">重置</el-button>
           <el-button type="primary" plain :disabled="!selectedPendingCount" @click="openBatchReview">
             批量审核
             <template v-if="selectedPendingCount">（{{ selectedPendingCount }}）</template>
@@ -347,11 +412,15 @@ onActivated(() => {
         <el-table-column prop="submittedBy" label="提交人" width="100" />
         <el-table-column prop="submittedAt" label="提交时间" width="166" />
         <el-table-column prop="reviewComment" label="审批意见" min-width="120" show-overflow-tooltip />
-        <el-table-column label="操作" width="120" fixed="right" align="center">
+        <el-table-column label="操作" width="160" fixed="right" align="center">
           <template #default="{ row }">
             <template v-if="row.status === 'PENDING'">
               <el-button link type="primary" @click="openReview(row)">审核</el-button>
               <el-button link type="info" @click="withdraw(row)">撤回</el-button>
+            </template>
+            <template v-else-if="canAdminOffline(row) || canAdminDelete(row)">
+              <el-button v-if="canAdminOffline(row)" link type="warning" @click="adminOffline(row)">下线</el-button>
+              <el-button v-if="canAdminDelete(row)" link type="danger" @click="adminDelete(row)">删除</el-button>
             </template>
             <span v-else class="muted">—</span>
           </template>

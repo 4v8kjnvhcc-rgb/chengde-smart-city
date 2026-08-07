@@ -224,6 +224,12 @@ function runUserSearch() {
   void loadUsers()
 }
 
+function resetUserSearch() {
+  userKeyword.value = ''
+  userPage.value = 1
+  void loadUsers()
+}
+
 watch(selectedOrgId, () => {
   void loadUsers()
 })
@@ -521,6 +527,7 @@ onMounted(async () => {
                 @keyup.enter="runUserSearch"
               />
               <el-button type="primary" size="small" @click="runUserSearch">查询</el-button>
+              <el-button size="small" @click="resetUserSearch">重置</el-button>
             </div>
           </div>
         </template>

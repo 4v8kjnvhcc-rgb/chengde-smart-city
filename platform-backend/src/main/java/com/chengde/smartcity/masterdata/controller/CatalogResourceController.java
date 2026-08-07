@@ -219,6 +219,25 @@ public class CatalogResourceController {
         return ApiResponse.ok(service.offline(principal, id));
     }
 
+    /** 平台/系统管理员：已发布目录即时下线，回到编目管理 */
+    @PostMapping("/{id}/admin-offline")
+    @PreAuthorize("isAuthenticated()")
+    public ApiResponse<GovCatalogResource> adminOffline(@AuthenticationPrincipal UserPrincipal principal,
+                                                        @PathVariable Long id,
+                                                        @RequestBody(required = false) Map<String, Object> body) {
+        return ApiResponse.ok(service.adminForceOffline(principal, id, body == null ? Map.of() : body));
+    }
+
+    /** 平台/系统管理员：即时删除目录 */
+    @PostMapping("/{id}/admin-delete")
+    @PreAuthorize("isAuthenticated()")
+    public ApiResponse<Void> adminDelete(@AuthenticationPrincipal UserPrincipal principal,
+                                         @PathVariable Long id,
+                                         @RequestBody(required = false) Map<String, Object> body) {
+        service.adminForceDelete(principal, id, body == null ? Map.of() : body);
+        return ApiResponse.ok(null);
+    }
+
     @PostMapping("/approvals/{approvalId}/approve")
     @PreAuthorize("isAuthenticated()")
     public ApiResponse<GovCatalogApproval> approve(@AuthenticationPrincipal UserPrincipal principal,

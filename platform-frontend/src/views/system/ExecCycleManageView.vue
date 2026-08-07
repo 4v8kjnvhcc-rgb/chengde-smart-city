@@ -2,6 +2,8 @@
 import { computed, onMounted, reactive, ref, watch } from 'vue'
 import api from '@/api/http'
 import { ElMessage, ElMessageBox } from 'element-plus'
+import PortalPagination from '@/components/common/PortalPagination.vue'
+import { useClientPager } from '@/composables/useClientPager'
 
 interface ExecCycle {
   id: number
@@ -16,6 +18,7 @@ interface ExecCycle {
 const loading = ref(false)
 const rows = ref<ExecCycle[]>([])
 const keyword = ref('')
+const { page, pageSize, paged, total, resetPage } = useClientPager(rows)
 const unitTab = ref<'sec' | 'min' | 'hour' | 'day' | 'month' | 'week' | 'year'>('sec')
 
 const dialog = reactive({
@@ -145,6 +148,12 @@ async function load() {
   } finally {
     loading.value = false
   }
+}
+
+function onReset() {
+  keyword.value = ''
+  resetPage()
+  void load()
 }
 
 function openCreate() {
@@ -299,11 +308,12 @@ onMounted(load)
   <div v-loading="loading" class="exec-cycle">
     <div class="toolbar">
       <el-input v-model="keyword" clearable placeholder="编码/名称/Cron" style="width:240px" @keyup.enter="load" />
-      <el-button @click="load">查询</el-button>
+      <el-button type="primary" @click="load">查询</el-button>
+      <el-button @click="onReset">重置</el-button>
       <el-button type="primary" @click="openCreate">新建执行周期</el-button>
     </div>
 
-    <el-table :data="rows" stripe size="small">
+    <el-table :data="paged" stripe size="small">
       <el-table-column prop="cycleCode" label="编码" width="140" />
       <el-table-column prop="cycleName" label="名称" min-width="140" />
       <el-table-column prop="cronExpr" label="Cron" min-width="180" show-overflow-tooltip />
@@ -318,6 +328,12 @@ onMounted(load)
         </template>
       </el-table-column>
     </el-table>
+    <PortalPagination
+      v-if="rows.length"
+      v-model:page="page"
+      v-model:page-size="pageSize"
+      :total="total"
+    />
 
     <el-dialog
       v-model="dialog.visible"

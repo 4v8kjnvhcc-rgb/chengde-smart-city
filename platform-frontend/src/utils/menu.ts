@@ -100,6 +100,8 @@ const HUB_LAYOUT_PATHS = new Set([
   '/governance',
   '/unstructured',
   '/resource-center',
+  '/analytics/general-support',
+  '/analytics/business-support',
   '/analytics/support',
   '/analytics/bi',
   '/analytics/population',
@@ -250,6 +252,18 @@ export function canAccessRoutePath(
   if (p === '/catalog' || p.startsWith('/catalog/') || p.startsWith('/modules/')) return true
 
   const allowed = collectAllowedMenuPaths(menus)
+  // 落地选卡页：有任一子系统菜单即可进入
+  if (p === '/analytics/general-support') {
+    return allowed.has('/analytics/support') || allowed.has('/analytics/bi')
+  }
+  if (p === '/analytics/business-support') {
+    return (
+      allowed.has('/analytics/population')
+      || allowed.has('/analytics/legal-entity')
+      || allowed.has('/analytics/macro')
+      || allowed.has('/analytics/key-domains')
+    )
+  }
   for (const a of allowed) {
     if (p === a || p.startsWith(`${a}/`)) return true
   }

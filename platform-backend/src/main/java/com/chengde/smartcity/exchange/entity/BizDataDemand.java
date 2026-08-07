@@ -32,6 +32,14 @@ public class BizDataDemand {
     private String superviseNote;
     private java.time.LocalDateTime superviseAt;
     private String superviseBy;
+    /** 确认/反馈截止（自然日，分发或督办起算） */
+    private LocalDateTime responseDeadline;
+    /** 同意提供后挂载目录截止（自然日，可配置） */
+    private LocalDateTime catalogMountDeadline;
+    /** 目录已挂载至门户时间 */
+    private LocalDateTime catalogMountedAt;
+    /** ADMIN_MATERIAL / ADMIN_PORTAL / PROVIDER_PENDING / ADMIN_AGREE_RETURN */
+    private String returnKind;
     private String analysisPayload;
     /** 需求填报表单 JSON（提供单位/目录/数据项/事项等） */
     private String formPayload;
@@ -85,6 +93,14 @@ public class BizDataDemand {
     public void setSuperviseAt(java.time.LocalDateTime superviseAt) { this.superviseAt = superviseAt; }
     public String getSuperviseBy() { return superviseBy; }
     public void setSuperviseBy(String superviseBy) { this.superviseBy = superviseBy; }
+    public LocalDateTime getResponseDeadline() { return responseDeadline; }
+    public void setResponseDeadline(LocalDateTime responseDeadline) { this.responseDeadline = responseDeadline; }
+    public LocalDateTime getCatalogMountDeadline() { return catalogMountDeadline; }
+    public void setCatalogMountDeadline(LocalDateTime catalogMountDeadline) { this.catalogMountDeadline = catalogMountDeadline; }
+    public LocalDateTime getCatalogMountedAt() { return catalogMountedAt; }
+    public void setCatalogMountedAt(LocalDateTime catalogMountedAt) { this.catalogMountedAt = catalogMountedAt; }
+    public String getReturnKind() { return returnKind; }
+    public void setReturnKind(String returnKind) { this.returnKind = returnKind; }
     public String getAnalysisPayload() { return analysisPayload; }
     public void setAnalysisPayload(String analysisPayload) { this.analysisPayload = analysisPayload; }
     public String getFormPayload() { return formPayload; }

@@ -4,6 +4,8 @@ import { useRoute, useRouter } from 'vue-router'
 import api from '@/api/http'
 import { ElMessage, ElMessageBox, type UploadFile } from 'element-plus'
 import PageCard from '@/components/common/PageCard.vue'
+import PortalPagination from '@/components/common/PortalPagination.vue'
+import { useClientPager } from '@/composables/useClientPager'
 import HubSideLayout, { type HubNavItem } from '@/components/common/HubSideLayout.vue'
 import { statusLabel, statusTagType } from '@/utils/status-label'
 
@@ -160,6 +162,7 @@ let overviewLoaded = false
 const overview = ref<Record<string, unknown> | null>(null)
 const categories = ref<Category[]>([])
 const docs = ref<Doc[]>([])
+const { page: docPage, pageSize: docPageSize, paged: pagedDocs, total: docTotal, resetPage: resetDocPage } = useClientPager(docs)
 const pipelines = ref<Pipeline[]>([])
 const searchQ = ref('')
 const searchCategory = ref<string>('')
@@ -233,7 +236,14 @@ const cleanOverview = ref<Record<string, unknown> | null>(null)
 const cleanRules = ref<CleanRule[]>([])
 const cleanIssues = ref<CleanIssue[]>([])
 const cleanTab = ref('execute')
-const cleanIssueStatus = ref('OPEN')
+const cleanIssueStatus = ref('')
+const {
+  page: cleanIssuePage,
+  pageSize: cleanIssuePageSize,
+  paged: pagedCleanIssues,
+  total: cleanIssueTotal,
+  resetPage: resetCleanIssuePage,
+} = useClientPager(cleanIssues)
 const cleanBusyId = ref<number | null>(null)
 const ruleDialogVisible = ref(false)
 const ruleEditingId = ref<number>()
@@ -309,6 +319,14 @@ async function loadDocuments() {
   })).data || []
 }
 
+function onResetDocuments() {
+  docQuery.keyword = ''
+  docQuery.categoryCode = ''
+  docQuery.publishStatus = ''
+  resetDocPage()
+  void loadDocuments()
+}
+
 async function loadPipelines(type: ProcessType) {
   pipelines.value = (await api.get('/unstructured/platform/pipelines', {
     params: { pipelineType: type },
@@ -327,6 +345,12 @@ async function loadCleanIssues() {
   cleanIssues.value = (await api.get('/unstructured/platform/clean/issues', {
     params: { issueStatus: cleanIssueStatus.value || undefined },
   })).data || []
+  resetCleanIssuePage()
+}
+
+function onResetCleanIssues() {
+  cleanIssueStatus.value = ''
+  void loadCleanIssues()
 }
 
 async function loadTabData() {
@@ -1039,9 +1063,10 @@ onMounted(() => {
           </el-form-item>
           <el-form-item class="portal-form-actions">
             <el-button type="primary" @click="loadDocuments">查询</el-button>
+            <el-button @click="onResetDocuments">重置</el-button>
           </el-form-item>
         </el-form>
-        <el-table :data="docs" stripe size="small">
+        <el-table :data="pagedDocs" stripe size="small">
           <el-table-column label="文件资源" min-width="190">
             <template #default="{ row }">
               <el-button link type="primary" @click="openDetail(row.id)">{{ row.title }}</el-button>
@@ -1105,6 +1130,12 @@ onMounted(() => {
             </template>
           </el-table-column>
         </el-table>
+        <PortalPagination
+          v-if="docs.length"
+          v-model:page="docPage"
+          v-model:page-size="docPageSize"
+          :total="docTotal"
+        />
 
         <el-dialog v-model="docDialogVisible" title="编辑文件资源" width="560px">
           <el-form label-width="90px">
@@ -1520,7 +1551,7 @@ onMounted(() => {
           <el-tab-pane label="问题数据" name="issues">
             <el-form inline class="portal-inline-form portal-inline-form--block" @submit.prevent>
               <el-form-item label="状态" class="portal-field-md">
-                <el-select v-model="cleanIssueStatus" clearable placeholder="全部" @change="loadCleanIssues">
+                <el-select v-model="cleanIssueStatus" clearable placeholder="全部">
                   <el-option label="待确认" value="OPEN" />
                   <el-option label="清洗后入库" value="CLEANED_IN" />
                   <el-option label="已放弃" value="ABANDONED" />
@@ -1528,10 +1559,11 @@ onMounted(() => {
                 </el-select>
               </el-form-item>
               <el-form-item class="portal-form-actions">
-                <el-button type="primary" @click="loadCleanIssues">刷新</el-button>
+                <el-button type="primary" @click="loadCleanIssues">查询</el-button>
+                <el-button @click="onResetCleanIssues">重置</el-button>
               </el-form-item>
             </el-form>
-            <el-table :data="cleanIssues" stripe size="small">
+            <el-table :data="pagedCleanIssues" stripe size="small">
               <el-table-column prop="docTitle" label="文档" min-width="140" show-overflow-tooltip />
               <el-table-column prop="ruleCode" label="规则" width="160" show-overflow-tooltip />
               <el-table-column prop="targetField" label="字段" width="100" />
@@ -1557,6 +1589,12 @@ onMounted(() => {
                 </template>
               </el-table-column>
             </el-table>
+            <PortalPagination
+              v-if="cleanIssueTotal"
+              v-model:page="cleanIssuePage"
+              v-model:page-size="cleanIssuePageSize"
+              :total="cleanIssueTotal"
+            />
           </el-tab-pane>
 
           <el-tab-pane label="清洗流水线" name="pipelines">

@@ -74,6 +74,11 @@ async function load() {
   })
 }
 
+function onReset() {
+  keyword.value = ''
+  void load()
+}
+
 function openCreate(parentId = 0) {
   editingId.value = null
   Object.assign(form, {
@@ -141,6 +146,7 @@ onMounted(load)
             </el-form-item>
             <el-form-item>
               <el-button type="primary" @click="load">查询</el-button>
+              <el-button @click="onReset">重置</el-button>
               <el-button type="primary" @click="openCreate(0)">新增分类</el-button>
             </el-form-item>
           </el-form>

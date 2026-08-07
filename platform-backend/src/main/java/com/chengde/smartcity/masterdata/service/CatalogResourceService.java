@@ -715,6 +715,67 @@ public class CatalogResourceService {
         return require(id);
     }
 
+    /**
+     * 平台/系统管理员对已发布目录即时下线（审批页「已通过」操作列）。
+     * 下线后 publishStatus=OFFLINE，资源回到编目管理可再编辑/发布。
+     */
+    @Transactional
+    public GovCatalogResource adminForceOffline(UserPrincipal operator, Long id, Map<String, Object> body) {
+        assertCatalogAdmin(operator);
+        GovCatalogResource r = require(id);
+        if (!"PUBLISHED".equalsIgnoreCase(r.getPublishStatus())) {
+            throw new BusinessException(400, "仅已发布资源可下线");
+        }
+        if ("PENDING".equalsIgnoreCase(r.getApprovalStatus())) {
+            throw new BusinessException(400, "审批中不可下线，请先处理待审申请");
+        }
+        String comment = str(body == null ? null : body.get("comment"), "管理员即时下线");
+        r.setPublishStatus("OFFLINE");
+        r.setApprovalStatus("APPROVED");
+        offlinePortal(r);
+        touch(r, operator);
+        resourceMapper.updateById(r);
+        insertApprovedAudit(operator, r, "OFFLINE", comment);
+        return r;
+    }
+
+    /**
+     * 平台/系统管理员即时删除目录（审批页「已通过」操作列）。
+     * 已发布资源会先下线门户再删除；草稿/已下线直接删除。
+     */
+    @Transactional
+    public void adminForceDelete(UserPrincipal operator, Long id, Map<String, Object> body) {
+        assertCatalogAdmin(operator);
+        GovCatalogResource r = require(id);
+        if ("PENDING".equalsIgnoreCase(r.getApprovalStatus())) {
+            throw new BusinessException(400, "审批中不可删除，请先处理待审申请");
+        }
+        String comment = str(body == null ? null : body.get("comment"), "管理员即时删除");
+        if ("PUBLISHED".equalsIgnoreCase(r.getPublishStatus())) {
+            offlinePortal(r);
+        }
+        insertApprovedAudit(operator, r, "DELETE", comment);
+        resourceMapper.deleteById(r.getId());
+    }
+
+    private void assertCatalogAdmin(UserPrincipal operator) {
+        if (operator == null || !(operator.isSystemAdmin() || operator.isPlatformAdmin())) {
+            throw new BusinessException(403, "仅平台管理员可执行此操作");
+        }
+    }
+
+    private void insertApprovedAudit(UserPrincipal operator, GovCatalogResource r, String actionType, String comment) {
+        GovCatalogApproval a = insertApproval(operator, r.getId(), r.getCategoryId(), r.getCatalogOrigin(),
+                actionType, comment, null);
+        a.setStatus("APPROVED");
+        a.setReviewComment(comment);
+        if (operator != null) {
+            a.setReviewedBy(operator.getUsername());
+        }
+        a.setReviewedAt(LocalDateTime.now());
+        approvalMapper.updateById(a);
+    }
+
     @Transactional
     public Map<String, Object> batchApprove(UserPrincipal operator, List<Long> approvalIds, Map<String, Object> body) {
         if (approvalIds == null || approvalIds.isEmpty()) {
@@ -938,10 +999,14 @@ public class CatalogResourceService {
             if (a.getResourceId() != null) {
                 GovCatalogResource r = resourceMapper.selectById(a.getResourceId());
                 if (r != null) {
+                    m.put("resourceAlive", true);
                     m.put("resourceCode", r.getResourceCode());
                     m.put("resourceName", r.getResourceName());
                     m.put("resourceType", r.getResourceType());
                     m.put("publishStatus", r.getPublishStatus());
+                    m.put("approvalStatus", r.getApprovalStatus());
+                } else {
+                    m.put("resourceAlive", false);
                 }
             }
             if (a.getCategoryId() != null) {

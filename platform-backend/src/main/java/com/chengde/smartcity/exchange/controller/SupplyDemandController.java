@@ -16,6 +16,7 @@ import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
@@ -136,8 +137,9 @@ public class SupplyDemandController {
     @PostMapping("/demands/{id}/analyze")
     @PreAuthorize("hasAuthority('portal:supply:approve') or hasAuthority('system:exchange:supply-config') or hasRole('SYSTEM_ADMIN')")
     public ApiResponse<Map<String, Object>> analyze(@AuthenticationPrincipal UserPrincipal principal,
-                                                      @PathVariable Long id) {
-        return ApiResponse.ok(service.analyzeDemand(principal, id));
+                                                      @PathVariable Long id,
+                                                      @RequestBody(required = false) Map<String, Object> body) {
+        return ApiResponse.ok(service.analyzeDemand(principal, id, body == null ? Map.of() : body));
     }
 
     @PostMapping("/demands/{id}/dispatch")
@@ -155,6 +157,46 @@ public class SupplyDemandController {
                                           @PathVariable Long id,
                                           @RequestBody Map<String, Object> body) {
         service.returnDemand(principal, id, body);
+        return ApiResponse.ok(null);
+    }
+
+    /** 高匹配：退回需求部门走门户申请 */
+    @PostMapping("/demands/{id}/return-portal")
+    @PreAuthorize("hasAuthority('portal:supply:approve') or hasAuthority('system:exchange:supply-config') or hasRole('SYSTEM_ADMIN')")
+    public ApiResponse<Void> returnPortal(@AuthenticationPrincipal UserPrincipal principal,
+                                          @PathVariable Long id,
+                                          @RequestBody(required = false) Map<String, Object> body) {
+        service.returnToPortalApply(principal, id, body == null ? Map.of() : body);
+        return ApiResponse.ok(null);
+    }
+
+    /** 管理员同意提供方退回 → 退回需求部门 */
+    @PostMapping("/demands/{id}/admin-agree-return")
+    @PreAuthorize("hasAuthority('portal:supply:approve') or hasAuthority('system:exchange:supply-config') or hasRole('SYSTEM_ADMIN')")
+    public ApiResponse<Void> adminAgreeReturn(@AuthenticationPrincipal UserPrincipal principal,
+                                              @PathVariable Long id,
+                                              @RequestBody(required = false) Map<String, Object> body) {
+        service.adminAgreeProviderReturn(principal, id, body == null ? Map.of() : body);
+        return ApiResponse.ok(null);
+    }
+
+    /** 管理员拒绝提供方退回 → 打回提供部门再确认 */
+    @PostMapping("/demands/{id}/admin-refuse-return")
+    @PreAuthorize("hasAuthority('portal:supply:approve') or hasAuthority('system:exchange:supply-config') or hasRole('SYSTEM_ADMIN')")
+    public ApiResponse<Void> adminRefuseReturn(@AuthenticationPrincipal UserPrincipal principal,
+                                               @PathVariable Long id,
+                                               @RequestBody(required = false) Map<String, Object> body) {
+        service.adminRefuseProviderReturn(principal, id, body == null ? Map.of() : body);
+        return ApiResponse.ok(null);
+    }
+
+    /** 提供部门：标记目录已挂载门户 */
+    @PostMapping("/demands/{id}/mark-mounted")
+    @PreAuthorize("hasAuthority('portal:supply:create') or hasAuthority('portal:supply:approve') or hasRole('SYSTEM_ADMIN')")
+    public ApiResponse<Void> markMounted(@AuthenticationPrincipal UserPrincipal principal,
+                                         @PathVariable Long id,
+                                         @RequestBody(required = false) Map<String, Object> body) {
+        service.markCatalogMounted(principal, id, body == null ? Map.of() : body);
         return ApiResponse.ok(null);
     }
 
@@ -177,8 +219,9 @@ public class SupplyDemandController {
 
     @GetMapping("/resource-search")
     public ApiResponse<Map<String, Object>> resourceSearch(@RequestParam(required = false) String keyword,
-                                                           @RequestParam(required = false) String resourceType) {
-        return ApiResponse.ok(service.searchResources(keyword, resourceType));
+                                                           @RequestParam(required = false) String resourceType,
+                                                           @RequestParam(required = false) String providerOrg) {
+        return ApiResponse.ok(service.searchResources(keyword, resourceType, providerOrg));
     }
 
     @PostMapping("/demands/{id}/confirm")
@@ -241,6 +284,19 @@ public class SupplyDemandController {
                                     @RequestBody Map<String, Object> body) {
         service.rejectDemand(principal, id, body);
         return ApiResponse.ok(null);
+    }
+
+    @GetMapping("/supervise-settings")
+    @PreAuthorize("hasAuthority('portal:supply:approve') or hasAuthority('system:exchange:supply-config') or hasRole('SYSTEM_ADMIN')")
+    public ApiResponse<Map<String, Object>> getSuperviseSettings() {
+        return ApiResponse.ok(service.getSuperviseSettings());
+    }
+
+    @PutMapping("/supervise-settings")
+    @PreAuthorize("hasAuthority('portal:supply:approve') or hasAuthority('system:exchange:supply-config') or hasRole('SYSTEM_ADMIN')")
+    public ApiResponse<Map<String, Object>> saveSuperviseSettings(@AuthenticationPrincipal UserPrincipal principal,
+                                                                  @RequestBody Map<String, Object> body) {
+        return ApiResponse.ok(service.saveSuperviseSettings(principal, body));
     }
 
     @GetMapping("/supply-tasks")

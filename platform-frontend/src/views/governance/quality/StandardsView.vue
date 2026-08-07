@@ -171,6 +171,13 @@ async function load() {
   }
 }
 
+function onReset() {
+  query.keyword = ''
+  query.publishStatus = ''
+  resetItemPage()
+  void load()
+}
+
 function resetForm() {
   editMode.value = false
   editingId.value = null
@@ -462,6 +469,7 @@ onMounted(load)
             </el-form-item>
             <el-form-item class="portal-form-actions">
               <el-button type="primary" @click="load">查询</el-button>
+              <el-button @click="onReset">重置</el-button>
             </el-form-item>
           </el-form>
 

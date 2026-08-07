@@ -341,6 +341,16 @@ function resetPanorama() {
   void loadPanorama()
 }
 
+function onResetQuery() {
+  keyword.value = ''
+  categoryTagId.value = null
+  if (viewMode.value === 'drill') {
+    resetPanorama()
+  } else {
+    void loadPanorama()
+  }
+}
+
 function crumbJump(idx: number) {
   if (idx < 0) {
     resetPanorama()
@@ -414,6 +424,7 @@ onMounted(async () => {
         </el-form-item>
         <el-form-item class="portal-form-actions">
           <el-button type="primary" @click="loadPanorama">查询</el-button>
+          <el-button @click="onResetQuery">重置</el-button>
           <el-button v-if="viewMode === 'drill'" type="primary" plain @click="resetPanorama">返回全景</el-button>
         </el-form-item>
       </el-form>

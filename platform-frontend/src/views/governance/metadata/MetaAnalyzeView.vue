@@ -223,6 +223,11 @@ async function loadAssoc() {
   }
 }
 
+function resetRelationFilter() {
+  relationKeyword.value = ''
+  void loadAssoc()
+}
+
 async function loadLineage() {
   if (!entryCode.value) {
     ElMessage.warning('请选择分析表')
@@ -549,6 +554,7 @@ onBeforeUnmount(() => {
           </el-form-item>
           <el-form-item class="portal-form-actions">
             <el-button @click="loadAssoc">查询</el-button>
+            <el-button @click="resetRelationFilter">重置</el-button>
           </el-form-item>
         </el-form>
         <el-table :data="relations" stripe size="small" max-height="280" empty-text="暂无关联关系">

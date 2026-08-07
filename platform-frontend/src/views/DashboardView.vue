@@ -288,7 +288,7 @@ async function enterMenuNode(node: MenuNode) {
     const landing = assessmentExternalUrl() || 'http://127.0.0.1:18081/assessment/index#/dashboard'
     const r = await openAssessmentWithPortalSso(landing)
     if (r.ok) {
-      ElMessage.success('已在新窗口打开考核评估系统')
+      ElMessage.success('已进入考核评估系统')
       return
     }
     ElMessage.warning(r.message || '单点登录失败')
@@ -311,7 +311,7 @@ async function enterNavNode(node: PortalNavNode) {
     if (landing || wantsPortalTicketSso(node)) {
       const r = await openAssessmentWithPortalSso(landing)
       if (r.ok) {
-        ElMessage.success('已在新窗口打开考核评估系统')
+        ElMessage.success('已进入考核评估系统')
         return
       }
       if (wantsPortalTicketSso(node)) {
@@ -333,6 +333,17 @@ async function enterNavNode(node: PortalNavNode) {
 function onCardItemClick(item: CardItem) {
   if (itemHasChildren(item)) {
     // 有子入口且自身可导航（如「大数据归集平台」）→ 进选择页；悬停飞出仍可直达子系统
+    // 通用/业务支撑：对齐归集落地选卡（即使门户库未刷新 url 也按名称兜底）
+    if (item.title === '通用支撑平台') {
+      hoverGroupKey.value = null
+      router.push('/analytics/general-support')
+      return
+    }
+    if (item.title === '业务支撑平台') {
+      hoverGroupKey.value = null
+      router.push('/analytics/business-support')
+      return
+    }
     if (item.kind === 'nav' && navigableTarget(item.node)) {
       hoverGroupKey.value = null
       void enterNavNode(item.node)
@@ -487,7 +498,6 @@ onActivated(() => {
                     : '暂无入口'
               }}
             </div>
-            <div class="drawer-footer">{{ getCardItems(card).length }} 个入口</div>
           </div>
         </div>
       </div>
@@ -810,13 +820,6 @@ onActivated(() => {
   color: #8a96a5;
   text-align: center;
   line-height: 1.5;
-}
-
-.drawer-footer {
-  padding: 6px 14px 8px;
-  font-size: 11px;
-  color: #a0aab8;
-  text-align: center;
 }
 
 .portal-drawer__empty {

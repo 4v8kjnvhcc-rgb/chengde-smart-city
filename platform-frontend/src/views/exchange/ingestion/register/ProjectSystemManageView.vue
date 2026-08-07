@@ -3,6 +3,8 @@ import { computed, onMounted, ref } from 'vue'
 import { ElMessage } from 'element-plus'
 import { useAuthStore } from '@/stores/auth'
 import PageCard from '@/components/common/PageCard.vue'
+import PortalPagination from '@/components/common/PortalPagination.vue'
+import { useClientPager } from '@/composables/useClientPager'
 import { ingestionApi, useIngestionLoading, type Project } from '../useIngestionHub'
 import {
   approveRegister,
@@ -16,7 +18,7 @@ const auth = useAuthStore()
 const { loading, loadError, withLoad } = useIngestionLoading()
 
 const projects = ref<Project[]>([])
-const statusFilter = ref('PENDING_REVIEW')
+const statusFilter = ref('')
 const keyword = ref('')
 
 const detailProjectId = ref<number | null>(null)
@@ -55,6 +57,8 @@ const filtered = computed(() => {
   return list
 })
 
+const { page, pageSize, paged, total, resetPage } = useClientPager(filtered)
+
 async function reload() {
   await withLoad(async () => {
     projects.value = (await ingestionApi.projects()).data || []
@@ -62,6 +66,18 @@ async function reload() {
       detailProjectId.value = null
     }
   })
+}
+
+function onQuery() {
+  resetPage()
+  void reload()
+}
+
+function onReset() {
+  statusFilter.value = ''
+  keyword.value = ''
+  resetPage()
+  void reload()
 }
 
 function openView(row: Project) {
@@ -147,14 +163,15 @@ onMounted(reload)
             </el-select>
           </el-form-item>
           <el-form-item label="关键词" class="portal-field-xl">
-            <el-input v-model="keyword" clearable placeholder="项目名称/部门" @keyup.enter="reload" />
+            <el-input v-model="keyword" clearable placeholder="项目名称/部门" @keyup.enter="onQuery" />
           </el-form-item>
           <el-form-item class="portal-form-actions">
-            <el-button type="primary" @click="reload">查询</el-button>
+            <el-button type="primary" @click="onQuery">查询</el-button>
+            <el-button @click="onReset">重置</el-button>
           </el-form-item>
         </el-form>
 
-        <el-table v-if="filtered.length" class="portal-table" :data="filtered" stripe border size="small">
+        <el-table v-if="filtered.length" class="portal-table" :data="paged" stripe border size="small">
           <el-table-column prop="projectName" label="项目名称" min-width="160" show-overflow-tooltip />
           <el-table-column label="部门" min-width="160" show-overflow-tooltip>
             <template #default="{ row }">{{ row.boundOrgName || currentDeptName }}</template>
@@ -183,6 +200,12 @@ onMounted(reload)
             </template>
           </el-table-column>
         </el-table>
+        <PortalPagination
+          v-if="filtered.length"
+          v-model:page="page"
+          v-model:page-size="pageSize"
+          :total="total"
+        />
         <el-empty v-else description="暂无待办或匹配记录" :image-size="48" />
       </PageCard>
     </template>

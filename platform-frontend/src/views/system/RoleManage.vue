@@ -4,6 +4,8 @@ import api from '@/api/http'
 import { ElMessage, ElMessageBox, type ElTree } from 'element-plus'
 import PageHeader from '@/components/common/PageHeader.vue'
 import PageCard from '@/components/common/PageCard.vue'
+import PortalPagination from '@/components/common/PortalPagination.vue'
+import { useClientPager } from '@/composables/useClientPager'
 import { statusLabel } from '@/utils/status-label'
 import { leafKeysForTreeCheck } from '@/utils/menu-tree-check'
 
@@ -32,6 +34,7 @@ interface TreeNode {
 const roles = ref<Role[]>([])
 const loading = ref(false)
 const keyword = ref('')
+const { page, pageSize, paged: pagedRoles, total: roleTotal, resetPage: resetRolePage } = useClientPager(roles)
 const menuDialogVisible = ref(false)
 const formDialogVisible = ref(false)
 const editingId = ref<number | null>(null)
@@ -92,6 +95,7 @@ async function loadRoles() {
       },
     })
     roles.value = res.data || []
+    resetRolePage()
   } finally {
     loading.value = false
   }
@@ -244,7 +248,7 @@ onMounted(loadRoles)
         </el-form-item>
       </el-form>
 
-      <el-table class="portal-table" :data="roles" v-loading="loading" stripe>
+      <el-table class="portal-table" :data="pagedRoles" v-loading="loading" stripe>
         <el-table-column prop="roleCode" label="编码" min-width="140" />
         <el-table-column prop="roleName" label="名称" min-width="140" />
         <el-table-column prop="description" label="描述" min-width="180" show-overflow-tooltip />
@@ -275,6 +279,12 @@ onMounted(loadRoles)
           </template>
         </el-table-column>
       </el-table>
+      <PortalPagination
+        v-if="roleTotal"
+        v-model:page="page"
+        v-model:page-size="pageSize"
+        :total="roleTotal"
+      />
     </PageCard>
 
     <el-dialog

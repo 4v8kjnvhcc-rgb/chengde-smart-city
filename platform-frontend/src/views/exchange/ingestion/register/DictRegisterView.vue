@@ -72,6 +72,11 @@ async function reload() {
   })
 }
 
+function onReset() {
+  keyword.value = ''
+  void reload()
+}
+
 function openCreateDict() {
   editingDictId.value = null
   dictForm.dictName = ''
@@ -333,6 +338,7 @@ onMounted(reload)
         <el-form-item class="portal-form-actions">
           <el-button type="primary" @click="openCreateDict">新增字典</el-button>
           <el-button v-if="isManage" @click="reload">查询</el-button>
+          <el-button v-if="isManage" @click="onReset">重置</el-button>
           <el-button @click="downloadTemplate">下载模板</el-button>
           <el-button @click="doImport">导入 Excel/CSV</el-button>
           <el-button @click="openExport">导出</el-button>

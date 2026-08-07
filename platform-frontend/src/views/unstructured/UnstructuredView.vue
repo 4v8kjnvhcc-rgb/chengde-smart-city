@@ -4,6 +4,8 @@ import api from '@/api/http'
 import { ElMessage } from 'element-plus'
 import PageHeader from '@/components/common/PageHeader.vue'
 import PageCard from '@/components/common/PageCard.vue'
+import PortalPagination from '@/components/common/PortalPagination.vue'
+import { useClientPager } from '@/composables/useClientPager'
 
 interface Doc {
   id: number
@@ -16,6 +18,7 @@ interface Doc {
 
 const docs = ref<Doc[]>([])
 const keyword = ref('')
+const { page, pageSize, paged, total, resetPage } = useClientPager(docs)
 const form = reactive({ title: '', contentType: 'application/pdf' })
 
 async function load() {
@@ -38,6 +41,12 @@ async function indexDoc(id: number) {
   await api.post(`/unstructured/documents/${id}/index`)
   ElMessage.success('已写入检索索引（ES 能力等价 POC）')
   load()
+}
+
+function onReset() {
+  keyword.value = ''
+  resetPage()
+  void load()
 }
 
 onMounted(load)
@@ -66,8 +75,9 @@ onMounted(load)
           <el-input v-model="keyword" clearable @clear="load" @keyup.enter="load" />
         </el-form-item>
         <el-button @click="load">查询</el-button>
+        <el-button @click="onReset">重置</el-button>
       </el-form>
-      <el-table class="portal-table" :data="docs" stripe>
+      <el-table class="portal-table" :data="paged" stripe>
         <el-table-column prop="docCode" label="编码" min-width="140" />
         <el-table-column prop="title" label="标题" min-width="180" />
         <el-table-column prop="storageKey" label="存储键" min-width="220" />
@@ -87,6 +97,12 @@ onMounted(load)
           </template>
         </el-table-column>
       </el-table>
+      <PortalPagination
+        v-if="docs.length"
+        v-model:page="page"
+        v-model:page-size="pageSize"
+        :total="total"
+      />
     </PageCard>
   </div>
 </template>

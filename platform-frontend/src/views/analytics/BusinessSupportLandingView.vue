@@ -6,40 +6,50 @@ const router = useRouter()
 
 const systems = [
   {
-    key: 'register',
-    title: '数据资产登记管理系统',
-    query: { system: 'register' },
+    key: 'population',
+    title: '人口大数据支撑系统',
+    path: '/analytics/population',
   },
   {
-    key: 'collect',
-    title: '数据资源采集汇聚系统',
-    query: { system: 'collect' },
+    key: 'legal',
+    title: '法人大数据支撑系统',
+    path: '/analytics/legal-entity',
+  },
+  {
+    key: 'macro',
+    title: '宏观经济及工业运行大数据支撑系统',
+    path: '/analytics/macro',
+  },
+  {
+    key: 'key',
+    title: '重点领域示范应用支撑系统',
+    path: '/analytics/key-domains',
   },
 ] as const
 
-function openSystem(q: { system: string }) {
-  router.push({ path: '/exchange/ingestion', query: q })
+function openSystem(path: string) {
+  router.push(path)
 }
 </script>
 
 <template>
   <div class="landing">
     <header class="landing__top">
-      <div class="landing__brand">大数据归集平台</div>
+      <div class="landing__brand">业务支撑平台</div>
       <div class="landing__actions">
         <button type="button" class="landing__back" @click="router.push('/dashboard')">返回总览</button>
         <UserAccountMenu tone="onDark" />
       </div>
     </header>
     <main class="landing__main">
-      <h1 class="landing__title">大数据归集平台</h1>
+      <h1 class="landing__title">业务支撑平台</h1>
       <div class="landing__grid">
         <button
           v-for="s in systems"
           :key="s.key"
           type="button"
           class="landing__card"
-          @click="openSystem(s.query)"
+          @click="openSystem(s.path)"
         >
           <span class="landing__card-title">{{ s.title }}</span>
           <span class="landing__card-go">进入 →</span>

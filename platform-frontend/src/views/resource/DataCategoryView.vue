@@ -91,6 +91,12 @@ function search() {
   void loadList()
 }
 
+function onReset() {
+  keyword.value = ''
+  page.value = 1
+  void loadList()
+}
+
 function pickRow(row: CategoryRow) {
   if (row.status !== 1) {
     ElMessage.warning('请选择已启用的分类')
@@ -223,6 +229,7 @@ onMounted(loadList)
         </el-form-item>
         <el-form-item class="portal-form-actions">
           <el-button type="primary" @click="search">查询</el-button>
+          <el-button @click="onReset">重置</el-button>
           <el-button @click="openCreate">新增</el-button>
         </el-form-item>
       </el-form>

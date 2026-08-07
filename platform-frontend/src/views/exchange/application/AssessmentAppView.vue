@@ -13,7 +13,7 @@ async function openExt() {
   const landing = assessmentExternalUrl() || DEFAULT_LANDING
   const r = await openAssessmentWithPortalSso(landing)
   if (r.ok) {
-    hint.value = '已在新窗口打开考核评估系统（门户票据 SSO）'
+    hint.value = '已进入考核评估系统'
     ElMessage.success(hint.value)
   } else {
     hint.value = r.message || '单点登录失败'
@@ -35,9 +35,9 @@ onMounted(openExt)
       </div>
     </header>
     <main class="app-shell__main">
-      <el-alert :title="hint || '考核评估为外系统，请通过门户票据 SSO 在新窗口中使用'" type="info" show-icon :closable="false" />
+      <el-alert :title="hint || '考核评估为外系统，点击下方按钮进入'" type="info" show-icon :closable="false" />
       <div class="actions">
-        <el-button type="primary" @click="openExt">打开考核评估系统</el-button>
+        <el-button type="primary" @click="openExt">进入 →</el-button>
       </div>
       <p class="muted">落地地址优先门户配置；也可设 <code>VITE_ASSESSMENT_EXTERNAL_URL</code></p>
     </main>

@@ -6,40 +6,56 @@ const router = useRouter()
 
 const systems = [
   {
-    key: 'register',
-    title: '数据资产登记管理系统',
-    query: { system: 'register' },
+    key: 'uum',
+    title: '统一用户管理系统',
+    path: '/analytics/support',
   },
   {
-    key: 'collect',
-    title: '数据资源采集汇聚系统',
-    query: { system: 'collect' },
+    key: 'bi',
+    title: '智能BI平台',
+    path: '/analytics/bi',
+  },
+  {
+    key: 'tasks',
+    title: '任务管理',
+    path: '/analytics/support',
+    query: { tab: 'tasks' },
+  },
+  {
+    key: 'ops',
+    title: '集成运维',
+    path: '/analytics/support',
+    query: { tab: 'ops.kettle' },
   },
 ] as const
 
-function openSystem(q: { system: string }) {
-  router.push({ path: '/exchange/ingestion', query: q })
+function openSystem(s: (typeof systems)[number]) {
+  if ('query' in s && s.query) {
+    router.push({ path: s.path, query: s.query })
+    return
+  }
+  router.push(s.path)
 }
 </script>
 
 <template>
   <div class="landing">
     <header class="landing__top">
-      <div class="landing__brand">大数据归集平台</div>
+      <div class="landing__brand">通用支撑平台</div>
       <div class="landing__actions">
         <button type="button" class="landing__back" @click="router.push('/dashboard')">返回总览</button>
         <UserAccountMenu tone="onDark" />
       </div>
     </header>
     <main class="landing__main">
-      <h1 class="landing__title">大数据归集平台</h1>
+      <h1 class="landing__title">通用支撑平台</h1>
       <div class="landing__grid">
         <button
           v-for="s in systems"
           :key="s.key"
           type="button"
           class="landing__card"
-          @click="openSystem(s.query)"
+          @click="openSystem(s)"
         >
           <span class="landing__card-title">{{ s.title }}</span>
           <span class="landing__card-go">进入 →</span>

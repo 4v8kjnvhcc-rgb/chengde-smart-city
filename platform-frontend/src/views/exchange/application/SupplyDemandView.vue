@@ -2,7 +2,7 @@
 import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import api from '@/api/http'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import PageCard from '@/components/common/PageCard.vue'
 import PortalPagination from '@/components/common/PortalPagination.vue'
 import {
@@ -33,11 +33,20 @@ const duties = ref<Record<string, unknown>[]>([])
 const objections = ref<Record<string, unknown>[]>([])
 const manifests = ref<Record<string, unknown>[]>([])
 const listCenterItems = ref<Record<string, unknown>[]>([])
+const listCenterStats = ref<Record<string, unknown> | null>(null)
 const listCenterSub = ref('catalog-published')
 const listCenterGroup = ref('目录清单')
+const listDetail = reactive<{ visible: boolean; row: Record<string, unknown> | null }>({
+  visible: false,
+  row: null,
+})
 const catalogManifestSections = MANIFEST_CENTER_SECTIONS.filter((s) => s.group === '目录清单')
 const supplyManifestSections = MANIFEST_CENTER_SECTIONS.filter((s) => s.group === '供需清单')
 const objectionManifestSections = MANIFEST_CENTER_SECTIONS.filter((s) => s.group === '异议清单')
+
+function isObjectionListSub(key = listCenterSub.value) {
+  return String(key).startsWith('objection')
+}
 const exchangeJobs = ref<Record<string, unknown>[]>([])
 const apiEndpoints = ref<Record<string, unknown>[]>([])
 const sharePages = ref<Record<string, unknown>[]>([])
@@ -59,13 +68,13 @@ const demandForm = reactive({
   targetCatalogId: undefined as number | undefined,
 })
 const dispatchForm = reactive({
-  assigneeOrg: '资源管理处',
+  assigneeOrg: '',
   analysisNote: '',
   fulfillPath: 'NEED_COLLECT' as FulfillPath,
 })
 const resourceSearch = reactive({
   keyword: '',
-  resourceType: 'ALL',
+  resourceType: 'CATALOG',
 })
 const quickSet = reactive({
   evalStatus: 'MATCHED',
@@ -288,9 +297,21 @@ async function exportDemandsCsv() {
 
 const analysisPending = computed(() =>
   demands.value.filter((d) =>
-    ['SUBMITTED', 'PRE_AUDITING', 'ANALYZING', 'SUPERVISING'].includes(String(d.status)),
+    ['SUBMITTED', 'PRE_AUDITING', 'ANALYZING', 'SUPERVISING', 'PROVIDER_RETURNED'].includes(String(d.status)),
   ),
 )
+
+function isMountSupervising(row: Record<string, unknown>) {
+  return String(row.status) === 'SUPERVISING' && !!row.catalogMountDeadline
+}
+
+function canProviderConfirm(row: Record<string, unknown>) {
+  const s = String(row.status || '')
+  if (s === 'DISPATCHED' || s === 'CORRECTION') return true
+  // 预审期督办可确认；挂载超时督办不可再次「同意确认」
+  if (s === 'SUPERVISING') return !row.catalogMountDeadline
+  return false
+}
 const filteredAnalysis = computed(() =>
   analysisPending.value.filter((d) => {
     if (analysisFilter.title && !String(d.demandTitle || '').includes(analysisFilter.title.trim())) return false
@@ -309,10 +330,11 @@ const selectedAnalysis = computed(() =>
 const relationCounts = computed(() => {
   const nodes = relationGraph.value?.nodes || []
   const typeOf = (t: string) => nodes.filter((n) => String(n.type || '').toUpperCase() === t).length
+  const fromCandidates = analysisCandidates.value.filter(
+    (c) => String(c.resourceType || '').toUpperCase() === 'CATALOG',
+  ).length
   return {
-    catalog: typeOf('CATALOG') || Number((analysisResult.value as any)?.catalogCount) || 0,
-    table: typeOf('TABLE') || Number((analysisResult.value as any)?.tableCount) || 0,
-    api: typeOf('API') || Number((analysisResult.value as any)?.apiCount) || 0,
+    catalog: typeOf('CATALOG') || fromCandidates || Number((analysisResult.value as any)?.catalogCount) || 0,
   }
 })
 const matchPercent = computed(() => {
@@ -350,9 +372,25 @@ function restoreAnalysisFromRow(row: Record<string, unknown>) {
   if (row.analysisNote) dispatchForm.analysisNote = String(row.analysisNote)
 }
 
+function prefillsAnalysisOrg(row: Record<string, unknown>) {
+  if (dispatchForm.assigneeOrg?.trim()) return
+  if (row.assigneeOrg) {
+    dispatchForm.assigneeOrg = String(row.assigneeOrg)
+    return
+  }
+  const form = parseFormPayload(row)
+  if (form.providerOrg) dispatchForm.assigneeOrg = form.providerOrg
+}
+
 async function selectAnalysisRow(row: Record<string, unknown>) {
   analyzingId.value = Number(row.id)
+  prefillsAnalysisOrg(row)
   if (row.matchScore == null || row.matchScore === '') {
+    if (!dispatchForm.assigneeOrg?.trim()) {
+      restoreAnalysisFromRow(row)
+      ElMessage.info('请先选择分发部门，再对该组织已发布门户目录进行智能匹配')
+      return
+    }
     await analyzeDemand(Number(row.id))
   } else {
     restoreAnalysisFromRow(row)
@@ -400,14 +438,36 @@ const supplyExchangeRows = computed(() =>
 
 const superviseRows = computed(() =>
   demands.value.filter((d) =>
-    ['SUBMITTED', 'PRE_AUDITING', 'ANALYZING', 'DISPATCHED', 'RETURNED', 'SUPERVISING', 'CORRECTION'].includes(String(d.status)),
+    ['SUBMITTED', 'PRE_AUDITING', 'ANALYZING', 'DISPATCHED', 'RETURNED', 'SUPERVISING', 'CORRECTION', 'PROVIDER_RETURNED', 'CONFIRMED'].includes(String(d.status)),
   ),
 )
-const superviseKpi = computed(() => ({
-  overdue: superviseRows.value.filter((d) => ['RETURNED', 'SUPERVISING'].includes(String(d.status)) || !d.assigneeOrg).length,
-  feedback: superviseRows.value.filter((d) => String(d.status) === 'SUPERVISING').length,
-  doneWeek: demands.value.filter((d) => ['CONFIRMED', 'COMPLETED'].includes(String(d.status))).length,
-}))
+const superviseKpi = computed(() => {
+  const now = Date.now()
+  const overdue = superviseRows.value.filter((d) => {
+    if (String(d.status) === 'SUPERVISING') {
+      if (d.catalogMountDeadline && !d.catalogMountedAt) {
+        return new Date(String(d.catalogMountDeadline)).getTime() < now
+      }
+      if (d.responseDeadline) {
+        return new Date(String(d.responseDeadline)).getTime() < now
+      }
+      return true
+    }
+    if (String(d.status) === 'CONFIRMED' && d.catalogMountDeadline && !d.catalogMountedAt) {
+      return new Date(String(d.catalogMountDeadline)).getTime() < now
+    }
+    if (['DISPATCHED', 'RETURNED', 'PROVIDER_RETURNED', 'CORRECTION'].includes(String(d.status)) && d.responseDeadline) {
+      return new Date(String(d.responseDeadline)).getTime() < now
+    }
+    if (String(d.status) === 'PROVIDER_RETURNED') return true
+    return false
+  }).length
+  return {
+    overdue,
+    feedback: superviseRows.value.filter((d) => String(d.status) === 'SUPERVISING').length,
+    doneWeek: demands.value.filter((d) => String(d.status) === 'COMPLETED').length,
+  }
+})
 
 function openFeedback(row: Record<string, unknown>) {
   feedbackDrawer.row = row
@@ -415,10 +475,13 @@ function openFeedback(row: Record<string, unknown>) {
 }
 
 const filteredListItems = computed(() => {
-  if (listCenterSub.value === 'objection') {
+  if (listCenterSub.value === 'objection-stats') {
+    return listCenterItems.value
+  }
+  if (isObjectionListSub()) {
     return listCenterItems.value.filter((r) => {
       if (objectionFilter.title && !String(r.title || '').includes(objectionFilter.title.trim())) return false
-      if (objectionFilter.object && !String(r.catalogId || r.objectName || '').includes(objectionFilter.object.trim())) return false
+      if (objectionFilter.object && !String(r.objectName || r.catalogId || '').includes(objectionFilter.object.trim())) return false
       if (objectionFilter.provider && !String(r.providerOrg || '').includes(objectionFilter.provider.trim())) return false
       if (objectionFilter.status && String(r.status) !== objectionFilter.status) return false
       return true
@@ -426,7 +489,7 @@ const filteredListItems = computed(() => {
   }
   return listCenterItems.value.filter((r) => {
     if (listFilter.code && !String(r.code || r.catalogCode || r.id || '').includes(listFilter.code.trim())) return false
-    if (listFilter.title && !String(r.title || '').includes(listFilter.title.trim())) return false
+    if (listFilter.title && !String(r.title || r.catalogName || r.demandCatalog || '').includes(listFilter.title.trim())) return false
     if (listFilter.status && String(r.status || r.publishStatus || '') !== listFilter.status) return false
     return true
   })
@@ -438,25 +501,73 @@ const pagedListItems = computed(() => {
 
 async function refreshManifestCounts() {
   try {
-    const [cat, man, obj] = await Promise.all([
-      api.get('/exchange/supply/catalog-manifest', { params: { scope: 'published' } }),
-      api.get('/exchange/supply/manifests'),
-      api.get('/exchange/supply/objections'),
+    const [cat, dem, obj] = await Promise.all([
+      api.get('/exchange/supply/list-center', { params: { listType: 'catalog-published' } }),
+      api.get('/exchange/supply/list-center', { params: { listType: 'sd-joint-audit' } }),
+      api.get('/exchange/supply/list-center', { params: { listType: 'objection-history' } }),
     ])
-    manifestCounts.catalog = (cat.data || []).length
-    manifestCounts.supply = (man.data || []).length
-    manifestCounts.objection = (obj.data || []).length
+    manifestCounts.catalog = (cat.data?.items || []).length
+    manifestCounts.supply = (dem.data?.items || []).length
+    manifestCounts.objection = (obj.data?.items || []).length
   } catch {
     // ignore
   }
 }
 
 function shortManifestLabel(label: string) {
-  return label.replace(/清单$/g, '').replace(/^目录/, '').replace(/^数据/, '').replace(/^已发布目录/, '已发布')
+  return label
+    .replace(/清单$/g, '')
+    .replace(/^目录/, '')
+    .replace(/^数据/, '')
+    .replace(/^已发布目录/, '已发布')
+}
+
+function openListDetail(row: Record<string, unknown>) {
+  listDetail.row = row
+  listDetail.visible = true
+}
+
+function exportListCenterCsv() {
+  const rows = filteredListItems.value
+  if (!rows.length) {
+    ElMessage.warning('当前无可导出数据')
+    return
+  }
+  const keys = Object.keys(rows[0]).filter((k) => k !== 'actions')
+  const header = keys.join(',')
+  const lines = rows.map((r) =>
+    keys.map((k) => `"${String(r[k] ?? '').replace(/"/g, '""')}"`).join(','),
+  )
+  const blob = new Blob([[header, ...lines].join('\n')], { type: 'text/csv;charset=utf-8' })
+  const a = document.createElement('a')
+  a.href = URL.createObjectURL(blob)
+  a.download = `清单中心_${listCenterSub.value}_${rows.length}条.csv`
+  a.click()
+  URL.revokeObjectURL(a.href)
+  ElMessage.success(`已导出 ${rows.length} 条`)
 }
 
 function showObjectionContent(row: Record<string, unknown>) {
-  ElMessage.info(String(row.content || '暂无核查说明'))
+  openListDetail(row)
+}
+
+async function closeObjectionFromList(id: number) {
+  await api.post(`/exchange/supply/objections/${id}/process`, {
+    action: 'CLOSE',
+    handlerNote: '清单中心办结',
+  })
+  ElMessage.success('异议已办结')
+  await loadListCenter()
+  await refreshManifestCounts()
+}
+
+async function startObjectionProcess(id: number) {
+  await api.post(`/exchange/supply/objections/${id}/process`, {
+    action: 'PROCESSING',
+    handlerNote: '清单中心转入处理',
+  })
+  ElMessage.success('已转入处理')
+  await loadListCenter()
 }
 
 const EVAL_STATUS_OPTIONS = [
@@ -554,7 +665,7 @@ function syncRoute() {
   } else if (sec === 'objection') {
     sec = 'manifest-center'
     listCenterGroup.value = '异议清单'
-    listCenterSub.value = 'objection'
+    listCenterSub.value = 'objection-apply'
   } else if (sec === 'manifest') {
     sec = 'manifest-center'
     listCenterGroup.value = '供需清单'
@@ -626,10 +737,31 @@ async function searchResourceCatalog() {
   const res = await api.get('/exchange/supply/resource-search', {
     params: {
       keyword: resourceSearch.keyword || undefined,
-      resourceType: resourceSearch.resourceType === 'ALL' ? undefined : resourceSearch.resourceType,
+      resourceType: 'CATALOG',
+      providerOrg: dispatchForm.assigneeOrg?.trim() || undefined,
     },
   })
   resourceHits.value = res.data.items || []
+}
+
+function resetResourceSearch() {
+  resourceSearch.keyword = ''
+  void searchResourceCatalog()
+}
+
+function resetListFilter() {
+  listFilter.code = ''
+  listFilter.title = ''
+  listFilter.status = ''
+  listPage.value = 1
+}
+
+function resetObjectionFilter() {
+  objectionFilter.title = ''
+  objectionFilter.object = ''
+  objectionFilter.provider = ''
+  objectionFilter.status = ''
+  listPage.value = 1
 }
 
 function goPortalApply(row: Record<string, unknown>) {
@@ -703,7 +835,8 @@ async function loadSection() {
 async function loadListCenter() {
   const res = await api.get('/exchange/supply/list-center', { params: { listType: listCenterSub.value } })
   listCenterItems.value = res.data.items || []
-  if (listCenterSub.value === 'objection') {
+  listCenterStats.value = (res.data.stats as Record<string, unknown>) || null
+  if (isObjectionListSub()) {
     objections.value = listCenterItems.value
     catalogs.value = (await api.get('/exchange/supply/catalog-manifest', { params: { scope: 'published' } })).data
   }
@@ -772,8 +905,17 @@ async function withdrawDemand(id: number) {
 }
 
 async function analyzeDemand(id: number) {
+  const org = dispatchForm.assigneeOrg?.trim()
+  if (!org) {
+    return ElMessage.warning('请先选择分发部门（组织机构），再分析该组织已发布到门户的目录')
+  }
   analyzingId.value = id
-  analysisResult.value = (await api.post(`/exchange/supply/demands/${id}/analyze`)).data
+  analysisResult.value = (
+    await api.post(`/exchange/supply/demands/${id}/analyze`, {
+      providerOrg: org,
+      assigneeOrg: org,
+    })
+  ).data
   analysisCandidates.value = (analysisResult.value?.candidates as Record<string, unknown>[]) || []
   relationGraph.value = (analysisResult.value?.relationGraph as typeof relationGraph.value) || null
   if (analysisResult.value?.fulfillPath) {
@@ -786,19 +928,72 @@ async function analyzeDemand(id: number) {
     quickSet.shareAttr = String(analysisResult.value.shareAttr)
   }
   demands.value = (await api.get('/exchange/supply/demands')).data
-  ElMessage.success('智能辅助分析完成')
+  ElMessage.success('门户目录智能匹配完成')
 }
 
 async function dispatchDemand(id: number) {
   if (!dispatchForm.assigneeOrg?.trim()) {
     return ElMessage.warning('请选择分发部门')
   }
-  await api.post(`/exchange/supply/demands/${id}/dispatch`, {
-    ...dispatchForm,
-    analysisNote: dispatchForm.analysisNote || analysisResult.value?.analysisNote || '已完成需求分析并分发',
+  try {
+    await api.post(`/exchange/supply/demands/${id}/dispatch`, {
+      ...dispatchForm,
+      analysisNote: dispatchForm.analysisNote || analysisResult.value?.analysisNote || '已完成需求分析并分发',
+    })
+    ElMessage.success('已分发到对应部门')
+    analyzingId.value = undefined
+    demands.value = (await api.get('/exchange/supply/demands')).data
+  } catch (e: unknown) {
+    ElMessage.error((e as Error)?.message || '分发失败')
+  }
+}
+
+async function returnToPortalApply(id: number) {
+  await api.post(`/exchange/supply/demands/${id}/return-portal`, {
+    analysisNote:
+      returnNote.value.trim()
+      || analysisResult.value?.analysisNote
+      || '管理员判定门户目录已可满足，请到部门数据共享门户直接申请',
   })
-  ElMessage.success('已分发到对应部门')
+  ElMessage.success('已退回需求部门，请其前往门户申请')
   analyzingId.value = undefined
+  demands.value = (await api.get('/exchange/supply/demands')).data
+}
+
+async function adminAgreeProviderReturn(id: number) {
+  await ElMessageBox.confirm('同意提供方退回后，需求将退回需求部门修改/重新提交。确认？', '同意退回', {
+    type: 'warning',
+  })
+  await api.post(`/exchange/supply/demands/${id}/admin-agree-return`, {
+    analysisNote: returnNote.value.trim() || undefined,
+  })
+  ElMessage.success('已同意退回需求部门')
+  analyzingId.value = undefined
+  demands.value = (await api.get('/exchange/supply/demands')).data
+}
+
+async function adminRefuseProviderReturn(id: number) {
+  await ElMessageBox.confirm('拒绝退回后，需求将打回提供部门重新确认。确认？', '拒绝退回', {
+    type: 'warning',
+  })
+  await api.post(`/exchange/supply/demands/${id}/admin-refuse-return`, {
+    analysisNote: returnNote.value.trim() || '管理员拒绝退回，请提供部门重新确认',
+  })
+  ElMessage.success('已打回提供部门重新确认')
+  analyzingId.value = undefined
+  demands.value = (await api.get('/exchange/supply/demands')).data
+}
+
+async function markCatalogMounted(id: number) {
+  await ElMessageBox.confirm(
+    '确认该需求对应目录已挂载至部门数据共享门户？挂载后需求部门可从门户申请，并可办结进入供给查看。',
+    '标记目录已挂载',
+    { type: 'info' },
+  )
+  await api.post(`/exchange/supply/demands/${id}/mark-mounted`, {
+    confirmNote: '目录已挂载至部门数据共享门户',
+  })
+  ElMessage.success('已标记目录挂载')
   demands.value = (await api.get('/exchange/supply/demands')).data
 }
 
@@ -896,11 +1091,10 @@ async function confirmDemand(id: number, row: Record<string, unknown>) {
   })
   confirmResult.value = res.data
   const taskCount = (res.data.tasks as unknown[])?.length || 0
-  ElMessage.success(`已同意提供：数据责任 #${res.data.dutyId}，生成 ${taskCount} 项共享任务`)
+  ElMessage.success(`已同意提供：数据责任 #${res.data.dutyId}，生成 ${taskCount} 项共享任务；请在 10 个工作日内挂载目录至门户`)
   selectedDemandId.value = id
   confirmDrawer.visible = false
   demands.value = (await api.get('/exchange/supply/demands')).data
-  await loadSupplyView(id)
 }
 
 const confirmReturnDialog = reactive({ visible: false, id: 0 })
@@ -923,7 +1117,7 @@ async function submitConfirmReturn() {
   })
   confirmReturnDialog.visible = false
   confirmDrawer.visible = false
-  ElMessage.success('已退回（不同意提供）')
+  ElMessage.success('已提交平台管理员裁决（提供方不同意提供）')
   demands.value = (await api.get('/exchange/supply/demands')).data
 }
 
@@ -988,13 +1182,21 @@ async function saveEdit() {
   demands.value = (await api.get('/exchange/supply/demands')).data
 }
 
-/** 已分发至供数部门、待确认（含督办/补正） */
+/** 已分发至供数部门、待确认（含督办/补正；挂载超时督办归入已确认台账处理） */
 const confirmPending = computed(() =>
-  demands.value.filter((d) => ['DISPATCHED', 'SUPERVISING', 'CORRECTION'].includes(String(d.status))),
+  demands.value.filter((d) => {
+    const s = String(d.status)
+    if (s === 'DISPATCHED' || s === 'CORRECTION') return true
+    if (s === 'SUPERVISING' && !d.catalogMountDeadline) return true
+    return false
+  }),
 )
-/** 已确认 / 办结 / 退回 / 撤销等台账 */
+/** 已确认 / 挂载督办 / 办结 / 退回 / 撤销等台账（提供方退回待裁决在「数据分析」由管理员处理） */
 const confirmManaged = computed(() =>
-  demands.value.filter((d) => ['CONFIRMED', 'COMPLETED', 'CANCELLED', 'REJECTED', 'RETURNED'].includes(String(d.status))),
+  demands.value.filter((d) =>
+    ['CONFIRMED', 'COMPLETED', 'CANCELLED', 'REJECTED', 'RETURNED'].includes(String(d.status))
+    || (String(d.status) === 'SUPERVISING' && !!d.catalogMountDeadline),
+  ),
 )
 /** 数据供给查看：仅已办结 */
 const supplyViewDemands = computed(() =>
@@ -1044,7 +1246,10 @@ async function submitObjection() {
   await api.post('/exchange/supply/objections', objectionForm)
   objectionForm.content = ''
   ElMessage.success('异议已登记')
+  listCenterSub.value = 'objection-apply'
+  listCenterGroup.value = '异议清单'
   await loadListCenter()
+  await refreshManifestCounts()
 }
 
 async function reopenObjectionAudit(id: number) {
@@ -1335,11 +1540,9 @@ onMounted(() => {
                   <div class="sd-match-gauge__lab">匹配度</div>
                 </div>
                 <div class="sd-relation-tri">
-                  <div class="sd-relation-tri__title">关联关系图谱</div>
+                  <div class="sd-relation-tri__title">关联关系（门户目录）</div>
                   <div class="sd-relation-tri__nodes">
-                    <div class="sd-rel-node is-catalog">目录 {{ relationCounts.catalog }} 个</div>
-                    <div class="sd-rel-node is-table">库表 {{ relationCounts.table }} 个</div>
-                    <div class="sd-rel-node is-api">接口 {{ relationCounts.api }} 个</div>
+                    <div class="sd-rel-node is-catalog">匹配目录 {{ relationCounts.catalog }} 个</div>
                   </div>
                   <ul v-if="relationGraph?.edges?.length" class="sd-rel-edges">
                     <li v-for="(e, idx) in relationGraph.edges" :key="idx">
@@ -1355,38 +1558,24 @@ onMounted(() => {
                   <el-form-item label="关键词" class="portal-field-lg">
                     <el-input
                       v-model="resourceSearch.keyword"
-                      placeholder="目录/库表/接口名称"
+                      placeholder="目录名称/描述"
                       clearable
                       @keyup.enter="searchResourceCatalog"
                     />
                   </el-form-item>
-                  <el-form-item label="类型" class="portal-field-sm">
-                    <el-select v-model="resourceSearch.resourceType">
-                      <el-option label="全部" value="ALL" />
-                      <el-option label="目录" value="CATALOG" />
-                      <el-option label="库表" value="TABLE" />
-                      <el-option label="接口" value="API" />
-                    </el-select>
-                  </el-form-item>
                   <el-form-item class="portal-form-actions">
                     <el-button type="primary" @click="searchResourceCatalog">查询</el-button>
+                    <el-button @click="resetResourceSearch">重置</el-button>
                   </el-form-item>
                 </el-form>
                 <el-table :data="resourceHits" stripe size="small" max-height="200">
-                  <el-table-column label="类型" width="80">
-                    <template #default="{ row }">{{ resourceTypeLabel(row.resourceType) }}</template>
-                  </el-table-column>
-                  <el-table-column prop="title" label="名称" min-width="140" show-overflow-tooltip />
+                  <el-table-column prop="title" label="目录名称" min-width="140" show-overflow-tooltip />
+                  <el-table-column prop="providerOrg" label="提供方" width="120" show-overflow-tooltip />
                   <el-table-column prop="score" label="匹配度" width="80" />
                   <el-table-column label="操作" width="200">
                     <template #default="{ row }">
                       <el-button link type="primary" @click="bindResourceToDemand(row)">选用</el-button>
-                      <el-button
-                        v-if="row.resourceType === 'CATALOG'"
-                        link
-                        type="success"
-                        @click="goPortalApply(row)"
-                      >跳转门户申请</el-button>
+                      <el-button link type="success" @click="goPortalApply(row)">跳转门户申请</el-button>
                     </template>
                   </el-table-column>
                 </el-table>
@@ -1428,25 +1617,39 @@ onMounted(() => {
               </el-form>
 
               <div class="sd-detail-actions">
-                <el-button type="primary" @click="dispatchDemand(Number(selectedAnalysis.id))">分发到部门</el-button>
-                <el-button @click="returnDemand(Number(selectedAnalysis.id))">退回提交部门</el-button>
-                <el-button type="warning" @click="superviseDemand(Number(selectedAnalysis.id))">督查督办</el-button>
-                <el-button type="success" @click="applyQuickSettings(Number(selectedAnalysis.id))">一键设置信息项</el-button>
-                <el-button link type="primary" @click="analyzeDemand(Number(selectedAnalysis.id))">重新智能匹配</el-button>
+                <template v-if="String(selectedAnalysis.status) === 'PROVIDER_RETURNED'">
+                  <el-alert
+                    type="warning"
+                    :closable="false"
+                    show-icon
+                    style="margin-bottom:10px"
+                    :title="`提供方不同意：${selectedAnalysis.confirmNote || '未填写原因'}。请裁决：同意退回需求部门，或拒绝并打回提供部门再确认。`"
+                  />
+                  <el-button type="primary" @click="adminAgreeProviderReturn(Number(selectedAnalysis.id))">同意退回需求部门</el-button>
+                  <el-button type="danger" @click="adminRefuseProviderReturn(Number(selectedAnalysis.id))">拒绝退回（打回再确认）</el-button>
+                  <el-button type="warning" @click="superviseDemand(Number(selectedAnalysis.id))">督查督办</el-button>
+                </template>
+                <template v-else>
+                  <el-button type="primary" @click="dispatchDemand(Number(selectedAnalysis.id))">分发到部门</el-button>
+                  <el-button type="success" @click="returnToPortalApply(Number(selectedAnalysis.id))">退回门户申请</el-button>
+                  <el-button @click="returnDemand(Number(selectedAnalysis.id))">退回提交部门</el-button>
+                  <el-button type="warning" @click="superviseDemand(Number(selectedAnalysis.id))">督查督办</el-button>
+                  <el-button type="success" plain @click="applyQuickSettings(Number(selectedAnalysis.id))">一键设置信息项</el-button>
+                  <el-button link type="primary" @click="analyzeDemand(Number(selectedAnalysis.id))">重新智能匹配</el-button>
+                </template>
               </div>
 
               <div v-if="analysisCandidates.length" class="analysis-panel">
-                <h4>智能匹配候选（目录 / 库表 / 接口）</h4>
+                <h4>门户目录匹配候选（仅所选组织已发布目录）</h4>
                 <el-table :data="analysisCandidates" stripe size="small">
-                  <el-table-column label="类型" width="80">
-                    <template #default="{ row }">{{ resourceTypeLabel(row.resourceType) }}</template>
-                  </el-table-column>
-                  <el-table-column prop="title" label="资源" min-width="140" />
+                  <el-table-column prop="title" label="目录" min-width="140" />
+                  <el-table-column prop="providerOrg" label="提供方" width="120" show-overflow-tooltip />
                   <el-table-column prop="score" label="匹配度%" width="90" />
                   <el-table-column prop="subtitle" label="说明" min-width="120" show-overflow-tooltip />
-                  <el-table-column label="操作" width="100">
+                  <el-table-column label="操作" width="180">
                     <template #default="{ row }">
                       <el-button link type="primary" @click="applyCandidate(row)">一键采用</el-button>
+                      <el-button link type="success" @click="goPortalApply(row)">门户申请</el-button>
                     </template>
                   </el-table-column>
                 </el-table>
@@ -1487,43 +1690,32 @@ onMounted(() => {
         :closable="false"
         show-icon
         style="margin-bottom:12px"
-        title="预审：分析/分发/退回/督办。资源目录快查仅含已发布到部门共享门户的统一目录；已满足可跳转门户申请，否则分发数源进入审核。支持智能匹配与一键设置评估状态/共享属性。"
+        title="预审：智能匹配仅供参考。由平台管理员人工判定：门户已可满足则「退回门户申请」；需数源部门供数则「分发到部门」；材料不全则「退回提交部门」。提供方退回后由管理员裁决。"
       />
 
       <PageCard title="资源目录快速查询" style="margin-bottom:12px">
         <el-form inline class="portal-inline-form portal-inline-form--block">
           <el-form-item label="关键词" class="portal-field-lg">
-            <el-input v-model="resourceSearch.keyword" placeholder="目录/库表/接口名称" clearable @keyup.enter="searchResourceCatalog" />
+            <el-input v-model="resourceSearch.keyword" placeholder="目录名称/描述" clearable @keyup.enter="searchResourceCatalog" />
           </el-form-item>
-          <el-form-item label="类型" class="portal-field-sm">
-            <el-select v-model="resourceSearch.resourceType">
-              <el-option label="全部" value="ALL" />
-              <el-option label="目录" value="CATALOG" />
-              <el-option label="库表" value="TABLE" />
-              <el-option label="接口" value="API" />
-            </el-select>
+          <el-form-item label="提供方" class="portal-field-md">
+            <el-input v-model="dispatchForm.assigneeOrg" placeholder="组织机构（与分发部门一致）" clearable />
           </el-form-item>
           <el-form-item class="portal-form-actions">
             <el-button type="primary" @click="searchResourceCatalog">查询</el-button>
+            <el-button @click="resetResourceSearch">重置</el-button>
           </el-form-item>
         </el-form>
         <el-table :data="resourceHits" stripe size="small" max-height="220">
-          <el-table-column label="类型" width="80">
-            <template #default="{ row }">{{ resourceTypeLabel(row.resourceType) }}</template>
-          </el-table-column>
           <el-table-column prop="resourceCode" label="编码" width="120" />
-          <el-table-column prop="title" label="名称" min-width="140" />
+          <el-table-column prop="title" label="目录名称" min-width="140" />
+          <el-table-column prop="providerOrg" label="提供方" width="120" show-overflow-tooltip />
           <el-table-column prop="score" label="匹配度" width="80" />
           <el-table-column prop="subtitle" label="说明" min-width="140" show-overflow-tooltip />
           <el-table-column label="操作" width="200">
             <template #default="{ row }">
               <el-button link type="primary" @click="bindResourceToDemand(row)">选用</el-button>
-              <el-button
-                v-if="row.resourceType === 'CATALOG'"
-                link
-                type="success"
-                @click="goPortalApply(row)"
-              >跳转门户申请</el-button>
+              <el-button link type="success" @click="goPortalApply(row)">跳转门户申请</el-button>
             </template>
           </el-table-column>
         </el-table>
@@ -1592,12 +1784,10 @@ onMounted(() => {
           style="margin-bottom:12px"
           :title="`需求 #${analysisResult.demandId}：${analysisResult.analysisNote}`"
         />
-        <h4>智能匹配候选（目录 / 库表 / 接口）</h4>
+        <h4>门户目录匹配候选</h4>
         <el-table :data="analysisCandidates" stripe size="small" style="margin-bottom:12px">
-          <el-table-column label="类型" width="80">
-            <template #default="{ row }">{{ resourceTypeLabel(row.resourceType) }}</template>
-          </el-table-column>
-          <el-table-column prop="title" label="资源" min-width="140" />
+          <el-table-column prop="title" label="目录" min-width="140" />
+          <el-table-column prop="providerOrg" label="提供方" width="120" show-overflow-tooltip />
           <el-table-column prop="score" label="匹配度%" width="90" />
           <el-table-column label="建议评估" width="100">
             <template #default="{ row }">{{ evalLabel(row.suggestedEvalStatus) }}</template>
@@ -1605,9 +1795,10 @@ onMounted(() => {
           <el-table-column label="建议共享" width="110">
             <template #default="{ row }">{{ shareLabel(row.suggestedShareAttr) }}</template>
           </el-table-column>
-          <el-table-column label="操作" width="120">
+          <el-table-column label="操作" width="180">
             <template #default="{ row }">
               <el-button link type="primary" @click="applyCandidate(row)">一键采用</el-button>
+              <el-button link type="success" @click="goPortalApply(row)">门户申请</el-button>
             </template>
           </el-table-column>
         </el-table>
@@ -1671,8 +1862,14 @@ onMounted(() => {
             <el-table-column prop="assigneeOrg" label="责任单位" width="120" />
             <el-table-column label="督办类型" width="110">
               <template #default="{ row }">
-                <el-tag :type="row.status === 'RETURNED' ? 'primary' : 'warning'" size="small">
-                  {{ row.status === 'RETURNED' ? '退回督办' : '超时督办' }}
+                <el-tag :type="row.status === 'PROVIDER_RETURNED' ? 'danger' : (row.status === 'RETURNED' ? 'primary' : 'warning')" size="small">
+                  {{
+                    row.status === 'PROVIDER_RETURNED'
+                      ? '提供方退回'
+                      : row.status === 'RETURNED'
+                        ? '退回督办'
+                        : (row.catalogMountDeadline && !row.catalogMountedAt ? '挂载超时/督办' : '超时督办')
+                  }}
                 </el-tag>
               </template>
             </el-table-column>
@@ -1776,15 +1973,26 @@ onMounted(() => {
                 <el-tag :type="$statusTagType(row.status)" size="small">{{ $statusLabel(row.status) }}</el-tag>
               </template>
             </el-table-column>
-            <el-table-column label="操作" width="320" fixed="right">
+            <el-table-column label="操作" width="360" fixed="right">
               <template #default="{ row }">
-                <template v-if="['DISPATCHED','SUPERVISING','CORRECTION'].includes(String(row.status))">
+                <template v-if="canProviderConfirm(row)">
                   <el-button link type="success" @click.stop="confirmDemand(Number(row.id), row)">同意并生成共享任务</el-button>
-                  <el-button link type="warning" @click.stop="confirmReturnDemand(Number(row.id))">退回</el-button>
+                  <el-button link type="warning" @click.stop="confirmReturnDemand(Number(row.id))">不同意退回</el-button>
                   <el-button link @click.stop="openConfirmDrawer(row)">督查反馈</el-button>
                 </template>
-                <template v-else-if="row.status === 'CONFIRMED'">
-                  <el-button link type="success" @click.stop="completeDemand(Number(row.id))">办结</el-button>
+                <template v-else-if="row.status === 'CONFIRMED' || isMountSupervising(row)">
+                  <el-button
+                    v-if="!row.catalogMountedAt"
+                    link
+                    type="primary"
+                    @click.stop="markCatalogMounted(Number(row.id))"
+                  >标记目录已挂载</el-button>
+                  <el-button
+                    v-if="row.catalogMountedAt"
+                    link
+                    type="success"
+                    @click.stop="completeDemand(Number(row.id))"
+                  >办结</el-button>
                   <el-button link @click.stop="openEdit(row)">修改</el-button>
                   <el-button link type="info" @click.stop="cancelDemand(Number(row.id))">撤销</el-button>
                 </template>
@@ -1812,6 +2020,8 @@ onMounted(() => {
               <el-descriptions-item label="申请单位">{{ confirmDrawer.row.requesterOrg || '—' }}</el-descriptions-item>
               <el-descriptions-item label="供数单位">{{ confirmDrawer.row.assigneeOrg || '—' }}</el-descriptions-item>
               <el-descriptions-item label="状态">{{ $statusLabel(confirmDrawer.row.status) }}</el-descriptions-item>
+              <el-descriptions-item v-if="confirmDrawer.row.catalogMountDeadline" label="挂载截止">{{ confirmDrawer.row.catalogMountDeadline }}</el-descriptions-item>
+              <el-descriptions-item v-if="confirmDrawer.row.catalogMountedAt" label="已挂载时间">{{ confirmDrawer.row.catalogMountedAt }}</el-descriptions-item>
               <el-descriptions-item v-if="confirmDrawer.row.superviseNote" label="督办说明">{{ confirmDrawer.row.superviseNote }}</el-descriptions-item>
             </el-descriptions>
             <h4 class="confirm-h">匹配信息</h4>
@@ -1826,23 +2036,28 @@ onMounted(() => {
             <el-input v-model="confirmFeedback" type="textarea" :rows="2" placeholder="对平台管理员督查督办的反馈意见" />
             <div class="sd-drawer-actions">
               <el-button
-                v-if="['DISPATCHED','SUPERVISING','CORRECTION'].includes(String(confirmDrawer.row.status))"
+                v-if="canProviderConfirm(confirmDrawer.row)"
                 type="success"
                 @click="confirmDemand(Number(confirmDrawer.row.id), confirmDrawer.row)"
               >同意并生成共享任务</el-button>
               <el-button
-                v-if="['DISPATCHED','SUPERVISING','CORRECTION'].includes(String(confirmDrawer.row.status))"
+                v-if="canProviderConfirm(confirmDrawer.row)"
                 type="warning"
                 @click="confirmReturnDemand(Number(confirmDrawer.row.id))"
-              >退回</el-button>
+              >不同意退回</el-button>
               <el-button type="warning" plain @click="submitConfirmFeedback(Number(confirmDrawer.row.id))">督查反馈</el-button>
               <el-button
-                v-if="confirmDrawer.row.status === 'CONFIRMED'"
+                v-if="(confirmDrawer.row.status === 'CONFIRMED' || isMountSupervising(confirmDrawer.row)) && !confirmDrawer.row.catalogMountedAt"
+                type="primary"
+                @click="markCatalogMounted(Number(confirmDrawer.row.id))"
+              >标记目录已挂载</el-button>
+              <el-button
+                v-if="(confirmDrawer.row.status === 'CONFIRMED' || isMountSupervising(confirmDrawer.row)) && confirmDrawer.row.catalogMountedAt"
                 type="success"
                 @click="completeDemand(Number(confirmDrawer.row.id))"
               >办结</el-button>
               <el-button
-                v-if="confirmDrawer.row.status === 'CONFIRMED' || ['DISPATCHED','SUPERVISING','CORRECTION'].includes(String(confirmDrawer.row.status))"
+                v-if="confirmDrawer.row.status === 'CONFIRMED' || canProviderConfirm(confirmDrawer.row)"
                 @click="openEdit(confirmDrawer.row)"
               >修改</el-button>
               <el-button
@@ -1855,7 +2070,7 @@ onMounted(() => {
                 type="primary"
                 :disabled="confirmDrawer.row.status !== 'COMPLETED'"
                 @click="loadSupplyView(Number(confirmDrawer.row.id)); setSection('supply'); confirmDrawer.visible = false"
-              >{{ confirmDrawer.row.status === 'COMPLETED' ? '供给查看' : '请先办结' }}</el-button>
+              >{{ confirmDrawer.row.status === 'COMPLETED' ? '供给查看' : '请先挂载并办结' }}</el-button>
             </div>
             <div v-if="confirmResult" class="confirm-result">
               <el-alert type="success" :closable="false" show-icon
@@ -1870,7 +2085,7 @@ onMounted(() => {
         :closable="false"
         show-icon
         style="margin-bottom:12px"
-        title="数据提供部门确认：同意并生成共享任务；不同意须填写原因后退回；对督查督办填写督查反馈；已确认需求可办结、撤销、修改。"
+        title="数据提供部门确认：同意后须在 10 个工作日内将目录挂载至门户（超时自动督办）；不同意须填原因退回管理员裁决；已挂载后方可办结进入供给查看。"
       />
       <el-form label-width="88px" style="max-width:720px;margin-bottom:12px">
         <el-form-item label="确认说明">
@@ -1895,7 +2110,7 @@ onMounted(() => {
         <el-table-column label="操作" width="400" fixed="right">
           <template #default="{ row }">
             <el-button link type="success" @click="confirmDemand(Number(row.id), row)">同意并生成共享任务</el-button>
-            <el-button link type="warning" @click="confirmReturnDemand(Number(row.id))">退回</el-button>
+            <el-button link type="warning" @click="confirmReturnDemand(Number(row.id))">不同意退回</el-button>
             <el-button link @click="submitConfirmFeedback(Number(row.id))">督查反馈</el-button>
             <el-button link @click="openEdit(row)">修改</el-button>
             <el-button link type="info" @click="cancelDemand(Number(row.id))">撤销</el-button>
@@ -1907,13 +2122,27 @@ onMounted(() => {
       <el-table :data="confirmManaged" stripe size="small">
         <el-table-column prop="demandTitle" label="需求" min-width="140" />
         <el-table-column prop="confirmNote" label="确认说明" min-width="160" show-overflow-tooltip />
-        <el-table-column prop="confirmFeedback" label="督查反馈" min-width="140" show-overflow-tooltip />
-        <el-table-column label="状态" width="110">
+        <el-table-column prop="catalogMountDeadline" label="挂载截止" width="160" show-overflow-tooltip />
+        <el-table-column label="挂载" width="90">
+          <template #default="{ row }">{{ row.catalogMountedAt ? '已挂载' : '未挂载' }}</template>
+        </el-table-column>
+        <el-table-column label="状态" width="120">
           <template #default="{ row }"><el-tag :type="$statusTagType(row.status)" size="small">{{ $statusLabel(row.status) }}</el-tag></template>
         </el-table-column>
-        <el-table-column label="操作" width="260" fixed="right">
+        <el-table-column label="操作" width="300" fixed="right">
           <template #default="{ row }">
-            <el-button v-if="row.status === 'CONFIRMED'" link type="success" @click="completeDemand(Number(row.id))">办结</el-button>
+            <el-button
+              v-if="(row.status === 'CONFIRMED' || isMountSupervising(row)) && !row.catalogMountedAt"
+              link
+              type="primary"
+              @click="markCatalogMounted(Number(row.id))"
+            >标记已挂载</el-button>
+            <el-button
+              v-if="(row.status === 'CONFIRMED' || isMountSupervising(row)) && row.catalogMountedAt"
+              link
+              type="success"
+              @click="completeDemand(Number(row.id))"
+            >办结</el-button>
             <el-button v-if="!['COMPLETED','CANCELLED','WITHDRAWN'].includes(String(row.status))" link @click="openEdit(row)">修改</el-button>
             <el-button v-if="row.status === 'CONFIRMED'" link type="info" @click="cancelDemand(Number(row.id))">撤销</el-button>
             <el-button v-if="row.status === 'COMPLETED'" link type="primary" @click="loadSupplyView(Number(row.id)); setSection('supply')">供给查看</el-button>
@@ -2130,235 +2359,261 @@ onMounted(() => {
     </PageCard>
 
     <PageCard v-else-if="section === 'manifest-center'" :title="mode === 'front' ? '' : '数据清单中心'" class="sd-panel">
-      <template v-if="mode === 'front'">
-        <div class="sd-manifest-cards">
-          <div class="sd-mcard tone-blue">
-            <div class="sd-mcard__top"><span>目录清单</span><b>{{ manifestCounts.catalog }}</b></div>
-            <div class="sd-mcard__grid">
-              <button
-                v-for="s in catalogManifestSections"
-                :key="s.key"
-                type="button"
-                class="sd-mcard__btn"
-                :class="{ 'is-on': listCenterSub === s.key }"
-                @click="setListCenterSub(s.key)"
-              >{{ shortManifestLabel(s.label) }}</button>
-            </div>
-          </div>
-          <div class="sd-mcard tone-green">
-            <div class="sd-mcard__top"><span>供需清单</span><b>{{ manifestCounts.supply }}</b></div>
-            <div class="sd-mcard__grid">
-              <button
-                v-for="s in supplyManifestSections"
-                :key="s.key"
-                type="button"
-                class="sd-mcard__btn"
-                :class="{ 'is-on': listCenterSub === s.key }"
-                @click="setListCenterSub(s.key)"
-              >{{ shortManifestLabel(s.label) }}</button>
-            </div>
-          </div>
-          <div class="sd-mcard tone-amber">
-            <div class="sd-mcard__top"><span>异议清单</span><b>{{ manifestCounts.objection }}</b></div>
-            <div class="sd-mcard__grid">
-              <button
-                type="button"
-                class="sd-mcard__btn"
-                :class="{ 'is-on': listCenterSub === 'objection' }"
-                @click="setListCenterSub('objection')"
-              >异议申请</button>
-              <button type="button" class="sd-mcard__btn" @click="setListCenterSub('objection')">异议审核</button>
-              <button type="button" class="sd-mcard__btn" @click="setListCenterSub('objection')">异议处理</button>
-              <button type="button" class="sd-mcard__btn" @click="setListCenterSub('objection')">异议办结</button>
-              <button type="button" class="sd-mcard__btn" @click="setListCenterSub('objection')">历史异议</button>
-              <button type="button" class="sd-mcard__btn" @click="setListCenterSub('objection')">统计分析</button>
-            </div>
+      <div v-if="mode === 'front'" class="sd-manifest-cards">
+        <div class="sd-mcard tone-blue">
+          <div class="sd-mcard__top"><span>目录清单</span><b>{{ manifestCounts.catalog }}</b></div>
+          <div class="sd-mcard__grid">
+            <button
+              v-for="s in catalogManifestSections"
+              :key="s.key"
+              type="button"
+              class="sd-mcard__btn"
+              :class="{ 'is-on': listCenterSub === s.key }"
+              @click="setListCenterSub(s.key)"
+            >{{ shortManifestLabel(s.label) }}</button>
           </div>
         </div>
-
-        <div class="sd-table-card">
-          <div class="sd-card-title">{{ listCenterGroup }} · {{ manifestCenterSections.find(s => s.key === listCenterSub)?.label || '' }}</div>
-
-          <template v-if="listCenterSub === 'objection'">
-            <el-form inline class="portal-inline-form portal-inline-form--block">
-              <el-form-item label="异议标题" class="portal-field-md">
-                <el-input v-model="objectionFilter.title" clearable />
-              </el-form-item>
-              <el-form-item label="异议对象" class="portal-field-md">
-                <el-input v-model="objectionFilter.object" clearable />
-              </el-form-item>
-              <el-form-item label="提供单位" class="portal-field-md">
-                <el-input v-model="objectionFilter.provider" clearable />
-              </el-form-item>
-              <el-form-item label="状态" class="portal-field-sm">
-                <el-select v-model="objectionFilter.status" clearable placeholder="全部">
-                  <el-option label="待核查" value="OPEN" />
-                  <el-option label="核查中" value="PROCESSING" />
-                  <el-option label="已办结" value="CLOSED" />
-                </el-select>
-              </el-form-item>
-              <el-form-item class="portal-form-actions">
-                <el-button @click="Object.assign(objectionFilter, { title: '', object: '', provider: '', status: '' })">重置</el-button>
-                <el-button type="primary" @click="listPage = 1">查询</el-button>
-              </el-form-item>
-            </el-form>
-            <el-form inline class="portal-inline-form portal-inline-form--block">
-              <el-form-item label="登记目录" class="portal-field-default">
-                <el-select v-model="objectionForm.catalogId" filterable placeholder="统一编目已发布目录">
-                  <el-option v-for="c in catalogs" :key="String(c.id)" :label="String(c.title)" :value="Number(c.id)" />
-                </el-select>
-              </el-form-item>
-              <el-form-item label="类型" class="portal-field-sm">
-                <el-select v-model="objectionForm.objectionType">
-                  <el-option label="质量" value="QUALITY" />
-                  <el-option label="完整性" value="COMPLETENESS" />
-                  <el-option label="授权" value="AUTH" />
-                </el-select>
-              </el-form-item>
-              <el-form-item label="内容" class="portal-field-lg"><el-input v-model="objectionForm.content" /></el-form-item>
-              <el-form-item class="portal-form-actions"><el-button type="primary" @click="submitObjection">登记异议</el-button></el-form-item>
-            </el-form>
-            <el-table :data="pagedListItems" stripe size="small">
-              <el-table-column prop="title" label="异议标题" min-width="140" show-overflow-tooltip />
-              <el-table-column label="异议对象" width="110">
-                <template #default="{ row }">{{ row.catalogId || row.objectName || '—' }}</template>
-              </el-table-column>
-              <el-table-column label="类型" width="90">
-                <template #default="{ row }">{{ $statusLabel(row.objectionType) }}</template>
-              </el-table-column>
-              <el-table-column prop="providerOrg" label="提供单位" width="120" />
-              <el-table-column prop="verifyOrg" label="核查单位" width="120" />
-              <el-table-column label="状态" width="100">
-                <template #default="{ row }">
-                  <el-tag :type="$statusTagType(row.status)" size="small">{{ $statusLabel(row.status) }}</el-tag>
-                </template>
-              </el-table-column>
-              <el-table-column prop="createdAt" label="创建时间" width="160" />
-              <el-table-column label="操作" width="160" fixed="right">
-                <template #default="{ row }">
-                  <el-button link type="primary" @click="showObjectionContent(row)">核查</el-button>
-                  <el-button
-                    v-if="row.status !== 'CLOSED'"
-                    link
-                    type="warning"
-                    @click="reopenObjectionAudit(Number(row.id))"
-                  >回流审核</el-button>
-                </template>
-              </el-table-column>
-            </el-table>
-          </template>
-
-          <template v-else>
-            <el-form inline class="portal-inline-form portal-inline-form--block">
-              <el-form-item label="编码" class="portal-field-md">
-                <el-input v-model="listFilter.code" clearable />
-              </el-form-item>
-              <el-form-item label="名称" class="portal-field-lg">
-                <el-input v-model="listFilter.title" clearable />
-              </el-form-item>
-              <el-form-item class="portal-form-actions">
-                <el-button type="primary" @click="listPage = 1">查询</el-button>
-              </el-form-item>
-            </el-form>
-            <el-table :data="pagedListItems" stripe size="small">
-              <el-table-column prop="code" label="编码" width="140">
-                <template #default="{ row }">{{ row.code || row.catalogCode || row.id }}</template>
-              </el-table-column>
-              <el-table-column prop="title" label="名称" min-width="160" />
-              <el-table-column v-if="listCenterGroup === '目录清单'" prop="providerOrg" label="提供方" width="120" show-overflow-tooltip />
-              <el-table-column v-if="listCenterGroup === '目录清单'" prop="catalogOrigin" label="来源" width="110">
-                <template #default="{ row }">{{ row.catalogOrigin === 'INGEST' ? '指标与目录' : (row.catalogOrigin === 'GOVERNANCE' ? '数据目录管理' : (row.catalogOrigin || '-')) }}</template>
-              </el-table-column>
-              <el-table-column v-if="listCenterGroup === '目录清单'" prop="shareAttr" label="共享属性" width="110" show-overflow-tooltip />
-              <el-table-column v-if="listCenterGroup === '供需清单'" prop="requesterOrg" label="需求单位" width="120" show-overflow-tooltip />
-              <el-table-column v-if="listCenterGroup === '供需清单'" prop="providerOrg" label="提供单位" width="120" show-overflow-tooltip />
-              <el-table-column label="状态" width="110">
-                <template #default="{ row }"><el-tag :type="$statusTagType(row.status || row.publishStatus)" size="small">{{ $statusLabel(row.status || row.publishStatus) }}</el-tag></template>
-              </el-table-column>
-              <el-table-column prop="createdAt" label="创建时间" width="160" />
-              <el-table-column prop="description" label="说明" min-width="140" show-overflow-tooltip />
-            </el-table>
-          </template>
-
-          <PortalPagination
-            v-if="filteredListItems.length"
-            v-model:page="listPage"
-            v-model:page-size="listPageSize"
-            :total="filteredListItems.length"
-          />
+        <div class="sd-mcard tone-green">
+          <div class="sd-mcard__top"><span>供需清单</span><b>{{ manifestCounts.supply }}</b></div>
+          <div class="sd-mcard__grid">
+            <button
+              v-for="s in supplyManifestSections"
+              :key="s.key"
+              type="button"
+              class="sd-mcard__btn"
+              :class="{ 'is-on': listCenterSub === s.key }"
+              @click="setListCenterSub(s.key)"
+            >{{ shortManifestLabel(s.label) }}</button>
+          </div>
         </div>
-      </template>
+        <div class="sd-mcard tone-amber">
+          <div class="sd-mcard__top"><span>异议清单</span><b>{{ manifestCounts.objection }}</b></div>
+          <div class="sd-mcard__grid">
+            <button
+              v-for="s in objectionManifestSections"
+              :key="s.key"
+              type="button"
+              class="sd-mcard__btn"
+              :class="{ 'is-on': listCenterSub === s.key }"
+              @click="setListCenterSub(s.key)"
+            >{{ shortManifestLabel(s.label) }}</button>
+          </div>
+        </div>
+      </div>
       <template v-else>
-      <el-radio-group :model-value="listCenterGroup" style="margin-bottom:12px" @change="setListCenterGroup">
-        <el-radio-button value="目录清单">目录清单</el-radio-button>
-        <el-radio-button value="供需清单">供需清单</el-radio-button>
-        <el-radio-button value="异议清单">异议清单</el-radio-button>
-      </el-radio-group>
-      <el-radio-group :model-value="listCenterSub" style="margin-bottom:12px" @change="setListCenterSub">
-        <el-radio-button v-for="s in manifestCenterSections" :key="s.key" :value="s.key">{{ s.label }}</el-radio-button>
-      </el-radio-group>
+        <el-radio-group :model-value="listCenterGroup" style="margin-bottom:12px" @change="setListCenterGroup">
+          <el-radio-button value="目录清单">目录清单</el-radio-button>
+          <el-radio-button value="供需清单">供需清单</el-radio-button>
+          <el-radio-button value="异议清单">异议清单</el-radio-button>
+        </el-radio-group>
+        <el-radio-group :model-value="listCenterSub" style="margin-bottom:12px" @change="setListCenterSub">
+          <el-radio-button v-for="s in manifestCenterSections" :key="s.key" :value="s.key">{{ s.label }}</el-radio-button>
+        </el-radio-group>
+      </template>
 
-      <template v-if="listCenterSub === 'objection'">
-        <el-form inline class="portal-inline-form portal-inline-form--block">
-          <el-form-item label="目录" class="portal-field-default">
-            <el-select v-model="objectionForm.catalogId" filterable placeholder="统一编目已发布目录">
-              <el-option v-for="c in catalogs" :key="String(c.id)" :label="String(c.title)" :value="Number(c.id)" />
-            </el-select>
-          </el-form-item>
-          <el-form-item label="类型" class="portal-field-sm">
-            <el-select v-model="objectionForm.objectionType">
-              <el-option label="质量" value="QUALITY" />
-              <el-option label="完整性" value="COMPLETENESS" />
-              <el-option label="授权" value="AUTH" />
-            </el-select>
-          </el-form-item>
-          <el-form-item label="内容" class="portal-field-lg"><el-input v-model="objectionForm.content" /></el-form-item>
-          <el-form-item class="portal-form-actions"><el-button type="primary" @click="submitObjection">登记异议</el-button></el-form-item>
-        </el-form>
-        <el-table :data="listCenterItems" stripe size="small">
-          <el-table-column prop="title" label="异议标题" min-width="140" />
-          <el-table-column prop="catalogId" label="目录ID" width="90" />
-          <el-table-column prop="demandId" label="需求ID" width="90" />
-          <el-table-column label="类型" width="100">
-            <template #default="{ row }">{{ $statusLabel(row.objectionType) }}</template>
-          </el-table-column>
-          <el-table-column prop="content" label="内容" min-width="160" />
-          <el-table-column prop="providerOrg" label="提出单位" width="120" />
-          <el-table-column prop="verifyOrg" label="核查单位" width="120" />
-          <el-table-column label="状态" width="100">
-            <template #default="{ row }">{{ $statusLabel(row.status) }}</template>
-          </el-table-column>
-          <el-table-column label="操作" width="140" fixed="right">
-            <template #default="{ row }">
-              <el-button
-                v-if="row.status !== 'CLOSED'"
-                link
-                type="warning"
-                @click="reopenObjectionAudit(Number(row.id))"
-              >回流审核</el-button>
-            </template>
-          </el-table-column>
-        </el-table>
-      </template>
-      <el-table v-else :data="listCenterItems" stripe size="small">
-        <el-table-column prop="code" label="编码" width="140">
-          <template #default="{ row }">{{ row.code || row.catalogCode || row.id }}</template>
-        </el-table-column>
-        <el-table-column prop="title" label="名称" min-width="160" />
-        <el-table-column v-if="listCenterGroup === '目录清单'" prop="providerOrg" label="提供方" width="120" show-overflow-tooltip />
-        <el-table-column v-if="listCenterGroup === '目录清单'" prop="catalogOrigin" label="来源" width="110">
-          <template #default="{ row }">{{ row.catalogOrigin === 'INGEST' ? '指标与目录' : (row.catalogOrigin === 'GOVERNANCE' ? '数据目录管理' : (row.catalogOrigin || '-')) }}</template>
-        </el-table-column>
-        <el-table-column v-if="listCenterGroup === '目录清单'" prop="shareAttr" label="共享属性" width="110" show-overflow-tooltip />
-        <el-table-column v-if="listCenterGroup === '供需清单'" prop="requesterOrg" label="需求单位" width="120" show-overflow-tooltip />
-        <el-table-column v-if="listCenterGroup === '供需清单'" prop="providerOrg" label="提供单位" width="120" show-overflow-tooltip />
-        <el-table-column label="状态" width="110">
-          <template #default="{ row }"><el-tag :type="$statusTagType(row.status || row.publishStatus)" size="small">{{ $statusLabel(row.status || row.publishStatus) }}</el-tag></template>
-        </el-table-column>
-        <el-table-column prop="createdAt" label="创建时间" width="160" />
-        <el-table-column prop="description" label="说明" min-width="160" show-overflow-tooltip />
-      </el-table>
-      </template>
+      <div class="sd-table-card">
+        <div class="sd-card-title" style="display:flex;justify-content:space-between;align-items:center;gap:12px">
+          <span>{{ listCenterGroup }} · {{ manifestCenterSections.find(s => s.key === listCenterSub)?.label || '' }}</span>
+          <el-button size="small" @click="exportListCenterCsv">导出 CSV</el-button>
+        </div>
+
+        <!-- 异议统计 -->
+        <template v-if="listCenterSub === 'objection-stats'">
+          <div class="sd-kpi-row" style="display:flex;gap:12px;margin-bottom:14px;flex-wrap:wrap">
+            <div class="sd-kpi"><div class="sd-kpi__lab">异议总数</div><div class="sd-kpi__num">{{ listCenterStats?.total ?? 0 }}</div></div>
+            <div class="sd-kpi"><div class="sd-kpi__lab">待核查</div><div class="sd-kpi__num">{{ listCenterStats?.open ?? 0 }}</div></div>
+            <div class="sd-kpi"><div class="sd-kpi__lab">处理中</div><div class="sd-kpi__num">{{ listCenterStats?.processing ?? 0 }}</div></div>
+            <div class="sd-kpi"><div class="sd-kpi__lab">已办结</div><div class="sd-kpi__num">{{ listCenterStats?.closed ?? 0 }}</div></div>
+          </div>
+          <el-row :gutter="12">
+            <el-col :span="12">
+              <h4 class="confirm-h">按状态</h4>
+              <el-table :data="(listCenterStats?.byStatus as Record<string, unknown>[]) || []" stripe size="small">
+                <el-table-column prop="title" label="状态" />
+                <el-table-column prop="count" label="数量" width="100" />
+              </el-table>
+            </el-col>
+            <el-col :span="12">
+              <h4 class="confirm-h">按类型</h4>
+              <el-table :data="(listCenterStats?.byType as Record<string, unknown>[]) || []" stripe size="small">
+                <el-table-column label="类型">
+                  <template #default="{ row }">{{ $statusLabel(row.code || row.title) }}</template>
+                </el-table-column>
+                <el-table-column prop="count" label="数量" width="100" />
+              </el-table>
+            </el-col>
+          </el-row>
+        </template>
+
+        <!-- 异议清单分态 -->
+        <template v-else-if="isObjectionListSub()">
+          <el-form inline class="portal-inline-form portal-inline-form--block">
+            <el-form-item label="异议标题" class="portal-field-md">
+              <el-input v-model="objectionFilter.title" clearable />
+            </el-form-item>
+            <el-form-item label="异议对象" class="portal-field-md">
+              <el-input v-model="objectionFilter.object" clearable />
+            </el-form-item>
+            <el-form-item label="提供单位" class="portal-field-md">
+              <el-input v-model="objectionFilter.provider" clearable />
+            </el-form-item>
+            <el-form-item label="状态" class="portal-field-sm">
+              <el-select v-model="objectionFilter.status" clearable placeholder="全部">
+                <el-option label="待核查" value="OPEN" />
+                <el-option label="核查中" value="PROCESSING" />
+                <el-option label="已办结" value="CLOSED" />
+              </el-select>
+            </el-form-item>
+            <el-form-item class="portal-form-actions">
+              <el-button type="primary" @click="listPage = 1">查询</el-button>
+              <el-button @click="resetObjectionFilter">重置</el-button>
+            </el-form-item>
+          </el-form>
+          <el-form v-if="listCenterSub === 'objection-apply'" inline class="portal-inline-form portal-inline-form--block">
+            <el-form-item label="登记目录" class="portal-field-default">
+              <el-select v-model="objectionForm.catalogId" filterable placeholder="统一编目已发布目录">
+                <el-option v-for="c in catalogs" :key="String(c.id)" :label="String(c.title)" :value="Number(c.id)" />
+              </el-select>
+            </el-form-item>
+            <el-form-item label="类型" class="portal-field-sm">
+              <el-select v-model="objectionForm.objectionType">
+                <el-option label="质量" value="QUALITY" />
+                <el-option label="完整性" value="COMPLETENESS" />
+                <el-option label="授权" value="AUTH" />
+              </el-select>
+            </el-form-item>
+            <el-form-item label="内容" class="portal-field-lg"><el-input v-model="objectionForm.content" /></el-form-item>
+            <el-form-item class="portal-form-actions"><el-button type="primary" @click="submitObjection">登记异议</el-button></el-form-item>
+          </el-form>
+          <el-table :data="pagedListItems" stripe size="small">
+            <el-table-column prop="title" label="异议标题" min-width="140" show-overflow-tooltip />
+            <el-table-column prop="objectName" label="异议对象" min-width="120" show-overflow-tooltip />
+            <el-table-column prop="serviceName" label="服务名称" width="120" show-overflow-tooltip />
+            <el-table-column prop="providerOrg" label="异议提供单位" width="120" show-overflow-tooltip />
+            <el-table-column prop="verifyOrg" label="异议核查单位" width="120" show-overflow-tooltip />
+            <el-table-column label="状态" width="100">
+              <template #default="{ row }">
+                <el-tag :type="$statusTagType(row.status)" size="small">{{ $statusLabel(row.status) }}</el-tag>
+              </template>
+            </el-table-column>
+            <el-table-column prop="createdAt" label="创建时间" width="160" />
+            <el-table-column label="操作" width="220" fixed="right">
+              <template #default="{ row }">
+                <el-button link type="primary" @click="openListDetail(row)">查看</el-button>
+                <el-button
+                  v-if="row.status === 'OPEN'"
+                  link
+                  @click="startObjectionProcess(Number(row.id))"
+                >转处理</el-button>
+                <el-button
+                  v-if="row.status === 'PROCESSING'"
+                  link
+                  type="success"
+                  @click="closeObjectionFromList(Number(row.id))"
+                >办结</el-button>
+                <el-button
+                  v-if="row.status !== 'CLOSED'"
+                  link
+                  type="warning"
+                  @click="reopenObjectionAudit(Number(row.id))"
+                >回流审核</el-button>
+              </template>
+            </el-table-column>
+          </el-table>
+        </template>
+
+        <!-- 目录 / 供需清单 -->
+        <template v-else>
+          <el-form inline class="portal-inline-form portal-inline-form--block">
+            <el-form-item :label="listCenterGroup === '目录清单' ? '目录代码' : '编码'" class="portal-field-md">
+              <el-input v-model="listFilter.code" clearable />
+            </el-form-item>
+            <el-form-item :label="listCenterGroup === '目录清单' ? '目录名称' : '名称'" class="portal-field-lg">
+              <el-input v-model="listFilter.title" clearable />
+            </el-form-item>
+            <el-form-item label="状态" class="portal-field-sm">
+              <el-input v-model="listFilter.status" clearable placeholder="状态码" />
+            </el-form-item>
+            <el-form-item class="portal-form-actions">
+              <el-button type="primary" @click="listPage = 1">查询</el-button>
+              <el-button @click="resetListFilter">重置</el-button>
+            </el-form-item>
+          </el-form>
+
+          <el-table v-if="listCenterGroup === '目录清单'" :data="pagedListItems" stripe size="small">
+            <el-table-column label="目录代码" width="140">
+              <template #default="{ row }">{{ row.catalogCode || row.code || row.id }}</template>
+            </el-table-column>
+            <el-table-column label="目录名称" min-width="160" show-overflow-tooltip>
+              <template #default="{ row }">{{ row.catalogName || row.title }}</template>
+            </el-table-column>
+            <el-table-column prop="providerOrg" label="提供方" width="120" show-overflow-tooltip />
+            <el-table-column prop="shareAttr" label="共享属性" width="120" show-overflow-tooltip />
+            <el-table-column label="状态" width="110">
+              <template #default="{ row }">
+                <el-tag :type="$statusTagType(row.status || row.publishStatus)" size="small">
+                  {{ $statusLabel(row.status || row.publishStatus) }}
+                </el-tag>
+              </template>
+            </el-table-column>
+            <el-table-column prop="createdAt" label="创建时间" width="160" />
+            <el-table-column label="操作" width="140" fixed="right">
+              <template #default="{ row }">
+                <el-button link type="primary" @click="openListDetail(row)">查看</el-button>
+                <el-button link @click="exportListCenterCsv">导出</el-button>
+              </template>
+            </el-table-column>
+          </el-table>
+
+          <el-table v-else :data="pagedListItems" stripe size="small">
+            <el-table-column prop="demandScene" label="需求场景" width="110" show-overflow-tooltip>
+              <template #default="{ row }">{{ $statusLabel(row.demandScene) || row.demandScene || '—' }}</template>
+            </el-table-column>
+            <el-table-column prop="demandCatalog" label="需求目录" min-width="140" show-overflow-tooltip />
+            <el-table-column prop="demandService" label="需求服务" width="120" show-overflow-tooltip />
+            <el-table-column prop="requesterOrg" label="数据需求单位" width="120" show-overflow-tooltip />
+            <el-table-column prop="providerOrg" label="数据提供单位" width="120" show-overflow-tooltip />
+            <el-table-column prop="resourceLevel" label="资源级别" width="100">
+              <template #default="{ row }">{{ $statusLabel(row.resourceLevel) || row.resourceLevel || '—' }}</template>
+            </el-table-column>
+            <el-table-column label="状态" width="110">
+              <template #default="{ row }">
+                <el-tag :type="$statusTagType(row.status)" size="small">{{ $statusLabel(row.status) }}</el-tag>
+              </template>
+            </el-table-column>
+            <el-table-column prop="createdAt" label="创建时间" width="160" />
+            <el-table-column label="操作" width="160" fixed="right">
+              <template #default="{ row }">
+                <el-button link type="primary" @click="openListDetail(row)">查看</el-button>
+                <el-button
+                  v-if="row.id && String(row.code || '').startsWith('DEMAND')"
+                  link
+                  @click="openTrack(row)"
+                >跟踪</el-button>
+              </template>
+            </el-table-column>
+          </el-table>
+        </template>
+
+        <PortalPagination
+          v-if="listCenterSub !== 'objection-stats' && filteredListItems.length"
+          v-model:page="listPage"
+          v-model:page-size="listPageSize"
+          :total="filteredListItems.length"
+        />
+      </div>
+
+      <el-drawer v-model="listDetail.visible" title="清单详情" size="480px">
+        <template v-if="listDetail.row">
+          <el-descriptions :column="1" border size="small">
+            <el-descriptions-item
+              v-for="(val, key) in listDetail.row"
+              :key="String(key)"
+              :label="String(key)"
+            >{{ val == null || Array.isArray(val) ? (Array.isArray(val) ? val.join(',') : '—') : String(val) }}</el-descriptions-item>
+          </el-descriptions>
+        </template>
+      </el-drawer>
     </PageCard>
 
     <el-dialog v-model="confirmReturnDialog.visible" title="不同意提供 / 退回" width="480px">

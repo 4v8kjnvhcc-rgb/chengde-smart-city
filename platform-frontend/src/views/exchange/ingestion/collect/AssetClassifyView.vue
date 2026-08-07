@@ -2,6 +2,8 @@
 import { onMounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import PageCard from '@/components/common/PageCard.vue'
+import PortalPagination from '@/components/common/PortalPagination.vue'
+import { useClientPager } from '@/composables/useClientPager'
 import api from '@/api/http'
 import { statusLabel } from '@/utils/status-label'
 
@@ -66,6 +68,7 @@ const loading = ref(false)
 const levels = ref<LevelRow[]>([])
 const categories = ref<CategoryRow[]>([])
 const marks = ref<MarkRow[]>([])
+const { page: markPage, pageSize: markPageSize, paged: pagedMarks, total: markTotal, resetPage: resetMarkPage } = useClientPager(marks)
 const scopes = ref<ScopeRow[]>([])
 const audits = ref<Record<string, unknown>[]>([])
 const hits = ref<Record<string, unknown>[]>([])
@@ -170,6 +173,12 @@ async function loadMarks() {
         params: { keyword: markKw.value || undefined, levelCode: markLevel.value || undefined },
       })
     ).data || []
+}
+function onResetMarks() {
+  markKw.value = ''
+  markLevel.value = ''
+  resetMarkPage()
+  void loadMarks()
 }
 async function loadScopes() {
   scopes.value = (await api.get('/exchange/ingestion/classify-grade/scope-rules')).data || []
@@ -381,10 +390,11 @@ onMounted(reloadAll)
         </el-form-item>
         <el-form-item class="portal-form-actions">
           <el-button type="primary" @click="loadMarks">查询</el-button>
+          <el-button @click="onResetMarks">重置</el-button>
           <el-button @click="openMark">新增标注</el-button>
         </el-form-item>
       </el-form>
-      <el-table :data="marks" stripe border>
+      <el-table :data="pagedMarks" stripe border>
         <el-table-column label="资产类型" width="100">
           <template #default="{ row }">{{ statusLabel(row.assetType) }}</template>
         </el-table-column>
@@ -402,6 +412,12 @@ onMounted(reloadAll)
         <el-table-column prop="gradedBy" label="定级人" width="100" />
         <el-table-column prop="versionNo" label="版本" width="70" />
       </el-table>
+      <PortalPagination
+        v-if="marks.length"
+        v-model:page="markPage"
+        v-model:page-size="markPageSize"
+        :total="markTotal"
+      />
     </PageCard>
 
     <PageCard v-else-if="tab === 'levels'" title="敏感级别字典">

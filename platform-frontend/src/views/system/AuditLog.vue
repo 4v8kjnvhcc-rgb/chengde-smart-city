@@ -43,6 +43,13 @@ function search() {
   void load()
 }
 
+function onReset() {
+  filters.username = ''
+  filters.action = ''
+  page.value = 1
+  void load()
+}
+
 onMounted(load)
 </script>
 
@@ -59,6 +66,7 @@ onMounted(load)
         </el-form-item>
         <el-form-item class="portal-form-actions">
           <el-button type="primary" @click="search">查询</el-button>
+          <el-button @click="onReset">重置</el-button>
         </el-form-item>
       </el-form>
       <el-table class="portal-table" :data="rows" v-loading="loading" stripe>

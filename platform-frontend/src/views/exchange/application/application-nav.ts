@@ -99,7 +99,12 @@ export const MANIFEST_CENTER_SECTIONS = [
   { key: 'sd-auth-history', label: '历史授权清单', group: '供需清单', mCode: 'M026' },
   { key: 'sd-history', label: '历史供需清单', group: '供需清单', mCode: 'M026' },
   { key: 'sd-cascade', label: '级联下行清单', group: '供需清单', mCode: 'M026' },
-  { key: 'objection', label: '数据异议清单', group: '异议清单', mCode: 'M025' },
+  { key: 'objection-apply', label: '异议申请', group: '异议清单', mCode: 'M025' },
+  { key: 'objection-audit', label: '异议审核', group: '异议清单', mCode: 'M025' },
+  { key: 'objection-process', label: '异议处理', group: '异议清单', mCode: 'M025' },
+  { key: 'objection-closed', label: '异议办结', group: '异议清单', mCode: 'M025' },
+  { key: 'objection-history', label: '历史异议', group: '异议清单', mCode: 'M025' },
+  { key: 'objection-stats', label: '统计分析', group: '异议清单', mCode: 'M025' },
 ] as const
 
 export const SUPPLY_FLOW_SECTIONS = SUPPLY_MAIN_SECTIONS.filter((s) => s.key !== 'manifest-center')

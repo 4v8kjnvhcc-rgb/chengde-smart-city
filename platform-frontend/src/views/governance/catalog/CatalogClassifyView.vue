@@ -162,6 +162,10 @@ async function load() {
   }
 }
 
+function onReset() {
+  keyword.value = ''
+}
+
 function openCreate(parentId = 0) {
   editingId.value = null
   Object.assign(form, {
@@ -260,6 +264,7 @@ onActivated(() => {
           @keyup.enter="load"
         />
         <el-button type="primary" @click="load">查询</el-button>
+        <el-button @click="onReset">重置</el-button>
         <el-button type="primary" @click="openCreate(0)">新增资源分类</el-button>
       </div>
       <el-table

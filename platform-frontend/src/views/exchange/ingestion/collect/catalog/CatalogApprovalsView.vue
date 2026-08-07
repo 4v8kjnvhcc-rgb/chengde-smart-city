@@ -2,6 +2,8 @@
 import { onMounted, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import PageCard from '@/components/common/PageCard.vue'
+import PortalPagination from '@/components/common/PortalPagination.vue'
+import { useClientPager } from '@/composables/useClientPager'
 import { ingestionApi, useIngestionLoading, type CatalogApproval } from '../../useIngestionHub'
 
 const ACTION_ZH: Record<string, string> = {
@@ -14,8 +16,9 @@ const ACTION_ZH: Record<string, string> = {
 
 const { loading, loadError, withLoad } = useIngestionLoading()
 const rows = ref<CatalogApproval[]>([])
-const statusFilter = ref('PENDING')
+const statusFilter = ref('')
 const selected = ref<CatalogApproval[]>([])
+const { page, pageSize, paged: pageRows, total, resetPage } = useClientPager(rows)
 
 async function load() {
   await withLoad(async () => {
@@ -23,7 +26,17 @@ async function load() {
       status: statusFilter.value || undefined,
     })
     rows.value = res.data || []
+    resetPage()
   })
+}
+
+function onQuery() {
+  void load()
+}
+
+function onReset() {
+  statusFilter.value = ''
+  void load()
 }
 
 async function approve(row: CatalogApproval) {
@@ -87,20 +100,21 @@ onMounted(load)
       />
       <el-form inline>
         <el-form-item label="状态">
-          <el-select v-model="statusFilter" clearable placeholder="全部" style="width:120px" @change="load">
+          <el-select v-model="statusFilter" clearable placeholder="全部" style="width:120px">
             <el-option label="待处理" value="PENDING" />
             <el-option label="已通过" value="APPROVED" />
             <el-option label="已拒绝" value="REJECTED" />
           </el-select>
         </el-form-item>
         <el-form-item>
-          <el-button type="primary" @click="load">刷新</el-button>
+          <el-button type="primary" @click="onQuery">查询</el-button>
+          <el-button @click="onReset">重置</el-button>
           <el-button type="success" :disabled="!selected.length" @click="batchApprove">批量通过</el-button>
           <el-button type="danger" plain :disabled="!selected.length" @click="batchReject">批量拒绝</el-button>
         </el-form-item>
       </el-form>
       <el-table
-        :data="rows"
+        :data="pageRows"
         border
         stripe
         @selection-change="(v: CatalogApproval[]) => (selected = v)"
@@ -125,6 +139,7 @@ onMounted(load)
           </template>
         </el-table-column>
       </el-table>
+      <PortalPagination v-model:page="page" v-model:page-size="pageSize" :total="total" />
     </PageCard>
   </div>
 </template>

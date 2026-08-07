@@ -10,28 +10,24 @@ const apps = [
   {
     key: 'supply',
     title: '数据供需对接系统',
-    desc: '需求 · 分析 · 确认 · 供给 · 清单',
     path: '/exchange/application/supply',
     external: false,
   },
   {
     key: 'assessment',
     title: '考核评估系统',
-    desc: '门户票据 SSO · 新窗口打开',
     path: '',
     external: true,
   },
   {
     key: 'stats-base',
     title: '基础库统计分析应用',
-    desc: '人口结构、经济运行等基础库专题',
     path: '/exchange/application/stats-base',
     external: false,
   },
   {
     key: 'stats-domain',
     title: '重点领域统计分析应用',
-    desc: '参保、津贴、低保、许可处罚等专题',
     path: '/exchange/application/stats-domain',
     external: false,
   },
@@ -41,7 +37,7 @@ async function openApp(app: (typeof apps)[number]) {
   if (app.external) {
     const landing = assessmentExternalUrl() || 'http://127.0.0.1:18081/assessment/index#/dashboard'
     const r = await openAssessmentWithPortalSso(landing)
-    if (r.ok) ElMessage.success('已在新窗口打开考核评估系统')
+    if (r.ok) ElMessage.success('已进入考核评估系统')
     else ElMessage.warning(r.message || '单点登录失败')
     return
   }
@@ -60,7 +56,6 @@ async function openApp(app: (typeof apps)[number]) {
     </header>
     <main class="landing__main">
       <h1 class="landing__title">应用平台</h1>
-      <p class="landing__desc">请选择要进入的独立应用（各自单独打开，互不混页）</p>
       <div class="landing__grid">
         <button
           v-for="a in apps"
@@ -70,8 +65,7 @@ async function openApp(app: (typeof apps)[number]) {
           @click="openApp(a)"
         >
           <span class="landing__card-title">{{ a.title }}</span>
-          <span class="landing__card-desc">{{ a.desc }}</span>
-          <span class="landing__card-go">{{ a.external ? '新窗口打开 →' : '进入 →' }}</span>
+          <span class="landing__card-go">进入 →</span>
         </button>
       </div>
     </main>
@@ -102,8 +96,7 @@ async function openApp(app: (typeof apps)[number]) {
   cursor: pointer;
 }
 .landing__main { max-width: 960px; margin: 0 auto; padding: 40px 20px; }
-.landing__title { margin: 0 0 8px; font-size: 28px; color: #0b3a7a; }
-.landing__desc { margin: 0 0 28px; color: #606266; }
+.landing__title { margin: 0 0 28px; font-size: 28px; color: #0b3a7a; }
 .landing__grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
 .landing__card {
   appearance: none;
@@ -116,7 +109,6 @@ async function openApp(app: (typeof apps)[number]) {
 }
 .landing__card:hover { border-color: #1251a8; box-shadow: 0 6px 18px rgba(11,58,122,.12); }
 .landing__card-title { display: block; font-size: 18px; font-weight: 650; color: #1f2d3d; }
-.landing__card-desc { display: block; margin-top: 8px; font-size: 13px; color: #909399; }
 .landing__card-go { display: block; margin-top: 16px; color: #1251a8; font-size: 13px; }
 @media (max-width: 720px) { .landing__grid { grid-template-columns: 1fr; } }
 </style>

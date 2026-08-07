@@ -2,6 +2,8 @@
 import { computed, onMounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import PageCard from '@/components/common/PageCard.vue'
+import PortalPagination from '@/components/common/PortalPagination.vue'
+import { useClientPager } from '@/composables/useClientPager'
 import { ingestionRegisterCache } from '../../ingestion-register-cache'
 import {
   ingestionApi,
@@ -13,6 +15,7 @@ import {
 
 const { loading, loadError, withLoad } = useIngestionLoading()
 const rows = ref<Registry[]>([])
+const { page, pageSize, paged, total, resetPage } = useClientPager(rows)
 const selected = ref<Registry[]>([])
 const dataSources = ref<DataSource[]>([])
 const tables = ref<DataTable[]>([])
@@ -70,6 +73,14 @@ async function loadRefs() {
   ])
   dataSources.value = ds
   tables.value = tb
+}
+
+function onReset() {
+  query.keyword = ''
+  query.approvalStatus = ''
+  query.shareType = ''
+  resetPage()
+  void load()
 }
 
 function resetForm() {
@@ -245,6 +256,7 @@ onMounted(async () => {
         </el-form-item>
         <el-form-item>
           <el-button type="primary" @click="load">查询</el-button>
+          <el-button @click="onReset">重置</el-button>
           <el-button type="primary" @click="openCreate">手动新增</el-button>
           <el-button @click="batchVisible = true">批量新增</el-button>
           <el-button @click="importVisible = true">批量导入</el-button>
@@ -252,7 +264,7 @@ onMounted(async () => {
         </el-form-item>
       </el-form>
 
-      <el-table :data="rows" border stripe @selection-change="(v: Registry[]) => (selected = v)">
+      <el-table :data="paged" border stripe @selection-change="(v: Registry[]) => (selected = v)">
         <el-table-column type="selection" width="42" />
         <el-table-column prop="title" label="信息资源名称" min-width="160" show-overflow-tooltip />
         <el-table-column label="代码" min-width="120" show-overflow-tooltip>
@@ -270,6 +282,12 @@ onMounted(async () => {
           </template>
         </el-table-column>
       </el-table>
+      <PortalPagination
+        v-if="rows.length"
+        v-model:page="page"
+        v-model:page-size="pageSize"
+        :total="total"
+      />
     </PageCard>
 
     <el-dialog v-model="dialogVisible" :title="editingId == null ? '手动新增数据资源' : '编辑数据资源'" width="640px" destroy-on-close>

@@ -84,6 +84,15 @@ async function loadMine() {
   }
 }
 
+function onQuery() {
+  void loadMine()
+}
+
+function onReset() {
+  statusFilter.value = ''
+  void loadMine()
+}
+
 async function loadPending() {
   loading.value = true
   try {
@@ -232,7 +241,7 @@ onMounted(load)
       <el-tab-pane label="我的申请" name="mine">
         <el-form inline class="portal-inline-form portal-inline-form--block">
           <el-form-item label="状态" class="portal-field-sm">
-            <el-select v-model="statusFilter" clearable placeholder="全部" @change="loadMine">
+            <el-select v-model="statusFilter" clearable placeholder="全部">
               <el-option label="待处理" value="PENDING" />
               <el-option label="已通过" value="APPROVED" />
               <el-option label="已驳回" value="REJECTED" />
@@ -241,7 +250,8 @@ onMounted(load)
             </el-select>
           </el-form-item>
           <el-form-item class="portal-form-actions">
-            <el-button type="primary" @click="loadMine">刷新</el-button>
+            <el-button type="primary" @click="onQuery">查询</el-button>
+            <el-button @click="onReset">重置</el-button>
           </el-form-item>
         </el-form>
         <p class="hint">仅可查看详情；通过后可在详情中分发。点击行查看申请内容。</p>

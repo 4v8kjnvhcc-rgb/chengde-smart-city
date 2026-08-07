@@ -8,13 +8,11 @@ const portals = [
   {
     key: 'dept',
     title: '部门数据共享门户',
-    desc: '首页、政务共享资源、基础资源目录、个人空间',
     path: '/exchange/analysis-portal/dept',
   },
   {
     key: 'leader',
     title: '领导决策门户',
-    desc: '决策驾驶舱 · 八态势',
     path: '/exchange/analysis-portal/leader',
   },
 ] as const
@@ -35,7 +33,6 @@ function openPortal(path: string) {
     </header>
     <main class="landing__main">
       <h1 class="landing__title">应用分析门户</h1>
-      <p class="landing__desc">请选择要进入的独立门户（各自单独打开，互不混页）</p>
       <div class="landing__grid">
         <button
           v-for="p in portals"
@@ -45,7 +42,6 @@ function openPortal(path: string) {
           @click="openPortal(p.path)"
         >
           <span class="landing__card-title">{{ p.title }}</span>
-          <span class="landing__card-desc">{{ p.desc }}</span>
           <span class="landing__card-go">进入 →</span>
         </button>
       </div>
@@ -77,8 +73,7 @@ function openPortal(path: string) {
   cursor: pointer;
 }
 .landing__main { max-width: 960px; margin: 0 auto; padding: 40px 20px; }
-.landing__title { margin: 0 0 8px; font-size: 28px; color: #0b3a7a; }
-.landing__desc { margin: 0 0 28px; color: #606266; }
+.landing__title { margin: 0 0 28px; font-size: 28px; color: #0b3a7a; }
 .landing__grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
 .landing__card {
   appearance: none;
@@ -91,7 +86,6 @@ function openPortal(path: string) {
 }
 .landing__card:hover { border-color: #1251a8; box-shadow: 0 6px 18px rgba(11,58,122,.12); }
 .landing__card-title { display: block; font-size: 18px; font-weight: 650; color: #1f2d3d; }
-.landing__card-desc { display: block; margin-top: 8px; font-size: 13px; color: #909399; }
 .landing__card-go { display: block; margin-top: 16px; color: #1251a8; font-size: 13px; }
 @media (max-width: 720px) { .landing__grid { grid-template-columns: 1fr; } }
 </style>

@@ -668,6 +668,14 @@ async function loadCatalog() {
   catalogEntries.value = (await api.get('/resource-center/platform/catalog/entries', { params })).data || []
 }
 
+function resetCatalogFilter() {
+  catalogFilter.q = ''
+  catalogFilter.visibility = ''
+  catalogFilter.subsystem = ''
+  catalogFilter.publishStatus = ''
+  void loadCatalog()
+}
+
 async function loadCatalogSubsystems() {
   if (catalogSubsystems.value.length) return
   catalogSubsystems.value = (await api.get('/resource-center/platform/catalog/subsystems')).data || []
@@ -2278,6 +2286,7 @@ onMounted(() => {
               </el-form-item>
               <el-form-item class="portal-form-actions">
                 <el-button type="primary" @click="loadCatalog">查询</el-button>
+                <el-button @click="resetCatalogFilter">重置</el-button>
               </el-form-item>
             </el-form>
             <el-table :data="catalogEntries" stripe size="small">

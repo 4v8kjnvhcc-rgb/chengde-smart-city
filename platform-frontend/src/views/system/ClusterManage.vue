@@ -4,6 +4,8 @@ import api from '@/api/http'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import PageHeader from '@/components/common/PageHeader.vue'
 import PageCard from '@/components/common/PageCard.vue'
+import PortalPagination from '@/components/common/PortalPagination.vue'
+import { useClientPager } from '@/composables/useClientPager'
 import { statusLabel } from '@/utils/status-label'
 
 interface ClusterAccount {
@@ -23,6 +25,7 @@ const loading = ref(false)
 const saving = ref(false)
 const keyword = ref('')
 const rows = ref<ClusterAccount[]>([])
+const { page, pageSize, paged, total, resetPage } = useClientPager(rows)
 const dialogVisible = ref(false)
 const editingId = ref<number | null>(null)
 
@@ -48,6 +51,12 @@ async function load() {
   } finally {
     loading.value = false
   }
+}
+
+function onReset() {
+  keyword.value = ''
+  resetPage()
+  void load()
 }
 
 function openCreate() {
@@ -140,10 +149,11 @@ onMounted(load)
         </el-form-item>
         <el-form-item class="portal-form-actions">
           <el-button type="primary" @click="load">查询</el-button>
+          <el-button @click="onReset">重置</el-button>
         </el-form-item>
       </el-form>
 
-      <el-table class="portal-table" :data="rows" v-loading="loading" stripe border>
+      <el-table class="portal-table" :data="paged" v-loading="loading" stripe border>
         <el-table-column prop="clusterCode" label="集群编码" min-width="120" show-overflow-tooltip />
         <el-table-column prop="clusterName" label="集群名称" min-width="140" show-overflow-tooltip />
         <el-table-column prop="accountName" label="账号" min-width="120" show-overflow-tooltip />
@@ -167,6 +177,12 @@ onMounted(load)
           </template>
         </el-table-column>
       </el-table>
+      <PortalPagination
+        v-if="rows.length"
+        v-model:page="page"
+        v-model:page-size="pageSize"
+        :total="total"
+      />
     </PageCard>
 
     <el-dialog

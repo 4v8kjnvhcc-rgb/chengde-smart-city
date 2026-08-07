@@ -3,11 +3,14 @@ import { onMounted, reactive, ref } from 'vue'
 import api from '@/api/http'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import PageCard from '@/components/common/PageCard.vue'
+import PortalPagination from '@/components/common/PortalPagination.vue'
+import { useClientPager } from '@/composables/useClientPager'
 
 const loading = ref(false)
 const rows = ref<Record<string, unknown>[]>([])
 const keyword = ref('')
 const matterType = ref('')
+const { page, pageSize, paged, total, resetPage } = useClientPager(rows)
 
 const dialog = reactive({
   visible: false,
@@ -35,6 +38,13 @@ async function load() {
   } finally {
     loading.value = false
   }
+}
+
+function onReset() {
+  keyword.value = ''
+  matterType.value = ''
+  resetPage()
+  void load()
 }
 
 function openCreate() {
@@ -114,9 +124,10 @@ onMounted(load)
         <el-input v-model="keyword" clearable placeholder="事项编码/名称" style="width:220px" @keyup.enter="load" />
         <el-input v-model="matterType" clearable placeholder="事项类型" style="width:160px" />
         <el-button type="primary" @click="load">查询</el-button>
+        <el-button @click="onReset">重置</el-button>
         <el-button type="primary" @click="openCreate">新建事项</el-button>
       </div>
-      <el-table :data="rows" stripe size="small" empty-text="暂无事项数据（若刚部署请重启后端以执行内置事项初始化）">
+      <el-table :data="paged" stripe size="small" empty-text="暂无事项数据（若刚部署请重启后端以执行内置事项初始化）">
         <el-table-column prop="matterCode" label="事项编码" width="140" />
         <el-table-column prop="matterName" label="事项名称" min-width="180" show-overflow-tooltip />
         <el-table-column prop="matterType" label="事项类型" width="120" />
@@ -133,6 +144,12 @@ onMounted(load)
           </template>
         </el-table-column>
       </el-table>
+      <PortalPagination
+        v-if="rows.length"
+        v-model:page="page"
+        v-model:page-size="pageSize"
+        :total="total"
+      />
     </PageCard>
 
     <el-dialog v-model="dialog.visible" :title="dialog.id ? '编辑事项' : '新建事项'" width="520px" destroy-on-close>

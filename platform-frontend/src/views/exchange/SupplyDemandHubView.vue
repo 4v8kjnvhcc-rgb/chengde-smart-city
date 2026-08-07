@@ -204,9 +204,16 @@ async function withdrawDemand(id: number) {
 }
 
 async function analyzeDemand(id: number) {
-  const res = await api.post(`/exchange/supply/demands/${id}/analyze`)
+  const org = String(dispatchForm.assigneeOrg || '').trim()
+  if (!org) {
+    return ElMessage.warning('请先填写分发单位，再分析该组织已发布门户目录')
+  }
+  const res = await api.post(`/exchange/supply/demands/${id}/analyze`, {
+    providerOrg: org,
+    assigneeOrg: org,
+  })
   analysisResult.value = res.data
-  ElMessage.success('智能匹配完成')
+  ElMessage.success('门户目录智能匹配完成')
   await loadDemands()
 }
 

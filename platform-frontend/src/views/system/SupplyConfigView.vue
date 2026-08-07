@@ -32,6 +32,11 @@ const schemaRows = ref<{ key: string; label: string }[]>([
 const catalogForm = reactive({ title: '', description: '' })
 void catalogForm
 
+const superviseForm = reactive({
+  responseDeadlineDays: 10,
+  mountDeadlineDays: 10,
+})
+
 const templateDialog = reactive({
   visible: false,
   mode: 'view' as 'view' | 'edit',
@@ -94,12 +99,32 @@ async function load() {
       manifests.value = (await api.get('/exchange/supply/manifests')).data
     } else if (tab.value === 'duty') {
       duties.value = (await api.get('/exchange/supply/duties')).data
+    } else if (tab.value === 'supervise') {
+      const res = await api.get('/exchange/supply/supervise-settings')
+      superviseForm.responseDeadlineDays = Number(res.data.responseDeadlineDays ?? 10)
+      superviseForm.mountDeadlineDays = Number(res.data.mountDeadlineDays ?? 10)
     }
   } catch {
     ElMessage.error('加载失败')
   } finally {
     loading.value = false
   }
+}
+
+async function saveSuperviseSettings() {
+  if (!Number.isInteger(superviseForm.responseDeadlineDays) || superviseForm.responseDeadlineDays < 1) {
+    return ElMessage.warning('确认/反馈时限须为正整数（天）')
+  }
+  if (!Number.isInteger(superviseForm.mountDeadlineDays) || superviseForm.mountDeadlineDays < 1) {
+    return ElMessage.warning('挂载门户时限须为正整数（天）')
+  }
+  const res = await api.put('/exchange/supply/supervise-settings', {
+    responseDeadlineDays: superviseForm.responseDeadlineDays,
+    mountDeadlineDays: superviseForm.mountDeadlineDays,
+  })
+  superviseForm.responseDeadlineDays = Number(res.data.responseDeadlineDays ?? 10)
+  superviseForm.mountDeadlineDays = Number(res.data.mountDeadlineDays ?? 10)
+  ElMessage.success('督查督办设置已保存')
 }
 
 async function createTemplate() {
@@ -224,6 +249,7 @@ onMounted(load)
       <el-radio-button value="objection">异议治理</el-radio-button>
       <el-radio-button value="manifest">全局清单</el-radio-button>
       <el-radio-button value="duty">数据责任</el-radio-button>
+      <el-radio-button value="supervise">督查督办设置</el-radio-button>
     </el-radio-group>
 
     <PageCard v-if="tab === 'template'" title="需求模板管理">
@@ -359,6 +385,43 @@ onMounted(load)
       </el-table>
     </PageCard>
 
+    <PageCard v-else-if="tab === 'supervise'" title="督查督办设置">
+      <el-alert
+        type="info"
+        :closable="false"
+        show-icon
+        style="margin-bottom:12px"
+        title="时限按自然日计算（含周末），默认均为 10 天。修改后对新发起的分发、督办、退回与确认生效；已写入需求的截止日不回溯调整。"
+      />
+      <el-form label-width="200px" style="max-width:640px">
+        <el-form-item label="确认/反馈时限" required>
+          <el-input-number
+            v-model="superviseForm.responseDeadlineDays"
+            :min="1"
+            :max="365"
+            :step="1"
+            controls-position="right"
+          />
+          <span class="unit-hint">天（自然日）</span>
+          <div class="field-tip">分发或督办后，数据提供部门、数据需求部门须在该时限内确认或反馈。</div>
+        </el-form-item>
+        <el-form-item label="挂载门户时限" required>
+          <el-input-number
+            v-model="superviseForm.mountDeadlineDays"
+            :min="1"
+            :max="365"
+            :step="1"
+            controls-position="right"
+          />
+          <span class="unit-hint">天（自然日）</span>
+          <div class="field-tip">数源部门同意提供后，须在该时限内将目录挂载到部门数据共享门户。</div>
+        </el-form-item>
+        <el-form-item>
+          <el-button type="primary" @click="saveSuperviseSettings">保存设置</el-button>
+        </el-form-item>
+      </el-form>
+    </PageCard>
+
     <el-dialog
       v-model="templateDialog.visible"
       :title="templateDialog.mode === 'view' ? '查看需求模板' : '编辑需求模板'"
@@ -434,4 +497,6 @@ onMounted(load)
 .mb { margin-bottom: 12px; }
 .schema-editor { display: flex; flex-direction: column; gap: 8px; width: 100%; }
 .schema-row { display: flex; gap: 8px; align-items: center; }
+.unit-hint { margin-left: 8px; color: var(--el-text-color-secondary); }
+.field-tip { width: 100%; margin-top: 6px; font-size: 12px; color: var(--el-text-color-secondary); line-height: 1.5; }
 </style>
