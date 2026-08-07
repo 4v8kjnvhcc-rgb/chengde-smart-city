@@ -136,13 +136,18 @@ async function loadBound() {
         categoryId: filterCategoryId.value,
         catalogOrigin: props.catalogOrigin,
         keyword,
+        excludeApprovalDraft: true,
       },
     })
     boundAll.value = res.data || []
     return
   }
   const res = await api.get('/governance/catalog/resources-mgmt', {
-    params: { catalogOrigin: props.catalogOrigin, keyword },
+    params: {
+      catalogOrigin: props.catalogOrigin,
+      keyword,
+      excludeApprovalDraft: true,
+    },
   })
   const all = (res.data || []) as CatalogRes[]
   boundAll.value = all.filter((r) => r.categoryId != null && Number(r.categoryId) > 0)
@@ -151,7 +156,12 @@ async function loadBound() {
 async function loadUnbound() {
   const keyword = query.resourceName.trim() || undefined
   const res = await api.get('/governance/catalog/resources-mgmt', {
-    params: { unboundOnly: true, catalogOrigin: props.catalogOrigin, keyword },
+    params: {
+      unboundOnly: true,
+      catalogOrigin: props.catalogOrigin,
+      keyword,
+      excludeApprovalDraft: true,
+    },
   })
   unboundAll.value = res.data || []
 }
@@ -314,7 +324,7 @@ onActivated(() => {
       type="info"
       :closable="false"
       show-icon
-      :title="`编目时已选「信息资源分类」的进入「分类下已关联资源」；未选分类的进入「未挂载资源」。关联/解除分类立即生效；在已关联列表点「发布」后才进入「${approvalEntryName}」。`"
+      :title="`本页仅显示编目已点「提交」的资源（待注册发布）。草稿不会出现在此。关联分类后点「发布」进入「${approvalEntryName}」；发布通过后离开本页。`"
       style="margin-bottom: 12px"
     />
 

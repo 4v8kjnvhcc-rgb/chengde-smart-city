@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import api from '@/api/http'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { Search } from '@element-plus/icons-vue'
@@ -7,6 +7,7 @@ import { statusLabel } from '@/utils/status-label'
 import PortalPagination from '@/components/common/PortalPagination.vue'
 import ResourceApplyDialog from './ResourceApplyDialog.vue'
 import type { ApplyResource } from './ResourceApplyDialog.vue'
+import { addFavorite, isFavorited, removeFavorite } from './portal-favorites'
 
 export interface CatalogFacet {
   code?: string
@@ -41,6 +42,8 @@ export interface CatalogRow {
 const props = defineProps<{
   themes: CatalogFacet[]
   providers: CatalogFacet[]
+  /** 首页搜索等外部传入的关键字 */
+  initialKeyword?: string
 }>()
 
 const emit = defineEmits<{
@@ -67,7 +70,7 @@ const RESOURCE_TYPE_OPTS = [
 ]
 
 const loading = ref(false)
-const keyword = ref('')
+const keyword = ref((props.initialKeyword || '').trim())
 const sideMode = ref<'all' | 'theme' | 'dept'>('all')
 const filterTheme = ref('')
 const filterProvider = ref('')
@@ -95,29 +98,6 @@ const applyVisible = ref(false)
 const applyTarget = ref<ApplyResource | null>(null)
 const subscribed = ref(false)
 const followSubId = ref<number | null>(null)
-
-const FOLLOW_KEY = 'portal-catalog-follow'
-
-function followSet(): Set<string> {
-  try {
-    const raw = localStorage.getItem(FOLLOW_KEY)
-    const arr = raw ? (JSON.parse(raw) as string[]) : []
-    return new Set(Array.isArray(arr) ? arr.map(String) : [])
-  } catch {
-    return new Set()
-  }
-}
-
-function isFollowed(id: number | string) {
-  return followSet().has(String(id))
-}
-
-function setFollowed(id: number | string, on: boolean) {
-  const s = followSet()
-  if (on) s.add(String(id))
-  else s.delete(String(id))
-  localStorage.setItem(FOLLOW_KEY, JSON.stringify([...s]))
-}
 
 const pageTitle = computed(() => {
   if (filterProvider.value) return filterProvider.value
@@ -252,7 +232,7 @@ async function openDetail(row: CatalogRow) {
       (s) => String(s.catalogId) === String(row.id) && ['APPROVED', 'READY', 'PENDING'].includes(String(s.status || '')),
     )
     followSubId.value = hit?.id ?? null
-    subscribed.value = !!hit || isFollowed(row.id)
+    subscribed.value = !!hit || isFavorited(row.id)
     const idx = rows.value.findIndex((r) => String(r.id) === String(row.id))
     if (idx >= 0 && res.data?.visitCount != null) {
       rows.value[idx] = { ...rows.value[idx], visitCount: Number(res.data.visitCount) }
@@ -300,12 +280,22 @@ function toggleSubscribe() {
   if (!detail.value) return
   const id = detail.value.id as number | string
   if (!subscribed.value) {
+    addFavorite({
+      catalogId: String(id),
+      title: String(detail.value.title || ''),
+      catalogCode: detail.value.catalogCode as string | undefined,
+      providerOrg: detail.value.providerOrg as string | undefined,
+      resourceType: detail.value.resourceType as string | undefined,
+      resourceTypeLabel: detail.value.resourceTypeLabel as string | undefined,
+      shareAttr: detail.value.shareAttr as string | undefined,
+      openAttr: detail.value.openAttr as string | undefined,
+      updatedAt: detail.value.updatedAt as string | undefined,
+    })
     subscribed.value = true
-    setFollowed(id, true)
-    ElMessage.success('已订阅该资源')
+    ElMessage.success('已订阅，可在「个人空间 · 我的订阅」查看')
     return
   }
-  void ElMessageBox.confirm('确认取消订阅该资源？', '取消订阅', {
+  void ElMessageBox.confirm('确认取消订阅该资源？取消后「我的订阅」中将不再显示。', '取消订阅', {
     type: 'warning',
     confirmButtonText: '取消订阅',
     cancelButtonText: '再想想',
@@ -319,7 +309,7 @@ function toggleSubscribe() {
       }
       followSubId.value = null
     }
-    setFollowed(id, false)
+    removeFavorite(id)
     subscribed.value = false
     ElMessage.success('已取消订阅')
   }).catch(() => undefined)
@@ -357,11 +347,26 @@ const tableColumns = computed(() => (currentTable.value?.columns as Record<strin
 const apiReqParams = computed(() => (currentApi.value?.requestParams as Record<string, unknown>[]) || [])
 const apiRespParams = computed(() => (currentApi.value?.responseParams as Record<string, unknown>[]) || [])
 
+function applyKeyword(kw?: string) {
+  keyword.value = (kw ?? '').trim()
+  return loadCatalog()
+}
+
+watch(
+  () => props.initialKeyword,
+  (v) => {
+    const next = (v || '').trim()
+    if (next === keyword.value) return
+    keyword.value = next
+    void loadCatalog()
+  },
+)
+
 onMounted(() => {
   void loadCatalog()
 })
 
-defineExpose({ loadCatalog, openDetail })
+defineExpose({ loadCatalog, openDetail, applyKeyword })
 </script>
 
 <template>
@@ -754,7 +759,6 @@ defineExpose({ loadCatalog, openDetail })
       :resource="applyTarget"
       :share-attr-label="shareAttrLabel"
       :open-attr-label="openAttrLabel"
-      default-applicant-org="承德高新技术产业开发区管理委员会"
       @submit="submitApplyPayload"
     />
   </div>

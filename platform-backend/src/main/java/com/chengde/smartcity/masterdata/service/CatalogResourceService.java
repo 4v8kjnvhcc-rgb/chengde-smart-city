@@ -94,20 +94,37 @@ public class CatalogResourceService {
 
     public List<GovCatalogResource> list(Long categoryId, String resourceType, String publishStatus,
                                          String approvalStatus, String keyword) {
-        return list(categoryId, resourceType, publishStatus, approvalStatus, keyword, null, null, null, null, null);
+        return list(categoryId, resourceType, publishStatus, approvalStatus, keyword, null, null, null, null, null, null, null);
     }
 
     public List<GovCatalogResource> list(Long categoryId, String resourceType, String publishStatus,
                                          String approvalStatus, String keyword,
                                          String sourcePathType, String providerOrg, Boolean unboundOnly) {
         return list(categoryId, resourceType, publishStatus, approvalStatus, keyword,
-                sourcePathType, providerOrg, unboundOnly, null, null);
+                sourcePathType, providerOrg, unboundOnly, null, null, null, null);
     }
 
     public List<GovCatalogResource> list(Long categoryId, String resourceType, String publishStatus,
                                          String approvalStatus, String keyword,
                                          String sourcePathType, String providerOrg, Boolean unboundOnly,
                                          String catalogOrigin, String shareType) {
+        return list(categoryId, resourceType, publishStatus, approvalStatus, keyword,
+                sourcePathType, providerOrg, unboundOnly, catalogOrigin, shareType, null, null);
+    }
+
+    public List<GovCatalogResource> list(Long categoryId, String resourceType, String publishStatus,
+                                         String approvalStatus, String keyword,
+                                         String sourcePathType, String providerOrg, Boolean unboundOnly,
+                                         String catalogOrigin, String shareType, Boolean excludeApprovalDraft) {
+        return list(categoryId, resourceType, publishStatus, approvalStatus, keyword,
+                sourcePathType, providerOrg, unboundOnly, catalogOrigin, shareType, excludeApprovalDraft, null);
+    }
+
+    public List<GovCatalogResource> list(Long categoryId, String resourceType, String publishStatus,
+                                         String approvalStatus, String keyword,
+                                         String sourcePathType, String providerOrg, Boolean unboundOnly,
+                                         String catalogOrigin, String shareType, Boolean excludeApprovalDraft,
+                                         String resourceFormat) {
         LambdaQueryWrapper<GovCatalogResource> q = new LambdaQueryWrapper<GovCatalogResource>()
                 .orderByDesc(GovCatalogResource::getId);
         if (Boolean.TRUE.equals(unboundOnly)) {
@@ -124,6 +141,10 @@ public class CatalogResourceService {
         if (approvalStatus != null && !approvalStatus.isBlank()) {
             q.eq(GovCatalogResource::getApprovalStatus, approvalStatus);
         }
+        if (Boolean.TRUE.equals(excludeApprovalDraft)) {
+            // 目录注册发布：仅编目「提交」后可见（TO_REGISTER），及已提交发布/下线审批中的（PENDING）
+            q.in(GovCatalogResource::getApprovalStatus, "TO_REGISTER", "PENDING");
+        }
         if (sourcePathType != null && !sourcePathType.isBlank()) {
             q.eq(GovCatalogResource::getSourcePathType, sourcePathType.trim().toUpperCase(Locale.ROOT));
         }
@@ -136,11 +157,16 @@ public class CatalogResourceService {
         if (shareType != null && !shareType.isBlank()) {
             q.eq(GovCatalogResource::getShareType, shareType.trim().toUpperCase(Locale.ROOT));
         }
+        if (resourceFormat != null && !resourceFormat.isBlank()) {
+            q.eq(GovCatalogResource::getResourceFormat, resourceFormat.trim().toUpperCase(Locale.ROOT));
+        }
         if (keyword != null && !keyword.isBlank()) {
             q.and(w -> w.like(GovCatalogResource::getResourceCode, keyword)
                     .or().like(GovCatalogResource::getResourceName, keyword)
                     .or().like(GovCatalogResource::getProviderOrg, keyword)
-                    .or().like(GovCatalogResource::getMetadataEntryCode, keyword));
+                    .or().like(GovCatalogResource::getMetadataEntryCode, keyword)
+                    .or().like(GovCatalogResource::getPhysicalTableName, keyword)
+                    .or().like(GovCatalogResource::getDescription, keyword));
         }
         return resourceMapper.selectList(q);
     }
@@ -528,15 +554,32 @@ public class CatalogResourceService {
         resourceMapper.updateById(r);
     }
 
+    /**
+     * 删除：
+     * - 草稿（approvalStatus=DRAFT）：直接物理删除，无需审批
+     * - 审批中（PENDING）：禁止删除
+     * - 已通过等其它状态：提交删除审批（仅草稿/已下线发布态可提）
+     */
     @Transactional
     public void delete(UserPrincipal operator, Long id) {
         GovCatalogResource r = require(id);
+        if ("PENDING".equalsIgnoreCase(r.getApprovalStatus())) {
+            throw new BusinessException(400, "审批中不可删除，请先撤回或处理待审申请");
+        }
+        if ("PUBLISHED".equalsIgnoreCase(r.getPublishStatus())) {
+            throw new BusinessException(400, "已发布资源请先下线后再删除");
+        }
+        String approval = r.getApprovalStatus() == null ? "DRAFT" : r.getApprovalStatus().toUpperCase(Locale.ROOT);
+        // 草稿：直接删除
+        if ("DRAFT".equals(approval)) {
+            offlinePortal(r);
+            resourceMapper.deleteById(r.getId());
+            return;
+        }
+        // 已通过 / 待注册发布等：走删除审批
         if (!"DRAFT".equalsIgnoreCase(r.getPublishStatus())
                 && !"OFFLINE".equalsIgnoreCase(r.getPublishStatus())) {
             throw new BusinessException(400, "仅草稿或已下线资源可提交删除审批");
-        }
-        if ("PENDING".equalsIgnoreCase(r.getApprovalStatus())) {
-            throw new BusinessException(400, "审批中不可删除");
         }
         submit(operator, id, Map.of("actionType", "DELETE", "comment", "提交编目删除审批"));
     }
@@ -590,6 +633,35 @@ public class CatalogResourceService {
         return a;
     }
 
+    /**
+     * 编目页「提交」：草稿进入目录注册发布可见范围（approvalStatus=TO_REGISTER），不创建审批单。
+     * 真正发布仍须在「目录注册发布」关联分类后提交 PUBLISH 审批。
+     */
+    @Transactional
+    public GovCatalogResource submitToRegister(UserPrincipal operator, Long id) {
+        GovCatalogResource r = require(id);
+        if ("PENDING".equalsIgnoreCase(r.getApprovalStatus())) {
+            throw new BusinessException(400, "审批中不可重复提交，请先处理待审申请");
+        }
+        if ("PUBLISHED".equalsIgnoreCase(r.getPublishStatus())) {
+            throw new BusinessException(400, "已发布资源无需再提交到注册发布，如需变更请先下线");
+        }
+        String st = r.getApprovalStatus() == null ? "" : r.getApprovalStatus().toUpperCase(Locale.ROOT);
+        if ("TO_REGISTER".equals(st)) {
+            return r;
+        }
+        if (!"DRAFT".equals(st) && !"REJECTED".equals(st) && !"WITHDRAWN".equals(st) && !"APPROVED".equals(st)) {
+            throw new BusinessException(400, "当前状态不可提交到注册发布");
+        }
+        if (r.getResourceName() == null || r.getResourceName().isBlank()) {
+            throw new BusinessException(400, "请先完善资源名称后再提交");
+        }
+        r.setApprovalStatus("TO_REGISTER");
+        touch(r, operator);
+        resourceMapper.updateById(r);
+        return r;
+    }
+
     @Transactional
     public GovCatalogApproval approve(UserPrincipal operator, Long approvalId, Map<String, Object> body) {
         GovCatalogApproval a = requireApproval(approvalId);
@@ -637,9 +709,12 @@ public class CatalogResourceService {
             syncPortal(r);
         } else if ("OFFLINE".equals(action)) {
             r.setPublishStatus("OFFLINE");
+            // 下线审批通过后回到编目，须重新提交才进注册发布
+            r.setApprovalStatus("DRAFT");
             offlinePortal(r);
         } else if ("CREATE".equals(action) || "UPDATE".equals(action)) {
-            // 编目新增/变更通过后仍为草稿，待注册挂载后再走发布审批
+            // 编目新增/变更通过后进入待注册发布，可在注册发布页挂载
+            r.setApprovalStatus("TO_REGISTER");
         }
         touch(r, operator);
         resourceMapper.updateById(r);
@@ -731,7 +806,8 @@ public class CatalogResourceService {
         }
         String comment = str(body == null ? null : body.get("comment"), "管理员即时下线");
         r.setPublishStatus("OFFLINE");
-        r.setApprovalStatus("APPROVED");
+        // 下线后回到编目草稿，须重新「提交」才会再出现在注册发布页
+        r.setApprovalStatus("DRAFT");
         offlinePortal(r);
         touch(r, operator);
         resourceMapper.updateById(r);

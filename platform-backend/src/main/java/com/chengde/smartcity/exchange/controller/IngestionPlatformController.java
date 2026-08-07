@@ -197,6 +197,13 @@ public class IngestionPlatformController {
         return ApiResponse.ok(service.createDataSource(principal, body));
     }
 
+    /** 未落库探测：只测连通性，不创建数据源（须放在 /{id}/test 之前避免路径冲突）。 */
+    @PostMapping("/data-sources/test-connection")
+    @PreAuthorize("isAuthenticated()")
+    public ApiResponse<Map<String, Object>> testConnectionByParams(@RequestBody Map<String, Object> body) {
+        return ApiResponse.ok(service.testConnectionByParams(body));
+    }
+
     @PostMapping("/data-sources/{id}/test")
     @PreAuthorize("isAuthenticated()")
     public ApiResponse<Map<String, Object>> testDataSource(@AuthenticationPrincipal UserPrincipal principal,

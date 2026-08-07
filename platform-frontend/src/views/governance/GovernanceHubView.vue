@@ -230,6 +230,9 @@ function syncQuery() {
   if (tab.value === 'quality') q.qSub = qualitySub.value
   if (tab.value === 'model') q.mSub = modelSub.value
   if (tab.value === 'catalog') q.cSub = catalogSub.value
+  if (tab.value === 'catalog' && catalogSub.value === 'subscriptions' && route.query.subTab) {
+    q.subTab = String(Array.isArray(route.query.subTab) ? route.query.subTab[0] : route.query.subTab)
+  }
   const fusionNeedsEtl = tab.value === 'model' && ['clean', 'schedule', 'execute'].includes(modelSub.value)
   if (tab.value === 'etl' || fusionNeedsEtl) {
     if (tab.value === 'etl') q.etlSub = etlSub.value || 'task-mgmt'

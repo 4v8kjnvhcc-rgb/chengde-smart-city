@@ -512,6 +512,43 @@ public class IngestionPlatformService {
         return list;
     }
 
+    /**
+     * 未落库连接探测：仅用表单参数做 JDBC 探测，不创建/更新数据源。
+     * 供编目侧「新增数据源」弹窗「测试连接」使用。
+     */
+    public Map<String, Object> testConnectionByParams(Map<String, Object> body) {
+        String sourceType = str(body.get("sourceType"), "MYSQL").toUpperCase();
+        if ("FILE".equals(sourceType) || "API".equals(sourceType)) {
+            throw new BusinessException(400, "FILE/API 数据源不支持 JDBC 连接测试");
+        }
+        String host = str(body.get("host"), null);
+        String username = str(body.get("username"), null);
+        if (host == null || host.isBlank() || username == null || username.isBlank()) {
+            throw new BusinessException(400, "请填写数据库连接地址与用户名后再测试");
+        }
+        String password = body.get("password") == null ? "" : String.valueOf(body.get("password"));
+        if (password.isBlank()) {
+            throw new BusinessException(400, "测试连接须填写密码");
+        }
+        JdbcProbeService.ConnConfig conn = new JdbcProbeService.ConnConfig();
+        conn.sourceType = sourceType;
+        conn.host = host.trim();
+        conn.port = body.get("port") == null ? 3306 : Integer.parseInt(String.valueOf(body.get("port")));
+        conn.database = str(body.get("database"), "");
+        conn.username = username.trim();
+        conn.password = password;
+        Map<String, Object> probe = jdbcProbeService.testConnection(conn);
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("ok", true);
+        out.put("connStatus", "OK");
+        out.put("tableCount", probe.getOrDefault("tableCount", 0));
+        out.put("schema", probe.getOrDefault("schema", ""));
+        out.put("product", probe.getOrDefault("product", ""));
+        out.put("elapsedMs", probe.getOrDefault("elapsedMs", 0));
+        out.put("message", "连接探测成功");
+        return out;
+    }
+
     /** 真实 JDBC 连接测试：建立连接、SELECT 1、统计表数量；失败即 FAILED 且抛出真实原因。 */
     @Transactional
     public Map<String, Object> testDataSource(UserPrincipal operator, Long id) {

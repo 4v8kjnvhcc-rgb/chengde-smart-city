@@ -251,15 +251,8 @@ public class PortalService {
                     row.put("resourceTypeLabel", resourceTypeLabel(String.valueOf(row.get("resourceType"))));
                 }
             }
-            if ("TABLE".equals(row.get("resourceType")) && row.get("tables") == null
-                    && !blank(gov.getPhysicalTableName())) {
-                row.put("tables", List.of(Map.of(
-                        "tableName", gov.getPhysicalTableName(),
-                        "catalogCode", nz(catalog.getCatalogCode(), ""),
-                        "summary", nz(gov.getDescription(), ""),
-                        "columns", List.of()
-                )));
-            }
+            // 编目保存的是 columnList/api/file，门户详情需要 tables/apis/files 结构
+            enrichPortalDetailFromGovExt(row, catalog, gov, ext);
         } else {
             row.put("updatedAt", formatDt(catalog.getPublishedAt()));
         }
@@ -276,7 +269,7 @@ public class PortalService {
     }
 
     /**
-     * @param scope mine=我的申请；pending=待我审批（资源提供方为本机构）；空=全部（兼容）
+     * @param scope mine=本部门申请；pending=待本部门审批（资源提供方为本机构）；空=仅本部门相关（申请或待审）
      */
     public List<Map<String, Object>> listSubscriptions(UserPrincipal operator, String status, String scope) {
         LambdaQueryWrapper<BizPortalSubscription> q = new LambdaQueryWrapper<BizPortalSubscription>()
@@ -288,28 +281,47 @@ public class PortalService {
         String myOrg = resolveOrgName(operator);
         String username = operator == null ? null : operator.getUsername();
         boolean admin = operator != null && operator.isSystemAdmin();
+        String scopeKey = nz(scope, "").trim().toLowerCase(Locale.ROOT);
 
         List<Map<String, Object>> out = new ArrayList<>();
         for (BizPortalSubscription sub : list) {
             BizCatalogItem cat = catalogMapper.selectById(sub.getCatalogId());
             String providerOrg = cat == null ? null : cat.getProviderOrg();
 
-            if ("mine".equalsIgnoreCase(nz(scope, ""))) {
-                if (username == null || !username.equals(sub.getCreatedBy())) {
-                    continue;
+            if ("mine".equals(scopeKey)) {
+                // 本部门提交的申请（按申请单位隔离；兼容历史仅按申请人账号）
+                if (!admin) {
+                    if (blank(myOrg)) {
+                        if (username == null || !username.equals(sub.getCreatedBy())) {
+                            continue;
+                        }
+                    } else if (!orgNameEquals(myOrg, sub.getApplicantOrg())
+                            && (username == null || !username.equals(sub.getCreatedBy()))) {
+                        continue;
+                    }
                 }
-            } else if ("pending".equalsIgnoreCase(nz(scope, ""))) {
+            } else if ("pending".equals(scopeKey)) {
+                // 本部门作为资源提供方的待审申请
                 if (!"PENDING".equalsIgnoreCase(sub.getStatus())) {
                     continue;
                 }
                 if (!admin) {
-                    if (blank(myOrg) || blank(providerOrg) || !myOrg.equals(providerOrg)) {
+                    if (blank(myOrg) || !orgNameEquals(myOrg, providerOrg)) {
                         continue;
                     }
                     // 本部门自己提的申请不算「待我审批」
-                    if (username != null && username.equals(sub.getCreatedBy())) {
+                    if (orgNameEquals(myOrg, sub.getApplicantOrg())
+                            || (username != null && username.equals(sub.getCreatedBy()))) {
                         continue;
                     }
+                }
+            } else if (!admin) {
+                // 未指定 scope：禁止返回全量，仅本部门相关
+                boolean asApplicant = !blank(myOrg) && orgNameEquals(myOrg, sub.getApplicantOrg());
+                boolean asProvider = !blank(myOrg) && orgNameEquals(myOrg, providerOrg);
+                boolean asSelf = username != null && username.equals(sub.getCreatedBy());
+                if (!asApplicant && !asProvider && !asSelf) {
+                    continue;
                 }
             }
 
@@ -357,6 +369,14 @@ public class PortalService {
         if (!Set.of("TABLE", "FILE", "API").contains(resourceType)) {
             throw new BusinessException(400, "resourceType 须为 TABLE/FILE/API");
         }
+        String myOrg = resolveOrgName(operator);
+        if (blank(myOrg) && (operator == null || !operator.isSystemAdmin())) {
+            throw new BusinessException(400, "当前账号未绑定所属部门，无法提交申请");
+        }
+        // 申请单位强制取登录用户部门，保证「我的申请」按部门隔离
+        String applicantOrg = blank(myOrg)
+                ? str(body.get("applicantOrg"), "系统管理员")
+                : myOrg;
         String purpose = str(body.get("purpose"), str(body.get("scene"), ""));
         if (purpose.length() > 500) {
             purpose = purpose.substring(0, 500);
@@ -365,6 +385,7 @@ public class PortalService {
         try {
             Map<String, Object> payload = new LinkedHashMap<>(body);
             payload.remove("catalogId");
+            payload.put("applicantOrg", applicantOrg);
             payloadJson = OM.writeValueAsString(payload);
         } catch (Exception e) {
             log.warn("serialize apply payload failed: {}", e.getMessage());
@@ -372,7 +393,7 @@ public class PortalService {
 
         BizPortalSubscription sub = new BizPortalSubscription();
         sub.setCatalogId(catalogId);
-        sub.setApplicantOrg(str(body.get("applicantOrg"), resolveOrgName(operator)));
+        sub.setApplicantOrg(applicantOrg);
         sub.setResourceType(resourceType);
         sub.setPurpose(purpose);
         sub.setApplyPayload(payloadJson);
@@ -386,7 +407,7 @@ public class PortalService {
                 Map<String, Object> govBody = new LinkedHashMap<>();
                 govBody.put("resourceId", catalog.getGovResourceId());
                 govBody.put("shareMode", toGovShareMode(resourceType));
-                govBody.put("applicantOrg", sub.getApplicantOrg());
+                govBody.put("applicantOrg", applicantOrg);
                 govBody.put("purpose", purpose);
                 govBody.put("applyPayload", payloadJson);
                 catalogSubscriptionService.create(operator, govBody);
@@ -417,6 +438,34 @@ public class PortalService {
         return org == null ? null : org.getOrgName();
     }
 
+    /** 部门名比对：去首尾空白后全等（与资源提供单位 / 申请单位对齐） */
+    private boolean orgNameEquals(String a, String b) {
+        if (blank(a) || blank(b)) {
+            return false;
+        }
+        return a.trim().equals(b.trim());
+    }
+
+    /** 仅资源提供方部门（或系统管理员）可审批 */
+    private void assertProviderCanReview(UserPrincipal operator, BizPortalSubscription sub) {
+        if (operator != null && operator.isSystemAdmin()) {
+            return;
+        }
+        if (operator == null) {
+            throw new BusinessException(403, "未登录，无法审批");
+        }
+        String myOrg = resolveOrgName(operator);
+        BizCatalogItem catalog = catalogMapper.selectById(sub.getCatalogId());
+        String providerOrg = catalog == null ? null : catalog.getProviderOrg();
+        if (blank(myOrg) || !orgNameEquals(myOrg, providerOrg)) {
+            throw new BusinessException(403, "仅资源提供方部门可审批该申请");
+        }
+        if (orgNameEquals(myOrg, sub.getApplicantOrg())
+                || Objects.equals(operator.getUsername(), sub.getCreatedBy())) {
+            throw new BusinessException(403, "不能审批本部门自己提交的申请");
+        }
+    }
+
     @SuppressWarnings("unchecked")
     private Object parseJsonSafe(String json) {
         if (blank(json)) {
@@ -435,6 +484,11 @@ public class PortalService {
         if (sub == null) {
             throw new BusinessException(404, "订阅申请不存在");
         }
+        if (!"PENDING".equalsIgnoreCase(sub.getStatus())) {
+            throw new BusinessException(400, "仅待审批申请可审核");
+        }
+        assertProviderCanReview(operator, sub);
+
         String action = str(body.get("action"), "APPROVE").toUpperCase(Locale.ROOT);
         boolean approved = "APPROVE".equals(action) || "APPROVED".equals(action);
         sub.setStatus(approved ? "APPROVED" : "REJECTED");
@@ -471,19 +525,24 @@ public class PortalService {
             throw new BusinessException(404, "订阅申请不存在");
         }
         boolean admin = operator != null && operator.isSystemAdmin();
-        if (!admin && (operator == null || !Objects.equals(operator.getUsername(), sub.getCreatedBy()))) {
-            throw new BusinessException(403, "仅申请人可取消订阅");
+        if (!admin) {
+            if (operator == null) {
+                throw new BusinessException(403, "仅申请方可取消订阅");
+            }
+            String myOrg = resolveOrgName(operator);
+            boolean self = Objects.equals(operator.getUsername(), sub.getCreatedBy());
+            boolean sameDept = orgNameEquals(myOrg, sub.getApplicantOrg());
+            if (!self && !sameDept) {
+                throw new BusinessException(403, "仅本部门申请方可取消订阅");
+            }
         }
-        if (!"PENDING".equalsIgnoreCase(sub.getStatus()) && !"APPROVED".equalsIgnoreCase(sub.getStatus())) {
-            throw new BusinessException(400, "当前状态不可取消");
+        if (!"PENDING".equalsIgnoreCase(sub.getStatus())) {
+            throw new BusinessException(400, "仅待审批申请可取消");
         }
         sub.setStatus("CANCELLED");
-        sub.setApproverNote("用户取消订阅");
         subscriptionMapper.updateById(sub);
-        if (operator != null) {
-            auditService.log(operator.getUserId(), operator.getUsername(), operator.getOrgId(),
-                    "PORTAL_SUB_CANCEL", "biz_portal_subscription", String.valueOf(id), "CANCELLED");
-        }
+        auditService.log(operator.getUserId(), operator.getUsername(), operator.getOrgId(),
+                "PORTAL_SUB_CANCEL", "biz_portal_subscription", String.valueOf(id), null);
     }
 
     public List<BizPortalSituation> listSituations() {
@@ -918,6 +977,208 @@ public class PortalService {
         }
     }
 
+    /**
+     * 将编目 extJson（columnList / api / file）转换为门户详情使用的 tables / apis / files。
+     */
+    @SuppressWarnings("unchecked")
+    private void enrichPortalDetailFromGovExt(Map<String, Object> row,
+                                              BizCatalogItem catalog,
+                                              GovCatalogResource gov,
+                                              Map<String, Object> ext) {
+        String type = String.valueOf(row.getOrDefault("resourceType", "TABLE")).toUpperCase(Locale.ROOT);
+        if ("TABLE".equals(type)) {
+            List<Map<String, Object>> columns = mapPortalColumnsFromExt(ext);
+            Object tablesObj = row.get("tables");
+            if (tablesObj instanceof List<?> rawList && !rawList.isEmpty()) {
+                List<Map<String, Object>> tables = new ArrayList<>();
+                for (Object o : rawList) {
+                    if (!(o instanceof Map<?, ?> m)) {
+                        continue;
+                    }
+                    Map<String, Object> t = new LinkedHashMap<>();
+                    for (Map.Entry<?, ?> e : m.entrySet()) {
+                        t.put(String.valueOf(e.getKey()), e.getValue());
+                    }
+                    Object cols = t.get("columns");
+                    boolean emptyCols = !(cols instanceof List<?>) || ((List<?>) cols).isEmpty();
+                    if (emptyCols && !columns.isEmpty()) {
+                        t.put("columns", columns);
+                    }
+                    if (blank(str(t.get("summary"), "")) && !columns.isEmpty()) {
+                        t.put("summary", "共 " + columns.size() + " 个字段");
+                    }
+                    tables.add(t);
+                }
+                if (!tables.isEmpty()) {
+                    row.put("tables", tables);
+                    return;
+                }
+            }
+            String tableName = firstNonBlank(
+                    gov.getPhysicalTableName(),
+                    ext == null ? null : str(ext.get("bindTableName"), null),
+                    null);
+            if (blank(tableName) && columns.isEmpty()) {
+                return;
+            }
+            Map<String, Object> t = new LinkedHashMap<>();
+            t.put("tableName", blank(tableName) ? "—" : tableName);
+            t.put("catalogCode", nz(catalog.getCatalogCode(), ""));
+            String summary = nz(gov.getDescription(), "");
+            if (blank(summary) && !columns.isEmpty()) {
+                summary = "共 " + columns.size() + " 个字段";
+            }
+            t.put("summary", summary);
+            t.put("columns", columns);
+            row.put("tables", List.of(t));
+            return;
+        }
+        if ("API".equals(type) && row.get("apis") == null && ext != null && ext.get("api") instanceof Map<?, ?> apiMap) {
+            Map<String, Object> api = new LinkedHashMap<>();
+            api.put("apiName", str(apiMap.get("apiName"), catalog.getTitle()));
+            api.put("apiCode", nz(catalog.getCatalogCode(), ""));
+            api.put("catalogCode", nz(catalog.getCatalogCode(), ""));
+            api.put("version", str(apiMap.get("apiVersion"), ""));
+            api.put("targetAddressHint", "资源申请通过后前往个人中心查看");
+            api.put("requestPath", firstNonBlank(str(apiMap.get("apiPath"), null), str(apiMap.get("apiUrl"), null), ""));
+            api.put("httpMethod", str(apiMap.get("apiMethod"), "GET"));
+            api.put("registeredAt", str(apiMap.get("registerAt"), ""));
+            api.put("description", str(apiMap.get("apiDescription"), nz(gov.getDescription(), "")));
+            api.put("expireAt", str(apiMap.get("expireAt"), ""));
+            api.put("requestParams", mapPortalApiParams(apiMap.get("requestParams")));
+            api.put("responseParams", mapPortalApiParams(apiMap.get("responseParams")));
+            Object example = apiMap.get("apiResultJson");
+            if (example instanceof String s && !s.isBlank()) {
+                try {
+                    api.put("successExample", OM.readValue(s, Object.class));
+                } catch (Exception e) {
+                    api.put("successExample", Map.of("raw", s));
+                }
+            } else if (example != null) {
+                api.put("successExample", example);
+            } else {
+                api.put("successExample", Map.of());
+            }
+            row.put("apis", List.of(api));
+            return;
+        }
+        if ("FILE".equals(type) && row.get("files") == null && ext != null && ext.get("file") instanceof Map<?, ?> fileMap) {
+            Map<String, Object> file = new LinkedHashMap<>();
+            String fileName = str(fileMap.get("fileName"), catalog.getTitle());
+            file.put("fileName", fileName);
+            file.put("fileCode", nz(catalog.getCatalogCode(), ""));
+            file.put("catalogCode", nz(catalog.getCatalogCode(), ""));
+            file.put("format", guessFileFormat(fileName));
+            file.put("size", str(fileMap.get("fileSize"), ""));
+            file.put("updateCycle", nz(gov.getUpdateCycle(), ""));
+            file.put("storage", "FTP");
+            file.put("addressHint", "资源申请通过后前往个人中心查看 FTP 地址");
+            file.put("registeredAt", formatDt(gov.getUpdatedAt() != null ? gov.getUpdatedAt() : catalog.getPublishedAt()));
+            file.put("description", firstNonBlank(str(fileMap.get("fileRemark"), null), nz(gov.getDescription(), ""), ""));
+            row.put("files", List.of(file));
+        }
+    }
+
+    private List<Map<String, Object>> mapPortalColumnsFromExt(Map<String, Object> ext) {
+        if (ext == null) {
+            return List.of();
+        }
+        Object raw = ext.get("columnList");
+        if (!(raw instanceof List<?> list) || list.isEmpty()) {
+            return List.of();
+        }
+        List<Map<String, Object>> out = new ArrayList<>();
+        for (Object o : list) {
+            if (!(o instanceof Map<?, ?> m)) {
+                continue;
+            }
+            String name = firstNonBlank(str(m.get("columnName"), null), str(m.get("name"), null), null);
+            if (blank(name)) {
+                continue;
+            }
+            Map<String, Object> col = new LinkedHashMap<>();
+            col.put("name", name);
+            col.put("comment", firstNonBlank(
+                    str(m.get("columnNameZh"), null),
+                    str(m.get("remark"), null),
+                    str(m.get("comment"), null),
+                    name));
+            col.put("type", firstNonBlank(
+                    str(m.get("dataTypeZh"), null),
+                    str(m.get("dataType"), null),
+                    str(m.get("type"), null),
+                    ""));
+            Object len = m.get("length");
+            if (len == null) {
+                len = m.get("columnLength");
+            }
+            col.put("length", len == null || String.valueOf(len).isBlank() ? "" : String.valueOf(len));
+            col.put("pk", boolish(m.get("pk")) || boolish(m.get("primaryKey")) || boolish(m.get("isPk")));
+            if (m.containsKey("nullable")) {
+                col.put("nullable", boolish(m.get("nullable")));
+            } else if (m.containsKey("notNull") || m.containsKey("required")) {
+                col.put("nullable", !(boolish(m.get("notNull")) || boolish(m.get("required"))));
+            } else {
+                col.put("nullable", true);
+            }
+            col.put("sensitivity", firstNonBlank(str(m.get("sensLevel"), null), str(m.get("sensitivity"), null), ""));
+            out.add(col);
+        }
+        return out;
+    }
+
+    private List<Map<String, Object>> mapPortalApiParams(Object raw) {
+        if (!(raw instanceof List<?> list) || list.isEmpty()) {
+            return List.of();
+        }
+        List<Map<String, Object>> out = new ArrayList<>();
+        for (Object o : list) {
+            if (!(o instanceof Map<?, ?> m)) {
+                continue;
+            }
+            Map<String, Object> p = new LinkedHashMap<>();
+            p.put("name", str(m.get("name"), ""));
+            p.put("required", boolish(m.get("required")));
+            p.put("dataType", firstNonBlank(str(m.get("dataType"), null), str(m.get("type"), null), ""));
+            p.put("comment", firstNonBlank(str(m.get("comment"), null), str(m.get("description"), null), ""));
+            out.add(p);
+        }
+        return out;
+    }
+
+    private String guessFileFormat(String fileName) {
+        if (blank(fileName) || !fileName.contains(".")) {
+            return "";
+        }
+        return fileName.substring(fileName.lastIndexOf('.') + 1).toUpperCase(Locale.ROOT);
+    }
+
+    private boolean boolish(Object v) {
+        if (v == null) {
+            return false;
+        }
+        if (v instanceof Boolean b) {
+            return b;
+        }
+        if (v instanceof Number n) {
+            return n.intValue() != 0;
+        }
+        String s = String.valueOf(v).trim();
+        return "true".equalsIgnoreCase(s) || "1".equals(s) || "Y".equalsIgnoreCase(s) || "是".equals(s);
+    }
+
+    private String firstNonBlank(String... values) {
+        if (values == null) {
+            return null;
+        }
+        for (String v : values) {
+            if (!blank(v)) {
+                return v;
+            }
+        }
+        return null;
+    }
+
     private String formatDt(LocalDateTime dt) {
         return dt == null ? "" : DT_FMT.format(dt);
     }
@@ -998,19 +1259,8 @@ public class PortalService {
                 key = code;
             } else if (name != null && nameToKey.containsKey(name)) {
                 key = nameToKey.get(name);
-            } else if (code != null) {
-                key = code;
-                map.putIfAbsent(key, newFacet(code, name,
-                        "/exchange/analysis-portal/dept?section=subscribe&baseCode=" + code));
-                if (name != null) {
-                    nameToKey.putIfAbsent(name, key);
-                }
-            } else if (name != null) {
-                key = "NAME:" + name;
-                map.putIfAbsent(key, newFacet(name, name,
-                        "/exchange/analysis-portal/dept?section=subscribe&baseCode=" + name));
-                nameToKey.putIfAbsent(name, key);
             }
+            // 不再按资源上的零散名称“发明”新图标：图标条只等于分类表一级节点
             if (key != null) {
                 bumpFacet(map.get(key), c);
             }
@@ -1050,25 +1300,16 @@ public class PortalService {
             }
             String name = !blank(c.getThemeName()) ? c.getThemeName() : c.getThemeCode();
             String code = !blank(c.getThemeCode()) ? c.getThemeCode() : null;
-            String key;
+            String key = null;
             if (code != null && map.containsKey(code)) {
                 key = code;
             } else if (name != null && nameToKey.containsKey(name)) {
                 key = nameToKey.get(name);
-            } else if (code != null) {
-                key = code;
-                map.putIfAbsent(key, newFacet(code, name,
-                        "/exchange/analysis-portal/dept?section=catalog&themeCode=" + code));
-                if (name != null) {
-                    nameToKey.putIfAbsent(name, key);
-                }
-            } else {
-                key = "NAME:" + name;
-                map.putIfAbsent(key, newFacet(name, name,
-                        "/exchange/analysis-portal/dept?section=catalog&themeCode=" + name));
-                nameToKey.putIfAbsent(name, key);
             }
-            bumpFacet(map.get(key), c);
+            // 主题卡片同样只展示分类表一级节点，不按资源名称发明新主题
+            if (key != null) {
+                bumpFacet(map.get(key), c);
+            }
         }
         return filterFacetsWithCatalog(map.values());
     }
@@ -1135,7 +1376,8 @@ public class PortalService {
                 .orderByAsc(GovCatalogCategory::getSortOrder)
                 .orderByAsc(GovCatalogCategory::getId));
 
-        Set<Long> rootIds = new LinkedHashSet<>();
+        // 与归集「指标与目录体系构建 · 数据资源分类」对齐：优先只用 INGEST 根下的一级分类
+        List<GovCatalogCategory> rootCandidates = new ArrayList<>();
         for (GovCatalogCategory c : all) {
             boolean isRoot = c.getParentId() == null || c.getParentId() == 0L;
             if (!isRoot) {
@@ -1144,6 +1386,17 @@ public class PortalService {
             String name = nz(c.getCategoryName(), "");
             String code = nz(c.getCategoryCode(), "").toUpperCase(Locale.ROOT);
             if (rootName.equals(name) || code.endsWith(codeSuffix)) {
+                rootCandidates.add(c);
+            }
+        }
+        Set<Long> rootIds = new LinkedHashSet<>();
+        for (GovCatalogCategory c : rootCandidates) {
+            if ("INGEST".equalsIgnoreCase(nz(c.getCatalogOrigin(), ""))) {
+                rootIds.add(c.getId());
+            }
+        }
+        if (rootIds.isEmpty()) {
+            for (GovCatalogCategory c : rootCandidates) {
                 rootIds.add(c.getId());
             }
         }
@@ -1165,6 +1418,14 @@ public class PortalService {
         if (l1.isEmpty()) {
             String prefix = rootName + "/";
             for (GovCatalogCategory c : all) {
+                if (!"INGEST".equalsIgnoreCase(nz(c.getCatalogOrigin(), "")) && !rootCandidates.isEmpty()) {
+                    // 已有 INGEST 根时，路径回退也只认 INGEST
+                    boolean ingestRootExists = rootCandidates.stream()
+                            .anyMatch(r -> "INGEST".equalsIgnoreCase(nz(r.getCatalogOrigin(), "")));
+                    if (ingestRootExists && !"INGEST".equalsIgnoreCase(nz(c.getCatalogOrigin(), ""))) {
+                        continue;
+                    }
+                }
                 String path = nz(c.getCategoryPath(), "");
                 if (!path.startsWith(prefix)) {
                     continue;
