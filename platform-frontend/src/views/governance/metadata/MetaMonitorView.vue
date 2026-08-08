@@ -27,6 +27,9 @@ interface LastRun {
   summary?: string
   tableCount?: number
   logText?: string
+  triggerType?: string
+  dsInstanceId?: number
+  dsState?: string
   durationSeconds?: number
   diff?: DiffInfo | null
   connectorName?: string
@@ -79,8 +82,11 @@ const items = ref<MonitorRow[]>([])
 const runs = ref<LastRun[]>([])
 const kpi = reactive({ total: 0, running: 0, success: 0, failed: 0, stopped: 0, idle: 0 })
 const omHealthy = ref(false)
+const dsHealthy = ref(false)
 const refreshedAt = ref('')
 const loading = ref(false)
+const stoppingTaskId = ref<number | null>(null)
+const stoppingRunId = ref<number | null>(null)
 const autoRefresh = ref(true)
 let timer: ReturnType<typeof setInterval> | null = null
 
@@ -163,6 +169,17 @@ function formatSummary(summary?: string, diff?: DiffInfo | null) {
   return summary
 }
 
+function isTaskRunning(row: MonitorRow) {
+  return row.execStatus === 'RUNNING'
+    || row.task?.status === 'RUNNING'
+    || !!row.canStop
+    || row.lastRun?.status === 'RUNNING'
+}
+
+function stopDisabledTip(row: MonitorRow) {
+  return isTaskRunning(row) ? '' : '仅运行中任务可停止'
+}
+
 function execPulse(status?: string) {
   if (status === 'RUNNING') return 'is-run'
   if (status === 'SUCCESS') return 'is-ok'
@@ -192,6 +209,7 @@ async function loadMonitor(silent = false) {
     })
     items.value = res.data.items || []
     omHealthy.value = !!res.data.omHealthy
+    dsHealthy.value = !!res.data.dsHealthy
     refreshedAt.value = res.data.refreshedAt || ''
     const k = res.data.kpi || {}
     kpi.total = Number(k.total || items.value.length)
@@ -232,6 +250,7 @@ function resetFilter() {
 }
 
 async function stopTask(row: MonitorRow) {
+  if (!isTaskRunning(row)) return
   const runId = row.lastRun?.id
   const name = row.task.taskName
   try {
@@ -243,19 +262,28 @@ async function stopTask(row: MonitorRow) {
   } catch {
     return
   }
-  if (runId && row.lastRun?.status === 'RUNNING') {
-    const res = await api.post(`/governance/platform/metadata/collect/runs/${runId}/stop`)
+  stoppingTaskId.value = row.task.id
+  try {
+    const useRunStop = runId && (row.execStatus === 'RUNNING' || row.lastRun?.status === 'RUNNING')
+    const res = await api.post(
+      useRunStop
+        ? `/governance/platform/metadata/collect/runs/${runId}/stop`
+        : `/governance/platform/metadata/collect/tasks/${row.task.id}/stop`,
+    )
     ElMessage.success(`已停止：${statusLabel(res.data.status)}`)
-  } else {
-    const res = await api.post(`/governance/platform/metadata/collect/tasks/${row.task.id}/stop`)
-    ElMessage.success(`已停止：${statusLabel(res.data.status)}`)
+    await onSearch()
+  } catch (e: unknown) {
+    const err = e as Error & { message?: string }
+    ElMessage.error(err.message || '停止失败')
+  } finally {
+    stoppingTaskId.value = null
   }
-  await onSearch()
 }
 
-async function stopRun(runId: number) {
+async function stopRun(runId: number, status?: string) {
+  if (status && status !== 'RUNNING') return
   try {
-    await ElMessageBox.confirm('确认停止该次采集运行？将终止元数据采集。', '停止采集', {
+    await ElMessageBox.confirm('确认停止该次采集运行？停止后将终止元数据采集。', '停止采集', {
       type: 'warning',
       confirmButtonText: '停止',
       cancelButtonText: '取消',
@@ -263,9 +291,17 @@ async function stopRun(runId: number) {
   } catch {
     return
   }
-  const res = await api.post(`/governance/platform/metadata/collect/runs/${runId}/stop`)
-  ElMessage.success(`已停止：${statusLabel(res.data.status)}`)
-  await onSearch()
+  stoppingRunId.value = runId
+  try {
+    const res = await api.post(`/governance/platform/metadata/collect/runs/${runId}/stop`)
+    ElMessage.success(`已停止：${statusLabel(res.data.status)}`)
+    await onSearch()
+  } catch (e: unknown) {
+    const err = e as Error & { message?: string }
+    ElMessage.error(err.message || '停止失败')
+  } finally {
+    stoppingRunId.value = null
+  }
 }
 
 async function openLogDetail(runId: number) {
@@ -307,15 +343,17 @@ function applyKpiFilter(status: string) {
 
 function setupTimer() {
   if (timer) clearInterval(timer)
+  const interval = hasRunning.value ? 2000 : 5000
   timer = setInterval(() => {
     if (!autoRefresh.value) return
     void loadMonitor(true)
     if (hasRunning.value) void loadRuns(true)
-  }, 5000)
+  }, interval)
 }
 
-watch(hasRunning, (v) => {
-  if (v && autoRefresh.value) void loadMonitor(true)
+watch(hasRunning, () => {
+  setupTimer()
+  if (hasRunning.value && autoRefresh.value) void loadMonitor(true)
 })
 
 onMounted(async () => {
@@ -356,6 +394,9 @@ onUnmounted(() => {
     </div>
 
     <PageCard title="元数据采集监控">
+      <p class="mm-runlog-tip">
+        本页仅支持查看与停止；任务执行请在「元数据采集」页发起。运行中可点击「停止」终止本次采集，已结束或未执行任务停止按钮置灰。
+      </p>
       <div class="mm-toolbar">
         <el-form inline class="portal-inline-form portal-inline-form--block">
           <el-form-item label="数据源" class="portal-field-xl">
@@ -384,6 +425,9 @@ onUnmounted(() => {
         <div class="mm-toolbar__right">
           <el-tag :type="omHealthy ? 'success' : 'info'" size="small">
             OpenMetadata {{ $statusLabel(omHealthy ? 'UP' : 'DOWN') }}
+          </el-tag>
+          <el-tag :type="dsHealthy ? 'success' : 'info'" size="small">
+            DolphinScheduler {{ $statusLabel(dsHealthy ? 'UP' : 'DOWN') }}
           </el-tag>
           <el-switch v-model="autoRefresh" inline-prompt active-text="实时" inactive-text="暂停" />
           <el-button size="small" @click="onSearch">刷新</el-button>
@@ -437,7 +481,7 @@ onUnmounted(() => {
             <span v-else>{{ formatDuration(row.lastRun?.durationSeconds) }}</span>
           </template>
         </el-table-column>
-        <el-table-column label="操作" width="220" fixed="right">
+        <el-table-column label="操作" width="200" fixed="right">
           <template #default="{ row }">
             <el-button
               v-if="row.lastRun"
@@ -452,9 +496,11 @@ onUnmounted(() => {
               @click="openMetadata(row.lastRun, row.task.taskName)"
             >元数据</el-button>
             <el-button
-              v-if="row.canStop"
               link
               type="danger"
+              :title="stopDisabledTip(row)"
+              :disabled="!isTaskRunning(row) || (stoppingTaskId != null && stoppingTaskId !== row.task.id)"
+              :loading="stoppingTaskId === row.task.id"
               @click="stopTask(row)"
             >停止</el-button>
           </template>
@@ -469,6 +515,7 @@ onUnmounted(() => {
     </PageCard>
 
     <PageCard title="采集运行日志" style="margin-top:12px">
+      <p class="mm-runlog-tip">历史运行明细；运行中记录可点击「停止」，已结束记录停止按钮置灰。</p>
       <el-table :data="runs.slice(0, 50)" stripe size="small" empty-text="暂无运行日志">
         <el-table-column prop="id" label="运行ID" width="80" />
         <el-table-column label="任务" min-width="140" show-overflow-tooltip>
@@ -476,6 +523,9 @@ onUnmounted(() => {
         </el-table-column>
         <el-table-column label="数据源" width="120" show-overflow-tooltip>
           <template #default="{ row }">{{ row.connectorName || '—' }}</template>
+        </el-table-column>
+        <el-table-column label="触发" width="80">
+          <template #default="{ row }">{{ row.triggerType === 'SCHEDULED' ? '定时' : '手动' }}</template>
         </el-table-column>
         <el-table-column label="状态" width="90">
           <template #default="{ row }">
@@ -496,7 +546,14 @@ onUnmounted(() => {
           <template #default="{ row }">
             <el-button link type="primary" @click="openLogDetail(row.id)">日志详情</el-button>
             <el-button link type="primary" @click="openMetadata(row)">元数据</el-button>
-            <el-button v-if="row.status === 'RUNNING'" link type="danger" @click="stopRun(row.id)">停止</el-button>
+            <el-button
+              link
+              type="danger"
+              :title="row.status === 'RUNNING' ? '' : '仅运行中任务可停止'"
+              :disabled="row.status !== 'RUNNING'"
+              :loading="stoppingRunId === row.id"
+              @click="stopRun(row.id, row.status)"
+            >停止</el-button>
           </template>
         </el-table-column>
       </el-table>
@@ -512,6 +569,13 @@ onUnmounted(() => {
             <el-descriptions-item label="源类型">{{ $statusLabel(logDetail.sourceType) }}</el-descriptions-item>
             <el-descriptions-item label="执行状态">
               <el-tag :type="$statusTagType(logDetail.status)" size="small">{{ $statusLabel(logDetail.status) }}</el-tag>
+            </el-descriptions-item>
+            <el-descriptions-item v-if="logDetail.triggerType" label="触发方式">
+              {{ logDetail.triggerType === 'SCHEDULED' ? '定时调度' : '手动' }}
+            </el-descriptions-item>
+            <el-descriptions-item v-if="logDetail.dsInstanceId" label="DS 实例">
+              #{{ logDetail.dsInstanceId }}
+              <span v-if="logDetail.dsState">（{{ logDetail.dsState }}）</span>
             </el-descriptions-item>
             <el-descriptions-item label="开始时间">{{ formatTime(logDetail.startedAt as string) }}</el-descriptions-item>
             <el-descriptions-item label="结束时间">{{ formatTime(logDetail.endedAt as string) }}</el-descriptions-item>
@@ -546,9 +610,10 @@ onUnmounted(() => {
               @click="openMetadata(logDetail as LastRun, String(logDetail.taskName || ''))"
             >查看本次元数据</el-button>
             <el-button
-              v-if="logDetail.status === 'RUNNING'"
               type="danger"
-              @click="stopRun(Number(logDetail.id))"
+              :disabled="logDetail.status !== 'RUNNING'"
+              :title="logDetail.status === 'RUNNING' ? '' : '仅运行中任务可停止'"
+              @click="stopRun(Number(logDetail.id), String(logDetail.status))"
             >停止采集</el-button>
           </div>
         </template>
@@ -680,6 +745,11 @@ onUnmounted(() => {
   max-height: 280px; overflow: auto; white-space: pre-wrap; word-break: break-all;
 }
 .mm-drawer-actions { margin-top: 16px; display: flex; gap: 8px; }
+.mm-runlog-tip {
+  margin: 0 0 10px;
+  font-size: 13px;
+  color: var(--el-text-color-secondary);
+}
 @media (max-width: 1100px) {
   .mm-kpi { grid-template-columns: repeat(2, 1fr); }
 }

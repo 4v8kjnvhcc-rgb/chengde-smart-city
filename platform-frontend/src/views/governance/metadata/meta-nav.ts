@@ -1,4 +1,6 @@
 export type MetaSection =
+  | 'category'
+  | 'source'
   | 'model'
   | 'collect'
   | 'monitor'
@@ -8,6 +10,8 @@ export type MetaSection =
   | 'analyze'
 
 export const metaSectionItems: { key: MetaSection; label: string }[] = [
+  { key: 'category', label: '数据源分类' },
+  { key: 'source', label: '数据源管理' },
   { key: 'model', label: '元模型管理' },
   { key: 'collect', label: '元数据采集' },
   { key: 'monitor', label: '元数据采集监控' },
@@ -18,6 +22,8 @@ export const metaSectionItems: { key: MetaSection; label: string }[] = [
 ]
 
 const sectionMap: Record<string, MetaSection> = {
+  category: 'category', m087: 'category', 'source-category': 'category',
+  source: 'source', m088: 'source', 'data-source': 'source',
   model: 'model', m089: 'model', metamodel: 'model',
   collect: 'collect', m090: 'collect',
   monitor: 'monitor', m091: 'monitor',

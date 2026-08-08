@@ -18,6 +18,13 @@ public class GovMetaCollectTask {
     private String cronExpr;
     private String scopeType;
     private String tableList;
+    private String scheduleType;
+    private String publishStatus;
+    private Long categoryId;
+    private Long metaDataSourceId;
+    private Long dsProjectCode;
+    private Long dsDefinitionCode;
+    private Integer dsScheduleId;
     private String status;
     private LocalDateTime lastRunAt;
     private String lastMessage;
@@ -45,6 +52,20 @@ public class GovMetaCollectTask {
     public void setScopeType(String scopeType) { this.scopeType = scopeType; }
     public String getTableList() { return tableList; }
     public void setTableList(String tableList) { this.tableList = tableList; }
+    public String getScheduleType() { return scheduleType; }
+    public void setScheduleType(String scheduleType) { this.scheduleType = scheduleType; }
+    public String getPublishStatus() { return publishStatus; }
+    public void setPublishStatus(String publishStatus) { this.publishStatus = publishStatus; }
+    public Long getCategoryId() { return categoryId; }
+    public void setCategoryId(Long categoryId) { this.categoryId = categoryId; }
+    public Long getMetaDataSourceId() { return metaDataSourceId; }
+    public void setMetaDataSourceId(Long metaDataSourceId) { this.metaDataSourceId = metaDataSourceId; }
+    public Long getDsProjectCode() { return dsProjectCode; }
+    public void setDsProjectCode(Long dsProjectCode) { this.dsProjectCode = dsProjectCode; }
+    public Long getDsDefinitionCode() { return dsDefinitionCode; }
+    public void setDsDefinitionCode(Long dsDefinitionCode) { this.dsDefinitionCode = dsDefinitionCode; }
+    public Integer getDsScheduleId() { return dsScheduleId; }
+    public void setDsScheduleId(Integer dsScheduleId) { this.dsScheduleId = dsScheduleId; }
     public String getStatus() { return status; }
     public void setStatus(String status) { this.status = status; }
     public LocalDateTime getLastRunAt() { return lastRunAt; }

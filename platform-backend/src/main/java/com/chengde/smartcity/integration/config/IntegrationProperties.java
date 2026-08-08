@@ -55,6 +55,10 @@ public class IntegrationProperties {
         private String password = "dolphinscheduler123";
         private String token = "";
         private String tenantCode = "default";
+        /** DS Worker 回调平台后端的基址，默认 host.docker.internal:9090 */
+        private String callbackBaseUrl = "http://host.docker.internal:9090";
+        /** DS Shell 回调鉴权令牌；为空时使用 password 作为 fallback */
+        private String callbackToken = "";
         public String getUrl() { return url; }
         public void setUrl(String url) { this.url = url; }
         public String getUser() { return user; }
@@ -65,6 +69,10 @@ public class IntegrationProperties {
         public void setToken(String token) { this.token = token; }
         public String getTenantCode() { return tenantCode; }
         public void setTenantCode(String tenantCode) { this.tenantCode = tenantCode; }
+        public String getCallbackBaseUrl() { return callbackBaseUrl; }
+        public void setCallbackBaseUrl(String callbackBaseUrl) { this.callbackBaseUrl = callbackBaseUrl; }
+        public String getCallbackToken() { return callbackToken; }
+        public void setCallbackToken(String callbackToken) { this.callbackToken = callbackToken; }
     }
 
     public static class Kettle {

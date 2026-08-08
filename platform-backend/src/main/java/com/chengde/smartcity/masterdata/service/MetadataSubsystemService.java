@@ -12,10 +12,13 @@ import com.chengde.smartcity.exchange.mapper.IngDataSourceMapper;
 import com.chengde.smartcity.exchange.mapper.IngDataTableMapper;
 import com.chengde.smartcity.exchange.mapper.IngIngestTaskMapper;
 import com.chengde.smartcity.integration.config.IntegrationProperties;
+import com.chengde.smartcity.integration.jdbc.CredentialCipher;
 import com.chengde.smartcity.integration.jdbc.JdbcProbeService;
 import com.chengde.smartcity.masterdata.support.DataLayerSupport;
 import com.chengde.smartcity.integration.openmetadata.OpenMetadataClient;
 import com.chengde.smartcity.masterdata.entity.GovMetaChangeNotice;
+import com.chengde.smartcity.masterdata.entity.GovMetaDataSource;
+import com.chengde.smartcity.masterdata.mapper.GovMetaDataSourceMapper;
 import com.chengde.smartcity.masterdata.entity.GovMetaCollectRun;
 import com.chengde.smartcity.masterdata.entity.GovMetaCollectTask;
 import com.chengde.smartcity.masterdata.entity.GovMetaModel;
@@ -57,13 +60,17 @@ import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
 import java.util.UUID;
+import java.util.concurrent.CompletableFuture;
 import java.util.stream.Collectors;
 import javax.sql.DataSource;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.context.annotation.Lazy;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.transaction.support.TransactionSynchronization;
+import org.springframework.transaction.support.TransactionSynchronizationManager;
 
 @Service
 public class MetadataSubsystemService {
@@ -94,6 +101,11 @@ public class MetadataSubsystemService {
     private final IngDataColumnMapper ingDataColumnMapper;
     private final IngIngestTaskMapper ingIngestTaskMapper;
     private final JdbcProbeService jdbcProbeService;
+    private final CredentialCipher credentialCipher;
+    private final MetaCollectDsService metaCollectDsService;
+    private final MetaSourceCategoryService metaSourceCategoryService;
+    private final GovMetaDataSourceMapper metaDataSourceMapper;
+    private final MetadataSubsystemService self;
     private final ObjectMapper objectMapper = new ObjectMapper();
 
     public MetadataSubsystemService(GovMetaModelMapper modelMapper,
@@ -114,6 +126,11 @@ public class MetadataSubsystemService {
                                     IngDataColumnMapper ingDataColumnMapper,
                                     IngIngestTaskMapper ingIngestTaskMapper,
                                     JdbcProbeService jdbcProbeService,
+                                    CredentialCipher credentialCipher,
+                                    MetaCollectDsService metaCollectDsService,
+                                    MetaSourceCategoryService metaSourceCategoryService,
+                                    GovMetaDataSourceMapper metaDataSourceMapper,
+                                    @Lazy MetadataSubsystemService self,
                                     @Autowired(required = false) DataSource dataSource) {
         this.modelMapper = modelMapper;
         this.taskMapper = taskMapper;
@@ -133,6 +150,11 @@ public class MetadataSubsystemService {
         this.ingDataColumnMapper = ingDataColumnMapper;
         this.ingIngestTaskMapper = ingIngestTaskMapper;
         this.jdbcProbeService = jdbcProbeService;
+        this.credentialCipher = credentialCipher;
+        this.metaCollectDsService = metaCollectDsService;
+        this.metaSourceCategoryService = metaSourceCategoryService;
+        this.metaDataSourceMapper = metaDataSourceMapper;
+        this.self = self;
         this.dataSource = dataSource;
     }
 
@@ -154,11 +176,14 @@ public class MetadataSubsystemService {
         m.setDataLength(intOrNull(body.get("dataLength")));
         m.setRequiredFlag(intVal(body.get("requiredFlag"), 0));
         m.setComponentType(str(body.get("componentType"), "FORM"));
+        m.setMetaDataSourceId(longVal(body.get("metaDataSourceId")));
+        m.setSourceTableName(str(body.get("sourceTableName"), null));
+        m.setSourceColumnName(str(body.get("sourceColumnName"), null));
         m.setContentJson(str(body.get("contentJson"), "[]"));
-        m.setStatus("DRAFT");
+        applyModelReadyOnSave(m);
         m.setCreatedBy(operator.getUsername());
         modelMapper.insert(m);
-        snapshotVersion(operator, "MODEL", m.getId(), toJson(m), "创建草稿");
+        snapshotVersion(operator, "MODEL", m.getId(), toJson(m), "创建元模型");
         auditService.log(operator.getUserId(), operator.getUsername(), operator.getOrgId(),
                 "META_MODEL_CREATE", "gov_meta_model", String.valueOf(m.getId()), m.getModelNameZh());
         return m.getId();
@@ -174,26 +199,283 @@ public class MetadataSubsystemService {
                 throw new BusinessException(400, "英文名称不可编辑");
             }
         }
-        if ("PUBLISHED".equals(m.getStatus()) && !Boolean.TRUE.equals(body.get("forceEdit"))) {
-            m.setStatus("DRAFT");
-        }
         if (body.containsKey("modelNameZh")) m.setModelNameZh(required(body.get("modelNameZh"), "modelNameZh"));
         if (body.containsKey("modelType")) m.setModelType(str(body.get("modelType"), m.getModelType()));
         if (body.containsKey("dataLength")) m.setDataLength(intOrNull(body.get("dataLength")));
         if (body.containsKey("requiredFlag")) m.setRequiredFlag(intVal(body.get("requiredFlag"), 0));
         if (body.containsKey("componentType")) m.setComponentType(str(body.get("componentType"), m.getComponentType()));
+        if (body.containsKey("metaDataSourceId")) m.setMetaDataSourceId(longVal(body.get("metaDataSourceId")));
+        if (body.containsKey("sourceTableName")) m.setSourceTableName(str(body.get("sourceTableName"), null));
+        if (body.containsKey("sourceColumnName")) m.setSourceColumnName(str(body.get("sourceColumnName"), null));
         if (body.containsKey("contentJson")) m.setContentJson(str(body.get("contentJson"), m.getContentJson()));
+        applyModelReadyOnSave(m);
         modelMapper.updateById(m);
-        snapshotVersion(operator, "MODEL", m.getId(), toJson(m), "编辑后需重新发布");
+        snapshotVersion(operator, "MODEL", m.getId(), toJson(m), "保存元模型");
         auditService.log(operator.getUserId(), operator.getUsername(), operator.getOrgId(),
                 "META_MODEL_UPDATE", "gov_meta_model", String.valueOf(id), m.getStatus());
+    }
+
+    /** 对已保存模型重新执行物理库 DDL（建表/加列/改列）。 */
+    @Transactional
+    public Map<String, Object> syncModelPhysical(UserPrincipal operator, Long id) {
+        GovMetaModel m = requireModel(id);
+        if (m.getMetaDataSourceId() == null) {
+            throw new BusinessException(400, "模型未绑定数据源，请先编辑并选择数据源");
+        }
+        if (m.getSourceTableName() == null || m.getSourceTableName().isBlank()) {
+            throw new BusinessException(400, "模型未填写表名，请先编辑补全");
+        }
+        applyModelPhysicalDdl(m);
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("modelId", id);
+        out.put("metaDataSourceId", m.getMetaDataSourceId());
+        out.put("sourceTableName", m.getSourceTableName());
+        out.put("message", "物理库表结构已同步");
+        auditService.log(operator.getUserId(), operator.getUsername(), operator.getOrgId(),
+                "META_MODEL_SYNC_PHYSICAL", "gov_meta_model", String.valueOf(id), m.getSourceTableName());
+        return out;
+    }
+
+    /** 保存即生效：校验字段、同步物理库结构，并置为已发布。 */
+    private void applyModelReadyOnSave(GovMetaModel m) {
+        List<String> fields = extractFieldNames(m.getContentJson());
+        if (fields.isEmpty()) {
+            throw new BusinessException(400, "请至少定义一个字段");
+        }
+        applyModelPhysicalDdl(m);
+        if (m.getModelNameEn() == null || m.getModelNameEn().isBlank()) {
+            m.setModelNameEn(m.getModelCode());
+        }
+        m.setStatus("PUBLISHED");
+        m.setPublishedAt(LocalDateTime.now());
+    }
+
+    /**
+     * 元模型保存后落物理库：表模型建表/补列，字段模型新增或修改列。
+     */
+    private void applyModelPhysicalDdl(GovMetaModel m) {
+        if (m.getMetaDataSourceId() == null) {
+            throw new BusinessException(400, "请选择数据源");
+        }
+        if (m.getSourceTableName() == null || m.getSourceTableName().isBlank()) {
+            throw new BusinessException(400, "请填写表名");
+        }
+        GovMetaDataSource mds = metaDataSourceMapper.selectById(m.getMetaDataSourceId());
+        if (mds == null || !"ACTIVE".equals(mds.getStatus())) {
+            throw new BusinessException(404, "数据源不存在");
+        }
+        JdbcProbeService.ConnConfig cfg = resolveConnConfigForMetaDataSource(mds);
+        String tableName = JdbcProbeService.sanitizeIdent(m.getSourceTableName().trim());
+        List<Map<String, Object>> fieldDefs = parseFieldList(m.getContentJson());
+        if (fieldDefs.isEmpty()) {
+            throw new BusinessException(400, "请至少定义一个字段");
+        }
+        if ("TABLE".equalsIgnoreCase(m.getModelType())) {
+            applyTableModelPhysicalDdl(cfg, tableName, fieldDefs, m.getModelNameZh());
+            return;
+        }
+        if ("COLUMN".equalsIgnoreCase(m.getModelType())) {
+            applyColumnModelPhysicalDdl(cfg, tableName, fieldDefs);
+            return;
+        }
+        throw new BusinessException(400, "不支持的模型类型: " + m.getModelType());
+    }
+
+    private void applyTableModelPhysicalDdl(JdbcProbeService.ConnConfig cfg, String tableName,
+                                            List<Map<String, Object>> fieldDefs, String comment) {
+        if (!jdbcProbeService.tableExists(cfg, tableName)) {
+            jdbcProbeService.executeDdl(cfg, buildCreateTableDdl(tableName, fieldDefs, comment));
+            log.info("元模型建表完成 db={} table={}", cfg.database, tableName);
+            return;
+        }
+        Set<String> existing = existingColumnNames(cfg, tableName);
+        for (Map<String, Object> field : fieldDefs) {
+            String code = fieldCode(field);
+            if (code == null || existing.contains(code.toLowerCase(Locale.ROOT))) {
+                continue;
+            }
+            String ddl = "ALTER TABLE `" + tableName + "` ADD COLUMN `" + code + "` " + buildColumnDefinition(field);
+            jdbcProbeService.executeDdl(cfg, ddl);
+            log.info("元模型补列完成 db={} table={} column={}", cfg.database, tableName, code);
+        }
+    }
+
+    private void applyColumnModelPhysicalDdl(JdbcProbeService.ConnConfig cfg, String tableName,
+                                             List<Map<String, Object>> fieldDefs) {
+        if (!jdbcProbeService.tableExists(cfg, tableName)) {
+            throw new BusinessException(400, "源表 " + tableName + " 不存在，请先创建表模型或确认表名");
+        }
+        if (fieldDefs.isEmpty()) {
+            throw new BusinessException(400, "请至少定义一个字段");
+        }
+        String headAction = str(fieldDefs.get(0).get("action"), "ADD");
+        Set<String> existing = existingColumnNames(cfg, tableName);
+        if ("MODIFY".equalsIgnoreCase(headAction)) {
+            Map<String, Object> field = fieldDefs.get(0);
+            String colCode = fieldCode(field);
+            if (colCode == null && field.get("code") == null) {
+                colCode = JdbcProbeService.sanitizeIdent(str(field.get("name"), "col"));
+            }
+            if (colCode == null) {
+                throw new BusinessException(400, "字段编码不能为空");
+            }
+            if (!existing.contains(colCode.toLowerCase(Locale.ROOT))) {
+                throw new BusinessException(400, "源字段 " + colCode + " 不存在，无法修改");
+            }
+            String colDef = buildColumnDefinition(field);
+            jdbcProbeService.executeDdl(cfg,
+                    "ALTER TABLE `" + tableName + "` MODIFY COLUMN `" + colCode + "` " + colDef);
+            log.info("元模型改列完成 db={} table={} column={}", cfg.database, tableName, colCode);
+            return;
+        }
+        int added = 0;
+        Set<String> pending = new LinkedHashSet<>();
+        for (Map<String, Object> field : fieldDefs) {
+            String action = str(field.get("action"), "ADD");
+            if ("MODIFY".equalsIgnoreCase(action)) {
+                continue;
+            }
+            String colCode = fieldCode(field);
+            if (colCode == null && field.get("code") == null) {
+                colCode = JdbcProbeService.sanitizeIdent(str(field.get("name"), "col"));
+            }
+            if (colCode == null || colCode.isBlank()) {
+                continue;
+            }
+            String lower = colCode.toLowerCase(Locale.ROOT);
+            if (existing.contains(lower)) {
+                throw new BusinessException(400, "字段 " + colCode + " 已存在于源表中，请使用「修改字段」或更换编码");
+            }
+            if (!pending.add(lower)) {
+                throw new BusinessException(400, "新增字段编码重复: " + colCode);
+            }
+            String colDef = buildColumnDefinition(field);
+            jdbcProbeService.executeDdl(cfg,
+                    "ALTER TABLE `" + tableName + "` ADD COLUMN `" + colCode + "` " + colDef);
+            log.info("元模型加列完成 db={} table={} column={}", cfg.database, tableName, colCode);
+            added++;
+        }
+        if (added == 0) {
+            throw new BusinessException(400, "请至少定义一个有效的新增字段编码");
+        }
+    }
+
+    private Set<String> existingColumnNames(JdbcProbeService.ConnConfig cfg, String tableName) {
+        Map<String, Object> desc = jdbcProbeService.describeTable(cfg, tableName);
+        Object raw = desc.get("columns");
+        Set<String> names = new LinkedHashSet<>();
+        if (raw instanceof List<?> list) {
+            for (Object item : list) {
+                if (item instanceof Map<?, ?> col) {
+                    Object name = col.get("columnName");
+                    if (name != null) {
+                        names.add(String.valueOf(name).toLowerCase(Locale.ROOT));
+                    }
+                }
+            }
+        }
+        return names;
+    }
+
+    private String fieldCode(Map<String, Object> field) {
+        String code = str(field.get("code"), null);
+        if (code == null) {
+            code = str(field.get("nameEn"), null);
+        }
+        if (code == null || code.isBlank()) {
+            return null;
+        }
+        return JdbcProbeService.sanitizeIdent(code.trim());
+    }
+
+    private String buildCreateTableDdl(String tableName, List<Map<String, Object>> fieldDefs, String comment) {
+        List<String> colDefs = new ArrayList<>();
+        List<String> pkCols = new ArrayList<>();
+        for (Map<String, Object> field : fieldDefs) {
+            String code = fieldCode(field);
+            if (code == null) {
+                continue;
+            }
+            StringBuilder col = new StringBuilder("  `").append(code).append("` ")
+                    .append(buildColumnDefinition(field));
+            if (Boolean.TRUE.equals(field.get("required")) || Boolean.TRUE.equals(field.get("primaryKey"))) {
+                col.append(" NOT NULL");
+            }
+            colDefs.add(col.toString());
+            if (Boolean.TRUE.equals(field.get("primaryKey"))) {
+                pkCols.add(code);
+            }
+        }
+        if (colDefs.isEmpty()) {
+            throw new BusinessException(400, "请至少定义一个有效字段编码");
+        }
+        if (!pkCols.isEmpty()) {
+            colDefs.add("  PRIMARY KEY (`" + String.join("`,`", pkCols) + "`)");
+        }
+        StringBuilder ddl = new StringBuilder("CREATE TABLE IF NOT EXISTS `")
+                .append(tableName)
+                .append("` (\n")
+                .append(String.join(",\n", colDefs))
+                .append("\n) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+        if (comment != null && !comment.isBlank()) {
+            ddl.append(" COMMENT='").append(comment.replace("'", "''")).append("'");
+        }
+        return ddl.toString();
+    }
+
+    private String buildColumnDefinition(Map<String, Object> field) {
+        return mapModelFieldToSqlType(str(field.get("type"), "VARCHAR"), intOrNull(field.get("length")));
+    }
+
+    private String mapModelFieldToSqlType(String dataType, Integer length) {
+        String t = dataType == null ? "" : dataType.trim().toUpperCase(Locale.ROOT);
+        int len = length == null || length <= 0 ? 64 : Math.min(length, 4000);
+        if (t.contains("TEXT") || t.contains("BLOB") || t.contains("JSON")) {
+            return "TEXT";
+        }
+        if (t.contains("CHAR") && !t.contains("INT")) {
+            return "VARCHAR(" + len + ")";
+        }
+        if (t.contains("BIGINT")) {
+            return "BIGINT";
+        }
+        if (t.contains("TINYINT")) {
+            return "TINYINT";
+        }
+        if (t.contains("SMALLINT")) {
+            return "SMALLINT";
+        }
+        if (t.contains("MEDIUMINT")) {
+            return "MEDIUMINT";
+        }
+        if (t.contains("INT")) {
+            return "INT";
+        }
+        if (t.contains("DECIMAL") || t.contains("NUMERIC")) {
+            return "DECIMAL(18,2)";
+        }
+        if (t.contains("DOUBLE") || t.contains("FLOAT")) {
+            return "DOUBLE";
+        }
+        if (t.contains("DATETIME") || t.contains("TIMESTAMP")) {
+            return "DATETIME";
+        }
+        if ("DATE".equals(t)) {
+            return "DATE";
+        }
+        if (t.contains("TIME")) {
+            return "TIME";
+        }
+        if (t.contains("BOOL") || t.contains("BIT")) {
+            return "TINYINT(1)";
+        }
+        return "VARCHAR(" + len + ")";
     }
 
     @Transactional
     public void publishModel(UserPrincipal operator, Long id) {
         GovMetaModel m = requireModel(id);
-        m.setStatus("PUBLISHED");
-        m.setPublishedAt(LocalDateTime.now());
+        applyModelReadyOnSave(m);
         modelMapper.updateById(m);
         snapshotVersion(operator, "MODEL", m.getId(), toJson(m), "发布元模型");
         auditService.log(operator.getUserId(), operator.getUsername(), operator.getOrgId(),
@@ -213,18 +495,71 @@ public class MetadataSubsystemService {
     public Map<String, Object> compareModels(Long leftId, Long rightId) {
         GovMetaModel left = requireModel(leftId);
         GovMetaModel right = requireModel(rightId);
+        Map<String, Object> fieldDiff = diffContentJsonFields(left.getContentJson(), right.getContentJson());
+        List<Map<String, Object>> basicDiff = new ArrayList<>();
+        addBasicDiff(basicDiff, "modelNameZh", nvl(left.getModelNameZh()), nvl(right.getModelNameZh()));
+        addBasicDiff(basicDiff, "modelNameEn", nvl(left.getModelNameEn()), nvl(right.getModelNameEn()));
+        addBasicDiff(basicDiff, "modelType", nvl(left.getModelType()), nvl(right.getModelType()));
+        addBasicDiff(basicDiff, "componentType", nvl(left.getComponentType()), nvl(right.getComponentType()));
+        addBasicDiff(basicDiff, "status", nvl(left.getStatus()), nvl(right.getStatus()));
+        List<Map<String, Object>> fieldAttrDiff = buildModelFieldAttrDiff(left.getContentJson(), right.getContentJson());
         Map<String, Object> out = new LinkedHashMap<>();
         out.put("left", left);
         out.put("right", right);
         out.put("sameType", left.getModelType() != null && left.getModelType().equals(right.getModelType()));
-        out.put("sameContent", String.valueOf(left.getContentJson()).equals(String.valueOf(right.getContentJson())));
-        out.put("fieldDiff", diffContentJsonFields(left.getContentJson(), right.getContentJson()));
-        out.put("diffFields", List.of(
-                Map.of("field", "modelNameZh", "left", nvl(left.getModelNameZh()), "right", nvl(right.getModelNameZh())),
-                Map.of("field", "status", "left", nvl(left.getStatus()), "right", nvl(right.getStatus())),
-                Map.of("field", "requiredFlag", "left", String.valueOf(left.getRequiredFlag()), "right", String.valueOf(right.getRequiredFlag()))
-        ));
+        out.put("sameContent", String.valueOf(left.getContentJson()).equals(String.valueOf(right.getContentJson()))
+                && basicDiff.isEmpty() && fieldAttrDiff.isEmpty());
+        out.put("fieldDiff", fieldDiff);
+        out.put("basicDiff", basicDiff);
+        out.put("fieldAttrDiff", fieldAttrDiff);
+        out.put("leftFieldCount", extractFieldNames(left.getContentJson()).size());
+        out.put("rightFieldCount", extractFieldNames(right.getContentJson()).size());
         return out;
+    }
+
+    private void addBasicDiff(List<Map<String, Object>> rows, String field, String left, String right) {
+        if (Objects.equals(left, right)) {
+            return;
+        }
+        Map<String, Object> row = new LinkedHashMap<>();
+        row.put("field", field);
+        row.put("left", left);
+        row.put("right", right);
+        rows.add(row);
+    }
+
+    private List<Map<String, Object>> buildModelFieldAttrDiff(Object leftRaw, Object rightRaw) {
+        Map<String, String> leftMap = fieldNameToJson(leftRaw);
+        Map<String, String> rightMap = fieldNameToJson(rightRaw);
+        Set<String> codes = new LinkedHashSet<>();
+        codes.addAll(leftMap.keySet());
+        codes.addAll(rightMap.keySet());
+        List<Map<String, Object>> rows = new ArrayList<>();
+        for (String code : codes) {
+            String lj = leftMap.get(code);
+            String rj = rightMap.get(code);
+            if (lj == null) {
+                rows.add(fieldAttrRow(code, "added", "—", rj));
+                continue;
+            }
+            if (rj == null) {
+                rows.add(fieldAttrRow(code, "removed", lj, "—"));
+                continue;
+            }
+            if (!nvl(lj).equals(nvl(rj))) {
+                rows.add(fieldAttrRow(code, "changed", lj, rj));
+            }
+        }
+        return rows;
+    }
+
+    private Map<String, Object> fieldAttrRow(String code, String changeType, String left, String right) {
+        Map<String, Object> row = new LinkedHashMap<>();
+        row.put("fieldCode", code);
+        row.put("changeType", changeType);
+        row.put("left", left);
+        row.put("right", right);
+        return row;
     }
 
     public Map<String, Object> exportModels() {
@@ -249,12 +584,15 @@ public class MetadataSubsystemService {
         return n;
     }
 
-    public List<GovMetaCollectTask> listTasks(String status, String sourceType, String keyword) {
+    public List<GovMetaCollectTask> listTasks(String status, String sourceType, String scheduleType, String keyword) {
         LambdaQueryWrapper<GovMetaCollectTask> q = new LambdaQueryWrapper<GovMetaCollectTask>()
                 .ne(GovMetaCollectTask::getStatus, "DELETED")
                 .orderByDesc(GovMetaCollectTask::getId);
         if (status != null && !status.isBlank()) {
             q.eq(GovMetaCollectTask::getStatus, status);
+        }
+        if (scheduleType != null && !scheduleType.isBlank()) {
+            q.eq(GovMetaCollectTask::getScheduleType, scheduleType.trim().toUpperCase(Locale.ROOT));
         }
         if (keyword != null && !keyword.isBlank()) {
             q.like(GovMetaCollectTask::getTaskName, keyword.trim());
@@ -270,10 +608,152 @@ public class MetadataSubsystemService {
         return tasks;
     }
 
+    public List<Map<String, Object>> listCollectTasksEnriched(String status, String sourceType,
+                                                              String scheduleType, String keyword) {
+        List<GovMetaCollectTask> tasks = listTasks(status, sourceType, scheduleType, keyword);
+        List<Map<String, Object>> rows = new ArrayList<>();
+        for (GovMetaCollectTask task : tasks) {
+            rows.add(enrichCollectTaskRow(task));
+        }
+        return rows;
+    }
+
+    private Map<String, Object> enrichCollectTaskRow(GovMetaCollectTask task) {
+        Map<String, Object> row = new LinkedHashMap<>();
+        row.put("task", task);
+        int pendingEntries = countPendingEntriesForCollectTask(task.getId());
+        Long versionCount = versionMapper.selectCount(new LambdaQueryWrapper<GovMetaVersion>()
+                .eq(GovMetaVersion::getCollectTaskId, task.getId()));
+        row.put("pendingChangeCount", pendingEntries);
+        row.put("needMetadataPublish", pendingEntries > 0);
+        row.put("schedulePaused", pendingEntries > 0 && !"PUBLISHED".equals(task.getPublishStatus()));
+        row.put("versionCount", versionCount == null ? 0 : versionCount.intValue());
+        GovMetaCollectRun lastRun = runMapper.selectOne(new LambdaQueryWrapper<GovMetaCollectRun>()
+                .eq(GovMetaCollectRun::getTaskId, task.getId())
+                .orderByDesc(GovMetaCollectRun::getId)
+                .last("limit 1"));
+        row.put("lastRun", lastRun);
+        return row;
+    }
+
+    private int countPendingEntriesForCollectTask(Long taskId) {
+        List<GovMetaVersion> versions = versionMapper.selectList(new LambdaQueryWrapper<GovMetaVersion>()
+                .eq(GovMetaVersion::getCollectTaskId, taskId)
+                .eq(GovMetaVersion::getTargetType, "ENTRY")
+                .select(GovMetaVersion::getTargetId));
+        Set<Long> entryIds = versions.stream()
+                .map(GovMetaVersion::getTargetId)
+                .filter(Objects::nonNull)
+                .collect(Collectors.toCollection(LinkedHashSet::new));
+        int n = 0;
+        for (Long entryId : entryIds) {
+            GovMetadataRegistry e = registryMapper.selectById(entryId);
+            if (e == null) {
+                continue;
+            }
+            if (Boolean.TRUE.equals(enrichMaintainEntry(e).get("needRepublish"))) {
+                n++;
+            }
+        }
+        return n;
+    }
+
+    @Transactional
+    public Map<String, Object> publishCollectTaskWithVersions(UserPrincipal operator, Long taskId) {
+        GovMetaCollectTask task = requireTask(taskId);
+        if (!"SCHEDULED".equalsIgnoreCase(task.getScheduleType())) {
+            throw new BusinessException(400, "仅定时采集任务支持发布定版");
+        }
+        Set<Long> entryIds = versionMapper.selectList(new LambdaQueryWrapper<GovMetaVersion>()
+                        .eq(GovMetaVersion::getCollectTaskId, taskId)
+                        .eq(GovMetaVersion::getTargetType, "ENTRY")
+                        .select(GovMetaVersion::getTargetId))
+                .stream()
+                .map(GovMetaVersion::getTargetId)
+                .filter(Objects::nonNull)
+                .collect(Collectors.toCollection(LinkedHashSet::new));
+        int publishedEntries = 0;
+        List<String> publishedNames = new ArrayList<>();
+        for (Long entryId : entryIds) {
+            GovMetadataRegistry e = registryMapper.selectById(entryId);
+            if (e == null) {
+                continue;
+            }
+            if (!Boolean.TRUE.equals(enrichMaintainEntry(e).get("needRepublish"))) {
+                continue;
+            }
+            publishEntry(operator, entryId, "定时采集发布定版：任务「" + task.getTaskName() + "」");
+            publishedEntries++;
+            publishedNames.add(e.getEntryName());
+        }
+        Map<String, Object> dsOut;
+        task = taskMapper.selectById(taskId);
+        if (!"PUBLISHED".equals(task.getPublishStatus())) {
+            dsOut = metaCollectDsService.publishScheduledTask(operator, taskId);
+        } else {
+            dsOut = Map.of("publishStatus", task.getPublishStatus(), "message", "调度已在运行");
+        }
+        auditService.log(operator.getUserId(), operator.getUsername(), operator.getOrgId(),
+                "META_COLLECT_PUBLISH_ALL", "gov_meta_collect_task", String.valueOf(taskId),
+                "entries=" + publishedEntries);
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("taskId", taskId);
+        out.put("publishedEntries", publishedEntries);
+        out.put("publishedEntryNames", publishedNames);
+        out.put("ds", dsOut);
+        out.put("message", publishedEntries > 0
+                ? "已发布 " + publishedEntries + " 条元数据定版并恢复 DolphinScheduler 调度"
+                : "已恢复 DolphinScheduler 调度");
+        return out;
+    }
+
+    public Map<String, Object> listVersionsByCollectTask(Long taskId) {
+        GovMetaCollectTask task = taskMapper.selectById(taskId);
+        if (task == null || "DELETED".equals(task.getStatus())) {
+            throw new BusinessException(404, "采集任务不存在");
+        }
+        List<GovMetaVersion> versions = versionMapper.selectList(new LambdaQueryWrapper<GovMetaVersion>()
+                .eq(GovMetaVersion::getCollectTaskId, taskId)
+                .orderByDesc(GovMetaVersion::getVersionNo)
+                .orderByDesc(GovMetaVersion::getId));
+        List<Map<String, Object>> items = new ArrayList<>();
+        for (GovMetaVersion v : versions) {
+            Map<String, Object> item = new LinkedHashMap<>();
+            item.put("version", v);
+            if ("ENTRY".equalsIgnoreCase(v.getTargetType())) {
+                GovMetadataRegistry e = registryMapper.selectById(v.getTargetId());
+                if (e != null) {
+                    item.put("entryName", e.getEntryName());
+                    item.put("entryCode", e.getEntryCode());
+                    item.put("entryId", e.getId());
+                }
+            }
+            items.add(item);
+        }
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("task", task);
+        out.put("items", items);
+        out.put("total", items.size());
+        return out;
+    }
+
     @Transactional
     public Long createTask(UserPrincipal operator, Map<String, Object> body) {
         Long ingDataSourceId = longVal(body.get("ingDataSourceId"));
         Long connectorId = longVal(body.get("connectorId"));
+        Long metaDataSourceId = longVal(body.get("metaDataSourceId"));
+        if (ingDataSourceId == null && metaDataSourceId != null) {
+            GovMetaDataSource mds = metaDataSourceMapper.selectById(metaDataSourceId);
+            if (mds == null) {
+                throw new BusinessException(404, "元数据数据源不存在");
+            }
+            if (mds.getIngSourceId() != null) {
+                ingDataSourceId = mds.getIngSourceId();
+            }
+            if (connectorId == null && mds.getConnectorId() != null) {
+                connectorId = mds.getConnectorId();
+            }
+        }
         GovOmConnector connector = null;
         if (ingDataSourceId != null && isPlatformLayerId(ingDataSourceId)) {
             connector = findOrCreatePlatformLayerConnector(ingDataSourceId, operator);
@@ -287,6 +767,13 @@ public class MetadataSubsystemService {
             connectorId = connector.getId();
         } else if (connectorId != null) {
             connector = connectorMapper.selectById(connectorId);
+        }
+        if ((connectorId == null || connector == null) && metaDataSourceId != null) {
+            GovMetaDataSource mdsForConn = metaDataSourceMapper.selectById(metaDataSourceId);
+            connector = ensureConnectorForMetaDataSource(mdsForConn, operator);
+            if (connector != null) {
+                connectorId = connector.getId();
+            }
         }
         if (connectorId == null || connector == null) {
             throw new BusinessException(400, "ingDataSourceId 或 connectorId 必填");
@@ -307,6 +794,14 @@ public class MetadataSubsystemService {
         t.setCronExpr(normalizeOptionalCron(body.get("cronExpr")));
         t.setScopeType(str(body.get("scopeType"), normalizeTableList(body.get("tableList")) == null ? "FULL" : "TABLE"));
         t.setTableList(normalizeTableList(body.get("tableList")));
+        String scheduleType = str(body.get("scheduleType"), null);
+        if (scheduleType == null) {
+            scheduleType = (t.getCronExpr() != null && !t.getCronExpr().isBlank()) ? "SCHEDULED" : "MANUAL";
+        }
+        t.setScheduleType(scheduleType.toUpperCase(Locale.ROOT));
+        t.setPublishStatus("DRAFT");
+        t.setCategoryId(longVal(body.get("categoryId")));
+        t.setMetaDataSourceId(metaDataSourceId);
         t.setStatus("READY");
         t.setCreatedBy(operator.getUsername());
         taskMapper.insert(t);
@@ -346,6 +841,9 @@ public class MetadataSubsystemService {
     @Transactional
     public void deleteTask(UserPrincipal operator, Long id) {
         GovMetaCollectTask t = requireTask(id);
+        if ("PUBLISHED".equals(t.getPublishStatus())) {
+            throw new BusinessException(400, "已发布任务须先下线再删除");
+        }
         if ("RUNNING".equals(t.getStatus())) {
             throw new BusinessException(400, "运行中任务不可删除");
         }
@@ -357,15 +855,62 @@ public class MetadataSubsystemService {
 
     @Transactional
     public Map<String, Object> runTask(UserPrincipal operator, Long taskId) {
-        return doRunTask(operator, taskId);
+        return doRunTask(operator, taskId, "MANUAL", null);
     }
 
     @Transactional
     public Map<String, Object> runTaskBySystem(Long taskId) {
-        return doRunTask(systemPrincipal(), taskId);
+        return doRunTask(systemPrincipal(), taskId, "MANUAL", null);
     }
 
-    private Map<String, Object> doRunTask(UserPrincipal operator, Long taskId) {
+    @Transactional
+    public Map<String, Object> runTaskBySystemScheduled(Long taskId, Long dsInstanceId) {
+        return doRunTask(systemPrincipal(), taskId, "SCHEDULED", dsInstanceId);
+    }
+
+    @Transactional
+    public Map<String, Object> runManualCollect(UserPrincipal operator, Map<String, Object> body) {
+        body.put("scheduleType", "MANUAL");
+        body.put("taskName", str(body.get("taskName"), "手动采集_" + System.currentTimeMillis()));
+        Long taskId = createTask(operator, body);
+        return runTask(operator, taskId);
+    }
+
+    public Map<String, Object> publishCollectTask(UserPrincipal operator, Long taskId) {
+        return metaCollectDsService.publishScheduledTask(operator, taskId);
+    }
+
+    public Map<String, Object> unpublishCollectTask(UserPrincipal operator, Long taskId) {
+        return metaCollectDsService.unpublishScheduledTask(operator, taskId);
+    }
+
+    @Transactional
+    public int batchDeleteCollectTasks(UserPrincipal operator, List<Long> ids) {
+        if (ids == null || ids.isEmpty()) {
+            return 0;
+        }
+        int n = 0;
+        for (Long id : ids) {
+            GovMetaCollectTask t = taskMapper.selectById(id);
+            if (t == null || "DELETED".equals(t.getStatus())) {
+                continue;
+            }
+            if ("PUBLISHED".equals(t.getPublishStatus())) {
+                throw new BusinessException(400, "已发布任务须先下线再删除: " + t.getTaskName());
+            }
+            if ("RUNNING".equals(t.getStatus())) {
+                throw new BusinessException(400, "运行中任务不可删除: " + t.getTaskName());
+            }
+            t.setStatus("DELETED");
+            taskMapper.updateById(t);
+            n++;
+        }
+        auditService.log(operator.getUserId(), operator.getUsername(), operator.getOrgId(),
+                "META_COLLECT_TASK_BATCH_DELETE", "gov_meta_collect_task", String.valueOf(n), "count=" + n);
+        return n;
+    }
+
+    private Map<String, Object> doRunTask(UserPrincipal operator, Long taskId, String triggerType, Long dsInstanceId) {
         GovMetaCollectTask task = requireTask(taskId);
         if ("DELETED".equals(task.getStatus())) {
             throw new BusinessException(400, "任务已删除");
@@ -380,6 +925,14 @@ public class MetadataSubsystemService {
             }
         }
         GovOmConnector connector = connectorMapper.selectById(task.getConnectorId());
+        if (connector == null && task.getMetaDataSourceId() != null) {
+            GovMetaDataSource mds = metaDataSourceMapper.selectById(task.getMetaDataSourceId());
+            connector = ensureConnectorForMetaDataSource(mds, operator);
+            if (connector != null) {
+                task.setConnectorId(connector.getId());
+                taskMapper.updateById(task);
+            }
+        }
         if (connector == null && task.getIngDataSourceId() != null) {
             IngDataSource ingDs = ingDataSourceMapper.selectById(task.getIngDataSourceId());
             if (ingDs != null) {
@@ -394,6 +947,8 @@ public class MetadataSubsystemService {
 
         GovMetaCollectRun run = new GovMetaCollectRun();
         run.setTaskId(taskId);
+        run.setTriggerType(triggerType != null ? triggerType : "MANUAL");
+        run.setDsInstanceId(dsInstanceId);
         run.setStatus("RUNNING");
         run.setStartedAt(LocalDateTime.now());
         run.setLogText("start collect connector=" + connector.getConnectorName());
@@ -403,31 +958,86 @@ public class MetadataSubsystemService {
         task.setLastRunAt(LocalDateTime.now());
         taskMapper.updateById(task);
 
+        final Long runId = run.getId();
+        final UserPrincipal op = operator;
+        final String trig = triggerType != null ? triggerType : "MANUAL";
+        Runnable job = () -> {
+            try {
+                self.performCollectRun(op, taskId, runId, trig, dsInstanceId);
+            } catch (Exception e) {
+                log.error("元数据采集异步执行失败 taskId={} runId={}: {}", taskId, runId, e.getMessage(), e);
+            }
+        };
+        if (TransactionSynchronizationManager.isSynchronizationActive()) {
+            TransactionSynchronizationManager.registerSynchronization(new TransactionSynchronization() {
+                @Override
+                public void afterCommit() {
+                    CompletableFuture.runAsync(job);
+                }
+            });
+        } else {
+            CompletableFuture.runAsync(job);
+        }
+
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("runId", runId);
+        out.put("status", "RUNNING");
+        out.put("message", "采集任务已启动，可在监控页查看进度或停止");
+        return out;
+    }
+
+    @Transactional
+    public void performCollectRun(UserPrincipal operator, Long taskId, Long runId, String triggerType, Long dsInstanceId) {
+        GovMetaCollectRun run = runMapper.selectById(runId);
+        GovMetaCollectTask task = taskMapper.selectById(taskId);
+        if (run == null || task == null || !"RUNNING".equals(run.getStatus())) {
+            return;
+        }
+        GovOmConnector connector = connectorMapper.selectById(task.getConnectorId());
+        if (connector == null) {
+            markCollectRunFailed(run, task, "适配器不存在");
+            return;
+        }
         String message;
-        int tableCount;
+        int tableCount = 0;
         boolean omUsed = false;
         boolean jdbcUsed = false;
+        Map<String, Object> runDiff = null;
         try {
+            if (isRunStopped(runId)) {
+                finalizeStoppedCollect(run, task);
+                return;
+            }
             List<Map<String, Object>> schema;
             if (task.getIngDataSourceId() != null && isPlatformLayerId(task.getIngDataSourceId())) {
                 schema = probePlatformLayerSchema(task.getIngDataSourceId(), task);
             } else if (task.getIngDataSourceId() != null) {
                 IngDataSource ingDs = ingDataSourceMapper.selectById(task.getIngDataSourceId());
                 schema = ingDs == null ? List.of() : probeIngDataSourceSchema(ingDs, task);
+            } else if (task.getMetaDataSourceId() != null) {
+                GovMetaDataSource mds = metaDataSourceMapper.selectById(task.getMetaDataSourceId());
+                schema = probeMetaDataSourceSchema(mds, task, connector);
             } else {
                 schema = probeJdbcSchema(connector, task);
+            }
+            if (isRunStopped(runId)) {
+                finalizeStoppedCollect(run, task);
+                return;
             }
             if (!schema.isEmpty()) {
                 jdbcUsed = true;
                 tableCount = upsertTableAndColumns(task, run.getId(), connector, schema);
-                Map<String, Object> diff = buildRunDiff(task.getId(), run.getId());
-                Map<String, Object> compact = compactRunDiff(diff);
+                if (isRunStopped(runId)) {
+                    finalizeStoppedCollect(run, task);
+                    return;
+                }
+                runDiff = buildRunDiff(task.getId(), run.getId());
+                Map<String, Object> compact = compactRunDiff(runDiff);
                 message = "JDBC采集 tables=" + tableCount
                         + " added=" + compact.get("addedCount")
                         + " removed=" + compact.get("removedCount")
                         + " changed=" + compact.get("changedCount");
-                // 完整 diff 明细写入 log_text（TEXT），summary 仅存压缩 JSON，避免 VARCHAR 截断
-                run.setLogText(run.getLogText() + "\njdbc tables=" + tableCount + "\ndiff=" + toJson(diff));
+                run.setLogText(run.getLogText() + "\njdbc tables=" + tableCount + "\ndiff=" + toJson(runDiff));
                 run.setSummary(clip(toJson(compact), 480));
             } else if (integrationProperties.isEnabled() && openMetadataClient.isHealthy()) {
                 Map<String, Object> om = openMetadataClient.ingestService(connector.getConnectorName());
@@ -444,6 +1054,13 @@ public class MetadataSubsystemService {
                 run.setLogText(run.getLogText() + "\nlocalFallback tables=" + tableCount);
                 upsertCollectResults(task, run.getId(), tableCount);
                 run.setSummary(clip(message, 480));
+            }
+            if (isRunStopped(runId)) {
+                finalizeStoppedCollect(run, task);
+                return;
+            }
+            if (runDiff != null && jdbcUsed) {
+                snapshotVersionsForScheduledCollect(operator, task, run, triggerType, runDiff);
             }
             run.setStatus("SUCCESS");
             run.setTableCount(tableCount);
@@ -463,29 +1080,50 @@ public class MetadataSubsystemService {
 
             auditService.log(operator.getUserId(), operator.getUsername(), operator.getOrgId(),
                     "META_COLLECT_RUN", "gov_meta_collect_run", String.valueOf(run.getId()), clip(message, 480));
-            Map<String, Object> out = new LinkedHashMap<>();
-            out.put("runId", run.getId());
-            out.put("status", "SUCCESS");
-            out.put("message", message);
-            out.put("tableCount", tableCount);
-            out.put("omUsed", omUsed);
-            out.put("jdbcUsed", jdbcUsed);
-            return out;
+            log.info("collect run success taskId={} runId={} tables={}", taskId, runId, tableCount);
         } catch (Exception e) {
-            String err = clip(e.getMessage(), 480);
-            run.setStatus("FAILED");
-            run.setSummary(err);
-            run.setEndedAt(LocalDateTime.now());
-            run.setLogText(clip(run.getLogText() + "\nerror=" + e.getMessage(), 8000));
-            runMapper.updateById(run);
-            task.setStatus("READY");
-            task.setLastMessage(clip("FAILED: " + err, 480));
-            taskMapper.updateById(task);
-            if (!integrationProperties.isDemoFallback()) {
-                throw new BusinessException(503, "元数据采集失败: " + err);
+            if (isRunStopped(runId)) {
+                finalizeStoppedCollect(run, task);
+                return;
             }
-            return Map.of("runId", run.getId(), "status", "FAILED", "message", err);
+            markCollectRunFailed(run, task, e.getMessage());
+            log.warn("collect run failed taskId={} runId={}: {}", taskId, runId, e.getMessage());
         }
+    }
+
+    private boolean isRunStopped(Long runId) {
+        GovMetaCollectRun run = runMapper.selectById(runId);
+        return run != null && "STOPPED".equals(run.getStatus());
+    }
+
+    private void finalizeStoppedCollect(GovMetaCollectRun run, GovMetaCollectTask task) {
+        GovMetaCollectRun latest = runMapper.selectById(run.getId());
+        if (latest == null || !"STOPPED".equals(latest.getStatus())) {
+            return;
+        }
+        if (latest.getEndedAt() == null) {
+            latest.setEndedAt(LocalDateTime.now());
+            runMapper.updateById(latest);
+        }
+        task.setStatus("READY");
+        task.setLastMessage("采集已停止");
+        taskMapper.updateById(task);
+    }
+
+    private void markCollectRunFailed(GovMetaCollectRun run, GovMetaCollectTask task, String errMsg) {
+        if (isRunStopped(run.getId())) {
+            finalizeStoppedCollect(run, task);
+            return;
+        }
+        String err = clip(errMsg, 480);
+        run.setStatus("FAILED");
+        run.setSummary(err);
+        run.setEndedAt(LocalDateTime.now());
+        run.setLogText(clip((run.getLogText() == null ? "" : run.getLogText()) + "\nerror=" + errMsg, 8000));
+        runMapper.updateById(run);
+        task.setStatus("READY");
+        task.setLastMessage(clip("FAILED: " + err, 480));
+        taskMapper.updateById(task);
     }
 
     public List<GovMetadataRegistry> listRunResults(Long runId) {
@@ -504,10 +1142,11 @@ public class MetadataSubsystemService {
         if (!"RUNNING".equals(run.getStatus())) {
             throw new BusinessException(400, "当前运行不可停止");
         }
+        GovMetaCollectTask task = taskMapper.selectById(run.getTaskId());
+        metaCollectDsService.stopDsInstanceIfPresent(run, task);
         boolean omStopped = false;
         if (integrationProperties.isEnabled() && openMetadataClient.isHealthy()) {
             try {
-                GovMetaCollectTask task = taskMapper.selectById(run.getTaskId());
                 if (task != null) {
                     GovOmConnector c = connectorMapper.selectById(task.getConnectorId());
                     if (c != null) {
@@ -524,10 +1163,12 @@ public class MetadataSubsystemService {
         run.setLogText((run.getLogText() == null ? "" : run.getLogText()) + "\nSTOPPED");
         runMapper.updateById(run);
 
-        GovMetaCollectTask task = taskMapper.selectById(run.getTaskId());
+        if (task == null) {
+            task = taskMapper.selectById(run.getTaskId());
+        }
         if (task != null) {
-            task.setStatus("STOPPED");
-            task.setLastMessage("stopped run#" + runId);
+            task.setStatus("READY");
+            task.setLastMessage("采集已停止 run#" + runId);
             taskMapper.updateById(task);
         }
         auditService.log(operator.getUserId(), operator.getUsername(), operator.getOrgId(),
@@ -595,8 +1236,8 @@ public class MetadataSubsystemService {
                 .last("limit 1"));
         if (run == null) {
             if ("RUNNING".equals(task.getStatus())) {
-                task.setStatus("STOPPED");
-                task.setLastMessage("stopped without active run");
+                task.setStatus("READY");
+                task.setLastMessage("采集已停止");
                 taskMapper.updateById(task);
                 return Map.of("taskId", taskId, "status", "STOPPED", "runId", 0L);
             }
@@ -607,15 +1248,23 @@ public class MetadataSubsystemService {
 
     public Map<String, Object> monitorOverview(String sourceKeyword, String taskKeyword, Long sourceId,
                                                String status, String runStatus) {
+        metaCollectDsService.syncRunningDsInstances();
         // status 兼容旧参数：优先按最近执行状态过滤
         String execStatus = (runStatus != null && !runStatus.isBlank()) ? runStatus
                 : (status != null && !status.isBlank() ? status : null);
-        List<GovMetaCollectTask> tasks = listTasks(null, null, taskKeyword);
+        List<GovMetaCollectTask> tasks = listTasks(null, null, null, taskKeyword);
         String sk = sourceKeyword == null ? "" : sourceKeyword.trim();
         List<Map<String, Object>> allRows = new ArrayList<>();
         List<Map<String, Object>> rows = new ArrayList<>();
         for (GovMetaCollectTask t : tasks) {
             GovOmConnector c = connectorMapper.selectById(t.getConnectorId());
+            String connectorName = c == null ? null : c.getConnectorName();
+            if ((connectorName == null || connectorName.isBlank()) && t.getMetaDataSourceId() != null) {
+                GovMetaDataSource mds = metaDataSourceMapper.selectById(t.getMetaDataSourceId());
+                if (mds != null) {
+                    connectorName = mds.getSourceName();
+                }
+            }
             if (sourceId != null) {
                 if (t.getIngDataSourceId() == null || !sourceId.equals(t.getIngDataSourceId())) {
                     continue;
@@ -637,7 +1286,7 @@ public class MetadataSubsystemService {
 
             Map<String, Object> row = new LinkedHashMap<>();
             row.put("task", t);
-            row.put("connectorName", c == null ? null : c.getConnectorName());
+            row.put("connectorName", connectorName);
             row.put("sourceType", c == null ? null : c.getSourceType());
             row.put("sourceId", t.getIngDataSourceId());
             row.put("lastRun", last == null ? null : enrichRunRow(last, t, c));
@@ -677,8 +1326,272 @@ public class MetadataSubsystemService {
         out.put("items", rows);
         out.put("kpi", kpi);
         out.put("omHealthy", openMetadataClient.isHealthy());
+        out.put("dsHealthy", metaCollectDsService.isDsAvailable());
         out.put("refreshedAt", LocalDateTime.now().toString());
         return out;
+    }
+
+    public List<Map<String, Object>> listCollectCategories(String keyword) {
+        return metaSourceCategoryService.listTree(keyword);
+    }
+
+    public List<Map<String, Object>> listCollectMetaDataSources(Long categoryId, String keyword) {
+        LambdaQueryWrapper<GovMetaDataSource> q = new LambdaQueryWrapper<GovMetaDataSource>()
+                .eq(GovMetaDataSource::getStatus, "ACTIVE")
+                .orderByAsc(GovMetaDataSource::getSortOrder)
+                .orderByDesc(GovMetaDataSource::getId);
+        if (categoryId != null && categoryId > 0) {
+            List<Long> scope = metaSourceCategoryService.collectCategoryScope(categoryId);
+            if (!scope.isEmpty()) {
+                q.in(GovMetaDataSource::getCategoryId, scope);
+            }
+        }
+        if (keyword != null && !keyword.isBlank()) {
+            q.like(GovMetaDataSource::getSourceName, keyword.trim());
+        }
+        List<Map<String, Object>> out = new ArrayList<>();
+        for (GovMetaDataSource row : metaDataSourceMapper.selectList(q)) {
+            Map<String, Object> m = new LinkedHashMap<>();
+            m.put("id", row.getId());
+            m.put("sourceCode", row.getSourceCode());
+            m.put("sourceName", row.getSourceName());
+            m.put("categoryId", row.getCategoryId());
+            m.put("adapterType", row.getAdapterType());
+            m.put("ingSourceId", row.getIngSourceId());
+            m.put("connectorId", row.getConnectorId());
+            out.add(m);
+        }
+        return out;
+    }
+
+    public List<Map<String, Object>> listCollectMetaDataSourceTables(Long metaDataSourceId, String collectFilter) {
+        GovMetaDataSource mds = metaDataSourceMapper.selectById(metaDataSourceId);
+        if (mds == null || !"ACTIVE".equals(mds.getStatus())) {
+            throw new BusinessException(404, "元数据数据源不存在");
+        }
+        List<Map<String, Object>> tables = probeTablesForMetaDataSource(mds);
+        Set<String> collected = registryMapper.selectList(new LambdaQueryWrapper<GovMetadataRegistry>()
+                        .eq(GovMetadataRegistry::getEntryType, "TABLE")
+                        .ne(GovMetadataRegistry::getStatus, "OFFLINE"))
+                .stream()
+                .map(GovMetadataRegistry::getEntryCode)
+                .filter(Objects::nonNull)
+                .collect(Collectors.toSet());
+        for (Map<String, Object> row : tables) {
+            String name = String.valueOf(row.getOrDefault("sourceTable", row.get("tableName")));
+            boolean hit = collected.contains(name);
+            row.put("collected", hit);
+            row.put("tableName", name);
+        }
+        if (collectFilter != null && !collectFilter.isBlank()) {
+            String f = collectFilter.trim().toUpperCase(Locale.ROOT);
+            tables = tables.stream().filter(row -> {
+                boolean hit = Boolean.TRUE.equals(row.get("collected"));
+                if ("COLLECTED".equals(f)) return hit;
+                if ("NOT_COLLECTED".equals(f)) return !hit;
+                return true;
+            }).collect(Collectors.toList());
+        }
+        return tables;
+    }
+
+    /**
+     * 元模型设计：探测数据源下指定表的列结构，供表模型/字段模型加载与编辑。
+     */
+    public Map<String, Object> probeMetaDataSourceTableColumns(Long metaDataSourceId, String tableName, String columnName) {
+        if (metaDataSourceId == null) {
+            throw new BusinessException(400, "metaDataSourceId 必填");
+        }
+        if (tableName == null || tableName.isBlank()) {
+            throw new BusinessException(400, "tableName 必填");
+        }
+        GovMetaDataSource mds = metaDataSourceMapper.selectById(metaDataSourceId);
+        if (mds == null || !"ACTIVE".equals(mds.getStatus())) {
+            throw new BusinessException(404, "元数据数据源不存在");
+        }
+        JdbcProbeService.ConnConfig cfg = resolveConnConfigForMetaDataSource(mds);
+        Map<String, Object> table = jdbcProbeService.describeTable(cfg, tableName.trim());
+        List<Map<String, Object>> fields = mapProbeColumnsToModelFields(table);
+        if (columnName != null && !columnName.isBlank()) {
+            String col = columnName.trim();
+            fields = fields.stream()
+                    .filter(f -> col.equalsIgnoreCase(String.valueOf(f.get("code"))))
+                    .collect(Collectors.toList());
+            if (fields.isEmpty()) {
+                throw new BusinessException(404, "源表不存在字段 " + col);
+            }
+        }
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("metaDataSourceId", metaDataSourceId);
+        out.put("sourceTableName", tableName.trim());
+        out.put("sourceColumnName", columnName == null || columnName.isBlank() ? null : columnName.trim());
+        out.put("fields", fields);
+        out.put("primaryKeys", table.get("primaryKeys"));
+        out.put("rowCount", table.get("rowCount"));
+        return out;
+    }
+
+    private JdbcProbeService.ConnConfig resolveConnConfigForMetaDataSource(GovMetaDataSource mds) {
+        Long ingId = mds.getIngSourceId();
+        if (ingId != null && ingId > 0) {
+            IngDataSource ds = ingDataSourceMapper.selectById(ingId);
+            if (ds == null) {
+                throw new BusinessException(404, "登记数据源不存在");
+            }
+            return jdbcProbeService.parse(ds.getSourceType(), ds.getConnConfigJson());
+        }
+        if (hasMetaDataSourceJdbcFields(mds)) {
+            return toConnConfigFromMetaDataSource(mds);
+        }
+        if (mds.getConnectorId() != null) {
+            GovOmConnector c = connectorMapper.selectById(mds.getConnectorId());
+            if (c != null) {
+                return toConnConfigFromConnector(c);
+            }
+        }
+        throw new BusinessException(400, "数据源未配置连接信息，请在「数据源管理」中补全");
+    }
+
+    @SuppressWarnings("unchecked")
+    private List<Map<String, Object>> mapProbeColumnsToModelFields(Map<String, Object> tableDesc) {
+        List<Map<String, Object>> cols = (List<Map<String, Object>>) tableDesc.getOrDefault("columns", List.of());
+        List<String> pks = (List<String>) tableDesc.getOrDefault("primaryKeys", List.of());
+        List<Map<String, Object>> fields = new ArrayList<>();
+        for (Map<String, Object> col : cols) {
+            String colName = String.valueOf(col.get("columnName"));
+            String remarks = col.get("remarks") == null ? null : String.valueOf(col.get("remarks")).trim();
+            Map<String, Object> f = new LinkedHashMap<>();
+            f.put("code", colName);
+            f.put("name", remarks == null || remarks.isBlank() ? colName : remarks);
+            f.put("type", normalizeJdbcDataType(String.valueOf(col.get("dataType"))));
+            Object size = col.get("columnSize");
+            if (size instanceof Number n) {
+                f.put("length", n.intValue());
+            }
+            f.put("required", !Boolean.TRUE.equals(col.get("nullable")));
+            f.put("primaryKey", pks.stream().anyMatch(pk -> pk.equalsIgnoreCase(colName)));
+            f.put("hint", remarks);
+            fields.add(f);
+        }
+        return fields;
+    }
+
+    private String normalizeJdbcDataType(String raw) {
+        if (raw == null || raw.isBlank()) {
+            return "VARCHAR";
+        }
+        String u = raw.trim().toUpperCase(Locale.ROOT);
+        if (u.contains("INT") && !u.contains("POINT")) {
+            return u.contains("BIG") ? "BIGINT" : "INT";
+        }
+        if (u.contains("CHAR") || u.contains("TEXT")) {
+            return u.contains("TEXT") ? "TEXT" : "VARCHAR";
+        }
+        if (u.contains("DECIMAL") || u.contains("NUMERIC")) {
+            return "DECIMAL";
+        }
+        if (u.contains("DOUBLE") || u.contains("FLOAT")) {
+            return "DOUBLE";
+        }
+        if (u.contains("DATE") && !u.contains("TIME")) {
+            return "DATE";
+        }
+        if (u.contains("TIME") || u.contains("TIMESTAMP")) {
+            return "DATETIME";
+        }
+        if (u.contains("BOOL") || u.contains("BIT")) {
+            return "BOOLEAN";
+        }
+        if (u.contains("JSON")) {
+            return "JSON";
+        }
+        return "VARCHAR";
+    }
+
+    /** 按 M088 元数据数据源配置探库：登记源 → 行内 JDBC → 关联连接器。 */
+    private List<Map<String, Object>> probeTablesForMetaDataSource(GovMetaDataSource mds) {
+        Long ingId = mds.getIngSourceId();
+        if (ingId != null && ingId > 0) {
+            return new ArrayList<>(listCollectDataSourceTables(ingId));
+        }
+        if (hasMetaDataSourceJdbcFields(mds)) {
+            return jdbcProbeService.listTables(toConnConfigFromMetaDataSource(mds));
+        }
+        if (mds.getConnectorId() != null) {
+            GovOmConnector c = connectorMapper.selectById(mds.getConnectorId());
+            if (c != null) {
+                return jdbcProbeService.listTables(toConnConfigFromConnector(c));
+            }
+        }
+        throw new BusinessException(400, "数据源未配置连接信息，请在「数据源管理」中补全主机、库名与账号");
+    }
+
+    private boolean hasMetaDataSourceJdbcFields(GovMetaDataSource mds) {
+        return mds.getDbHost() != null && !mds.getDbHost().isBlank()
+                && mds.getDbName() != null && !mds.getDbName().isBlank()
+                && mds.getUsername() != null && !mds.getUsername().isBlank();
+    }
+
+    private JdbcProbeService.ConnConfig toConnConfigFromMetaDataSource(GovMetaDataSource row) {
+        JdbcProbeService.ConnConfig cfg = new JdbcProbeService.ConnConfig();
+        cfg.sourceType = row.getAdapterType() == null || row.getAdapterType().isBlank()
+                ? "MYSQL" : row.getAdapterType().toUpperCase(Locale.ROOT);
+        cfg.host = row.getDbHost();
+        cfg.port = row.getDbPort() == null ? 3306 : row.getDbPort();
+        cfg.database = row.getDbName();
+        cfg.username = row.getUsername();
+        cfg.password = row.getPasswordCipher() == null ? "" : credentialCipher.decrypt(row.getPasswordCipher());
+        return cfg;
+    }
+
+    private JdbcProbeService.ConnConfig toConnConfigFromConnector(GovOmConnector connector) {
+        JdbcProbeService.ConnConfig cfg = new JdbcProbeService.ConnConfig();
+        cfg.sourceType = connector.getSourceType() == null || connector.getSourceType().isBlank()
+                ? "MYSQL" : connector.getSourceType().toUpperCase(Locale.ROOT);
+        cfg.username = connector.getJdbcUser();
+        cfg.password = connector.getJdbcPassword() == null ? "" : credentialCipher.decrypt(connector.getJdbcPassword());
+        cfg.database = connector.getJdbcDatabase() == null ? "" : connector.getJdbcDatabase();
+        parseJdbcUrlIntoConnConfig(connector.getJdbcUrl(), cfg);
+        if (cfg.host == null || cfg.host.isBlank() || cfg.username == null || cfg.username.isBlank()) {
+            throw new BusinessException(400, "连接器 JDBC 配置不完整");
+        }
+        if (cfg.port <= 0) {
+            cfg.port = "POSTGRES".equals(cfg.sourceType) || "POSTGRESQL".equals(cfg.sourceType) ? 5432 : 3306;
+        }
+        return cfg;
+    }
+
+    private void parseJdbcUrlIntoConnConfig(String jdbcUrl, JdbcProbeService.ConnConfig cfg) {
+        if (jdbcUrl == null || jdbcUrl.isBlank()) {
+            return;
+        }
+        int schemeEnd = jdbcUrl.indexOf("://");
+        if (schemeEnd < 0) {
+            return;
+        }
+        String rest = jdbcUrl.substring(schemeEnd + 3);
+        int slash = rest.indexOf('/');
+        String hostPort = slash >= 0 ? rest.substring(0, slash) : rest;
+        if (slash >= 0 && (cfg.database == null || cfg.database.isBlank())) {
+            String dbPart = rest.substring(slash + 1);
+            int q = dbPart.indexOf('?');
+            cfg.database = q > 0 ? dbPart.substring(0, q) : dbPart;
+        }
+        int at = hostPort.lastIndexOf('@');
+        if (at >= 0) {
+            hostPort = hostPort.substring(at + 1);
+        }
+        int colon = hostPort.lastIndexOf(':');
+        if (colon > 0) {
+            cfg.host = hostPort.substring(0, colon);
+            try {
+                cfg.port = Integer.parseInt(hostPort.substring(colon + 1));
+            } catch (NumberFormatException ignored) {
+                cfg.port = 3306;
+            }
+        } else if (!hostPort.isBlank()) {
+            cfg.host = hostPort;
+        }
     }
 
     private Map<String, Object> enrichRunRow(GovMetaCollectRun run, GovMetaCollectTask task, GovOmConnector c) {
@@ -696,6 +1609,9 @@ public class MetadataSubsystemService {
         m.put("summary", run.getSummary());
         m.put("logText", run.getLogText());
         m.put("durationSeconds", calcDurationSeconds(run.getStartedAt(), run.getEndedAt()));
+        m.put("triggerType", run.getTriggerType());
+        m.put("dsInstanceId", run.getDsInstanceId());
+        m.put("dsState", run.getDsState());
         m.put("diff", parseRunDiffCompact(run));
         return m;
     }
@@ -806,7 +1722,7 @@ public class MetadataSubsystemService {
             registryMapper.updateById(e);
             summary = "AUTO 标准匹配维护";
         }
-        snapshotVersion(operator, "ENTRY", e.getId(), toJson(e), summary);
+        snapshotEntryVersion(operator, e, summary);
         if (Boolean.TRUE.equals(body.get("promoteStandard"))) {
             auditService.log(operator.getUserId(), operator.getUsername(), operator.getOrgId(),
                     "META_PROMOTE_STANDARD", "gov_metadata_registry", String.valueOf(e.getId()), "沉淀标准提醒");
@@ -931,6 +1847,12 @@ public class MetadataSubsystemService {
         out.put("previewHint", previewHint);
         out.put("isPublishVersion", isPublishSummary(version.getChangeSummary()));
         out.put("isOfflineVersion", isOfflineSummary(version.getChangeSummary()));
+        if (version.getCollectTaskId() != null) {
+            GovMetaCollectTask collectTask = taskMapper.selectById(version.getCollectTaskId());
+            if (collectTask != null) {
+                out.put("collectTaskName", collectTask.getTaskName());
+            }
+        }
         return out;
     }
 
@@ -1122,13 +2044,16 @@ public class MetadataSubsystemService {
             }
             return byCode.values().stream()
                     .filter(e -> e.getEntryCode() != null && include.contains(e.getEntryCode()))
+                    .filter(e -> isSourceCatalogEntry(e, byCode))
                     .sorted(Comparator.comparing((GovMetadataRegistry x) -> nvl(x.getEntryType()))
                             .thenComparing(x -> nvl(x.getEntryName())))
                     .collect(Collectors.toList());
         }
         if ("asset".equals(t)) {
             return all.stream()
-                    .filter(e -> isAssetType(e.getEntryType()) || isSourceType(e.getEntryType()))
+                    .filter(e -> isAssetCatalogEntry(e, byCode))
+                    .sorted(Comparator.comparing((GovMetadataRegistry x) -> nvl(x.getEntryType()))
+                            .thenComparing(x -> nvl(x.getEntryName())))
                     .collect(Collectors.toList());
         }
         return all;
@@ -1714,11 +2639,13 @@ public class MetadataSubsystemService {
         }
         List<GovMetadataRegistry> entries = registryMapper.selectList(q);
         List<Map<String, Object>> items = new ArrayList<>();
-        int needRepublish = 0, unreadNotice = 0, matchedHint = 0;
+        int needRepublish = 0, pendingFirstPublish = 0, unreadNotice = 0, matchedHint = 0;
         for (GovMetadataRegistry e : entries) {
             Map<String, Object> row = enrichMaintainEntry(e);
             boolean need = Boolean.TRUE.equals(row.get("needRepublish"));
+            boolean first = Boolean.TRUE.equals(row.get("pendingFirstPublish"));
             if (need) needRepublish++;
+            if (first) pendingFirstPublish++;
             if (Boolean.TRUE.equals(needRepublishOnly) && !need) {
                 continue;
             }
@@ -1730,6 +2657,8 @@ public class MetadataSubsystemService {
         Map<String, Object> kpi = new LinkedHashMap<>();
         kpi.put("total", entries.size());
         kpi.put("needRepublish", needRepublish);
+        kpi.put("pendingFirstPublish", pendingFirstPublish);
+        kpi.put("changeRepublish", Math.max(0, needRepublish - pendingFirstPublish));
         kpi.put("unreadNotice", unreadNotice);
         kpi.put("standardLinked", matchedHint);
         Map<String, Object> out = new LinkedHashMap<>();
@@ -1756,7 +2685,16 @@ public class MetadataSubsystemService {
         row.put("latestVersionId", latest == null ? null : latest.getId());
         row.put("publishedVersionNo", published == null ? null : published.getVersionNo());
         row.put("publishedVersionId", published == null ? null : published.getId());
-        boolean needRepublish = "CHANGED".equals(e.getChangeFlag()) || "NEW".equals(e.getChangeFlag());
+        boolean needRepublish;
+        if (published == null) {
+            needRepublish = latest != null
+                    || "NEW".equals(e.getChangeFlag())
+                    || "CHANGED".equals(e.getChangeFlag());
+        } else if (latest == null) {
+            needRepublish = "NEW".equals(e.getChangeFlag()) || "CHANGED".equals(e.getChangeFlag());
+        } else {
+            needRepublish = latest.getVersionNo() > published.getVersionNo();
+        }
         row.put("needRepublish", needRepublish);
         row.put("pendingFirstPublish", needRepublish && published == null);
         row.put("standardCode", e.getOmRef());
@@ -1790,7 +2728,7 @@ public class MetadataSubsystemService {
             e.setUpdatedAt(LocalDateTime.now());
             registryMapper.updateById(e);
             insertChangeNotice(e, "AUTO 标准匹配维护", "依据数据元标准自动补充元数据");
-            snapshotVersion(operator, "ENTRY", e.getId(), toJson(e), "AUTO 标准匹配维护");
+            snapshotEntryVersion(operator, e, "AUTO 标准匹配维护");
             matched++;
             Map<String, Object> d = new LinkedHashMap<>();
             d.put("entryId", e.getId());
@@ -1816,16 +2754,7 @@ public class MetadataSubsystemService {
         List<Map<String, Object>> out = new ArrayList<>();
         for (GovMetadataRegistry e : entries) {
             if (e.getEntryName() == null || e.getEntryName().isBlank()) continue;
-            GovStandardItem std = standardItemMapper.selectOne(new LambdaQueryWrapper<GovStandardItem>()
-                    .eq(GovStandardItem::getItemName, e.getEntryName().trim())
-                    .eq(GovStandardItem::getStatus, "ACTIVE")
-                    .last("limit 1"));
-            if (std == null) {
-                std = standardItemMapper.selectOne(new LambdaQueryWrapper<GovStandardItem>()
-                        .like(GovStandardItem::getItemName, e.getEntryName().trim())
-                        .eq(GovStandardItem::getStatus, "ACTIVE")
-                        .last("limit 1"));
-            }
+            GovStandardItem std = findStandardForEntry(e);
             if (std == null) continue;
             Map<String, Object> row = new LinkedHashMap<>();
             row.put("entryId", e.getId());
@@ -1911,40 +2840,69 @@ public class MetadataSubsystemService {
         out.put("published", published);
         out.put("latest", latest);
         if (published == null) {
-            out.put("sameSnapshot", false);
-            out.put("basicDiff", List.of(Map.of(
-                    "field", "publishStatus",
-                    "left", "未发布",
-                    "right", "当前草稿/最新",
-                    "changeType", "changed")));
+            out.put("pendingFirstPublish", true);
+            out.put("compareMode", "FIRST_PUBLISH");
+            out.put("contentChanged", false);
+            out.put("sameSnapshot", true);
+            out.put("basicDiff", List.of());
             out.put("fieldDiff", Map.of("added", List.of(), "removed", List.of(), "changed", List.of()));
+            out.put("attrDiff", List.of());
+            out.put("summary", "该条目尚未发布过，当前最新版本为待首次发布，无可对比的已发布基线。");
             return out;
         }
-        // 用当前实体快照与已发布版本对比
-        Map<String, Object> leftSnap = parseSnapshot(published.getSnapshotJson());
-        Map<String, Object> rightSnap = parseSnapshot(toJson(e));
-        List<Map<String, Object>> basicDiff = new ArrayList<>();
-        Set<String> keys = new HashSet<>();
-        keys.addAll(leftSnap.keySet());
-        keys.addAll(rightSnap.keySet());
-        for (String key : keys) {
-            if ("contentJson".equals(key) || "updatedAt".equals(key) || "createdAt".equals(key)) continue;
-            String lv = nvl(String.valueOf(leftSnap.getOrDefault(key, "")));
-            String rv = nvl(String.valueOf(rightSnap.getOrDefault(key, "")));
-            if (!lv.equals(rv)) {
-                Map<String, Object> d = new LinkedHashMap<>();
-                d.put("field", key);
-                d.put("left", lv);
-                d.put("right", rv);
-                d.put("changeType", "changed");
-                basicDiff.add(d);
-            }
+        Map<String, Object> leftSnap = ensureEntrySnapshotFields(published);
+        Map<String, Object> rightSnap;
+        if (latest != null) {
+            rightSnap = ensureEntrySnapshotFields(latest);
+        } else {
+            rightSnap = buildLiveEntrySnapshot(e);
         }
-        out.put("sameSnapshot", basicDiff.isEmpty());
+        List<Map<String, Object>> basicDiff = buildBasicDiff(leftSnap, rightSnap);
+        List<Map<String, Object>> attrDiff = buildAttrDiff(leftSnap, rightSnap);
+        boolean contentChanged = !basicDiff.isEmpty() || !attrDiff.isEmpty();
+        boolean versionAhead = latest != null && latest.getVersionNo() > published.getVersionNo();
+        out.put("pendingFirstPublish", false);
+        out.put("compareMode", "REPUBLISH");
+        out.put("contentChanged", contentChanged);
+        out.put("versionAhead", versionAhead);
+        out.put("sameSnapshot", !contentChanged);
         out.put("basicDiff", basicDiff);
         out.put("fieldDiff", diffContentJsonFields(leftSnap.get("contentJson"), rightSnap.get("contentJson")));
-        out.put("attrDiff", buildAttrDiff(leftSnap, rightSnap));
+        out.put("attrDiff", attrDiff);
+        if (!contentChanged && versionAhead) {
+            out.put("summary", "版本号已更新（v" + published.getVersionNo()
+                    + " → v" + latest.getVersionNo() + "），元数据内容一致，执行发布即可同步定版。");
+        } else if (contentChanged) {
+            out.put("summary", "已发布版本与当前最新版本存在元数据内容差异，请核对后重新发布。");
+        } else {
+            out.put("summary", "已发布版本与当前最新版本内容一致。");
+        }
         return out;
+    }
+
+    private Map<String, Object> buildLiveEntrySnapshot(GovMetadataRegistry e) {
+        Map<String, Object> snap = parseSnapshot(toJson(e));
+        snap.put("fields", buildFieldAttrsFromEntry(e));
+        snap.put("relations", listRelationsForEntryCode(e.getEntryCode()));
+        return snap;
+    }
+
+    @SuppressWarnings("unchecked")
+    private Map<String, Object> ensureEntrySnapshotFields(GovMetaVersion version) {
+        Map<String, Object> snap = parseSnapshot(version.getSnapshotJson());
+        if (snap.get("fields") instanceof List && !((List<?>) snap.get("fields")).isEmpty()) {
+            return snap;
+        }
+        if ("ENTRY".equalsIgnoreCase(version.getTargetType())) {
+            GovMetadataRegistry entry = registryMapper.selectById(version.getTargetId());
+            if (entry != null) {
+                snap.put("fields", buildFieldAttrsFromEntry(entry));
+                if (!snap.containsKey("relations") || snap.get("relations") == null) {
+                    snap.put("relations", listRelationsForEntryCode(entry.getEntryCode()));
+                }
+            }
+        }
+        return snap;
     }
 
     @Transactional
@@ -2002,14 +2960,27 @@ public class MetadataSubsystemService {
 
     public List<Map<String, Object>> suggestStandards() {
         List<GovMetadataRegistry> columns = registryMapper.selectList(new LambdaQueryWrapper<GovMetadataRegistry>()
-                .eq(GovMetadataRegistry::getEntryType, "COLUMN"));
+                .eq(GovMetadataRegistry::getEntryType, "COLUMN")
+                .ne(GovMetadataRegistry::getStatus, "OFFLINE"));
         Map<String, Long> freq = new HashMap<>();
+        Map<String, String> sampleDesc = new HashMap<>();
         for (GovMetadataRegistry c : columns) {
             if (c.getEntryName() == null || c.getEntryName().isBlank()) continue;
             String name = c.getEntryName().trim();
             freq.merge(name, 1L, Long::sum);
+            if (!sampleDesc.containsKey(name) && c.getDescription() != null && !c.getDescription().isBlank()) {
+                sampleDesc.put(name, c.getDescription());
+            }
         }
+        Set<String> existing = standardItemMapper.selectList(new LambdaQueryWrapper<GovStandardItem>()
+                        .eq(GovStandardItem::getStatus, "ACTIVE"))
+                .stream()
+                .map(GovStandardItem::getItemName)
+                .filter(Objects::nonNull)
+                .map(String::trim)
+                .collect(Collectors.toSet());
         return freq.entrySet().stream()
+                .filter(e -> !existing.contains(e.getKey()))
                 .sorted((a, b) -> Long.compare(b.getValue(), a.getValue()))
                 .limit(20)
                 .map(e -> {
@@ -2017,6 +2988,7 @@ public class MetadataSubsystemService {
                     row.put("itemName", e.getKey());
                     row.put("count", e.getValue());
                     row.put("itemType", "COLUMN");
+                    row.put("sampleDescription", sampleDesc.get(e.getKey()));
                     return row;
                 })
                 .collect(Collectors.toList());
@@ -2030,6 +3002,20 @@ public class MetadataSubsystemService {
         item.setItemName(itemName);
         item.setItemType(str(body.get("itemType"), "COLUMN"));
         item.setStandardRef(str(body.get("standardRef"), "META_SUGGEST"));
+        String bizDef = str(body.get("businessDefinition"), null);
+        if (bizDef == null || bizDef.isBlank()) {
+            GovMetadataRegistry sample = registryMapper.selectOne(new LambdaQueryWrapper<GovMetadataRegistry>()
+                    .eq(GovMetadataRegistry::getEntryType, "COLUMN")
+                    .eq(GovMetadataRegistry::getEntryName, itemName)
+                    .isNotNull(GovMetadataRegistry::getDescription)
+                    .orderByDesc(GovMetadataRegistry::getUpdatedAt)
+                    .last("limit 1"));
+            if (sample != null && sample.getDescription() != null) {
+                bizDef = "基于元数据沉淀：" + sample.getDescription();
+            }
+        }
+        item.setBusinessDefinition(bizDef);
+        item.setCategory(str(body.get("category"), "元数据沉淀"));
         item.setStatus("ACTIVE");
         standardItemMapper.insert(item);
         auditService.log(operator.getUserId(), operator.getUsername(), operator.getOrgId(),
@@ -2131,8 +3117,90 @@ public class MetadataSubsystemService {
             }
             return tables;
         } catch (Exception e) {
+            log.warn("JDBC 探库失败 connector={}: {}", connector.getConnectorName(), e.getMessage());
             return Collections.emptyList();
         }
+    }
+
+    private List<Map<String, Object>> probeMetaDataSourceSchema(GovMetaDataSource mds, GovMetaCollectTask task,
+                                                                GovOmConnector connector) {
+        if (mds != null && hasMetaDataSourceJdbcFields(mds)) {
+            try {
+                Set<String> allowedTables = parseTableList(task);
+                List<Map<String, Object>> tables = new ArrayList<>();
+                for (Map<String, Object> row : jdbcProbeService.listTables(toConnConfigFromMetaDataSource(mds))) {
+                    String name = String.valueOf(row.getOrDefault("sourceTable", row.get("tableName")));
+                    if (!allowedTables.isEmpty() && !allowedTables.contains(name)) {
+                        continue;
+                    }
+                    Map<String, Object> table = new LinkedHashMap<>();
+                    table.put("tableName", name);
+                    table.put("columns", normalizeProbeColumns(row.get("columns")));
+                    tables.add(table);
+                }
+                if (!tables.isEmpty()) {
+                    return tables;
+                }
+            } catch (BusinessException e) {
+                log.warn("元数据数据源探库失败 id={}: {}", mds.getId(), e.getMessage());
+                throw e;
+            } catch (Exception e) {
+                log.warn("元数据数据源探库失败 id={}: {}", mds.getId(), e.getMessage());
+            }
+        }
+        return probeJdbcSchema(connector, task);
+    }
+
+    @SuppressWarnings("unchecked")
+    private List<Map<String, String>> normalizeProbeColumns(Object raw) {
+        if (!(raw instanceof List<?> list)) {
+            return List.of();
+        }
+        List<Map<String, String>> cols = new ArrayList<>();
+        for (Object item : list) {
+            if (!(item instanceof Map<?, ?> map)) {
+                continue;
+            }
+            Map<String, String> col = new LinkedHashMap<>();
+            col.put("columnName", String.valueOf(map.get("columnName")));
+            Object dataType = map.get("dataType");
+            col.put("dataType", dataType == null ? "" : String.valueOf(dataType));
+            Object nullable = map.get("nullable");
+            col.put("nullable", nullable == null ? "YES" : String.valueOf(nullable));
+            cols.add(col);
+        }
+        return cols;
+    }
+
+    private GovOmConnector ensureConnectorForMetaDataSource(GovMetaDataSource row, UserPrincipal operator) {
+        if (row == null) {
+            return null;
+        }
+        if (row.getConnectorId() != null) {
+            GovOmConnector exist = connectorMapper.selectById(row.getConnectorId());
+            if (exist != null) {
+                return exist;
+            }
+        }
+        if (!hasMetaDataSourceJdbcFields(row)) {
+            return null;
+        }
+        GovOmConnector connector = new GovOmConnector();
+        connector.setConnectorCode("META_DS_" + row.getId());
+        connector.setStatus("ACTIVE");
+        connector.setCreatedBy(operator == null ? "system" : operator.getUsername());
+        connector.setConnectorName(row.getSourceName());
+        connector.setSourceType(row.getAdapterType() == null ? "MYSQL" : row.getAdapterType());
+        connector.setJdbcUrl(jdbcProbeService.jdbcUrl(toConnConfigFromMetaDataSource(row)));
+        connector.setJdbcUser(row.getUsername());
+        connector.setJdbcPassword(row.getPasswordCipher());
+        connector.setJdbcDatabase(row.getDbName());
+        connector.setLastMessage("sync from gov_meta_data_source");
+        connector.setLastSyncAt(LocalDateTime.now());
+        connectorMapper.insert(connector);
+        row.setConnectorId(connector.getId());
+        metaDataSourceMapper.updateById(row);
+        return connector;
     }
 
     private List<Map<String, String>> loadColumns(Connection conn, String schema, String tableName) throws Exception {
@@ -2160,6 +3228,9 @@ public class MetadataSubsystemService {
                                       List<Map<String, Object>> schema) {
         int tableCount = 0;
         for (Map<String, Object> table : schema) {
+            if (isRunStopped(runId)) {
+                break;
+            }
             String tableName = String.valueOf(table.get("tableName"));
             String tableCode = tableEntryCode(connector.getId(), tableName);
             GovMetadataRegistry tbl = registryMapper.selectOne(new LambdaQueryWrapper<GovMetadataRegistry>()
@@ -2242,8 +3313,7 @@ public class MetadataSubsystemService {
             } else {
                 GovMetadataRegistry c = curMap.get(code);
                 GovMetadataRegistry p = prevMap.get(code);
-                if (!nvl(c.getEntryName()).equals(nvl(p.getEntryName()))
-                        || !nvl(c.getDescription()).equals(nvl(p.getDescription()))) {
+                if (registryEntryChanged(c, p)) {
                     changed.add(code);
                 }
             }
@@ -2259,6 +3329,119 @@ public class MetadataSubsystemService {
         diff.put("changed", changed);
         diff.put("prevRunId", prev == null ? null : prev.getId());
         return diff;
+    }
+
+    private boolean registryEntryChanged(GovMetadataRegistry c, GovMetadataRegistry p) {
+        if (c == null || p == null) {
+            return false;
+        }
+        return !nvl(c.getEntryName()).equals(nvl(p.getEntryName()))
+                || !nvl(c.getDescription()).equals(nvl(p.getDescription()))
+                || !nvl(c.getKeywords()).equals(nvl(p.getKeywords()))
+                || !nvl(c.getOmRef()).equals(nvl(p.getOmRef()))
+                || !nvl(c.getTags()).equals(nvl(p.getTags()))
+                || !nvl(c.getSecurityLevel()).equals(nvl(p.getSecurityLevel()));
+    }
+
+    @SuppressWarnings("unchecked")
+    private boolean hasRunDiffChanges(Map<String, Object> diff) {
+        if (diff == null) {
+            return false;
+        }
+        return !((List<?>) diff.getOrDefault("added", List.of())).isEmpty()
+                || !((List<?>) diff.getOrDefault("removed", List.of())).isEmpty()
+                || !((List<?>) diff.getOrDefault("changed", List.of())).isEmpty();
+    }
+
+    private boolean isScheduledCollect(GovMetaCollectTask task, String triggerType) {
+        return "SCHEDULED".equalsIgnoreCase(triggerType)
+                || "SCHEDULED".equalsIgnoreCase(task.getScheduleType());
+    }
+
+    @SuppressWarnings("unchecked")
+    private void snapshotVersionsForScheduledCollect(UserPrincipal operator, GovMetaCollectTask task,
+                                                     GovMetaCollectRun run, String triggerType,
+                                                     Map<String, Object> diff) {
+        if (!isScheduledCollect(task, triggerType) || !hasRunDiffChanges(diff)) {
+            return;
+        }
+        Map<String, Object> compact = compactRunDiff(diff);
+        Set<Long> tableEntryIds = resolveAffectedTableEntryIds(diff, run.getId());
+        if (tableEntryIds.isEmpty()) {
+            return;
+        }
+        String baseSummary = String.format("定时采集变更：任务「%s」运行#%d，+%d/-%d/~%d",
+                task.getTaskName(), run.getId(),
+                compact.get("addedCount"), compact.get("removedCount"), compact.get("changedCount"));
+        int versionCount = 0;
+        for (Long entryId : tableEntryIds) {
+            GovMetadataRegistry entry = registryMapper.selectById(entryId);
+            if (entry == null || !"TABLE".equalsIgnoreCase(entry.getEntryType())) {
+                continue;
+            }
+            String summary = baseSummary + " · 表 " + entry.getEntryName();
+            snapshotEntryVersionFromCollect(operator, entry, summary, task.getId(), run.getId());
+            versionCount++;
+        }
+        if (versionCount > 0) {
+            String pauseMsg = String.format("检测到元数据变更(+%d/-%d/~%d)，调度已暂停，请在定时任务中发布定版",
+                    compact.get("addedCount"), compact.get("removedCount"), compact.get("changedCount"));
+            metaCollectDsService.pauseScheduledTaskOnMetadataChange(task, pauseMsg);
+            auditService.log(operator.getUserId(), operator.getUsername(), operator.getOrgId(),
+                    "META_COLLECT_VERSION", "gov_meta_collect_run", String.valueOf(run.getId()),
+                    "scheduled collect versions=" + versionCount);
+            log.info("scheduled collect created {} version(s) taskId={} runId={}", versionCount, task.getId(), run.getId());
+        }
+    }
+
+    @SuppressWarnings("unchecked")
+    private Set<Long> resolveAffectedTableEntryIds(Map<String, Object> diff, Long currentRunId) {
+        Set<Long> ids = new LinkedHashSet<>();
+        List<String> allCodes = new ArrayList<>();
+        allCodes.addAll((List<String>) diff.getOrDefault("added", List.of()));
+        allCodes.addAll((List<String>) diff.getOrDefault("removed", List.of()));
+        allCodes.addAll((List<String>) diff.getOrDefault("changed", List.of()));
+        Map<String, GovMetadataRegistry> curByCode = listRunResults(currentRunId).stream()
+                .collect(Collectors.toMap(GovMetadataRegistry::getEntryCode, e -> e, (a, b) -> a));
+        for (String code : allCodes) {
+            if (code == null || code.isBlank()) {
+                continue;
+            }
+            GovMetadataRegistry entry = curByCode.get(code);
+            if (entry == null) {
+                entry = registryMapper.selectOne(new LambdaQueryWrapper<GovMetadataRegistry>()
+                        .eq(GovMetadataRegistry::getEntryCode, code)
+                        .last("limit 1"));
+            }
+            if (entry == null) {
+                continue;
+            }
+            if ("TABLE".equalsIgnoreCase(entry.getEntryType())) {
+                ids.add(entry.getId());
+            } else if ("COLUMN".equalsIgnoreCase(entry.getEntryType()) && entry.getParentCode() != null) {
+                GovMetadataRegistry tbl = registryMapper.selectOne(new LambdaQueryWrapper<GovMetadataRegistry>()
+                        .eq(GovMetadataRegistry::getEntryCode, entry.getParentCode())
+                        .eq(GovMetadataRegistry::getEntryType, "TABLE")
+                        .last("limit 1"));
+                if (tbl != null) {
+                    ids.add(tbl.getId());
+                }
+            }
+        }
+        return ids;
+    }
+
+    private void snapshotEntryVersionFromCollect(UserPrincipal operator, GovMetadataRegistry e, String summary,
+                                                 Long collectTaskId, Long collectRunId) {
+        Map<String, Object> snap = parseSnapshot(toJson(e));
+        snap.put("fields", buildFieldAttrsFromEntry(e));
+        snap.put("relations", listRelationsForEntryCode(e.getEntryCode()));
+        snap.put("collectTaskId", collectTaskId);
+        snap.put("collectRunId", collectRunId);
+        snapshotVersion(operator, "ENTRY", e.getId(), toJson(snap), summary,
+                "SCHEDULED_COLLECT", collectTaskId, collectRunId);
+        insertChangeNotice(e, "定时采集检测到元数据变更，调度已暂停", summary
+                + "；请在「元数据采集 → 定时任务」发布定版后恢复调度，并在版本管理中对比差异");
     }
 
     /**
@@ -2330,6 +3513,9 @@ public class MetadataSubsystemService {
         if (connector.getJdbcUrl() != null && !connector.getJdbcUrl().isBlank()) {
             String user = connector.getJdbcUser();
             String pwd = connector.getJdbcPassword();
+            if (pwd != null && !pwd.isBlank()) {
+                pwd = credentialCipher.decrypt(pwd);
+            }
             if (user != null && !user.isBlank()) {
                 return DriverManager.getConnection(connector.getJdbcUrl(), user, pwd == null ? "" : pwd);
             }
@@ -2380,16 +3566,7 @@ public class MetadataSubsystemService {
 
     private boolean applyStandardMatch(GovMetadataRegistry e) {
         if (e.getEntryName() == null || e.getEntryName().isBlank()) return false;
-        GovStandardItem std = standardItemMapper.selectOne(new LambdaQueryWrapper<GovStandardItem>()
-                .eq(GovStandardItem::getItemName, e.getEntryName().trim())
-                .eq(GovStandardItem::getStatus, "ACTIVE")
-                .last("limit 1"));
-        if (std == null) {
-            std = standardItemMapper.selectOne(new LambdaQueryWrapper<GovStandardItem>()
-                    .like(GovStandardItem::getItemName, e.getEntryName().trim())
-                    .eq(GovStandardItem::getStatus, "ACTIVE")
-                    .last("limit 1"));
-        }
+        GovStandardItem std = findStandardForEntry(e);
         if (std == null) {
             return false;
         }
@@ -2430,6 +3607,33 @@ public class MetadataSubsystemService {
         return touched;
     }
 
+    private GovStandardItem findStandardForEntry(GovMetadataRegistry e) {
+        String name = e.getEntryName().trim();
+        GovStandardItem std = standardItemMapper.selectOne(new LambdaQueryWrapper<GovStandardItem>()
+                .eq(GovStandardItem::getItemName, name)
+                .eq(GovStandardItem::getStatus, "ACTIVE")
+                .last("limit 1"));
+        if (std == null && e.getKeywords() != null && !e.getKeywords().isBlank()) {
+            std = standardItemMapper.selectOne(new LambdaQueryWrapper<GovStandardItem>()
+                    .eq(GovStandardItem::getItemName, e.getKeywords().trim())
+                    .eq(GovStandardItem::getStatus, "ACTIVE")
+                    .last("limit 1"));
+        }
+        if (std == null && e.getOmRef() != null && !e.getOmRef().isBlank()) {
+            std = standardItemMapper.selectOne(new LambdaQueryWrapper<GovStandardItem>()
+                    .eq(GovStandardItem::getItemCode, e.getOmRef().trim())
+                    .eq(GovStandardItem::getStatus, "ACTIVE")
+                    .last("limit 1"));
+        }
+        if (std == null) {
+            std = standardItemMapper.selectOne(new LambdaQueryWrapper<GovStandardItem>()
+                    .like(GovStandardItem::getItemName, name)
+                    .eq(GovStandardItem::getStatus, "ACTIVE")
+                    .last("limit 1"));
+        }
+        return std;
+    }
+
     private boolean isBlank(String s) {
         return s == null || s.isBlank();
     }
@@ -2452,7 +3656,16 @@ public class MetadataSubsystemService {
     }
 
     private void insertChangeNotice(GovMetadataRegistry e, String title, String detail) {
-        if (!"CHANGED".equals(e.getChangeFlag()) && !"NEW".equals(e.getChangeFlag())) return;
+        if (e == null || e.getId() == null) {
+            return;
+        }
+        // 变更提醒仅针对「已有定版基线后的内容变更」；首次登记/首次采集待发布不走变更提醒
+        if (!"CHANGED".equals(e.getChangeFlag())) {
+            return;
+        }
+        if (!hasPublishedBaseline(e.getId())) {
+            return;
+        }
         GovMetaChangeNotice notice = new GovMetaChangeNotice();
         notice.setEntryId(e.getId());
         notice.setEntryCode(e.getEntryCode());
@@ -2460,6 +3673,18 @@ public class MetadataSubsystemService {
         notice.setDetail(detail == null ? e.getEntryName() : detail);
         notice.setStatus("UNREAD");
         changeNoticeMapper.insert(notice);
+    }
+
+    private boolean hasPublishedBaseline(Long entryId) {
+        if (entryId == null) {
+            return false;
+        }
+        GovMetaVersion published = versionMapper.selectOne(new LambdaQueryWrapper<GovMetaVersion>()
+                .eq(GovMetaVersion::getTargetType, "ENTRY")
+                .eq(GovMetaVersion::getTargetId, entryId)
+                .like(GovMetaVersion::getChangeSummary, "发布")
+                .last("limit 1"));
+        return published != null;
     }
 
     private void collectDownstream(String code, List<GovMetaRelation> rels, Set<String> visited, List<String> impacted) {
@@ -2699,6 +3924,13 @@ public class MetadataSubsystemService {
 
     private boolean catalogKeywordMatch(GovMetadataRegistry e, String kwLower) {
         if (e == null || kwLower == null || kwLower.isBlank()) return false;
+        // 元数据名称/编码、表名；字段 COLUMN 的 entryName=英文名、keywords=中文名
+        if ("COLUMN".equalsIgnoreCase(e.getEntryType())) {
+            return containsIgnoreCase(e.getEntryName(), kwLower)
+                    || containsIgnoreCase(e.getKeywords(), kwLower)
+                    || containsIgnoreCase(e.getEntryCode(), kwLower)
+                    || containsIgnoreCase(e.getDescription(), kwLower);
+        }
         return containsIgnoreCase(e.getEntryName(), kwLower)
                 || containsIgnoreCase(e.getEntryCode(), kwLower)
                 || containsIgnoreCase(e.getPhysicalTableName(), kwLower)
@@ -2796,7 +4028,8 @@ public class MetadataSubsystemService {
         List<GovMetadataRegistry> tables = entries.stream()
                 .filter(e -> "TABLE".equalsIgnoreCase(e.getEntryType()))
                 .collect(Collectors.toList());
-        List<String> layers = List.of("ODS", "DWD", "DWS", "ADS");
+        // 数据资产目录：治理后数仓成果（DWD/DWS/ADS），不含 ODS 源层
+        List<String> layers = List.of("DWD", "DWS", "ADS");
         List<Map<String, Object>> tree = new ArrayList<>();
         for (String layer : layers) {
             List<GovMetadataRegistry> layerTables = tables.stream()
@@ -2907,7 +4140,8 @@ public class MetadataSubsystemService {
         Map<String, Object> snap = parseSnapshot(toJson(e));
         snap.put("fields", buildFieldAttrsFromEntry(e));
         snap.put("relations", listRelationsForEntryCode(e.getEntryCode()));
-        snapshotVersion(operator, "ENTRY", e.getId(), toJson(snap), summary);
+        snapshotVersion(operator, "ENTRY", e.getId(), toJson(snap), summary,
+                inferVersionSource(summary), null, null);
     }
 
     private List<Map<String, Object>> listRelationsForEntryCode(String entryCode) {
@@ -3071,7 +4305,7 @@ public class MetadataSubsystemService {
 
     private List<Map<String, Object>> buildBasicDiff(Map<String, Object> leftSnap, Map<String, Object> rightSnap) {
         Set<String> skip = Set.of("fields", "relations", "contentJson", "updatedAt", "createdAt",
-                "publishedAt", "omSyncedAt", "id");
+                "publishedAt", "omSyncedAt", "id", "collectTaskId", "collectRunId");
         Set<String> keys = new HashSet<>();
         keys.addAll(leftSnap.keySet());
         keys.addAll(rightSnap.keySet());
@@ -3293,6 +4527,57 @@ public class MetadataSubsystemService {
                 || "TABLE".equalsIgnoreCase(entryType) || "COLUMN".equalsIgnoreCase(entryType);
     }
 
+    /** 数据源目录：治理前源系统家底（业务系统→数据源→库→表，含 ODS 源层表）。 */
+    private boolean isSourceCatalogEntry(GovMetadataRegistry e, Map<String, GovMetadataRegistry> byCode) {
+        if (e == null) {
+            return false;
+        }
+        if (isSourceType(e.getEntryType())) {
+            return true;
+        }
+        if ("TABLE".equalsIgnoreCase(e.getEntryType())) {
+            if (isAssetCatalogLayer(resolveDataPlaneLayer(e))) {
+                return false;
+            }
+            if ("ODS".equalsIgnoreCase(resolveDataPlaneLayer(e))) {
+                return true;
+            }
+            if (e.getParentCode() != null) {
+                GovMetadataRegistry parent = byCode.get(e.getParentCode());
+                return parent != null && isSourceType(parent.getEntryType());
+            }
+            return true;
+        }
+        if ("COLUMN".equalsIgnoreCase(e.getEntryType()) && e.getParentCode() != null) {
+            GovMetadataRegistry tbl = byCode.get(e.getParentCode());
+            return tbl != null && isSourceCatalogEntry(tbl, byCode);
+        }
+        return false;
+    }
+
+    /** 数据资产目录：治理后数仓资产（DWD/DWS/ADS 及下属字段）。 */
+    private boolean isAssetCatalogEntry(GovMetadataRegistry e, Map<String, GovMetadataRegistry> byCode) {
+        if (e == null) {
+            return false;
+        }
+        if ("TABLE".equalsIgnoreCase(e.getEntryType())) {
+            return isAssetCatalogLayer(resolveDataPlaneLayer(e));
+        }
+        if ("COLUMN".equalsIgnoreCase(e.getEntryType()) && e.getParentCode() != null) {
+            GovMetadataRegistry tbl = byCode.get(e.getParentCode());
+            return tbl != null && isAssetCatalogEntry(tbl, byCode);
+        }
+        return false;
+    }
+
+    private boolean isAssetCatalogLayer(String layer) {
+        if (layer == null || layer.isBlank()) {
+            return false;
+        }
+        String lv = layer.trim().toUpperCase(Locale.ROOT);
+        return "DWD".equals(lv) || "DWS".equals(lv) || "ADS".equals(lv);
+    }
+
     /** 控制面表：dataLayer=CONTROL 或物理库 smart_city */
     private boolean isControlPlaneTable(GovMetadataRegistry e) {
         if (e == null || !"TABLE".equalsIgnoreCase(e.getEntryType())) {
@@ -3346,6 +4631,34 @@ public class MetadataSubsystemService {
     }
 
     private void snapshotVersion(UserPrincipal operator, String targetType, Long targetId, String snapshot, String summary) {
+        snapshotVersion(operator, targetType, targetId, snapshot, summary,
+                inferVersionSource(summary), null, null);
+    }
+
+    private String inferVersionSource(String summary) {
+        if (summary == null) {
+            return "MANUAL";
+        }
+        if (summary.contains("定时采集")) {
+            return "SCHEDULED_COLLECT";
+        }
+        if (summary.contains("回滚")) {
+            return "ROLLBACK";
+        }
+        if (summary.contains("下线")) {
+            return "PUBLISH";
+        }
+        if (summary.contains("发布") || summary.contains("定版")) {
+            return "PUBLISH";
+        }
+        if (summary.contains("维护") || summary.contains("AUTO") || summary.contains("手工")) {
+            return "MAINTAIN";
+        }
+        return "MANUAL";
+    }
+
+    private void snapshotVersion(UserPrincipal operator, String targetType, Long targetId, String snapshot, String summary,
+                                 String versionSource, Long collectTaskId, Long collectRunId) {
         Long cnt = versionMapper.selectCount(new LambdaQueryWrapper<GovMetaVersion>()
                 .eq(GovMetaVersion::getTargetType, targetType)
                 .eq(GovMetaVersion::getTargetId, targetId));
@@ -3355,6 +4668,9 @@ public class MetadataSubsystemService {
         v.setVersionNo(cnt == null ? 1 : cnt.intValue() + 1);
         v.setSnapshotJson(snapshot);
         v.setChangeSummary(summary);
+        v.setVersionSource(versionSource);
+        v.setCollectTaskId(collectTaskId);
+        v.setCollectRunId(collectRunId);
         v.setCreatedBy(operator.getUsername());
         versionMapper.insert(v);
     }
@@ -3986,9 +5302,10 @@ public class MetadataSubsystemService {
             for (GovMetadataRegistry c : cols) {
                 Map<String, Object> f = new LinkedHashMap<>();
                 f.put("code", c.getEntryName());
-                f.put("name", c.getEntryName());
+                f.put("name", firstNonBlank(c.getKeywords(), c.getEntryName()));
                 f.put("type", nvl(c.getDescription()));
                 f.put("required", false);
+                f.put("hint", firstNonBlank(c.getDescription(), c.getKeywords()));
                 fields.add(f);
             }
             return fields;

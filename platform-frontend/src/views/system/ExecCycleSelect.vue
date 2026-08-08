@@ -1,6 +1,8 @@
 <script setup lang="ts">
-import { onMounted, ref, watch } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import api from '@/api/http'
+
+const CUSTOM_ID = -1
 
 export interface ExecCycleOption {
   id: number
@@ -9,11 +11,14 @@ export interface ExecCycleOption {
   cronExpr: string
 }
 
-const props = defineProps<{
+const props = withDefaults(defineProps<{
   modelValue?: string
   cycleId?: number | null
   placeholder?: string
-}>()
+  allowCustom?: boolean
+}>(), {
+  allowCustom: true,
+})
 
 const emit = defineEmits<{
   'update:modelValue': [string]
@@ -23,18 +28,46 @@ const emit = defineEmits<{
 
 const options = ref<ExecCycleOption[]>([])
 const selectedId = ref<number | null>(props.cycleId ?? null)
+const customCron = ref('')
+
+const isCustom = computed(() => selectedId.value === CUSTOM_ID)
+
+function syncFromModelValue(v?: string) {
+  if (!v) {
+    if (props.cycleId == null) {
+      selectedId.value = null
+      customCron.value = ''
+    }
+    return
+  }
+  const hit = options.value.find((o) => o.cronExpr === v)
+  if (hit) {
+    selectedId.value = hit.id
+    customCron.value = ''
+  } else if (props.allowCustom) {
+    selectedId.value = CUSTOM_ID
+    customCron.value = v
+  } else {
+    selectedId.value = null
+    customCron.value = ''
+  }
+}
 
 async function load() {
   options.value = (await api.get('/system/exec-cycles', { params: { status: 'ACTIVE' } })).data || []
-  if (selectedId.value == null && props.modelValue) {
-    const hit = options.value.find((o) => o.cronExpr === props.modelValue)
-    if (hit) selectedId.value = hit.id
-  }
+  syncFromModelValue(props.modelValue)
 }
 
 function onPick(id: number | null) {
   selectedId.value = id
+  if (id === CUSTOM_ID) {
+    emit('update:cycleId', null)
+    emit('update:modelValue', customCron.value.trim())
+    emit('change', null)
+    return
+  }
   const hit = options.value.find((o) => o.id === id) || null
+  customCron.value = ''
   emit('update:cycleId', id)
   emit('update:modelValue', hit?.cronExpr || '')
   emit('change', hit)
@@ -43,18 +76,22 @@ function onPick(id: number | null) {
 watch(
   () => props.cycleId,
   (v) => {
-    selectedId.value = v ?? null
+    if (v != null) selectedId.value = v
   },
 )
 
 watch(
   () => props.modelValue,
-  (v) => {
-    if (!v) return
-    const hit = options.value.find((o) => o.cronExpr === v)
-    if (hit) selectedId.value = hit.id
-  },
+  (v) => syncFromModelValue(v),
 )
+
+watch(customCron, (v) => {
+  if (selectedId.value === CUSTOM_ID) {
+    emit('update:modelValue', v.trim())
+    emit('update:cycleId', null)
+    emit('change', null)
+  }
+})
 
 onMounted(load)
 </script>
@@ -75,12 +112,29 @@ onMounted(load)
         :label="`${o.cycleName}（${o.cronExpr}）`"
         :value="o.id"
       />
+      <el-option v-if="allowCustom" label="自定义 Cron 表达式" :value="CUSTOM_ID" />
     </el-select>
+    <el-input
+      v-if="isCustom"
+      v-model="customCron"
+      class="custom-cron-input"
+      placeholder="请输入 Quartz Cron，如 0 0 2 * * ?"
+      clearable
+    />
     <div v-if="modelValue" class="cron-hint">Cron：{{ modelValue }}</div>
   </div>
 </template>
 
 <style scoped>
-.exec-cycle-select { width: 100%; }
-.cron-hint { margin-top: 6px; font-size: 12px; color: #909399; }
+.exec-cycle-select {
+  width: 100%;
+}
+.custom-cron-input {
+  margin-top: 8px;
+}
+.cron-hint {
+  margin-top: 6px;
+  font-size: 12px;
+  color: #909399;
+}
 </style>

@@ -16,6 +16,9 @@ public class GovMetaModel {
     private Integer dataLength;
     private Integer requiredFlag;
     private String componentType;
+    private Long metaDataSourceId;
+    private String sourceTableName;
+    private String sourceColumnName;
     private String status;
     private String contentJson;
     private LocalDateTime publishedAt;
@@ -39,6 +42,12 @@ public class GovMetaModel {
     public void setRequiredFlag(Integer requiredFlag) { this.requiredFlag = requiredFlag; }
     public String getComponentType() { return componentType; }
     public void setComponentType(String componentType) { this.componentType = componentType; }
+    public Long getMetaDataSourceId() { return metaDataSourceId; }
+    public void setMetaDataSourceId(Long metaDataSourceId) { this.metaDataSourceId = metaDataSourceId; }
+    public String getSourceTableName() { return sourceTableName; }
+    public void setSourceTableName(String sourceTableName) { this.sourceTableName = sourceTableName; }
+    public String getSourceColumnName() { return sourceColumnName; }
+    public void setSourceColumnName(String sourceColumnName) { this.sourceColumnName = sourceColumnName; }
     public String getStatus() { return status; }
     public void setStatus(String status) { this.status = status; }
     public String getContentJson() { return contentJson; }

@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref, watch } from 'vue'
+import { useRoute } from 'vue-router'
 import api from '@/api/http'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import PageCard from '@/components/common/PageCard.vue'
@@ -34,6 +35,9 @@ interface Version {
   changeSummary?: string
   createdBy?: string
   createdAt?: string
+  versionSource?: string
+  collectTaskId?: number
+  collectRunId?: number
 }
 
 interface FieldAttr {
@@ -55,7 +59,24 @@ interface AttrDiffRow {
   right: string
 }
 
-const activeTab = ref<'publish' | 'history' | 'compare'>('publish')
+interface CollectTaskVersionItem {
+  version: Version
+  entryName?: string
+  entryCode?: string
+  entryId?: number
+}
+
+const route = useRoute()
+const collectTaskId = computed(() => {
+  const v = route.query.collectTaskId
+  return v ? Number(v) : undefined
+})
+const collectTaskName = computed(() => String(route.query.collectTaskName || ''))
+const collectTaskVersions = ref<CollectTaskVersionItem[]>([])
+const collectTaskVersionsLoading = ref(false)
+const collectTaskInfo = ref<{ taskName?: string } | null>(null)
+
+const activeTab = ref<'publish' | 'history' | 'compare' | 'collect-task'>('publish')
 const loading = ref(false)
 const items = ref<VersionTarget[]>([])
 const kpi = reactive({ total: 0, published: 0, draft: 0, offline: 0 })
@@ -86,6 +107,7 @@ const detail = ref<{
   dataPreview?: Array<Record<string, unknown>>
   previewHint?: string
   isPublishVersion?: boolean
+  collectTaskName?: string
 } | null>(null)
 
 const compareForm = reactive({
@@ -125,6 +147,11 @@ const basicInfoRows = computed(() => {
     .filter(k => !['fields', 'relations', 'contentJson', 'snapshotJson'].includes(k))
     .map(k => ({ field: k, value: formatVal(info[k]) }))
 })
+
+function versionSourceLabel(source?: string) {
+  if (!source) return '—'
+  return statusLabel(source)
+}
 
 function formatTime(v?: string) {
   if (!v) return '—'
@@ -208,6 +235,44 @@ function onPickCompareTarget(id: number | undefined) {
   }
   const row = items.value.find(i => i.targetId === id)
   if (row) goCompare(row)
+}
+
+async function loadCollectTaskVersions() {
+  if (!collectTaskId.value) {
+    collectTaskVersions.value = []
+    collectTaskInfo.value = null
+    return
+  }
+  collectTaskVersionsLoading.value = true
+  try {
+    const res = await api.get(`/governance/platform/metadata/versions/by-collect-task/${collectTaskId.value}`)
+    collectTaskInfo.value = res.data.task || null
+    collectTaskVersions.value = res.data.items || []
+    activeTab.value = 'collect-task'
+  } finally {
+    collectTaskVersionsLoading.value = false
+  }
+}
+
+function compareCollectWithLatest(item: CollectTaskVersionItem) {
+  const sameEntry = collectTaskVersions.value.filter((i) => i.entryId === item.entryId)
+  const latest = sameEntry[0]?.version
+  if (!latest || latest.id === item.version.id) {
+    ElMessage.info('当前已是最新版本')
+    return
+  }
+  compareCollectVersions(item.version, latest)
+}
+
+function compareCollectVersions(left: Version, right?: Version) {
+  if (!right || left.id === right.id) {
+    ElMessage.warning('请选择两个不同版本进行对比')
+    return
+  }
+  compareForm.leftId = left.id
+  compareForm.rightId = right.id
+  activeTab.value = 'compare'
+  void doCompare()
 }
 
 async function loadOverview() {
@@ -415,7 +480,14 @@ watch(() => filter.targetType, () => {
   onSearch()
 })
 
-onMounted(loadOverview)
+watch(collectTaskId, () => {
+  if (collectTaskId.value) void loadCollectTaskVersions()
+})
+
+onMounted(async () => {
+  await loadOverview()
+  if (collectTaskId.value) await loadCollectTaskVersions()
+})
 </script>
 
 <template>
@@ -444,6 +516,7 @@ onMounted(loadOverview)
         <el-tab-pane label="元数据发布" name="publish" />
         <el-tab-pane label="版本历史" name="history" />
         <el-tab-pane label="版本对比" name="compare" />
+        <el-tab-pane v-if="collectTaskId" label="定时任务版本" name="collect-task" />
       </el-tabs>
 
       <!-- 发布管理 -->
@@ -552,6 +625,12 @@ onMounted(loadOverview)
         </el-form>
 
         <el-alert
+          type="info"
+          :closable="false"
+          style="margin-bottom:12px"
+          title="定时采集任务检测到元数据变更时，将自动生成版本记录；发布定版、维护、回滚也会写入历史。支持查看详情及与最新版本对比。"
+        />
+        <el-alert
           v-if="selected"
           type="success"
           :closable="false"
@@ -565,6 +644,9 @@ onMounted(loadOverview)
             <template #default="{ row }">
               <el-tag size="small">v{{ row.versionNo }}</el-tag>
             </template>
+          </el-table-column>
+          <el-table-column label="版本来源" width="100">
+            <template #default="{ row }">{{ versionSourceLabel(row.versionSource) }}</template>
           </el-table-column>
           <el-table-column prop="createdBy" label="提交人" width="110" />
           <el-table-column label="提交时间" width="170">
@@ -581,8 +663,50 @@ onMounted(loadOverview)
         </el-table>
       </template>
 
+      <!-- 定时任务关联版本 -->
+      <template v-else-if="activeTab === 'collect-task'">
+        <el-alert
+          type="info"
+          :closable="false"
+          show-icon
+          style="margin-bottom:12px"
+          :title="`采集任务「${collectTaskName || collectTaskInfo?.taskName || ('#' + collectTaskId)}」的全部版本记录；可选择两个版本进行差异分析。`"
+        />
+        <el-table v-loading="collectTaskVersionsLoading" :data="collectTaskVersions" stripe size="small" empty-text="该任务暂无版本记录">
+          <el-table-column label="版本号" width="90">
+            <template #default="{ row }">
+              <el-tag size="small">v{{ row.version.versionNo }}</el-tag>
+            </template>
+          </el-table-column>
+          <el-table-column label="元数据表" min-width="140" show-overflow-tooltip>
+            <template #default="{ row }">{{ row.entryName || '—' }}</template>
+          </el-table-column>
+          <el-table-column label="版本来源" width="100">
+            <template #default="{ row }">{{ versionSourceLabel(row.version.versionSource) }}</template>
+          </el-table-column>
+          <el-table-column prop="version.createdBy" label="提交人" width="100" />
+          <el-table-column label="提交时间" width="170">
+            <template #default="{ row }">{{ formatTime(row.version.createdAt) }}</template>
+          </el-table-column>
+          <el-table-column prop="version.changeSummary" label="变更说明" min-width="200" show-overflow-tooltip />
+          <el-table-column label="运行" width="80">
+            <template #default="{ row }">{{ row.version.collectRunId ? `#${row.version.collectRunId}` : '—' }}</template>
+          </el-table-column>
+          <el-table-column label="操作" width="200" fixed="right">
+            <template #default="{ row }">
+              <el-button link type="primary" @click="openDetail(row.version)">详情</el-button>
+              <el-button
+                link
+                type="primary"
+                @click="compareCollectWithLatest(row)"
+              >与最新对比</el-button>
+            </template>
+          </el-table-column>
+        </el-table>
+      </template>
+
       <!-- 版本对比 -->
-      <template v-else>
+      <template v-else-if="activeTab === 'compare'">
         <el-alert
           type="info"
           :closable="false"
@@ -687,9 +811,16 @@ onMounted(loadOverview)
         <template v-if="detail?.version">
           <el-descriptions :column="2" border size="small">
             <el-descriptions-item label="版本号">v{{ detail.version.versionNo }}</el-descriptions-item>
+            <el-descriptions-item label="版本来源">{{ versionSourceLabel(detail.version.versionSource) }}</el-descriptions-item>
             <el-descriptions-item label="提交人">{{ detail.version.createdBy || '—' }}</el-descriptions-item>
             <el-descriptions-item label="提交时间">{{ formatTime(detail.version.createdAt) }}</el-descriptions-item>
-            <el-descriptions-item label="发布描述">{{ detail.version.changeSummary || '—' }}</el-descriptions-item>
+            <el-descriptions-item label="发布描述" :span="2">{{ detail.version.changeSummary || '—' }}</el-descriptions-item>
+            <el-descriptions-item v-if="detail.version.collectTaskId" label="采集任务">
+              {{ detail.collectTaskName || `任务#${detail.version.collectTaskId}` }}
+            </el-descriptions-item>
+            <el-descriptions-item v-if="detail.version.collectRunId" label="采集运行">
+              #{{ detail.version.collectRunId }}
+            </el-descriptions-item>
           </el-descriptions>
 
           <div class="mver-section">基本信息</div>

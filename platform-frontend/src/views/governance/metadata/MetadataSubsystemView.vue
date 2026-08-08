@@ -10,6 +10,8 @@ const router = useRouter()
 const section = ref<MetaSection>('model')
 
 const components: Record<MetaSection, ReturnType<typeof defineAsyncComponent>> = {
+  category: defineAsyncComponent(() => import('./MetaSourceCategoryView.vue')),
+  source: defineAsyncComponent(() => import('./MetaDataSourceView.vue')),
   model: defineAsyncComponent(() => import('./MetaModelView.vue')),
   collect: defineAsyncComponent(() => import('./MetaCollectView.vue')),
   monitor: defineAsyncComponent(() => import('./MetaMonitorView.vue')),

@@ -1,32 +1,34 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref, watch } from 'vue'
+import { useRouter } from 'vue-router'
 import api from '@/api/http'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import PageCard from '@/components/common/PageCard.vue'
 import PortalPagination from '@/components/common/PortalPagination.vue'
 import { useClientPager } from '@/composables/useClientPager'
-import { LAYER_OPTIONS } from './meta-labels'
 import ExecCycleSelect from '@/views/system/ExecCycleSelect.vue'
+import { statusLabel } from '@/utils/status-label'
 
-interface DataSource {
+interface CategoryNode {
   id: number
-  sourceCode?: string
+  label: string
+  categoryCode?: string
+  layerCode?: string
+  children?: CategoryNode[]
+}
+
+interface MetaDataSource {
+  id: number
   sourceName: string
-  sourceType?: string
-  layerHint: string
-  platformLayer?: boolean
-  databaseName?: string
+  categoryId?: number
+  categoryName?: string
+  adapterType?: string
 }
 
 interface SourceTable {
-  sourceTable?: string
   tableName?: string
-}
-
-interface MetaModel {
-  id: number
-  modelNameZh: string
-  status: string
+  sourceTable?: string
+  collected?: boolean
 }
 
 interface Task {
@@ -34,20 +36,127 @@ interface Task {
   taskCode: string
   taskName: string
   ingDataSourceId?: number
-  connectorId?: number
-  modelId?: number
+  metaDataSourceId?: number
+  categoryId?: number
   cronExpr?: string
   scopeType: string
   tableList?: string
   status: string
+  scheduleType?: string
+  publishStatus?: string
   lastMessage?: string
+  createdAt?: string
 }
 
-const LAYER_GROUP_ORDER = ['EXTERNAL', 'ODS', 'DWD', 'DWS', 'ADS']
+interface TaskExtra {
+  pendingChangeCount?: number
+  needMetadataPublish?: boolean
+  schedulePaused?: boolean
+  versionCount?: number
+}
 
-const dataSources = ref<DataSource[]>([])
-const models = ref<MetaModel[]>([])
+const activeTab = ref<'manual' | 'scheduled'>('manual')
+const router = useRouter()
+
+const categories = ref<CategoryNode[]>([])
+const flatCategories = computed(() => flattenTree(categories.value))
+const categoryNameMap = computed(() => {
+  const m = new Map<number, string>()
+  for (const c of flatCategories.value) m.set(c.id, c.label)
+  return m
+})
+
+const allMetaSources = ref<MetaDataSource[]>([])
+const metaSourceNameMap = computed(() => {
+  const m = new Map<number, string>()
+  for (const s of allMetaSources.value) m.set(s.id, s.sourceName)
+  return m
+})
+
+// ---------- 手动采集：弹窗三栏选择 ----------
+const manualDialogVisible = ref(false)
+const dlgCategoryId = ref<number | null>(null)
+const dlgSourceId = ref<number | null>(null)
+const dlgTableNames = ref<string[]>([])
+const dlgCategoryKw = ref('')
+const dlgSourceKw = ref('')
+const dlgTableKw = ref('')
+const dlgCollectFilter = ref('')
+const dlgMetaSources = ref<MetaDataSource[]>([])
+const dlgSourceTables = ref<SourceTable[]>([])
+const dlgTablesLoading = ref(false)
+const dlgSaving = ref(false)
+
+const dlgFlatCategories = computed(() => flatCategories.value)
+const dlgFilteredCategories = computed(() => {
+  const kw = dlgCategoryKw.value.trim()
+  if (!kw) return dlgFlatCategories.value
+  return dlgFlatCategories.value.filter(c => c.label.includes(kw))
+})
+const dlgFilteredSources = computed(() => {
+  const kw = dlgSourceKw.value.trim()
+  if (!kw) return dlgMetaSources.value
+  return dlgMetaSources.value.filter(s => s.sourceName.includes(kw))
+})
+const dlgFilteredTables = computed(() => {
+  const kw = dlgTableKw.value.trim()
+  let rows = dlgSourceTables.value
+  if (dlgCollectFilter.value === 'COLLECTED') rows = rows.filter(t => t.collected)
+  if (dlgCollectFilter.value === 'NOT_COLLECTED') rows = rows.filter(t => !t.collected)
+  if (!kw) return rows
+  return rows.filter(t => tableNameOf(t).includes(kw))
+})
+
+const canConfirmManual = computed(() => dlgTableNames.value.length > 0)
+
+// ---------- 手动采集：列表 ----------
+const manualTasks = ref<Task[]>([])
+const manualFilter = reactive({ categoryId: undefined as number | undefined })
+const selectedManualTaskIds = ref<number[]>([])
+const {
+  page: manualPage,
+  pageSize: manualPageSize,
+  paged: pagedManualTasks,
+  total: manualTotal,
+  resetPage: resetManualPage,
+} = useClientPager(manualTasks)
+
+// ---------- 定时任务 ----------
+const schedCategoryId = ref<number | null>(null)
+const schedSourceId = ref<number | null>(null)
+const schedTableNames = ref<string[]>([])
+const schedCategoryKw = ref('')
+const schedSourceKw = ref('')
+const schedTableKw = ref('')
+const schedCollectFilter = ref('')
+const schedMetaSources = ref<MetaDataSource[]>([])
+const schedSourceTables = ref<SourceTable[]>([])
+const schedTablesLoading = ref(false)
+
+const schedFilteredCategories = computed(() => {
+  const kw = schedCategoryKw.value.trim()
+  if (!kw) return flatCategories.value
+  return flatCategories.value.filter(c => c.label.includes(kw))
+})
+const schedFilteredSources = computed(() => {
+  const kw = schedSourceKw.value.trim()
+  if (!kw) return schedMetaSources.value
+  return schedMetaSources.value.filter(s => s.sourceName.includes(kw))
+})
+const schedFilteredTables = computed(() => {
+  const kw = schedTableKw.value.trim()
+  let rows = schedSourceTables.value
+  if (schedCollectFilter.value === 'COLLECTED') rows = rows.filter(t => t.collected)
+  if (schedCollectFilter.value === 'NOT_COLLECTED') rows = rows.filter(t => !t.collected)
+  if (!kw) return rows
+  return rows.filter(t => tableNameOf(t).includes(kw))
+})
+
 const tasks = ref<Task[]>([])
+const taskExtraMap = ref<Record<number, TaskExtra>>({})
+const taskFilter = reactive({ keyword: '', scheduleType: 'SCHEDULED' })
+const selectedTaskIds = ref<number[]>([])
+const runningTaskId = ref<number | null>(null)
 const {
   page: taskPage,
   pageSize: taskPageSize,
@@ -56,88 +165,22 @@ const {
   resetPage: resetTaskPage,
 } = useClientPager(tasks)
 
-const sourceTables = ref<SourceTable[]>([])
-const tablesLoading = ref(false)
-const selectedTableNames = ref<string[]>([])
-
-const cronEnabled = ref(false)
-
-const form = reactive({
+const taskDialogVisible = ref(false)
+const taskDialogMode = ref<'create' | 'edit'>('create')
+const taskForm = reactive({
+  id: 0,
   taskName: '',
-  ingDataSourceId: undefined as number | undefined,
-  modelId: undefined as number | undefined,
-  scopeType: 'FULL' as 'FULL' | 'TABLE',
   cronExpr: '',
+  scopeType: 'TABLE' as 'FULL' | 'TABLE',
 })
 
-const editVisible = ref(false)
-const editing = ref<Task | null>(null)
-const editCronEnabled = ref(false)
-const editForm = reactive({
-  taskName: '',
-  modelId: undefined as number | undefined,
-  cronExpr: '',
-  scopeType: 'FULL' as 'FULL' | 'TABLE',
-  tableList: '',
-})
-const editSelectedTables = ref<string[]>([])
-const editSourceTables = ref<SourceTable[]>([])
-const editTablesLoading = ref(false)
-
-const connectorForm = reactive({
-  connectorName: '',
-  sourceType: 'MySQL',
-  jdbcUrl: '',
-  jdbcUser: '',
-  jdbcPassword: '',
-  jdbcDatabase: '',
-})
-
-const layerLabel = (layer: string) => {
-  if (layer === 'EXTERNAL') return '外部数据源'
-  return LAYER_OPTIONS.find(o => o.value === layer)?.label || layer
+function flattenTree(nodes: CategoryNode[], out: CategoryNode[] = []): CategoryNode[] {
+  for (const n of nodes) {
+    out.push(n)
+    if (n.children?.length) flattenTree(n.children, out)
+  }
+  return out
 }
-
-const groupedDataSources = computed(() => {
-  const groups: { layer: string; label: string; items: DataSource[] }[] = []
-  for (const layer of LAYER_GROUP_ORDER) {
-    const items = dataSources.value.filter(ds => ds.layerHint === layer)
-    if (items.length) {
-      groups.push({ layer, label: layerLabel(layer), items })
-    }
-  }
-  return groups
-})
-
-const dataSourceNameMap = computed(() => {
-  const map = new Map<number, string>()
-  for (const ds of dataSources.value) {
-    map.set(ds.id, ds.sourceName)
-  }
-  return map
-})
-
-const modelNameMap = computed(() => {
-  const map = new Map<number, string>()
-  for (const m of models.value) {
-    map.set(m.id, m.modelNameZh)
-  }
-  return map
-})
-
-const tableOptions = computed(() =>
-  sourceTables.value.map(t => {
-    const name = t.sourceTable || t.tableName || ''
-    return { label: name, value: name }
-  }).filter(o => o.value),
-)
-
-const editTableOptions = computed(() =>
-  editSourceTables.value.map(t => {
-    const name = t.sourceTable || t.tableName || ''
-    return { label: name, value: name }
-  }).filter(o => o.value),
-)
 
 function tableNameOf(t: SourceTable) {
   return t.sourceTable || t.tableName || ''
@@ -160,352 +203,829 @@ function formatTableList(names: string[]) {
   return names.length ? JSON.stringify(names) : ''
 }
 
-async function loadDataSources() {
-  dataSources.value = (await api.get('/governance/platform/metadata/collect/data-sources')).data || []
+function formatTableListDisplay(raw?: string | null) {
+  const names = parseTableList(raw)
+  if (!names.length) return '整库'
+  if (names.length <= 3) return names.join('、')
+  return `${names.slice(0, 3).join('、')} 等 ${names.length} 张`
 }
 
-async function loadModels() {
-  models.value = (await api.get('/governance/platform/metadata/models', { params: { status: 'PUBLISHED' } })).data || []
+function formatTime(v?: string) {
+  if (!v) return '—'
+  return String(v).replace('T', ' ').slice(0, 19)
 }
 
-async function loadTasks() {
-  tasks.value = (await api.get('/governance/platform/metadata/collect/tasks')).data || []
+function cycleLabel(cron?: string) {
+  if (!cron) return '—'
+  return cron
+}
+
+async function loadCategories() {
+  const res = await api.get('/governance/platform/metadata/source-categories/tree')
+  categories.value = res.data || []
+}
+
+async function loadAllMetaSources() {
+  allMetaSources.value = (await api.get('/governance/platform/metadata/data-sources')).data || []
+}
+
+async function loadMetaSourcesByCategory(categoryId: number | null, target: MetaDataSource[]) {
+  if (!categoryId) {
+    target.splice(0, target.length)
+    return
+  }
+  const rows = (await api.get('/governance/platform/metadata/data-sources', {
+    params: { categoryId },
+  })).data || []
+  target.splice(0, target.length, ...rows)
+}
+
+async function loadSourceTablesFor(
+  sourceId: number,
+  collectFilter: string,
+  target: SourceTable[],
+  loading: { value: boolean },
+) {
+  loading.value = true
+  target.splice(0, target.length)
+  try {
+    const rows = (await api.get(
+      `/governance/platform/metadata/collect/meta-data-sources/${sourceId}/tables`,
+      { params: { collectFilter: collectFilter || undefined } },
+    )).data || []
+    target.splice(0, target.length, ...rows)
+  } catch (e: unknown) {
+    const msg = (e as { response?: { data?: { message?: string } } })?.response?.data?.message
+    ElMessage.error(msg || '加载表列表失败，请检查数据源连接配置')
+  } finally {
+    loading.value = false
+  }
+}
+
+async function loadManualTasks() {
+  let rows: Task[] = (await api.get('/governance/platform/metadata/collect/tasks', {
+    params: { scheduleType: 'MANUAL' },
+  })).data || []
+  if (manualFilter.categoryId) {
+    rows = rows.filter(t => t.categoryId === manualFilter.categoryId)
+  }
+  manualTasks.value = rows
+  resetManualPage()
+}
+
+async function loadScheduledTasks() {
+  const rows = (await api.get('/governance/platform/metadata/collect/tasks', {
+    params: {
+      scheduleType: 'SCHEDULED',
+      keyword: taskFilter.keyword || undefined,
+      enriched: true,
+    },
+  })).data || []
+  const extra: Record<number, TaskExtra> = {}
+  tasks.value = rows.map((r: { task: Task; pendingChangeCount?: number; needMetadataPublish?: boolean; schedulePaused?: boolean; versionCount?: number }) => {
+    extra[r.task.id] = {
+      pendingChangeCount: r.pendingChangeCount,
+      needMetadataPublish: r.needMetadataPublish,
+      schedulePaused: r.schedulePaused,
+      versionCount: r.versionCount,
+    }
+    return r.task
+  })
+  taskExtraMap.value = extra
   resetTaskPage()
 }
 
-async function loadSourceTables(sourceId: number) {
-  tablesLoading.value = true
-  sourceTables.value = []
-  try {
-    sourceTables.value = (await api.get(`/governance/platform/metadata/collect/data-sources/${sourceId}/tables`)).data || []
-  } finally {
-    tablesLoading.value = false
-  }
+function taskExtra(taskId: number): TaskExtra {
+  return taskExtraMap.value[taskId] || {}
 }
 
-watch(() => form.ingDataSourceId, async (id) => {
-  selectedTableNames.value = []
-  sourceTables.value = []
-  if (!id) return
-  await loadSourceTables(id)
+function goTaskVersions(row: Task) {
+  router.push({
+    path: '/governance',
+    query: { tab: 'metadata', section: 'version', collectTaskId: row.id, collectTaskName: row.taskName },
+  })
+}
+
+watch(dlgCategoryId, async (id) => {
+  dlgSourceId.value = null
+  dlgTableNames.value = []
+  dlgSourceTables.value = []
+  await loadMetaSourcesByCategory(id, dlgMetaSources.value)
 })
 
-watch(() => form.scopeType, (scope) => {
-  if (scope === 'FULL') {
-    selectedTableNames.value = []
-  }
-})
-
-watch(cronEnabled, (on) => {
-  if (!on) form.cronExpr = ''
-})
-
-async function createTask() {
-  if (!form.taskName.trim()) {
-    ElMessage.warning('请填写任务名称')
+watch(dlgSourceId, async (id) => {
+  dlgTableNames.value = []
+  if (!id) {
+    dlgSourceTables.value = []
     return
   }
-  if (!form.ingDataSourceId) {
+  await loadSourceTablesFor(id, dlgCollectFilter.value, dlgSourceTables.value, dlgTablesLoading)
+})
+
+watch(dlgCollectFilter, async () => {
+  if (dlgSourceId.value) {
+    await loadSourceTablesFor(dlgSourceId.value, dlgCollectFilter.value, dlgSourceTables.value, dlgTablesLoading)
+  }
+})
+
+watch(schedCategoryId, async (id) => {
+  schedSourceId.value = null
+  schedTableNames.value = []
+  schedSourceTables.value = []
+  await loadMetaSourcesByCategory(id, schedMetaSources.value)
+})
+
+watch(schedSourceId, async (id) => {
+  schedTableNames.value = []
+  if (!id) {
+    schedSourceTables.value = []
+    return
+  }
+  await loadSourceTablesFor(id, schedCollectFilter.value, schedSourceTables.value, schedTablesLoading)
+})
+
+watch(schedCollectFilter, async () => {
+  if (schedSourceId.value) {
+    await loadSourceTablesFor(schedSourceId.value, schedCollectFilter.value, schedSourceTables.value, schedTablesLoading)
+  }
+})
+
+watch(activeTab, async (tab) => {
+  if (tab === 'manual') await loadManualTasks()
+  else await Promise.all([loadScheduledTasks(), loadAllMetaSources()])
+})
+
+function openManualDialog() {
+  dlgCategoryKw.value = ''
+  dlgSourceKw.value = ''
+  dlgTableKw.value = ''
+  dlgCollectFilter.value = ''
+  dlgCategoryId.value = flatCategories.value[0]?.id ?? null
+  dlgSourceId.value = null
+  dlgTableNames.value = []
+  dlgMetaSources.value = []
+  dlgSourceTables.value = []
+  manualDialogVisible.value = true
+}
+
+async function confirmManualDialog() {
+  if (!dlgSourceId.value) {
     ElMessage.warning('请选择数据源')
     return
   }
-  if (form.scopeType === 'TABLE' && !selectedTableNames.value.length) {
+  if (!dlgTableNames.value.length) {
     ElMessage.warning('请至少选择一张表')
     return
   }
-  if (cronEnabled.value && !form.cronExpr.trim()) {
-    ElMessage.warning('请选择执行周期')
-    return
-  }
-  const cronExpr = cronEnabled.value ? form.cronExpr : null
-  await api.post('/governance/platform/metadata/collect/tasks', {
-    taskName: form.taskName.trim(),
-    ingDataSourceId: form.ingDataSourceId,
-    modelId: form.modelId || null,
-    scopeType: form.scopeType,
-    tableList: form.scopeType === 'TABLE' ? formatTableList(selectedTableNames.value) : null,
-    cronExpr,
-  })
-  ElMessage.success('采集任务已创建')
-  form.taskName = ''
-  form.modelId = undefined
-  form.scopeType = 'FULL'
-  form.cronExpr = ''
-  selectedTableNames.value = []
-  cronEnabled.value = false
-  await loadTasks()
-}
-
-async function runTask(id: number) {
-  const res = await api.post(`/governance/platform/metadata/collect/tasks/${id}/run`)
-  ElMessage.success(res.data?.message || '采集完成')
-  await loadTasks()
-}
-
-function initEditCronFromExpr(expr?: string) {
-  editCronEnabled.value = !!expr
-  editForm.cronExpr = expr || ''
-}
-
-async function openEdit(row: Task) {
-  editing.value = row
-  editForm.taskName = row.taskName
-  editForm.modelId = row.modelId
-  editForm.scopeType = (row.scopeType === 'TABLE' ? 'TABLE' : 'FULL') as 'FULL' | 'TABLE'
-  initEditCronFromExpr(row.cronExpr)
-  const names = parseTableList(row.tableList)
-  editSelectedTables.value = names
-  editForm.tableList = row.tableList || ''
-  editVisible.value = true
-  editSourceTables.value = []
-  if (row.ingDataSourceId && editForm.scopeType === 'TABLE') {
-    editTablesLoading.value = true
-    try {
-      const tables: SourceTable[] = (await api.get(`/governance/platform/metadata/collect/data-sources/${row.ingDataSourceId}/tables`)).data || []
-      editSourceTables.value = tables
-      editSelectedTables.value = names.filter(n => tables.some(t => tableNameOf(t) === n))
-    } finally {
-      editTablesLoading.value = false
+  const sourceName = metaSourceNameMap.value.get(dlgSourceId.value) || '数据源'
+  dlgSaving.value = true
+  try {
+    const res = await api.post('/governance/platform/metadata/collect/manual', {
+      taskName: `手动采集_${sourceName}_${Date.now()}`,
+      categoryId: dlgCategoryId.value,
+      metaDataSourceId: dlgSourceId.value,
+      scopeType: 'TABLE',
+      tableList: formatTableList(dlgTableNames.value),
+    })
+    const status = res.data?.status
+    if (status === 'RUNNING') {
+      ElMessage.success(res.data?.message || '采集已启动，请到「元数据采集监控」查看或停止')
+    } else {
+      ElMessage.success(status ? `采集完成：${statusLabel(status)}` : '手动采集已执行')
     }
+    manualDialogVisible.value = false
+    await loadManualTasks()
+  } catch (e: unknown) {
+    const msg = (e as { response?: { data?: { message?: string } } })?.response?.data?.message
+    ElMessage.error(msg || '手动采集失败')
+  } finally {
+    dlgSaving.value = false
   }
 }
 
-async function saveEdit() {
-  if (!editing.value) return
-  if (editCronEnabled.value && !editForm.cronExpr.trim()) {
-    ElMessage.warning('请选择执行周期')
+function openCreateTaskDialog() {
+  taskDialogMode.value = 'create'
+  taskForm.id = 0
+  taskForm.taskName = ''
+  taskForm.cronExpr = ''
+  taskForm.scopeType = 'TABLE'
+  schedCategoryId.value = flatCategories.value[0]?.id ?? null
+  schedSourceId.value = null
+  schedTableNames.value = []
+  taskDialogVisible.value = true
+}
+
+function openEditTaskDialog(row: Task) {
+  taskDialogMode.value = 'edit'
+  taskForm.id = row.id
+  taskForm.taskName = row.taskName
+  taskForm.cronExpr = row.cronExpr || ''
+  taskForm.scopeType = row.scopeType === 'FULL' ? 'FULL' : 'TABLE'
+  schedCategoryId.value = row.categoryId || null
+  schedSourceId.value = row.metaDataSourceId || null
+  schedTableNames.value = parseTableList(row.tableList)
+  taskDialogVisible.value = true
+  if (schedCategoryId.value) {
+    loadMetaSourcesByCategory(schedCategoryId.value, schedMetaSources.value).then(() => {
+      if (schedSourceId.value) {
+        loadSourceTablesFor(schedSourceId.value, schedCollectFilter.value, schedSourceTables.value, schedTablesLoading)
+      }
+    })
+  }
+}
+
+async function saveTaskDialog() {
+  if (!taskForm.taskName.trim()) {
+    ElMessage.warning('请填写任务名称')
     return
   }
-  const cronExpr = editCronEnabled.value ? editForm.cronExpr : null
-  await api.put(`/governance/platform/metadata/collect/tasks/${editing.value.id}`, {
-    taskName: editForm.taskName.trim(),
-    modelId: editForm.modelId || null,
-    scopeType: editForm.scopeType,
-    tableList: editForm.scopeType === 'TABLE' ? formatTableList(editSelectedTables.value) : null,
-    cronExpr,
-  })
-  ElMessage.success('任务已更新')
-  editVisible.value = false
-  await loadTasks()
+  if (!taskForm.cronExpr.trim()) {
+    ElMessage.warning('请选择或填写执行周期')
+    return
+  }
+  if (!schedSourceId.value) {
+    ElMessage.warning('请选择数据源')
+    return
+  }
+  if (taskForm.scopeType === 'TABLE' && !schedTableNames.value.length) {
+    ElMessage.warning('请至少选择一张表')
+    return
+  }
+  const body = {
+    taskName: taskForm.taskName.trim(),
+    categoryId: schedCategoryId.value,
+    metaDataSourceId: schedSourceId.value,
+    cronExpr: taskForm.cronExpr,
+    scopeType: taskForm.scopeType,
+    tableList: taskForm.scopeType === 'TABLE' ? formatTableList(schedTableNames.value) : null,
+    scheduleType: 'SCHEDULED',
+  }
+  if (taskDialogMode.value === 'create') {
+    await api.post('/governance/platform/metadata/collect/tasks', body)
+    ElMessage.success('定时任务已创建')
+  } else {
+    await api.put(`/governance/platform/metadata/collect/tasks/${taskForm.id}`, body)
+    ElMessage.success('任务已更新')
+  }
+  taskDialogVisible.value = false
+  await loadScheduledTasks()
 }
 
-async function removeTask(row: Task) {
-  await ElMessageBox.confirm(`确认删除任务「${row.taskName}」？`, '删除确认')
-  await api.delete(`/governance/platform/metadata/collect/tasks/${row.id}`)
-  ElMessage.success('已删除')
-  await loadTasks()
+async function publishTasks() {
+  if (!selectedTaskIds.value.length) {
+    ElMessage.warning('请选择要发布的任务')
+    return
+  }
+  const hasChange = selectedTaskIds.value.some((id) => taskExtra(id).needMetadataPublish)
+  const tip = hasChange
+    ? `将发布 ${selectedTaskIds.value.length} 个任务的元数据定版（含变更表），并恢复 DolphinScheduler 调度。是否继续？`
+    : `将发布 ${selectedTaskIds.value.length} 个定时任务到 DolphinScheduler。是否继续？`
+  try {
+    await ElMessageBox.confirm(tip, '发布定版', { type: 'warning', confirmButtonText: '发布', cancelButtonText: '取消' })
+  } catch {
+    return
+  }
+  for (const id of selectedTaskIds.value) {
+    const res = await api.post(`/governance/platform/metadata/collect/tasks/${id}/publish-all`)
+    ElMessage.success(res.data?.message || '发布成功')
+  }
+  selectedTaskIds.value = []
+  await loadScheduledTasks()
 }
 
-async function createConnector() {
-  if (!connectorForm.connectorName) return
-  await api.post('/governance/connectors', { ...connectorForm })
-  ElMessage.success('适配器已创建')
-  connectorForm.connectorName = ''
-  connectorForm.jdbcUrl = ''
-  connectorForm.jdbcUser = ''
-  connectorForm.jdbcPassword = ''
-  connectorForm.jdbcDatabase = ''
+async function publishOneTask(row: Task) {
+  const extra = taskExtra(row.id)
+  const tip = extra.needMetadataPublish
+    ? `任务「${row.taskName}」检测到元数据变更，将发布定版并恢复调度。是否继续？`
+    : `确认发布任务「${row.taskName}」到 DolphinScheduler？`
+  try {
+    await ElMessageBox.confirm(tip, '发布定版', { type: 'warning', confirmButtonText: '发布', cancelButtonText: '取消' })
+  } catch {
+    return
+  }
+  const res = await api.post(`/governance/platform/metadata/collect/tasks/${row.id}/publish-all`)
+  ElMessage.success(res.data?.message || '发布成功')
+  await loadScheduledTasks()
+}
+
+function canDeleteTask(row: Task) {
+  return row.status !== 'RUNNING' && row.publishStatus !== 'PUBLISHED'
+}
+
+async function deleteOneTask(row: Task, reload: () => Promise<void>) {
+  if (!canDeleteTask(row)) {
+    if (row.status === 'RUNNING') {
+      ElMessage.warning('运行中任务不可删除')
+    } else {
+      ElMessage.warning('已发布任务须先下线再删除')
+    }
+    return
+  }
+  try {
+    await ElMessageBox.confirm(`确认删除任务「${row.taskName}」？`, '删除确认', { type: 'warning' })
+    await api.delete(`/governance/platform/metadata/collect/tasks/${row.id}`)
+    ElMessage.success('已删除')
+    await reload()
+  } catch (e: unknown) {
+    if (e === 'cancel' || (e as { message?: string })?.message === 'cancel') return
+    const err = e as Error & { message?: string }
+    ElMessage.error(err.message || '删除失败')
+  }
+}
+
+async function batchDeleteTasks(ids: number[], reload: () => Promise<void>, clearSelection: () => void) {
+  if (!ids.length) {
+    ElMessage.warning('请选择要删除的任务')
+    return
+  }
+  try {
+    await ElMessageBox.confirm(`确认删除选中的 ${ids.length} 个任务？`, '删除确认', { type: 'warning' })
+    await api.post('/governance/platform/metadata/collect/tasks/batch-delete', { ids })
+    ElMessage.success('已删除')
+    clearSelection()
+    await reload()
+  } catch (e: unknown) {
+    if (e === 'cancel' || (e as { message?: string })?.message === 'cancel') return
+    const err = e as Error & { message?: string }
+    ElMessage.error(err.message || '删除失败')
+  }
+}
+
+async function deleteScheduledTasks() {
+  await batchDeleteTasks(selectedTaskIds.value, loadScheduledTasks, () => { selectedTaskIds.value = [] })
+}
+
+async function deleteManualTasksBatch() {
+  await batchDeleteTasks(selectedManualTaskIds.value, loadManualTasks, () => { selectedManualTaskIds.value = [] })
+}
+
+async function runTaskNow(id: number) {
+  if (runningTaskId.value != null) return
+  runningTaskId.value = id
+  try {
+    const res = await api.post(
+      `/governance/platform/metadata/collect/tasks/${id}/run`,
+      {},
+    )
+    const status = res.data?.status
+    const msg = res.data?.message
+    if (status === 'RUNNING') {
+      ElMessage.success(msg || '采集已启动，请到「元数据采集监控」查看或停止')
+    } else if (status === 'FAILED') {
+      ElMessage.error(msg || '采集失败')
+    } else {
+      ElMessage.success(msg || `采集完成：${statusLabel(status || 'SUCCESS')}`)
+    }
+    await loadScheduledTasks()
+  } catch (e: unknown) {
+    const err = e as Error & { message?: string }
+    ElMessage.error(err.message || '触发采集失败')
+  } finally {
+    runningTaskId.value = null
+  }
+}
+
+async function unpublishTask(row: Task) {
+  await api.post(`/governance/platform/metadata/collect/tasks/${row.id}/unpublish`)
+  ElMessage.success('已下线')
+  await loadScheduledTasks()
 }
 
 onMounted(async () => {
-  await Promise.all([loadDataSources(), loadModels(), loadTasks()])
+  await Promise.all([loadCategories(), loadAllMetaSources(), loadManualTasks()])
 })
 </script>
 
 <template>
   <PageCard title="元数据采集">
-    <el-form label-width="96px" class="meta-collect-form">
-      <el-form-item label="任务名称" required>
-        <el-input v-model="form.taskName" placeholder="采集任务名称" style="max-width:360px" />
-      </el-form-item>
-      <el-form-item label="数据源" required>
-        <el-select
-          v-model="form.ingDataSourceId"
-          filterable
-          clearable
-          placeholder="选择登记数据源或平台分层库"
-          style="max-width:480px"
-        >
-          <el-option-group v-for="g in groupedDataSources" :key="g.layer" :label="g.label">
-            <el-option
-              v-for="ds in g.items"
-              :key="ds.id"
-              :label="`${ds.sourceName}${ds.databaseName ? ' · ' + ds.databaseName : ''}`"
-              :value="ds.id"
-            />
-          </el-option-group>
-        </el-select>
-      </el-form-item>
-      <el-form-item label="采集范围">
-        <el-radio-group v-model="form.scopeType">
-          <el-radio value="FULL">整库</el-radio>
-          <el-radio value="TABLE">选表</el-radio>
-        </el-radio-group>
-      </el-form-item>
-      <el-form-item v-if="form.scopeType === 'TABLE'" label="选择表">
-        <div v-loading="tablesLoading" style="width:100%;max-width:560px">
-          <el-select
-            v-model="selectedTableNames"
-            multiple
-            filterable
-            collapse-tags
-            collapse-tags-tooltip
-            placeholder="请先选择数据源"
-            style="width:100%"
-            :disabled="!form.ingDataSourceId"
-          >
-            <el-option v-for="o in tableOptions" :key="o.value" :label="o.label" :value="o.value" />
-          </el-select>
-          <div v-if="form.ingDataSourceId && !tablesLoading && !tableOptions.length" class="meta-hint">
-            未探测到可用表，请确认数据源连接正常
-          </div>
+    <el-tabs v-model="activeTab">
+      <el-tab-pane label="手动采集" name="manual">
+        <div class="meta-collect-tip">
+          分类与数据源与「数据源管理」同步；创建后将立即执行采集，执行详情请在「元数据采集监控」查看。
         </div>
-      </el-form-item>
-      <el-form-item label="元模型">
-        <el-select v-model="form.modelId" clearable filterable placeholder="可选，绑定已发布模型" style="max-width:360px">
-          <el-option v-for="m in models" :key="m.id" :label="m.modelNameZh" :value="m.id" />
-        </el-select>
-      </el-form-item>
-      <el-form-item label="定时调度">
-        <el-switch v-model="cronEnabled" active-text="启用定时" inactive-text="手动执行" />
-      </el-form-item>
-      <el-form-item v-if="cronEnabled" label="执行周期">
-        <ExecCycleSelect v-model="form.cronExpr" style="max-width:420px" />
-      </el-form-item>
-      <el-form-item>
-        <el-button type="primary" @click="createTask">创建任务</el-button>
-      </el-form-item>
-    </el-form>
-
-    <el-divider content-position="left">采集任务</el-divider>
-    <el-table :data="pagedTasks" stripe size="small">
-      <el-table-column prop="taskName" label="任务" min-width="140" />
-      <el-table-column label="数据源" min-width="120">
-        <template #default="{ row }">
-          {{ row.ingDataSourceId ? (dataSourceNameMap.get(row.ingDataSourceId) || '—') : '—' }}
-        </template>
-      </el-table-column>
-      <el-table-column label="范围" width="80">
-        <template #default="{ row }">{{ $statusLabel(row.scopeType) }}</template>
-      </el-table-column>
-      <el-table-column label="模型" min-width="100">
-        <template #default="{ row }">
-          {{ row.modelId ? (modelNameMap.get(row.modelId) || '—') : '—' }}
-        </template>
-      </el-table-column>
-      <el-table-column label="调度" width="130">
-        <template #default="{ row }">{{ row.cronExpr || '手动' }}</template>
-      </el-table-column>
-      <el-table-column label="状态" width="90">
-        <template #default="{ row }">
-          <el-tag :type="$statusTagType(row.status)" size="small">{{ $statusLabel(row.status) }}</el-tag>
-        </template>
-      </el-table-column>
-      <el-table-column prop="lastMessage" label="最近结果" min-width="160" show-overflow-tooltip />
-      <el-table-column label="操作" width="180" fixed="right">
-        <template #default="{ row }">
-          <el-button link type="primary" @click="runTask(row.id)">执行</el-button>
-          <el-button link @click="openEdit(row)">编辑</el-button>
-          <el-button link type="danger" @click="removeTask(row)">删除</el-button>
-        </template>
-      </el-table-column>
-    </el-table>
-    <PortalPagination
-      v-model:page="taskPage"
-      v-model:page-size="taskPageSize"
-      :total="taskTotal"
-    />
-
-    <el-collapse style="margin-top:20px">
-      <el-collapse-item title="高级：适配器" name="adapter">
         <el-form inline class="portal-inline-form portal-inline-form--block">
-          <el-form-item label="适配器" class="portal-field-lg">
-            <el-input v-model="connectorForm.connectorName" placeholder="名称" />
+          <el-form-item class="portal-form-actions">
+            <el-button type="primary" @click="openManualDialog">+ 创建</el-button>
+            <el-button
+              type="danger"
+              plain
+              :disabled="!selectedManualTaskIds.length"
+              @click="deleteManualTasksBatch"
+            >删除</el-button>
           </el-form-item>
-          <el-form-item label="类型" class="portal-field-sm">
-            <el-select v-model="connectorForm.sourceType">
-              <el-option label="MySQL" value="MySQL" />
-              <el-option label="PostgreSQL" value="PostgreSQL" />
+          <el-form-item label="数据分类" class="portal-field-md">
+            <el-select
+              v-model="manualFilter.categoryId"
+              clearable
+              filterable
+              placeholder="全部分类"
+            >
+              <el-option
+                v-for="c in flatCategories"
+                :key="c.id"
+                :label="c.label"
+                :value="c.id"
+              />
             </el-select>
           </el-form-item>
-          <el-form-item label="JDBC URL" class="portal-field-xl">
-            <el-input v-model="connectorForm.jdbcUrl" placeholder="可选" />
-          </el-form-item>
-          <el-form-item label="库名" class="portal-field-sm">
-            <el-input v-model="connectorForm.jdbcDatabase" />
-          </el-form-item>
-          <el-form-item label="用户" class="portal-field-sm">
-            <el-input v-model="connectorForm.jdbcUser" />
-          </el-form-item>
-          <el-form-item label="密码" class="portal-field-sm">
-            <el-input v-model="connectorForm.jdbcPassword" type="password" show-password />
-          </el-form-item>
           <el-form-item class="portal-form-actions">
-            <el-button @click="createConnector">新增适配器</el-button>
+            <el-button @click="loadManualTasks">查询</el-button>
           </el-form-item>
         </el-form>
-        <div class="meta-hint">常规采集请使用上方「登记数据源」；适配器仅用于特殊 JDBC 连接器场景。</div>
-      </el-collapse-item>
-    </el-collapse>
 
-    <!-- 编辑对话框 -->
-    <el-dialog v-model="editVisible" title="编辑采集任务" width="560px" destroy-on-close>
-      <el-form label-width="96px">
-        <el-form-item label="任务名称">
-          <el-input v-model="editForm.taskName" />
+        <div class="meta-section-title">手动采集列表</div>
+        <el-table
+          :data="pagedManualTasks"
+          stripe
+          size="small"
+          empty-text="暂无手动采集，请点击「创建」新增"
+          @selection-change="(rows: Task[]) => { selectedManualTaskIds = rows.map(r => r.id) }"
+        >
+          <el-table-column type="selection" width="42" :selectable="(row: Task) => canDeleteTask(row)" />
+          <el-table-column type="index" label="序号" width="60" />
+          <el-table-column prop="taskName" label="任务名称" min-width="160" show-overflow-tooltip />
+          <el-table-column label="分类" width="100" show-overflow-tooltip>
+            <template #default="{ row }">
+              {{ row.categoryId ? (categoryNameMap.get(row.categoryId) || '—') : '—' }}
+            </template>
+          </el-table-column>
+          <el-table-column label="数据源" min-width="120" show-overflow-tooltip>
+            <template #default="{ row }">
+              {{ row.metaDataSourceId ? (metaSourceNameMap.get(row.metaDataSourceId) || '—') : '—' }}
+            </template>
+          </el-table-column>
+          <el-table-column label="采集表" min-width="160" show-overflow-tooltip>
+            <template #default="{ row }">{{ formatTableListDisplay(row.tableList) }}</template>
+          </el-table-column>
+          <el-table-column label="状态" width="90">
+            <template #default="{ row }">
+              <el-tag :type="$statusTagType(row.status)" size="small">{{ statusLabel(row.status) }}</el-tag>
+            </template>
+          </el-table-column>
+          <el-table-column label="最近结果" min-width="140" show-overflow-tooltip>
+            <template #default="{ row }">{{ row.lastMessage || '—' }}</template>
+          </el-table-column>
+          <el-table-column label="创建时间" width="160">
+            <template #default="{ row }">{{ formatTime(row.createdAt) }}</template>
+          </el-table-column>
+          <el-table-column label="操作" width="80" fixed="right">
+            <template #default="{ row }">
+              <el-button
+                link
+                type="danger"
+                :disabled="!canDeleteTask(row)"
+                @click="deleteOneTask(row, loadManualTasks)"
+              >删除</el-button>
+            </template>
+          </el-table-column>
+        </el-table>
+        <PortalPagination
+          v-model:page="manualPage"
+          v-model:page-size="manualPageSize"
+          :total="manualTotal"
+        />
+      </el-tab-pane>
+
+      <el-tab-pane label="定时任务采集" name="scheduled">
+        <div class="meta-collect-tip">
+          定时任务发布后将按周期执行；若探测到元数据变更，调度自动暂停并在「元数据维护 → 变更提醒」提示，须在本页<strong>发布定版</strong>后恢复调度；版本可在「元数据版本管理」按任务查看并对比。
+        </div>
+        <el-form inline class="portal-inline-form portal-inline-form--block">
+          <el-form-item class="portal-form-actions">
+            <el-button type="primary" @click="openCreateTaskDialog">+ 新增</el-button>
+            <el-button type="primary" plain :disabled="!selectedTaskIds.length" @click="publishTasks">发布定版</el-button>
+            <el-button type="danger" plain :disabled="!selectedTaskIds.length" @click="deleteScheduledTasks">删除</el-button>
+          </el-form-item>
+          <el-form-item label="关键字" class="portal-field-md">
+            <el-input v-model="taskFilter.keyword" placeholder="任务名称" clearable @keyup.enter="loadScheduledTasks" />
+          </el-form-item>
+          <el-form-item class="portal-form-actions">
+            <el-button @click="loadScheduledTasks">查询</el-button>
+          </el-form-item>
+        </el-form>
+
+        <el-table
+          :data="pagedTasks"
+          stripe
+          size="small"
+          @selection-change="(rows: Task[]) => { selectedTaskIds = rows.map(r => r.id) }"
+        >
+          <el-table-column type="selection" width="42" :selectable="(row: Task) => canDeleteTask(row)" />
+          <el-table-column type="index" label="序号" width="60" />
+          <el-table-column prop="taskName" label="任务名称" min-width="140" />
+          <el-table-column label="数据源" min-width="120">
+            <template #default="{ row }">
+              {{ row.metaDataSourceId ? (metaSourceNameMap.get(row.metaDataSourceId) || '—') : '—' }}
+            </template>
+          </el-table-column>
+          <el-table-column label="执行周期" min-width="120">
+            <template #default="{ row }">{{ cycleLabel(row.cronExpr) }}</template>
+          </el-table-column>
+          <el-table-column label="发布状态" width="100">
+            <template #default="{ row }">
+              <el-tag :type="row.publishStatus === 'PUBLISHED' ? 'success' : 'info'" size="small">
+                {{ statusLabel(row.publishStatus || 'DRAFT') }}
+              </el-tag>
+            </template>
+          </el-table-column>
+          <el-table-column label="变更/版本" width="120">
+            <template #default="{ row }">
+              <el-tag v-if="taskExtra(row.id).needMetadataPublish" type="warning" size="small">待发布变更</el-tag>
+              <el-tag v-else-if="taskExtra(row.id).schedulePaused" type="info" size="small">调度已暂停</el-tag>
+              <span v-else-if="taskExtra(row.id).versionCount">版本 {{ taskExtra(row.id).versionCount }}</span>
+              <span v-else>—</span>
+            </template>
+          </el-table-column>
+          <el-table-column label="任务状态" width="90">
+            <template #default="{ row }">
+              <el-tag :type="$statusTagType(row.status)" size="small">{{ statusLabel(row.status) }}</el-tag>
+            </template>
+          </el-table-column>
+          <el-table-column label="创建时间" width="160">
+            <template #default="{ row }">{{ formatTime(row.createdAt) }}</template>
+          </el-table-column>
+          <el-table-column label="操作" width="300" fixed="right">
+            <template #default="{ row }">
+              <el-button
+                link
+                type="success"
+                @click="publishOneTask(row)"
+              >发布定版</el-button>
+              <el-button
+                link
+                type="primary"
+                :loading="runningTaskId === row.id"
+                :disabled="runningTaskId != null && runningTaskId !== row.id"
+                @click="runTaskNow(row.id)"
+              >执行</el-button>
+              <el-button link @click="openEditTaskDialog(row)">编辑</el-button>
+              <el-button link type="primary" @click="goTaskVersions(row)">版本</el-button>
+              <el-button
+                v-if="row.publishStatus === 'PUBLISHED'"
+                link
+                type="warning"
+                @click="unpublishTask(row)"
+              >下线</el-button>
+              <el-button
+                link
+                type="danger"
+                :disabled="!canDeleteTask(row)"
+                @click="deleteOneTask(row, loadScheduledTasks)"
+              >删除</el-button>
+            </template>
+          </el-table-column>
+        </el-table>
+        <PortalPagination v-model:page="taskPage" v-model:page-size="taskPageSize" :total="taskTotal" />
+      </el-tab-pane>
+    </el-tabs>
+
+    <!-- 手动采集：采集元数据弹窗 -->
+    <el-dialog v-model="manualDialogVisible" title="采集元数据" width="920px" destroy-on-close>
+      <div class="meta-picker meta-picker--dialog">
+        <div class="meta-picker-col">
+          <div class="meta-picker-title">元数据-分类</div>
+          <el-input v-model="dlgCategoryKw" placeholder="请输入分类名称" clearable size="small" />
+          <el-scrollbar class="meta-picker-list">
+            <div
+              v-for="c in dlgFilteredCategories"
+              :key="'m' + c.id"
+              class="meta-picker-item"
+              :class="{ active: dlgCategoryId === c.id }"
+              @click="dlgCategoryId = c.id"
+            >
+              {{ c.label }}
+            </div>
+          </el-scrollbar>
+        </div>
+        <div class="meta-picker-col">
+          <div class="meta-picker-title">元数据-数据源</div>
+          <el-input v-model="dlgSourceKw" placeholder="请输入数据源名称" clearable size="small" />
+          <el-scrollbar class="meta-picker-list">
+            <el-empty v-if="!dlgFilteredSources.length" description="暂无数据" :image-size="48" />
+            <div
+              v-for="s in dlgFilteredSources"
+              :key="'m' + s.id"
+              class="meta-picker-item"
+              :class="{ active: dlgSourceId === s.id }"
+              @click="dlgSourceId = s.id"
+            >
+              {{ s.sourceName }}
+            </div>
+          </el-scrollbar>
+        </div>
+        <div class="meta-picker-col">
+          <div class="meta-picker-title">元数据-表</div>
+          <div class="meta-picker-toolbar">
+            <el-input v-model="dlgTableKw" placeholder="请输入表名称" clearable size="small" />
+            <el-select v-model="dlgCollectFilter" clearable placeholder="采集状态" size="small" style="width:110px">
+              <el-option label="已采集" value="COLLECTED" />
+              <el-option label="未采集" value="NOT_COLLECTED" />
+            </el-select>
+          </div>
+          <el-scrollbar v-loading="dlgTablesLoading" class="meta-picker-list">
+            <el-empty v-if="!dlgFilteredTables.length && !dlgTablesLoading" description="暂无数据" :image-size="48" />
+            <el-checkbox-group v-model="dlgTableNames">
+              <div v-for="t in dlgFilteredTables" :key="'m' + tableNameOf(t)" class="meta-table-row">
+                <el-checkbox :value="tableNameOf(t)">
+                  {{ tableNameOf(t) }}
+                  <el-tag v-if="t.collected" size="small" type="success" class="meta-tag">已采集</el-tag>
+                </el-checkbox>
+              </div>
+            </el-checkbox-group>
+          </el-scrollbar>
+        </div>
+      </div>
+      <template #footer>
+        <div class="dlg-footer">
+          <span v-if="!canConfirmManual" class="dlg-footer-hint">请先在「元数据-表」中勾选至少一张表</span>
+          <div class="dlg-footer-actions">
+            <el-button @click="manualDialogVisible = false">取消</el-button>
+            <el-button type="primary" :loading="dlgSaving" :disabled="!canConfirmManual" @click="confirmManualDialog">
+              确定
+            </el-button>
+          </div>
+        </div>
+      </template>
+    </el-dialog>
+
+    <!-- 定时任务弹窗 -->
+    <el-dialog
+      v-model="taskDialogVisible"
+      :title="taskDialogMode === 'create' ? '新增定时采集任务' : '编辑定时采集任务'"
+      width="920px"
+      destroy-on-close
+    >
+      <el-form label-width="96px" class="task-basic-form">
+        <el-form-item label="任务名称" required>
+          <el-input v-model="taskForm.taskName" placeholder="采集任务名称" />
         </el-form-item>
-        <el-form-item label="数据源">
-          <el-input
-            :model-value="editing?.ingDataSourceId ? (dataSourceNameMap.get(editing.ingDataSourceId) || '—') : '—'"
-            disabled
-          />
+        <el-form-item label="执行器地址">
+          <el-select model-value="default" disabled style="max-width:360px">
+            <el-option label="默认" value="default" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="执行周期" required>
+          <ExecCycleSelect v-model="taskForm.cronExpr" style="max-width:420px" />
         </el-form-item>
         <el-form-item label="采集范围">
-          <el-radio-group v-model="editForm.scopeType">
+          <el-radio-group v-model="taskForm.scopeType">
             <el-radio value="FULL">整库</el-radio>
             <el-radio value="TABLE">选表</el-radio>
           </el-radio-group>
         </el-form-item>
-        <el-form-item v-if="editForm.scopeType === 'TABLE'" label="选择表">
-          <div v-loading="editTablesLoading" style="width:100%">
-            <el-select
-              v-model="editSelectedTables"
-              multiple
-              filterable
-              collapse-tags
-              style="width:100%"
+      </el-form>
+
+      <div class="meta-picker meta-picker--dialog">
+        <div class="meta-picker-col">
+          <div class="meta-picker-title">元数据-分类</div>
+          <el-input v-model="schedCategoryKw" placeholder="请输入分类名称" clearable size="small" />
+          <el-scrollbar class="meta-picker-list">
+            <div
+              v-for="c in schedFilteredCategories"
+              :key="'s' + c.id"
+              class="meta-picker-item"
+              :class="{ active: schedCategoryId === c.id }"
+              @click="schedCategoryId = c.id"
             >
-              <el-option v-for="o in editTableOptions" :key="'e' + o.value" :label="o.label" :value="o.value" />
+              {{ c.label }}
+            </div>
+          </el-scrollbar>
+        </div>
+        <div class="meta-picker-col">
+          <div class="meta-picker-title">元数据-数据源</div>
+          <el-input v-model="schedSourceKw" placeholder="请输入数据源名称" clearable size="small" />
+          <el-scrollbar class="meta-picker-list">
+            <el-empty v-if="!schedFilteredSources.length" description="暂无数据" :image-size="48" />
+            <div
+              v-for="s in schedFilteredSources"
+              :key="'s' + s.id"
+              class="meta-picker-item"
+              :class="{ active: schedSourceId === s.id }"
+              @click="schedSourceId = s.id"
+            >
+              {{ s.sourceName }}
+            </div>
+          </el-scrollbar>
+        </div>
+        <div class="meta-picker-col">
+          <div class="meta-picker-title">元数据-表</div>
+          <div class="meta-picker-toolbar">
+            <el-input v-model="schedTableKw" placeholder="请输入表名称" clearable size="small" />
+            <el-select v-model="schedCollectFilter" clearable placeholder="采集状态" size="small" style="width:110px">
+              <el-option label="已采集" value="COLLECTED" />
+              <el-option label="未采集" value="NOT_COLLECTED" />
             </el-select>
           </div>
-        </el-form-item>
-        <el-form-item label="元模型">
-          <el-select v-model="editForm.modelId" clearable filterable style="width:100%">
-            <el-option v-for="m in models" :key="m.id" :label="m.modelNameZh" :value="m.id" />
-          </el-select>
-        </el-form-item>
-        <el-form-item label="定时调度">
-          <el-switch v-model="editCronEnabled" active-text="启用" inactive-text="手动" />
-        </el-form-item>
-        <el-form-item v-if="editCronEnabled" label="执行周期">
-          <ExecCycleSelect v-model="editForm.cronExpr" />
-        </el-form-item>
-      </el-form>
+          <el-scrollbar v-loading="schedTablesLoading" class="meta-picker-list">
+            <el-empty v-if="taskForm.scopeType === 'FULL'" description="整库采集无需选表" :image-size="48" />
+            <template v-else>
+              <el-empty v-if="!schedFilteredTables.length && !schedTablesLoading" description="暂无数据" :image-size="48" />
+              <el-checkbox-group v-model="schedTableNames">
+                <div v-for="t in schedFilteredTables" :key="'s' + tableNameOf(t)" class="meta-table-row">
+                  <el-checkbox :value="tableNameOf(t)">{{ tableNameOf(t) }}</el-checkbox>
+                </div>
+              </el-checkbox-group>
+            </template>
+          </el-scrollbar>
+        </div>
+      </div>
+
       <template #footer>
-        <el-button @click="editVisible = false">取消</el-button>
-        <el-button type="primary" @click="saveEdit">保存</el-button>
+        <el-button @click="taskDialogVisible = false">取消</el-button>
+        <el-button type="primary" @click="saveTaskDialog">确定</el-button>
       </template>
     </el-dialog>
   </PageCard>
 </template>
 
 <style scoped>
-.meta-collect-form {
-  max-width: 720px;
+.meta-collect-tip {
+  margin-bottom: 12px;
+  font-size: 13px;
+  color: var(--el-text-color-secondary);
 }
-.meta-hint {
+.meta-section-title {
+  font-weight: 600;
+  font-size: 14px;
+  margin: 16px 0 10px;
+}
+.meta-picker {
+  display: grid;
+  grid-template-columns: 1fr 1fr 1.2fr;
+  gap: 12px;
+  min-height: 360px;
+}
+.meta-picker--dialog {
+  height: 420px;
+  min-height: 320px;
+}
+.meta-picker-col {
+  border: 1px solid var(--el-border-color-light);
+  border-radius: 8px;
+  padding: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  min-height: 0;
+  overflow: hidden;
+  background: var(--el-fill-color-blank);
+}
+.meta-picker-title {
+  font-weight: 600;
+  font-size: 13px;
+}
+.meta-picker-toolbar {
+  display: flex;
+  gap: 8px;
+}
+.meta-picker-list {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+.meta-picker-list :deep(.el-scrollbar) {
+  height: 100%;
+}
+.meta-picker-list :deep(.el-scrollbar__wrap) {
+  overflow-x: hidden;
+}
+.meta-picker-item {
+  padding: 8px 10px;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 13px;
+}
+.meta-picker-item:hover {
+  background: var(--el-fill-color-light);
+}
+.meta-picker-item.active {
+  background: var(--el-color-primary-light-9);
+  color: var(--el-color-primary);
+}
+.meta-table-row {
+  padding: 4px 2px;
+}
+.meta-tag {
+  margin-left: 6px;
+}
+.task-basic-form {
+  max-width: 640px;
+  margin-bottom: 12px;
+}
+.dlg-footer {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  width: 100%;
+  gap: 12px;
+}
+.dlg-footer-hint {
+  margin-right: auto;
   font-size: 12px;
   color: var(--el-text-color-secondary);
-  margin-top: 6px;
+}
+.dlg-footer-actions {
+  display: flex;
+  gap: 8px;
 }
 </style>

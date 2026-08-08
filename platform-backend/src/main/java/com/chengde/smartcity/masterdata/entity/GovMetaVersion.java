@@ -14,6 +14,9 @@ public class GovMetaVersion {
     private Integer versionNo;
     private String snapshotJson;
     private String changeSummary;
+    private String versionSource;
+    private Long collectTaskId;
+    private Long collectRunId;
     private String createdBy;
     private LocalDateTime createdAt;
 
@@ -29,6 +32,12 @@ public class GovMetaVersion {
     public void setSnapshotJson(String snapshotJson) { this.snapshotJson = snapshotJson; }
     public String getChangeSummary() { return changeSummary; }
     public void setChangeSummary(String changeSummary) { this.changeSummary = changeSummary; }
+    public String getVersionSource() { return versionSource; }
+    public void setVersionSource(String versionSource) { this.versionSource = versionSource; }
+    public Long getCollectTaskId() { return collectTaskId; }
+    public void setCollectTaskId(Long collectTaskId) { this.collectTaskId = collectTaskId; }
+    public Long getCollectRunId() { return collectRunId; }
+    public void setCollectRunId(Long collectRunId) { this.collectRunId = collectRunId; }
     public String getCreatedBy() { return createdBy; }
     public void setCreatedBy(String createdBy) { this.createdBy = createdBy; }
     public LocalDateTime getCreatedAt() { return createdAt; }

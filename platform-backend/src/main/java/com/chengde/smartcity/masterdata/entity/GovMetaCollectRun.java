@@ -10,6 +10,9 @@ public class GovMetaCollectRun {
     @TableId(type = IdType.AUTO)
     private Long id;
     private Long taskId;
+    private String triggerType;
+    private Long dsInstanceId;
+    private String dsState;
     private String status;
     private LocalDateTime startedAt;
     private LocalDateTime endedAt;
@@ -21,6 +24,12 @@ public class GovMetaCollectRun {
     public void setId(Long id) { this.id = id; }
     public Long getTaskId() { return taskId; }
     public void setTaskId(Long taskId) { this.taskId = taskId; }
+    public String getTriggerType() { return triggerType; }
+    public void setTriggerType(String triggerType) { this.triggerType = triggerType; }
+    public Long getDsInstanceId() { return dsInstanceId; }
+    public void setDsInstanceId(Long dsInstanceId) { this.dsInstanceId = dsInstanceId; }
+    public String getDsState() { return dsState; }
+    public void setDsState(String dsState) { this.dsState = dsState; }
     public String getStatus() { return status; }
     public void setStatus(String status) { this.status = status; }
     public LocalDateTime getStartedAt() { return startedAt; }

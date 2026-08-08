@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref, watch } from 'vue'
 import api from '@/api/http'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import PageCard from '@/components/common/PageCard.vue'
@@ -46,10 +46,19 @@ interface Notice {
   createdAt?: string
 }
 
+interface AttrDiffRow {
+  fieldName: string
+  changeType: string
+  attr: string
+  left: string
+  right: string
+}
+
 interface Suggestion {
   itemName: string
   count: number
   itemType: string
+  sampleDescription?: string
 }
 
 interface AutoPreview {
@@ -71,7 +80,7 @@ const notices = ref<Notice[]>([])
 const suggestions = ref<Suggestion[]>([])
 const autoPreview = ref<AutoPreview[]>([])
 const autoRunning = ref(false)
-const kpi = reactive({ total: 0, needRepublish: 0, unreadNotice: 0, standardLinked: 0 })
+const kpi = reactive({ total: 0, needRepublish: 0, pendingFirstPublish: 0, changeRepublish: 0, unreadNotice: 0, standardLinked: 0 })
 
 const filter = reactive({
   keyword: '',
@@ -113,13 +122,20 @@ const compareData = ref<{
   entry?: Entry
   published?: { versionNo?: number; changeSummary?: string; createdAt?: string }
   latest?: { versionNo?: number; changeSummary?: string }
+  pendingFirstPublish?: boolean
+  contentChanged?: boolean
+  versionAhead?: boolean
+  summary?: string
   sameSnapshot?: boolean
   basicDiff?: Array<{ field: string; left: string; right: string }>
+  attrDiff?: AttrDiffRow[]
 } | null>(null)
 const noticeDetail = ref<Notice | null>(null)
 const noticeVisible = ref(false)
 
 const selectedIds = ref<number[]>([])
+const selectedPreviewIds = ref<number[]>([])
+const tabLoaded = reactive({ auto: false, notice: false })
 
 const pagedItems = computed(() => {
   const start = (page.value - 1) * pageSize.value
@@ -127,6 +143,9 @@ const pagedItems = computed(() => {
 })
 
 const unreadNotices = computed(() => notices.value.filter((n) => n.status === 'UNREAD'))
+
+const pendingFirstItems = computed(() => items.value.filter(i => i.pendingFirstPublish))
+const changeRepublishItems = computed(() => items.value.filter(i => i.needRepublish && !i.pendingFirstPublish))
 
 function tagsToArray(tags?: string): string[] {
   if (!tags) return []
@@ -140,6 +159,21 @@ function tagsToString(list: string[]): string {
 function formatTime(v?: string) {
   if (!v) return '—'
   return String(v).replace('T', ' ').slice(0, 19)
+}
+
+function attrLabel(attr: string) {
+  const map: Record<string, string> = {
+    nameZh: '字段中文名',
+    nameEn: '字段英文名',
+    dataType: '数据类型',
+    length: '长度',
+    primaryKey: '主键',
+    partition: '分区',
+    unit: '计量单位',
+    description: '描述',
+    整行: '整行',
+  }
+  return map[attr] || attr
 }
 
 function fieldLabel(field: string) {
@@ -173,6 +207,8 @@ async function loadOverview() {
     const k = res.data.kpi || {}
     kpi.total = Number(k.total || 0)
     kpi.needRepublish = Number(k.needRepublish || 0)
+    kpi.pendingFirstPublish = Number(k.pendingFirstPublish || 0)
+    kpi.changeRepublish = Number(k.changeRepublish || 0)
     kpi.unreadNotice = Number(k.unreadNotice || 0)
     kpi.standardLinked = Number(k.standardLinked || 0)
   } finally {
@@ -239,7 +275,8 @@ async function saveUpdate() {
   })
   ElMessage.success('已保存，版本有更新，请重新发布')
   editVisible.value = false
-  await Promise.all([loadOverview(), loadNotices()])
+  await loadOverview()
+  if (tabLoaded.notice) await loadNotices()
 }
 
 async function saveCreate() {
@@ -263,14 +300,15 @@ async function saveCreate() {
   Object.assign(createForm, {
     entryName: '', description: '', businessDomain: '', ownerName: '', keywords: '', securityLevel: '', tags: [],
   })
-  await Promise.all([loadOverview(), loadNotices()])
+  await loadOverview()
+  if (tabLoaded.notice) await loadNotices()
 }
 
 async function runAuto(selectedOnly = false) {
   try {
     await ElMessageBox.confirm(
       selectedOnly
-        ? `将按数据元标准自动匹配并补充选中的 ${selectedIds.value.length} 条元数据，是否继续？`
+        ? `将按数据元标准自动匹配并补充选中的 ${selectedPreviewIds.value.length || selectedIds.value.length} 条元数据，是否继续？`
         : '将按数据元标准自动匹配并补充可匹配的元数据信息项，是否继续？',
       '自动维护',
       { type: 'info', confirmButtonText: '开始匹配', cancelButtonText: '取消' },
@@ -278,18 +316,21 @@ async function runAuto(selectedOnly = false) {
   } catch {
     return
   }
-  if (selectedOnly && !selectedIds.value.length) {
+  const entryIds = selectedOnly
+    ? (selectedPreviewIds.value.length ? selectedPreviewIds.value : selectedIds.value)
+    : undefined
+  if (selectedOnly && (!entryIds || !entryIds.length)) {
     ElMessage.warning('请先勾选条目')
     return
   }
   autoRunning.value = true
   try {
-    const res = await api.post('/governance/platform/metadata/maintain/auto-run', {
-      entryIds: selectedOnly ? selectedIds.value : undefined,
-    })
+    const res = await api.post('/governance/platform/metadata/maintain/auto-run', { entryIds })
     ElMessage.success(`扫描 ${res.data.scanned} 条，成功匹配补充 ${res.data.matched} 条`)
     selectedIds.value = []
-    await Promise.all([loadOverview(), loadNotices(), loadAutoPreview(), loadSuggestions()])
+    selectedPreviewIds.value = []
+    await Promise.all([loadOverview(), loadAutoPreview(), loadSuggestions()])
+    if (tabLoaded.notice) await loadNotices()
   } finally {
     autoRunning.value = false
   }
@@ -316,7 +357,8 @@ async function publishEntry(row: MaintainRow) {
   }
   await api.post(`/governance/platform/metadata/maintain/entries/${row.entry.id}/publish`)
   ElMessage.success('已发布')
-  await Promise.all([loadOverview(), loadNotices()])
+  await loadOverview()
+  if (tabLoaded.notice) await loadNotices()
 }
 
 async function openCompare(row: MaintainRow) {
@@ -335,6 +377,34 @@ async function openCompare(row: MaintainRow) {
   }
 }
 
+async function openCompareByEntryId(entryId: number) {
+  const row = items.value.find((i) => i.entry.id === entryId)
+  if (row) {
+    await openCompare(row)
+    return
+  }
+  compareVisible.value = true
+  compareLoading.value = true
+  compareData.value = null
+  try {
+    compareData.value = (await api.get(
+      `/governance/platform/metadata/maintain/entries/${entryId}/compare-published`,
+    )).data
+  } catch {
+    ElMessage.error('加载对比失败')
+    compareVisible.value = false
+  } finally {
+    compareLoading.value = false
+  }
+}
+
+async function publishByEntryId(entryId: number) {
+  const row = items.value.find((i) => i.entry.id === entryId)
+  if (row) {
+    await publishEntry(row)
+  }
+}
+
 async function openNotice(row: Notice) {
   noticeDetail.value = row
   noticeVisible.value = true
@@ -347,24 +417,45 @@ async function openNotice(row: Notice) {
   }
 }
 
+async function compareFromNotice() {
+  if (!noticeDetail.value?.entryId) return
+  noticeVisible.value = false
+  await openCompareByEntryId(noticeDetail.value.entryId)
+}
+
+function onPreviewSelectionChange(rows: AutoPreview[]) {
+  selectedPreviewIds.value = rows.map((r) => r.entryId)
+}
+
 function onSelectionChange(rows: MaintainRow[]) {
   selectedIds.value = rows.map((r) => r.entry.id)
 }
 
+watch(activeTab, async (tab) => {
+  if (tab === 'auto' && !tabLoaded.auto) {
+    tabLoaded.auto = true
+    await Promise.all([loadAutoPreview(), loadSuggestions()])
+  } else if (tab === 'notice' && !tabLoaded.notice) {
+    tabLoaded.notice = true
+    await loadNotices()
+  }
+})
+
+onMounted(loadOverview)
+
 function applyKpiFilter(kind: 'all' | 'republish' | 'notice') {
   if (kind === 'notice') {
     activeTab.value = 'notice'
+    if (!tabLoaded.notice) {
+      tabLoaded.notice = true
+      void loadNotices()
+    }
     return
   }
   activeTab.value = 'manual'
   filter.needRepublishOnly = kind === 'republish'
   void onSearch()
 }
-
-onMounted(async () => {
-  await onSearch()
-  await Promise.all([loadNotices(), loadSuggestions(), loadAutoPreview()])
-})
 </script>
 
 <template>
@@ -374,7 +465,9 @@ onMounted(async () => {
         <span>维护条目</span><b>{{ kpi.total }}</b>
       </button>
       <button type="button" class="mmaint-kpi__card tone-warn" :class="{ 'is-on': filter.needRepublishOnly }" @click="applyKpiFilter('republish')">
-        <span>待重新发布</span><b>{{ kpi.needRepublish }}</b>
+        <span>待发布</span>
+        <b>{{ kpi.needRepublish }}</b>
+        <small class="mmaint-kpi__sub">首次 {{ kpi.pendingFirstPublish }} · 变更 {{ kpi.changeRepublish }}</small>
       </button>
       <button type="button" class="mmaint-kpi__card tone-info" @click="applyKpiFilter('notice')">
         <span>未读变更</span><b>{{ kpi.unreadNotice }}</b>
@@ -398,6 +491,13 @@ onMounted(async () => {
 
       <!-- 手工维护 -->
       <template v-if="activeTab === 'manual'">
+        <el-alert
+          type="info"
+          :closable="false"
+          show-icon
+          style="margin-bottom:12px"
+          title="人工编辑元数据信息项、数据分级分类、数据标签等；保存后生成新版本并提示需重新发布。"
+        />
         <el-form inline class="portal-inline-form portal-inline-form--block">
           <el-form-item label="关键字" class="portal-field-lg">
             <el-input v-model="filter.keyword" clearable placeholder="名称/编码/标签" @keyup.enter="onSearch" />
@@ -408,7 +508,7 @@ onMounted(async () => {
             </el-select>
           </el-form-item>
           <el-form-item>
-            <el-checkbox v-model="filter.needRepublishOnly">仅看待重新发布</el-checkbox>
+            <el-checkbox v-model="filter.needRepublishOnly">仅看待发布</el-checkbox>
           </el-form-item>
           <el-form-item class="portal-form-actions">
             <el-button type="primary" @click="onSearch">查询</el-button>
@@ -434,10 +534,12 @@ onMounted(async () => {
           <el-table-column label="分级" width="90">
             <template #default="{ row }">{{ $statusLabel(row.entry.securityLevel) }}</template>
           </el-table-column>
-          <el-table-column label="版本" width="110">
+          <el-table-column label="版本" width="130">
             <template #default="{ row }">
-              <span>v{{ row.latestVersionNo ?? '—' }}</span>
-              <el-tag v-if="row.needRepublish" type="warning" size="small" style="margin-left:4px">需重新发布</el-tag>
+              <div>最新 v{{ row.latestVersionNo ?? '—' }}</div>
+              <div class="mmaint-code">定版 {{ row.publishedVersionNo != null ? `v${row.publishedVersionNo}` : '未发布' }}</div>
+              <el-tag v-if="row.pendingFirstPublish" type="info" size="small" style="margin-top:4px">待首次发布</el-tag>
+              <el-tag v-else-if="row.needRepublish" type="warning" size="small" style="margin-top:4px">需重新发布</el-tag>
             </template>
           </el-table-column>
           <el-table-column label="变更" width="90">
@@ -452,7 +554,8 @@ onMounted(async () => {
             <template #default="{ row }">
               <el-button link type="primary" @click="openEdit(row)">编辑</el-button>
               <el-button link type="primary" @click="openCompare(row)">变更对比</el-button>
-              <el-button v-if="row.needRepublish || row.pendingFirstPublish" link type="success" @click="publishEntry(row)">发布</el-button>
+              <el-button v-if="row.pendingFirstPublish" link type="success" @click="publishEntry(row)">首次发布</el-button>
+              <el-button v-else-if="row.needRepublish" link type="success" @click="publishEntry(row)">重新发布</el-button>
             </template>
           </el-table-column>
         </el-table>
@@ -466,14 +569,22 @@ onMounted(async () => {
 
       <!-- 自动维护 -->
       <template v-else-if="activeTab === 'auto'">
+        <el-alert
+          type="info"
+          :closable="false"
+          show-icon
+          style="margin-bottom:12px"
+          title="系统根据元数据信息项自动与数据元标准匹配，识别对应数据元并补充说明、分级、标签等属性。"
+        />
         <div class="mmaint-auto-actions">
           <el-button type="primary" :loading="autoRunning" @click="runAuto(false)">一键自动匹配补充</el-button>
-          <el-button :loading="autoRunning" :disabled="!selectedIds.length" @click="runAuto(true)">仅匹配已选条目</el-button>
+          <el-button :loading="autoRunning" :disabled="!selectedPreviewIds.length && !selectedIds.length" @click="runAuto(true)">仅匹配已选条目</el-button>
           <el-button @click="loadAutoPreview">刷新预览</el-button>
         </div>
 
         <div class="mmaint-section">匹配预览（可补全）</div>
-        <el-table :data="autoPreview" stripe size="small" max-height="360" empty-text="暂无可匹配标准的条目">
+        <el-table :data="autoPreview" stripe size="small" max-height="360" empty-text="暂无可匹配标准的条目" @selection-change="onPreviewSelectionChange">
+          <el-table-column type="selection" width="42" />
           <el-table-column prop="entryName" label="元数据项" min-width="120" />
           <el-table-column label="类型" width="90">
             <template #default="{ row }">{{ $statusLabel(row.entryType) }}</template>
@@ -490,10 +601,11 @@ onMounted(async () => {
           </el-table-column>
         </el-table>
 
-        <div class="mmaint-section">标准沉淀建议</div>
+        <div class="mmaint-section">标准沉淀建议（高频字段 → 数据元标准）</div>
         <el-table :data="suggestions" stripe size="small" max-height="240" empty-text="暂无沉淀建议">
           <el-table-column prop="itemName" label="高频字段名" min-width="140" />
           <el-table-column prop="count" label="出现频次" width="100" />
+          <el-table-column prop="sampleDescription" label="样例说明" min-width="160" show-overflow-tooltip />
           <el-table-column label="类型" width="90">
             <template #default="{ row }">{{ $statusLabel(row.itemType) }}</template>
           </el-table-column>
@@ -505,16 +617,16 @@ onMounted(async () => {
         </el-table>
       </template>
 
-      <!-- 变更提醒 -->
+      <!-- 变更提醒：仅已有定版后的变更 -->
       <template v-else>
         <el-alert
-          type="warning"
+          type="info"
           :closable="false"
           show-icon
           style="margin-bottom:12px"
-          title="列表展示当前最新版本；元数据更新后将提示「需重新发布」。可查看变更详情，并与最近发布版本对比。"
+          title="变更提醒仅针对「已发布定版后」的内容变更（手工修改、定时采集 diff 等）。首次采集/登记的条目请在「手工维护」Tab 直接「首次发布」，不会出现在下方变更列表。"
         />
-        <el-table :data="notices" stripe size="small" empty-text="暂无变更提醒">
+        <el-table :data="notices" stripe size="small" empty-text="暂无变更提醒（首次发布条目不会生成变更提醒）">
           <el-table-column label="状态" width="90">
             <template #default="{ row }">
               <el-tag :type="row.status === 'UNREAD' ? 'danger' : 'info'" size="small">{{ $statusLabel(row.status) }}</el-tag>
@@ -532,8 +644,27 @@ onMounted(async () => {
           </el-table-column>
         </el-table>
 
-        <div class="mmaint-section">待重新发布条目</div>
-        <el-table :data="items.filter(i => i.needRepublish)" stripe size="small" empty-text="暂无待发布项">
+        <div class="mmaint-section">待首次发布（采集/登记后定版，非变更）</div>
+        <el-table :data="pendingFirstItems" stripe size="small" empty-text="暂无待首次发布条目">
+          <el-table-column label="名称" min-width="140">
+            <template #default="{ row }">{{ row.entry.entryName }}</template>
+          </el-table-column>
+          <el-table-column label="类型" width="90">
+            <template #default="{ row }">{{ $statusLabel(row.entry.entryType) }}</template>
+          </el-table-column>
+          <el-table-column label="最新版本" width="100">
+            <template #default="{ row }">v{{ row.latestVersionNo ?? '—' }}</template>
+          </el-table-column>
+          <el-table-column label="操作" width="160">
+            <template #default="{ row }">
+              <el-button link type="primary" @click="openCompare(row)">发布预览</el-button>
+              <el-button link type="success" @click="publishEntry(row)">首次发布</el-button>
+            </template>
+          </el-table-column>
+        </el-table>
+
+        <div class="mmaint-section">变更待重新发布（相对已定版有内容变更）</div>
+        <el-table :data="changeRepublishItems" stripe size="small" empty-text="暂无变更待发布条目">
           <el-table-column label="名称" min-width="140">
             <template #default="{ row }">{{ row.entry.entryName }}</template>
           </el-table-column>
@@ -545,7 +676,7 @@ onMounted(async () => {
           </el-table-column>
           <el-table-column label="操作" width="180">
             <template #default="{ row }">
-              <el-button link type="primary" @click="openCompare(row)">对比详情</el-button>
+              <el-button link type="primary" @click="openCompare(row)">变更对比</el-button>
               <el-button link type="success" @click="publishEntry(row)">重新发布</el-button>
             </template>
           </el-table-column>
@@ -639,10 +770,21 @@ onMounted(async () => {
       </template>
     </el-dialog>
 
-    <!-- 与已发布版本对比 -->
-    <el-drawer v-model="compareVisible" title="与最新发布版本对比" size="560px">
+    <!-- 与已发布版本对比 / 待首次发布预览 -->
+    <el-drawer
+      v-model="compareVisible"
+      :title="compareData?.pendingFirstPublish ? '待首次发布预览' : '与最新发布版本对比'"
+      size="560px"
+    >
       <div v-loading="compareLoading">
         <template v-if="compareData">
+          <el-alert
+            v-if="compareData.summary"
+            :type="compareData.pendingFirstPublish ? 'info' : (compareData.contentChanged ? 'warning' : 'success')"
+            :closable="false"
+            :title="compareData.summary"
+            style="margin-bottom: 12px"
+          />
           <el-descriptions :column="1" border size="small">
             <el-descriptions-item label="条目">{{ compareData.entry?.entryName }}</el-descriptions-item>
             <el-descriptions-item label="已发布版本">
@@ -651,20 +793,45 @@ onMounted(async () => {
             <el-descriptions-item label="当前最新版本">
               {{ compareData.latest ? `v${compareData.latest.versionNo}` : '—' }}
             </el-descriptions-item>
-            <el-descriptions-item label="是否一致">
-              <el-tag :type="compareData.sameSnapshot ? 'success' : 'warning'" size="small">
-                {{ compareData.sameSnapshot ? '一致' : '有差异，需重新发布' }}
-              </el-tag>
+            <el-descriptions-item label="发布状态">
+              <el-tag v-if="compareData.pendingFirstPublish" type="info" size="small">待首次发布</el-tag>
+              <el-tag v-else-if="compareData.contentChanged" type="warning" size="small">内容有变更，需重新发布</el-tag>
+              <el-tag v-else-if="compareData.versionAhead" type="warning" size="small">版本已更新，内容一致</el-tag>
+              <el-tag v-else type="success" size="small">与已发布一致</el-tag>
             </el-descriptions-item>
           </el-descriptions>
-          <div class="mmaint-section">字段差异（左=已发布，右=当前）</div>
-          <el-table :data="compareData.basicDiff || []" stripe size="small" empty-text="无差异">
-            <el-table-column label="字段" width="120">
-              <template #default="{ row }">{{ fieldLabel(row.field) }}</template>
-            </el-table-column>
-            <el-table-column prop="left" label="已发布" min-width="120" show-overflow-tooltip />
-            <el-table-column prop="right" label="当前" min-width="120" show-overflow-tooltip />
-          </el-table>
+          <template v-if="!compareData.pendingFirstPublish">
+            <div class="mmaint-section">基本信息差异（左=已发布，右=当前最新）</div>
+            <el-table :data="compareData.basicDiff || []" stripe size="small" empty-text="基本信息无差异">
+              <el-table-column label="字段" width="120">
+                <template #default="{ row }">{{ fieldLabel(row.field) }}</template>
+              </el-table-column>
+              <el-table-column prop="left" label="已发布" min-width="120" show-overflow-tooltip />
+              <el-table-column prop="right" label="当前最新" min-width="120" show-overflow-tooltip />
+            </el-table>
+            <div class="mmaint-section">属性信息差异（字段中文名/英文名/类型/长度/主键/分区/单位/描述）</div>
+            <el-table :data="compareData.attrDiff || []" stripe size="small" max-height="320" empty-text="属性信息无差异">
+              <el-table-column prop="fieldName" label="字段" width="120" show-overflow-tooltip />
+              <el-table-column label="变更" width="80">
+                <template #default="{ row }">
+                  <el-tag size="small" :type="row.changeType === 'added' ? 'success' : row.changeType === 'removed' ? 'danger' : 'warning'">
+                    {{ row.changeType === 'added' ? '新增' : row.changeType === 'removed' ? '删除' : '变更' }}
+                  </el-tag>
+                </template>
+              </el-table-column>
+              <el-table-column label="属性" width="100">
+                <template #default="{ row }">{{ attrLabel(row.attr) }}</template>
+              </el-table-column>
+              <el-table-column prop="left" label="已发布" min-width="100" show-overflow-tooltip />
+              <el-table-column prop="right" label="当前最新" min-width="100" show-overflow-tooltip />
+            </el-table>
+          </template>
+          <el-empty
+            v-else
+            description="尚无已发布基线，当前展示的是待发布版本内容；执行「发布」即可完成首次定版。"
+            :image-size="64"
+            style="margin-top: 16px"
+          />
         </template>
       </div>
     </el-drawer>
@@ -678,6 +845,10 @@ onMounted(async () => {
           <el-descriptions-item label="时间">{{ formatTime(noticeDetail.createdAt) }}</el-descriptions-item>
           <el-descriptions-item label="详情">{{ noticeDetail.detail || '—' }}</el-descriptions-item>
         </el-descriptions>
+        <div v-if="noticeDetail.entryId" class="mmaint-notice-actions">
+          <el-button type="primary" @click="compareFromNotice">查看变更对比</el-button>
+          <el-button type="success" @click="publishByEntryId(noticeDetail.entryId!)">重新发布</el-button>
+        </div>
       </template>
     </el-drawer>
   </div>
@@ -694,6 +865,7 @@ onMounted(async () => {
 }
 .mmaint-kpi__card span { display: block; font-size: 12px; color: #606266; }
 .mmaint-kpi__card b { font-size: 24px; font-weight: 700; color: #303133; }
+.mmaint-kpi__sub { display: block; font-size: 11px; color: #909399; margin-top: 2px; }
 .mmaint-kpi__card.tone-warn b { color: #ef6c00; }
 .mmaint-kpi__card.tone-info b { color: #1677ff; }
 .mmaint-kpi__card.tone-ok b { color: #2e7d32; }
@@ -706,6 +878,7 @@ onMounted(async () => {
   padding-left: 8px; border-left: 3px solid #1677ff;
 }
 .mmaint-auto-actions { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 12px; }
+.mmaint-notice-actions { margin-top: 16px; display: flex; gap: 8px; }
 @media (max-width: 1100px) {
   .mmaint-kpi { grid-template-columns: repeat(2, 1fr); }
 }

@@ -10,6 +10,7 @@ import java.net.URLEncoder;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -232,11 +233,16 @@ public class DolphinSchedulerClient {
         return waitForLatestInstanceId(projectCode, definitionCode);
     }
 
+    /** 查询流程定义最近一次实例 ID。 */
+    public long latestInstanceId(long projectCode, long definitionCode) {
+        return latestInstanceIdInternal(projectCode, definitionCode);
+    }
+
     /** DS start 返回的 data 是 triggerCode，不是 processInstanceId；轮询直到实例出现。 */
     private long waitForLatestInstanceId(long projectCode, long definitionCode) {
         for (int i = 0; i < 30; i++) {
             try {
-                return latestInstanceId(projectCode, definitionCode);
+                return latestInstanceIdInternal(projectCode, definitionCode);
             } catch (BusinessException be) {
                 if (i >= 29) {
                     throw be;
@@ -252,7 +258,7 @@ public class DolphinSchedulerClient {
         throw new BusinessException(502, "未查询到刚启动的 DS 实例");
     }
 
-    private long latestInstanceId(long projectCode, long definitionCode) {
+    private long latestInstanceIdInternal(long projectCode, long definitionCode) {
         String url = base() + "/projects/" + projectCode + "/process-instances?pageNo=1&pageSize=1"
                 + "&processDefineCode=" + definitionCode;
         JsonNode root = requireGet(url, "查询 DS 实例");
@@ -297,6 +303,89 @@ public class DolphinSchedulerClient {
         out.put("executeType", executeType);
         out.put("status", "SUCCESS");
         return out;
+    }
+
+    // ---------- 定时调度 ----------
+
+    /**
+     * 为已上线流程定义创建 Cron 调度并上线，返回 scheduleId。
+     * cronExpr 为 Spring/Quartz 6 段或 7 段表达式，统一转为 DS Quartz 7 段。
+     */
+    public int createAndOnlineSchedule(long projectCode, long definitionCode, String cronExpr) {
+        IntegrationConfig.requireIntegration(props, "DolphinScheduler");
+        String crontab = toDsCrontab(cronExpr);
+        java.time.LocalDateTime now = java.time.LocalDateTime.now();
+        String start = now.format(java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss"));
+        String end = now.plusYears(10).format(java.time.format.DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss"));
+        String scheduleJson = "{\"startTime\":\"" + start + "\",\"endTime\":\"" + end
+                + "\",\"timezoneId\":\"Asia/Shanghai\",\"crontab\":\"" + escapeJson(crontab) + "\"}";
+        String url = base() + "/projects/" + projectCode + "/schedules";
+        MultiValueMap<String, String> form = new LinkedMultiValueMap<>();
+        form.add("processDefinitionCode", String.valueOf(definitionCode));
+        form.add("schedule", scheduleJson);
+        form.add("warningType", "NONE");
+        form.add("warningGroupId", "0");
+        form.add("failureStrategy", "END");
+        form.add("processInstancePriority", "MEDIUM");
+        form.add("workerGroup", "default");
+        form.add("tenantCode", resolveTenant());
+        form.add("environmentCode", "-1");
+        JsonNode root = requirePost(url, form, "创建 DS 调度");
+        int scheduleId = root.path("data").path("id").asInt();
+        if (scheduleId <= 0) {
+            scheduleId = root.path("data").asInt();
+        }
+        if (scheduleId <= 0) {
+            throw new BusinessException(502, "创建 DS 调度未返回 id: " + trim(root.toString()));
+        }
+        onlineSchedule(projectCode, scheduleId);
+        return scheduleId;
+    }
+
+    public void onlineSchedule(long projectCode, int scheduleId) {
+        String url = base() + "/projects/" + projectCode + "/schedules/" + scheduleId + "/online";
+        requirePost(url, new LinkedMultiValueMap<>(), "上线 DS 调度");
+    }
+
+    public void offlineSchedule(long projectCode, int scheduleId) {
+        String url = base() + "/projects/" + projectCode + "/schedules/" + scheduleId + "/offline";
+        requirePost(url, new LinkedMultiValueMap<>(), "下线 DS 调度");
+    }
+
+    /** 删除流程定义（下线后）。 */
+    public void deleteDefinition(long projectCode, long definitionCode) {
+        String url = base() + "/projects/" + projectCode + "/process-definition/" + definitionCode;
+        requireDelete(url, "删除 DS 流程定义");
+    }
+
+    /** 将平台 Cron（常见 6 段）转为 DS Quartz 7 段。 */
+    public static String toDsCrontab(String cronExpr) {
+        if (cronExpr == null || cronExpr.isBlank()) {
+            throw new BusinessException(400, "Cron 表达式不能为空");
+        }
+        String[] parts = cronExpr.trim().split("\\s+");
+        if (parts.length == 6) {
+            return cronExpr.trim() + " *";
+        }
+        if (parts.length == 7) {
+            return cronExpr.trim();
+        }
+        if (parts.length == 5) {
+            return "0 " + cronExpr.trim() + " *";
+        }
+        throw new BusinessException(400, "不支持的 Cron 格式: " + cronExpr);
+    }
+
+    /** DS 实例 state 映射为平台采集 run 状态。 */
+    public static String mapDsStateToRunStatus(String dsState) {
+        if (dsState == null) return "RUNNING";
+        return switch (dsState.toUpperCase(Locale.ROOT)) {
+            case "SUCCESS", "FORCED_SUCCESS" -> "SUCCESS";
+            case "FAILURE", "FAILED" -> "FAILED";
+            case "STOP", "KILL", "READY_STOP" -> "STOPPED";
+            case "RUNNING_EXECUTION", "SUBMITTED_SUCCESS", "DELAY_EXECUTION" -> "RUNNING";
+            default -> "RUNNING";
+        };
     }
 
     // ---------- 兼容旧接口（分析域调度台账） ----------
@@ -435,6 +524,18 @@ public class DolphinSchedulerClient {
                     new HttpEntity<>(form, authHeaders(MediaType.APPLICATION_FORM_URLENCODED));
             ResponseEntity<String> res = rest.exchange(url, HttpMethod.POST, req, String.class);
             return requireOk(res.getBody(), action);
+        } catch (BusinessException be) {
+            throw be;
+        } catch (Exception e) {
+            throw new BusinessException(502, action + "失败: " + e.getMessage());
+        }
+    }
+
+    private void requireDelete(String url, String action) {
+        try {
+            ResponseEntity<String> res = rest.exchange(url, HttpMethod.DELETE,
+                    new HttpEntity<>(authHeaders(null)), String.class);
+            requireOk(res.getBody(), action);
         } catch (BusinessException be) {
             throw be;
         } catch (Exception e) {

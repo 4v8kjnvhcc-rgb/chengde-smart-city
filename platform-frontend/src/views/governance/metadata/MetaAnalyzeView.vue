@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, reactive, ref, watch } from 'vue'
+import { useRoute } from 'vue-router'
 import * as echarts from 'echarts'
 import api from '@/api/http'
 import { ElMessage, ElMessageBox } from 'element-plus'
@@ -51,6 +52,7 @@ interface ImpactDetail {
   hop: number
 }
 
+const route = useRoute()
 const activeTab = ref<'assoc' | 'lineage' | 'impact'>('assoc')
 const kpi = reactive({
   tableCount: 0,
@@ -91,6 +93,17 @@ const impactMaxHop = ref(0)
 const offlineAssess = ref<{ canOffline?: boolean; hasDownstream?: boolean } | null>(null)
 const relatedTasks = ref<Array<Record<string, unknown>>>([])
 const maxDepth = ref(10)
+const loadedTabs = ref(new Set<string>())
+
+const analyzeTabHint = computed(() => {
+  if (activeTab.value === 'assoc') {
+    return '关联分析：基于主外键自动解析并可视化表间关联，支持手工维护，为业务梳理提供支撑。'
+  }
+  if (activeTab.value === 'lineage') {
+    return '血缘分析：追溯元数据来源与加工推移，支持表级血缘与字段级下钻，使数据流程可追溯。'
+  }
+  return '影响分析：递归评估变更对象的下游依赖与风险，辅助元数据清理、维护与下线决策。'
+})
 
 const entrySelectOptions = computed(() =>
   tableEntries.value.map(e => ({
@@ -365,6 +378,8 @@ function onResize() {
 }
 
 watch(activeTab, async (tab) => {
+  if (loadedTabs.value.has(tab)) return
+  loadedTabs.value.add(tab)
   if (tab === 'assoc') await loadAssoc()
   else if (tab === 'lineage') await loadLineage()
   else {
@@ -375,6 +390,11 @@ watch(activeTab, async (tab) => {
 
 onMounted(async () => {
   await Promise.all([loadOverview(), loadTables()])
+  const fromQuery = String(route.query.entryCode || '').trim()
+  if (fromQuery) {
+    entryCode.value = fromQuery
+  }
+  loadedTabs.value.add('assoc')
   await loadAssoc()
   window.addEventListener('resize', onResize)
 })
@@ -412,6 +432,8 @@ onBeforeUnmount(() => {
         <el-tab-pane label="血缘分析" name="lineage" />
         <el-tab-pane label="影响分析" name="impact" />
       </el-tabs>
+
+      <el-alert type="info" :closable="false" :title="analyzeTabHint" style="margin-bottom: 12px" />
 
       <el-form inline class="portal-inline-form portal-inline-form--block">
         <el-form-item label="分析表" class="portal-field-xl">

@@ -29,6 +29,8 @@ public class MetaCollectScheduler {
     public void scanAndRunDueTasks() {
         List<GovMetaCollectTask> tasks = taskMapper.selectList(new LambdaQueryWrapper<GovMetaCollectTask>()
                 .eq(GovMetaCollectTask::getStatus, "READY")
+                .and(w -> w.isNull(GovMetaCollectTask::getScheduleType)
+                        .or().eq(GovMetaCollectTask::getScheduleType, "MANUAL"))
                 .isNotNull(GovMetaCollectTask::getCronExpr)
                 .ne(GovMetaCollectTask::getCronExpr, ""));
         LocalDateTime now = LocalDateTime.now();

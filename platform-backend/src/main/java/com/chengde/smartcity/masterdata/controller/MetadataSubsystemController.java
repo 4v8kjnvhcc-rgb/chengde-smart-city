@@ -7,6 +7,7 @@ import com.chengde.smartcity.masterdata.entity.GovMetaModel;
 import com.chengde.smartcity.masterdata.entity.GovMetaSubscription;
 import com.chengde.smartcity.masterdata.entity.GovMetaVersion;
 import com.chengde.smartcity.masterdata.entity.GovMetadataRegistry;
+import com.chengde.smartcity.masterdata.service.MetaCollectDsService;
 import com.chengde.smartcity.masterdata.service.MetadataSubsystemService;
 import com.chengde.smartcity.security.UserPrincipal;
 import java.util.List;
@@ -19,6 +20,7 @@ import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
@@ -28,9 +30,12 @@ import org.springframework.web.bind.annotation.RestController;
 public class MetadataSubsystemController {
 
     private final MetadataSubsystemService service;
+    private final MetaCollectDsService metaCollectDsService;
 
-    public MetadataSubsystemController(MetadataSubsystemService service) {
+    public MetadataSubsystemController(MetadataSubsystemService service,
+                                       MetaCollectDsService metaCollectDsService) {
         this.service = service;
+        this.metaCollectDsService = metaCollectDsService;
     }
 
     @GetMapping("/models")
@@ -108,6 +113,21 @@ public class MetadataSubsystemController {
         return ApiResponse.ok(service.recheckModelConformity(principal, id));
     }
 
+    @PostMapping("/models/{id}/sync-physical")
+    @PreAuthorize("isAuthenticated()")
+    public ApiResponse<Map<String, Object>> syncModelPhysical(@AuthenticationPrincipal UserPrincipal principal,
+                                                              @PathVariable Long id) {
+        return ApiResponse.ok(service.syncModelPhysical(principal, id));
+    }
+
+    @GetMapping("/models/meta-data-sources/{id}/table-columns")
+    @PreAuthorize("isAuthenticated()")
+    public ApiResponse<Map<String, Object>> modelSourceTableColumns(@PathVariable Long id,
+                                                                     @RequestParam String tableName,
+                                                                     @RequestParam(required = false) String columnName) {
+        return ApiResponse.ok(service.probeMetaDataSourceTableColumns(id, tableName, columnName));
+    }
+
     @GetMapping("/collect/data-sources")
     @PreAuthorize("isAuthenticated()")
     public ApiResponse<List<Map<String, Object>>> collectDataSources() {
@@ -119,11 +139,45 @@ public class MetadataSubsystemController {
     public ApiResponse<List<Map<String, Object>>> collectDataSourceTables(@PathVariable Long id) {
         return ApiResponse.ok(service.listCollectDataSourceTables(id));
     }
+
+    @GetMapping("/collect/categories")
     @PreAuthorize("isAuthenticated()")
-    public ApiResponse<List<GovMetaCollectTask>> collectTasks(@RequestParam(required = false) String status,
-                                                              @RequestParam(required = false) String sourceType,
-                                                              @RequestParam(required = false) String keyword) {
-        return ApiResponse.ok(service.listTasks(status, sourceType, keyword));
+    public ApiResponse<List<Map<String, Object>>> collectCategories(@RequestParam(required = false) String keyword) {
+        return ApiResponse.ok(service.listCollectCategories(keyword));
+    }
+
+    @GetMapping("/collect/meta-data-sources")
+    @PreAuthorize("isAuthenticated()")
+    public ApiResponse<List<Map<String, Object>>> collectMetaDataSources(@RequestParam(required = false) Long categoryId,
+                                                                         @RequestParam(required = false) String keyword) {
+        return ApiResponse.ok(service.listCollectMetaDataSources(categoryId, keyword));
+    }
+
+    @GetMapping("/collect/meta-data-sources/{id}/tables")
+    @PreAuthorize("isAuthenticated()")
+    public ApiResponse<List<Map<String, Object>>> collectMetaDataSourceTables(@PathVariable Long id,
+                                                                              @RequestParam(required = false) String collectFilter) {
+        return ApiResponse.ok(service.listCollectMetaDataSourceTables(id, collectFilter));
+    }
+
+    @GetMapping("/collect/tasks")
+    @PreAuthorize("isAuthenticated()")
+    public ApiResponse<?> collectTasks(@RequestParam(required = false) String status,
+                                       @RequestParam(required = false) String sourceType,
+                                       @RequestParam(required = false) String scheduleType,
+                                       @RequestParam(required = false) String keyword,
+                                       @RequestParam(required = false, defaultValue = "false") boolean enriched) {
+        if (enriched) {
+            return ApiResponse.ok(service.listCollectTasksEnriched(status, sourceType, scheduleType, keyword));
+        }
+        return ApiResponse.ok(service.listTasks(status, sourceType, scheduleType, keyword));
+    }
+
+    @PostMapping("/collect/manual")
+    @PreAuthorize("isAuthenticated()")
+    public ApiResponse<Map<String, Object>> runManualCollect(@AuthenticationPrincipal UserPrincipal principal,
+                                                            @RequestBody Map<String, Object> body) {
+        return ApiResponse.ok(service.runManualCollect(principal, body));
     }
 
     @PostMapping("/collect/tasks")
@@ -155,6 +209,50 @@ public class MetadataSubsystemController {
     public ApiResponse<Map<String, Object>> runCollectTask(@AuthenticationPrincipal UserPrincipal principal,
                                                            @PathVariable Long id) {
         return ApiResponse.ok(service.runTask(principal, id));
+    }
+
+    @PostMapping("/collect/tasks/{id}/publish")
+    @PreAuthorize("isAuthenticated()")
+    public ApiResponse<Map<String, Object>> publishCollectTask(@AuthenticationPrincipal UserPrincipal principal,
+                                                               @PathVariable Long id) {
+        return ApiResponse.ok(service.publishCollectTask(principal, id));
+    }
+
+    @PostMapping("/collect/tasks/{id}/publish-all")
+    @PreAuthorize("isAuthenticated()")
+    public ApiResponse<Map<String, Object>> publishCollectTaskAll(@AuthenticationPrincipal UserPrincipal principal,
+                                                                  @PathVariable Long id) {
+        return ApiResponse.ok(service.publishCollectTaskWithVersions(principal, id));
+    }
+
+    @PostMapping("/collect/tasks/{id}/unpublish")
+    @PreAuthorize("isAuthenticated()")
+    public ApiResponse<Map<String, Object>> unpublishCollectTask(@AuthenticationPrincipal UserPrincipal principal,
+                                                                 @PathVariable Long id) {
+        return ApiResponse.ok(service.unpublishCollectTask(principal, id));
+    }
+
+    @PostMapping("/collect/tasks/batch-delete")
+    @PreAuthorize("isAuthenticated()")
+    public ApiResponse<Integer> batchDeleteCollectTasks(@AuthenticationPrincipal UserPrincipal principal,
+                                                          @RequestBody Map<String, Object> body) {
+        @SuppressWarnings("unchecked")
+        List<Long> ids = body.get("ids") instanceof List<?> list
+                ? list.stream().map(o -> Long.valueOf(String.valueOf(o))).toList()
+                : List.of();
+        return ApiResponse.ok(service.batchDeleteCollectTasks(principal, ids));
+    }
+
+    /** DolphinScheduler Worker 回调：执行定时元数据采集。 */
+    @PostMapping("/collect/tasks/{id}/run-callback")
+    public ApiResponse<Map<String, Object>> runCollectTaskCallback(@PathVariable Long id,
+                                                                  @RequestHeader(value = "X-Ds-Callback-Token", required = false) String token,
+                                                                  @RequestBody(required = false) Map<String, Object> body) {
+        Long dsInstanceId = null;
+        if (body != null && body.get("dsInstanceId") != null) {
+            dsInstanceId = Long.valueOf(String.valueOf(body.get("dsInstanceId")));
+        }
+        return ApiResponse.ok(metaCollectDsService.runFromDsCallback(id, token, dsInstanceId));
     }
 
     @PostMapping("/collect/runs/{runId}/stop")
@@ -260,6 +358,12 @@ public class MetadataSubsystemController {
     public ApiResponse<Long> promoteStandard(@AuthenticationPrincipal UserPrincipal principal,
                                              @RequestBody Map<String, Object> body) {
         return ApiResponse.ok(service.promoteSuggestedStandard(principal, body));
+    }
+
+    @GetMapping("/versions/by-collect-task/{taskId}")
+    @PreAuthorize("isAuthenticated()")
+    public ApiResponse<Map<String, Object>> versionsByCollectTask(@PathVariable Long taskId) {
+        return ApiResponse.ok(service.listVersionsByCollectTask(taskId));
     }
 
     @GetMapping("/versions")
