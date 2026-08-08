@@ -66,21 +66,25 @@ public class CatalogResourceController {
     @PreAuthorize("isAuthenticated()")
     public ApiResponse<List<Map<String, Object>>> bindSources(
             @RequestParam(required = false) String categoryKey,
-            @RequestParam(required = false) String keyword) {
-        return ApiResponse.ok(service.listBindSources(categoryKey, keyword));
+            @RequestParam(required = false) Long categoryId,
+            @RequestParam(required = false) String keyword,
+            @RequestParam(required = false, defaultValue = "ING") String sourceKind) {
+        return ApiResponse.ok(service.listBindSources(categoryKey, categoryId, keyword, sourceKind));
     }
 
     @GetMapping("/bind-sources/{sourceId}/tables")
     @PreAuthorize("isAuthenticated()")
-    public ApiResponse<List<Map<String, Object>>> bindTables(@PathVariable Long sourceId) {
-        return ApiResponse.ok(service.listBindTables(sourceId));
+    public ApiResponse<List<Map<String, Object>>> bindTables(@PathVariable Long sourceId,
+                                                              @RequestParam(required = false, defaultValue = "ING") String sourceKind) {
+        return ApiResponse.ok(service.listBindTables(sourceId, sourceKind));
     }
 
     @GetMapping("/bind-sources/{sourceId}/table-columns")
     @PreAuthorize("isAuthenticated()")
     public ApiResponse<Map<String, Object>> bindTableColumns(@PathVariable Long sourceId,
-                                                             @RequestParam String tableName) {
-        return ApiResponse.ok(service.describeBindTable(sourceId, tableName));
+                                                             @RequestParam String tableName,
+                                                             @RequestParam(required = false, defaultValue = "ING") String sourceKind) {
+        return ApiResponse.ok(service.describeBindTable(sourceId, tableName, sourceKind));
     }
 
     @GetMapping("/approvals")

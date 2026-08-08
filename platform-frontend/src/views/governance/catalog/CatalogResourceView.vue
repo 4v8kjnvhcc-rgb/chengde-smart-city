@@ -119,6 +119,7 @@ interface BindSource {
   sourceType?: string
   categoryKey?: string
   categoryName?: string
+  categoryId?: number
   providerOrg?: string
   versionLabel?: string
   catalogable?: boolean
@@ -126,6 +127,13 @@ interface BindSource {
   connStatus?: string
   databaseName?: string
   platformLayer?: boolean
+  sourceKind?: 'META' | 'ING'
+}
+
+interface MetaCategoryOption {
+  id: number
+  label: string
+  layerCode?: string
 }
 
 interface BindTable {
@@ -219,6 +227,8 @@ const categoryHint = computed(() =>
     ? '取自归集「指标与目录体系构建 · 数据资源分类」'
     : '请先在数据资源分类中维护',
 )
+/** 库表选源统一走元数据「数据源管理」（归集编目 / 治理目录编制） */
+const useMetaBindPicker = computed(() => true)
 
 const treeData = ref<CategoryNode[]>([])
 const categoryOptions = ref<{ id: number; label: string }[]>([])
@@ -304,6 +314,9 @@ const fileSheetOptions = ref<string[]>([])
 const bindSourceId = ref<number | undefined>()
 const bindSourceName = ref('')
 const bindTableName = ref('')
+const bindSourceKind = ref<'META' | 'ING'>('ING')
+const metaSourceCategories = ref<MetaCategoryOption[]>([])
+const dsPickerCategoryId = ref<number | undefined>()
 const dsPickerVisible = ref(false)
 const dsPickerCat = ref('SOURCE')
 const dsPickerKeyword = ref('')
@@ -717,6 +730,8 @@ function resetForm() {
   bindSourceId.value = undefined
   bindSourceName.value = ''
   bindTableName.value = ''
+  bindSourceKind.value = 'META'
+  dsPickerCategoryId.value = undefined
 }
 
 async function loadEligibleMeta(keyword?: string) {
@@ -833,6 +848,12 @@ function fillFormFromRow(row: CatalogRes) {
   form.qualityScore = row.qualityScore
   const ext = parseExt(row)
   if (ext) {
+    if (ext.bindSourceKind === 'META' || ext.bindSourceKind === 'ING') {
+      bindSourceKind.value = ext.bindSourceKind
+    } else {
+      bindSourceKind.value = 'ING'
+    }
+    if (ext.bindCategoryId) dsPickerCategoryId.value = Number(ext.bindCategoryId)
     if (ext.bindSourceId) bindSourceId.value = Number(ext.bindSourceId)
     if (ext.bindSourceName) bindSourceName.value = String(ext.bindSourceName)
     if (ext.bindTableName) bindTableName.value = String(ext.bindTableName)
@@ -1113,6 +1134,8 @@ function buildExtJson(): Record<string, unknown> | null {
   const fmt = form.resourceFormat
   if (fmt === 'DATABASE') {
     return {
+      bindSourceKind: bindSourceKind.value,
+      bindCategoryId: dsPickerCategoryId.value,
       bindSourceId: bindSourceId.value,
       bindSourceName: bindSourceName.value,
       bindTableName: bindTableName.value,
@@ -1219,25 +1242,61 @@ function removeColumnRow(idx: number) {
   columnRows.value.splice(idx, 1)
 }
 
+function flattenMetaCategoryTree(nodes: Array<{ id: number; label: string; layerCode?: string; children?: typeof nodes }>, out: MetaCategoryOption[] = []): MetaCategoryOption[] {
+  for (const n of nodes) {
+    out.push({ id: n.id, label: n.label, layerCode: n.layerCode })
+    if (n.children?.length) flattenMetaCategoryTree(n.children, out)
+  }
+  return out
+}
+
+function metaCategoryLabel(c: MetaCategoryOption) {
+  return c.layerCode ? `${c.label}（${c.layerCode}）` : c.label
+}
+
+const filteredMetaCategories = computed(() => {
+  const kw = dsPickerKeyword.value.trim()
+  if (!kw) return metaSourceCategories.value
+  return metaSourceCategories.value.filter((c) => metaCategoryLabel(c).includes(kw))
+})
+
+async function loadMetaSourceCategories() {
+  try {
+    const rows = (await api.get('/governance/platform/metadata/source-categories/tree')).data || []
+    metaSourceCategories.value = flattenMetaCategoryTree(rows)
+    if (!dsPickerCategoryId.value && metaSourceCategories.value.length) {
+      dsPickerCategoryId.value = metaSourceCategories.value[0].id
+    }
+  } catch {
+    metaSourceCategories.value = []
+    ElMessage.error('加载数据源分类失败')
+  }
+}
+
 async function openDsPicker() {
   if (viewMode.value) return
   dsPickerVisible.value = true
   dsPickerSelected.value = null
-  dsPickerCat.value = 'SOURCE'
   dsPickerKeyword.value = ''
   dsPickerName.value = ''
+  bindSourceKind.value = 'META'
+  await loadMetaSourceCategories()
   await loadBindSources()
 }
 
 async function loadBindSources() {
   dsPickerLoading.value = true
   try {
-    const res = await api.get('/governance/catalog/resources-mgmt/bind-sources', {
-      params: {
-        categoryKey: dsPickerCat.value || undefined,
-        keyword: dsPickerName.value || dsPickerKeyword.value || undefined,
-      },
-    })
+    const params: Record<string, unknown> = {
+      sourceKind: bindSourceKind.value,
+      keyword: dsPickerName.value || dsPickerKeyword.value || undefined,
+    }
+    if (bindSourceKind.value === 'META') {
+      params.categoryId = dsPickerCategoryId.value
+    } else {
+      params.categoryKey = dsPickerCat.value || undefined
+    }
+    const res = await api.get('/governance/catalog/resources-mgmt/bind-sources', { params })
     dsPickerRows.value = res.data || []
   } catch {
     dsPickerRows.value = []
@@ -1263,6 +1322,8 @@ async function confirmDsPicker() {
   }
   bindSourceId.value = row.id
   bindSourceName.value = row.sourceName
+  bindSourceKind.value = row.sourceKind || bindSourceKind.value
+  if (row.categoryId) dsPickerCategoryId.value = row.categoryId
   bindTableName.value = ''
   form.metadataEntryCode = ''
   form.physicalTableName = ''
@@ -1284,7 +1345,9 @@ async function openTablePicker() {
   tablePickerSelected.value = bindTableName.value || ''
   tablePickerLoading.value = true
   try {
-    const res = await api.get(`/governance/catalog/resources-mgmt/bind-sources/${bindSourceId.value}/tables`)
+    const res = await api.get(`/governance/catalog/resources-mgmt/bind-sources/${bindSourceId.value}/tables`, {
+      params: { sourceKind: bindSourceKind.value },
+    })
     tablePickerRows.value = res.data || []
   } catch (e: any) {
     tablePickerRows.value = []
@@ -1314,7 +1377,7 @@ async function loadBindColumns(tableName: string) {
   try {
     const res = await api.get(
       `/governance/catalog/resources-mgmt/bind-sources/${bindSourceId.value}/table-columns`,
-      { params: { tableName } },
+      { params: { tableName, sourceKind: bindSourceKind.value } },
     )
     const d = res.data || {}
     bindTableName.value = tableName
@@ -1377,6 +1440,10 @@ function resetAddDsForm() {
 }
 
 function openAddDsWizard() {
+  if (useMetaBindPicker.value || bindSourceKind.value === 'META') {
+    router.push({ path: '/governance', query: { tab: 'metadata', section: 'source' } })
+    return
+  }
   resetAddDsForm()
   addDsVisible.value = true
   void loadAddDsProjects()
@@ -1384,6 +1451,10 @@ function openAddDsWizard() {
 
 /** 编辑已有登记数据源（平台分层库不可编辑） */
 async function openEditDs(row: BindSource) {
+  if (useMetaBindPicker.value || row.sourceKind === 'META') {
+    router.push({ path: '/governance', query: { tab: 'metadata', section: 'source' } })
+    return
+  }
   if (row.platformLayer) {
     ElMessage.warning('平台分层库不可在此编辑，请到数据源登记维护')
     return
@@ -1560,7 +1631,9 @@ async function submitAddDs() {
     const selected = dsPickerRows.value.find((r) => r.id === id)
     if (selected) {
       dsPickerSelected.value = selected
-      dsPickerCat.value = 'SOURCE'
+      if (bindSourceKind.value === 'ING') {
+        dsPickerCat.value = 'SOURCE'
+      }
     }
   } catch (e: any) {
     ElMessage.error(e?.response?.data?.message || e?.message || (isEdit ? '更新数据源失败' : '创建数据源失败'))
@@ -2456,15 +2529,17 @@ onActivated(async () => {
       <div class="ds-picker">
         <aside class="ds-picker-side">
           <el-input v-model="dsPickerKeyword" clearable placeholder="请输入名称" size="small" style="margin-bottom: 8px" />
-          <div
-            v-for="c in BIND_CATEGORY_OPTS"
-            :key="c.key"
-            class="ds-cat"
-            :class="{ active: dsPickerCat === c.key }"
-            @click="dsPickerCat = c.key; loadBindSources()"
-          >
-            {{ c.label }}
-          </div>
+          <template v-if="useMetaBindPicker">
+            <div
+              v-for="c in filteredMetaCategories"
+              :key="c.id"
+              class="ds-cat"
+              :class="{ active: dsPickerCategoryId === c.id }"
+              @click="dsPickerCategoryId = c.id; loadBindSources()"
+            >
+              {{ metaCategoryLabel(c) }}
+            </div>
+          </template>
         </aside>
         <div class="ds-picker-main">
           <el-form inline class="portal-inline-form portal-inline-form--sm" size="small">
@@ -2474,12 +2549,11 @@ onActivated(async () => {
             <el-form-item class="portal-form-actions">
               <el-button type="primary" @click="loadBindSources">查询</el-button>
               <el-button @click="dsPickerName = ''; loadBindSources()">重置</el-button>
-              <el-button type="primary" @click="openAddDsWizard">+ 新增</el-button>
             </el-form-item>
           </el-form>
           <el-table
             v-loading="dsPickerLoading"
-            :data="dsPickerRows.filter((r) => !dsPickerKeyword || r.sourceName?.includes(dsPickerKeyword))"
+            :data="dsPickerRows"
             size="small"
             stripe
             highlight-current-row
@@ -2495,11 +2569,6 @@ onActivated(async () => {
             </el-table-column>
             <el-table-column label="提供部门" width="120" show-overflow-tooltip>
               <template #default="{ row }">{{ row.providerOrg || row.systemName || '—' }}</template>
-            </el-table-column>
-            <el-table-column label="操作" width="70">
-              <template #default="{ row }">
-                <el-button link type="primary" @click.stop="openEditDs(row)">编辑</el-button>
-              </template>
             </el-table-column>
           </el-table>
         </div>

@@ -12,11 +12,15 @@ import com.chengde.smartcity.masterdata.entity.GovCatalogApproval;
 import com.chengde.smartcity.masterdata.entity.GovCatalogCategory;
 import com.chengde.smartcity.masterdata.entity.GovCatalogResource;
 import com.chengde.smartcity.masterdata.entity.GovCatalogResourceVersion;
+import com.chengde.smartcity.masterdata.entity.GovMetaDataSource;
+import com.chengde.smartcity.masterdata.entity.GovMetaSourceCategory;
 import com.chengde.smartcity.masterdata.entity.GovMetadataRegistry;
 import com.chengde.smartcity.masterdata.mapper.GovCatalogApprovalMapper;
 import com.chengde.smartcity.masterdata.mapper.GovCatalogCategoryMapper;
 import com.chengde.smartcity.masterdata.mapper.GovCatalogResourceMapper;
 import com.chengde.smartcity.masterdata.mapper.GovCatalogResourceVersionMapper;
+import com.chengde.smartcity.masterdata.mapper.GovMetaDataSourceMapper;
+import com.chengde.smartcity.masterdata.mapper.GovMetaSourceCategoryMapper;
 import com.chengde.smartcity.masterdata.mapper.GovMetadataRegistryMapper;
 import com.chengde.smartcity.masterdata.support.DataLayerSupport;
 import com.chengde.smartcity.security.UserPrincipal;
@@ -74,6 +78,9 @@ public class CatalogResourceService {
     private final IngDataSourceMapper ingDataSourceMapper;
     private final JdbcProbeService jdbcProbeService;
     private final MetadataSubsystemService metadataSubsystemService;
+    private final MetaDataSourceService metaDataSourceService;
+    private final GovMetaDataSourceMapper metaDataSourceMapper;
+    private final GovMetaSourceCategoryMapper metaSourceCategoryMapper;
     private final SysUserMapper sysUserMapper;
     private final SysOrgMapper orgMapper;
 
@@ -87,6 +94,9 @@ public class CatalogResourceService {
                                   IngDataSourceMapper ingDataSourceMapper,
                                   JdbcProbeService jdbcProbeService,
                                   MetadataSubsystemService metadataSubsystemService,
+                                  MetaDataSourceService metaDataSourceService,
+                                  GovMetaDataSourceMapper metaDataSourceMapper,
+                                  GovMetaSourceCategoryMapper metaSourceCategoryMapper,
                                   SysUserMapper sysUserMapper,
                                   SysOrgMapper orgMapper) {
         this.resourceMapper = resourceMapper;
@@ -99,6 +109,9 @@ public class CatalogResourceService {
         this.ingDataSourceMapper = ingDataSourceMapper;
         this.jdbcProbeService = jdbcProbeService;
         this.metadataSubsystemService = metadataSubsystemService;
+        this.metaDataSourceService = metaDataSourceService;
+        this.metaDataSourceMapper = metaDataSourceMapper;
+        this.metaSourceCategoryMapper = metaSourceCategoryMapper;
         this.sysUserMapper = sysUserMapper;
         this.orgMapper = orgMapper;
     }
@@ -286,9 +299,47 @@ public class CatalogResourceService {
 
     /**
      * 编目库表挂载：可选数据源（按分类侧栏）。
-     * 分类：来源=登记外部源；原始库=ODS；治理库=DWD（不可编目）；主题/专题=DWS/ADS。
+     * sourceKind=ING：登记源 + 平台分层虚拟源；sourceKind=META：元数据「数据源管理」。
      */
-    public List<Map<String, Object>> listBindSources(String categoryKey, String keyword) {
+    public List<Map<String, Object>> listBindSources(String categoryKey, Long categoryId, String keyword, String sourceKind) {
+        if ("META".equalsIgnoreCase(sourceKind)) {
+            return listMetaBindSources(categoryId, keyword);
+        }
+        return listIngBindSources(categoryKey, keyword);
+    }
+
+    private List<Map<String, Object>> listMetaBindSources(Long categoryId, String keyword) {
+        Map<Long, String> layerByCat = metaSourceCategoryMapper.selectList(new LambdaQueryWrapper<GovMetaSourceCategory>()
+                        .eq(GovMetaSourceCategory::getStatus, "ACTIVE"))
+                .stream()
+                .collect(Collectors.toMap(GovMetaSourceCategory::getId,
+                        c -> c.getLayerCode() == null ? "" : c.getLayerCode().trim().toUpperCase(Locale.ROOT),
+                        (a, b) -> a));
+        List<Map<String, Object>> out = new ArrayList<>();
+        for (Map<String, Object> src : metaDataSourceService.list(categoryId, keyword)) {
+            Long catId = longOrNull(src.get("categoryId"));
+            String layer = catId == null || !layerByCat.containsKey(catId) || layerByCat.get(catId).isBlank()
+                    ? "ODS" : layerByCat.get(catId);
+            Map<String, Object> row = new LinkedHashMap<>();
+            row.put("id", src.get("id"));
+            row.put("sourceCode", src.get("sourceCode"));
+            row.put("sourceName", src.get("sourceName"));
+            row.put("sourceType", src.get("adapterType"));
+            row.put("categoryId", src.get("categoryId"));
+            row.put("categoryName", src.get("categoryName"));
+            row.put("databaseName", src.get("dbName"));
+            row.put("providerOrg", firstNonBlank(src.get("deptName"), src.get("orgName")));
+            row.put("versionLabel", "V1");
+            row.put("sourceKind", "META");
+            row.put("platformLayer", false);
+            row.put("dataLayer", layer);
+            row.put("catalogable", !DataLayerSupport.isProcessLayer(layer));
+            out.add(row);
+        }
+        return out;
+    }
+
+    private List<Map<String, Object>> listIngBindSources(String categoryKey, String keyword) {
         List<Map<String, Object>> raw = new ArrayList<>();
         // 登记数据源（含未测通，便于新增后立刻可选）
         List<IngDataSource> sources = ingDataSourceMapper.selectList(new LambdaQueryWrapper<IngDataSource>()
@@ -343,14 +394,22 @@ public class CatalogResourceService {
             String conn = String.valueOf(src.getOrDefault("connStatus", ""));
             row.put("versionLabel", "OK".equalsIgnoreCase(conn) ? "V1"
                     : ("UNTESTED".equalsIgnoreCase(conn) ? "待采集" : statusOrDefault(conn, "待采集")));
+            row.put("sourceKind", "ING");
             out.add(row);
         }
         return out;
     }
 
     public List<Map<String, Object>> listBindTables(Long sourceId) {
+        return listBindTables(sourceId, "ING");
+    }
+
+    public List<Map<String, Object>> listBindTables(Long sourceId, String sourceKind) {
         if (sourceId == null) {
             throw new BusinessException(400, "sourceId 必填");
+        }
+        if ("META".equalsIgnoreCase(sourceKind)) {
+            return listMetaBindTables(sourceId);
         }
         List<Map<String, Object>> summaries = listBindTableSummaries(sourceId);
         List<Map<String, Object>> out = new ArrayList<>();
@@ -383,9 +442,52 @@ public class CatalogResourceService {
         return out;
     }
 
+    private List<Map<String, Object>> listMetaBindTables(Long metaSourceId) {
+        String layer = resolveMetaDataSourceLayer(metaSourceId);
+        boolean processLayer = DataLayerSupport.isProcessLayer(layer);
+        List<Map<String, Object>> tables = metadataSubsystemService.listCollectMetaDataSourceTables(metaSourceId, null);
+        List<Map<String, Object>> out = new ArrayList<>();
+        for (Map<String, Object> t : tables) {
+            String name = String.valueOf(t.getOrDefault("tableName", t.get("sourceTable"))).trim();
+            if (name.isEmpty()) {
+                continue;
+            }
+            Map<String, Object> row = new LinkedHashMap<>();
+            row.put("tableName", name);
+            row.put("sourceTable", name);
+            Object remark = t.get("remarks");
+            if (remark == null) {
+                remark = t.get("tableComment");
+            }
+            row.put("tableComment", remark);
+            row.put("chineseName", remark);
+            GovMetadataRegistry meta = findMetadataByTableNameOnly(name);
+            if (meta != null) {
+                row.put("metadataEntryCode", meta.getEntryCode());
+                row.put("entryName", meta.getEntryName());
+                String metaLayer = resolveLayer(meta);
+                row.put("dataLayer", metaLayer);
+                row.put("catalogable", !DataLayerSupport.isProcessLayer(metaLayer));
+            } else {
+                row.put("metadataEntryCode", null);
+                row.put("dataLayer", layer);
+                row.put("catalogable", !processLayer);
+            }
+            out.add(row);
+        }
+        return out;
+    }
+
     public Map<String, Object> describeBindTable(Long sourceId, String tableName) {
+        return describeBindTable(sourceId, tableName, "ING");
+    }
+
+    public Map<String, Object> describeBindTable(Long sourceId, String tableName, String sourceKind) {
         if (sourceId == null || tableName == null || tableName.isBlank()) {
             throw new BusinessException(400, "sourceId 与 tableName 必填");
+        }
+        if ("META".equalsIgnoreCase(sourceKind)) {
+            return describeMetaBindTable(sourceId, tableName.trim());
         }
         if (isPlatformDwd(sourceId)) {
             throw new BusinessException(400, "过程层（治理库/DWD）不可编目进资源目录");
@@ -418,6 +520,82 @@ public class CatalogResourceService {
                     : "DIRECT");
         }
         return out;
+    }
+
+    private Map<String, Object> describeMetaBindTable(Long metaSourceId, String tableName) {
+        String layer = resolveMetaDataSourceLayer(metaSourceId);
+        if (DataLayerSupport.isProcessLayer(layer)) {
+            throw new BusinessException(400, "过程层（治理库/DWD）不可编目进资源目录");
+        }
+        Map<String, Object> probe = metadataSubsystemService.probeMetaDataSourceTableColumns(metaSourceId, tableName, null);
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> fields = (List<Map<String, Object>>) probe.get("fields");
+        List<Map<String, Object>> columns = new ArrayList<>();
+        if (fields != null) {
+            for (Map<String, Object> f : fields) {
+                Map<String, Object> col = new LinkedHashMap<>();
+                col.put("columnName", f.get("code"));
+                col.put("dataType", f.get("type"));
+                String remark = str(f.get("name"), null);
+                col.put("remarks", remark);
+                col.put("comment", remark);
+                columns.add(col);
+            }
+        }
+        GovMetadataRegistry meta = findMetadataByTableNameOnly(tableName);
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("sourceId", metaSourceId);
+        out.put("tableName", tableName);
+        out.put("sourceKind", "META");
+        out.put("columns", columns);
+        out.put("primaryKeys", probe.getOrDefault("primaryKeys", List.of()));
+        if (meta != null) {
+            String metaLayer = resolveLayer(meta);
+            if (DataLayerSupport.isProcessLayer(metaLayer)) {
+                throw new BusinessException(400, "过程层（DWD）不可编目进资源目录");
+            }
+            out.put("metadataEntryCode", meta.getEntryCode());
+            out.put("entryName", meta.getEntryName());
+            out.put("dataLayer", metaLayer);
+            out.put("sourcePathType", DataLayerSupport.sourcePathTypeForLayer(metaLayer));
+            out.put("ownerName", meta.getOwnerName());
+            out.put("physicalTableName", meta.getPhysicalTableName());
+        } else {
+            out.put("metadataEntryCode", null);
+            out.put("dataLayer", layer);
+            out.put("sourcePathType", DataLayerSupport.sourcePathTypeForLayer(layer));
+            out.put("physicalTableName", tableName);
+        }
+        out.put("catalogable", true);
+        return out;
+    }
+
+    private String resolveMetaDataSourceLayer(Long metaSourceId) {
+        GovMetaDataSource mds = metaDataSourceMapper.selectById(metaSourceId);
+        if (mds == null || !"ACTIVE".equals(mds.getStatus())) {
+            throw new BusinessException(404, "元数据数据源不存在");
+        }
+        if (mds.getCategoryId() == null) {
+            return "ODS";
+        }
+        GovMetaSourceCategory cat = metaSourceCategoryMapper.selectById(mds.getCategoryId());
+        if (cat == null || cat.getLayerCode() == null || cat.getLayerCode().isBlank()) {
+            return "ODS";
+        }
+        return cat.getLayerCode().trim().toUpperCase(Locale.ROOT);
+    }
+
+    private GovMetadataRegistry findMetadataByTableNameOnly(String tableName) {
+        if (tableName == null || tableName.isBlank()) {
+            return null;
+        }
+        List<GovMetadataRegistry> list = metadataRegistryMapper.selectList(new LambdaQueryWrapper<GovMetadataRegistry>()
+                .ne(GovMetadataRegistry::getStatus, "OFFLINE")
+                .eq(GovMetadataRegistry::getEntryType, "TABLE")
+                .and(w -> w.eq(GovMetadataRegistry::getPhysicalTableName, tableName)
+                        .or().eq(GovMetadataRegistry::getEntryName, tableName))
+                .last("limit 1"));
+        return list.isEmpty() ? null : list.get(0);
     }
 
     private List<String> listBindTableNames(Long sourceId) {
@@ -2201,6 +2379,30 @@ public class CatalogResourceService {
             throw new BusinessException(400, field + " 不能为空");
         }
         return v;
+    }
+
+    private static Object firstNonBlank(Object a, Object b) {
+        if (a != null && !String.valueOf(a).isBlank()) {
+            return a;
+        }
+        if (b != null && !String.valueOf(b).isBlank()) {
+            return b;
+        }
+        return "";
+    }
+
+    private static Long longOrNull(Object v) {
+        if (v == null) {
+            return null;
+        }
+        if (v instanceof Number n) {
+            return n.longValue();
+        }
+        try {
+            return Long.parseLong(String.valueOf(v).trim());
+        } catch (NumberFormatException e) {
+            return null;
+        }
     }
 
     private static String str(Object v, String def) {
