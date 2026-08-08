@@ -6,11 +6,21 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import PageCard from '@/components/common/PageCard.vue'
 import PortalPagination from '@/components/common/PortalPagination.vue'
 import { statusLabel, statusTagType } from '@/utils/status-label'
+import { useAuthStore } from '@/stores/auth'
 import {
-  listFavorites,
+  fetchFavorites,
   removeFavorite,
   type PortalFavorite,
 } from '@/views/exchange/application/portal-favorites'
+
+interface ApprovalFlowStep {
+  step: string
+  status: string
+  result: string
+  actor?: string
+  time?: string
+  comment?: string
+}
 
 interface SubRow {
   id: number
@@ -25,6 +35,7 @@ interface SubRow {
   status: string
   reviewComment?: string
   reviewedBy?: string
+  reviewerContact?: string
   reviewedAt?: string
   distributeResult?: string
   distributeAt?: string
@@ -36,6 +47,7 @@ interface SubRow {
   description?: string
   physicalTableName?: string
   applyPayload?: string | Record<string, unknown>
+  approvalFlow?: ApprovalFlowStep[]
   authorization?: {
     authorizationCode?: string
     status?: string
@@ -54,9 +66,11 @@ const SHARE_ZH: Record<string, string> = {
 
 const route = useRoute()
 const router = useRouter()
+const auth = useAuthStore()
 const activeTab = ref('mine')
 const mineRows = ref<SubRow[]>([])
 const pendingRows = ref<SubRow[]>([])
+const reviewedRows = ref<SubRow[]>([])
 const favoriteRows = ref<PortalFavorite[]>([])
 const loading = ref(false)
 const statusFilter = ref('')
@@ -64,13 +78,19 @@ const minePage = ref(1)
 const minePageSize = ref(10)
 const pendingPage = ref(1)
 const pendingPageSize = ref(10)
+const reviewedPage = ref(1)
+const reviewedPageSize = ref(10)
 const favPage = ref(1)
 const favPageSize = ref(10)
-const reviewNote = ref('')
+const reviewForm = reactive({
+  reviewerName: '',
+  reviewerContact: '',
+  note: '',
+})
 
 const subDetail = reactive<{
   visible: boolean
-  mode: 'mine' | 'pending'
+  mode: 'mine' | 'pending' | 'reviewed'
   row: SubRow | null
 }>({ visible: false, mode: 'mine', row: null })
 
@@ -81,6 +101,10 @@ const pagedMine = computed(() => {
 const pagedPending = computed(() => {
   const start = (pendingPage.value - 1) * pendingPageSize.value
   return pendingRows.value.slice(start, start + pendingPageSize.value)
+})
+const pagedReviewed = computed(() => {
+  const start = (reviewedPage.value - 1) * reviewedPageSize.value
+  return reviewedRows.value.slice(start, start + reviewedPageSize.value)
 })
 const pagedFav = computed(() => {
   const start = (favPage.value - 1) * favPageSize.value
@@ -150,55 +174,113 @@ async function loadPending() {
   }
 }
 
-function loadFavorites() {
-  favoriteRows.value = listFavorites('GOV')
+async function loadReviewed() {
+  loading.value = true
+  try {
+    const res = await api.get('/governance/catalog/subscriptions/reviewed')
+    reviewedRows.value = res.data || []
+    reviewedPage.value = 1
+  } catch {
+    ElMessage.error('加载已审批失败')
+  } finally {
+    loading.value = false
+  }
+}
+
+async function loadFavorites() {
+  favoriteRows.value = await fetchFavorites('GOV')
   favPage.value = 1
 }
 
 async function load() {
   if (activeTab.value === 'mine') await loadMine()
   else if (activeTab.value === 'pending') await loadPending()
-  else loadFavorites()
+  else if (activeTab.value === 'reviewed') await loadReviewed()
+  else await loadFavorites()
 }
 
 function syncTabFromRoute() {
   const t = String(route.query.subTab || '')
-  if (t === 'favorites' || t === 'pending' || t === 'mine') {
-    activeTab.value = t === 'favorites' ? 'favorites' : t
+  if (t === 'favorites' || t === 'pending' || t === 'mine' || t === 'reviewed') {
+    activeTab.value = t
   }
 }
 
-function openDetail(row: SubRow, mode: 'mine' | 'pending') {
+function openDetail(row: SubRow, mode: 'mine' | 'pending' | 'reviewed') {
   subDetail.row = row
   subDetail.mode = mode
   subDetail.visible = true
-  reviewNote.value = ''
+  reviewForm.note = ''
+  if (mode === 'pending') {
+    reviewForm.reviewerName = auth.user?.displayName || auth.user?.username || ''
+    reviewForm.reviewerContact = auth.user?.phone || ''
+  }
+}
+
+function flowStatusTag(s?: string) {
+  if (s === 'APPROVED' || s === 'DONE') return 'success'
+  if (s === 'REJECTED' || s === 'CANCELLED') return 'danger'
+  return 'warning'
 }
 
 async function approve(row: SubRow) {
-  await api.post(`/governance/catalog/subscriptions/${row.id}/approve`, {
-    comment: reviewNote.value || '同意',
-  })
-  ElMessage.success('已通过')
-  subDetail.visible = false
-  await loadPending()
+  if (!reviewForm.reviewerName.trim()) {
+    ElMessage.warning('请填写审批人')
+    return
+  }
+  if (!reviewForm.reviewerContact.trim()) {
+    ElMessage.warning('请填写联系方式')
+    return
+  }
+  try {
+    await api.post(`/governance/catalog/subscriptions/${row.id}/approve`, {
+      comment: reviewForm.note.trim() || '同意',
+      reviewerName: reviewForm.reviewerName.trim(),
+      reviewerContact: reviewForm.reviewerContact.trim(),
+    })
+    ElMessage.success('已通过')
+    subDetail.visible = false
+    await Promise.all([loadPending(), loadReviewed()])
+  } catch (e: unknown) {
+    ElMessage.error((e as Error)?.message || '审批失败')
+  }
 }
 
 async function reject(row: SubRow) {
-  let comment = reviewNote.value
-  if (!comment?.trim()) {
-    const { value } = await ElMessageBox.prompt('请填写驳回意见', '驳回申请', {
-      confirmButtonText: '驳回',
-      cancelButtonText: '取消',
-      inputPattern: /\S+/,
-      inputErrorMessage: '意见不能为空',
-    })
-    comment = value
+  if (!reviewForm.reviewerName.trim()) {
+    ElMessage.warning('请填写审批人')
+    return
   }
-  await api.post(`/governance/catalog/subscriptions/${row.id}/reject`, { comment })
-  ElMessage.success('已驳回')
-  subDetail.visible = false
-  await loadPending()
+  if (!reviewForm.reviewerContact.trim()) {
+    ElMessage.warning('请填写联系方式')
+    return
+  }
+  let comment = reviewForm.note
+  if (!comment?.trim()) {
+    try {
+      const { value } = await ElMessageBox.prompt('请填写驳回意见', '驳回申请', {
+        confirmButtonText: '驳回',
+        cancelButtonText: '取消',
+        inputPattern: /\S+/,
+        inputErrorMessage: '意见不能为空',
+      })
+      comment = value
+    } catch {
+      return
+    }
+  }
+  try {
+    await api.post(`/governance/catalog/subscriptions/${row.id}/reject`, {
+      comment,
+      reviewerName: reviewForm.reviewerName.trim(),
+      reviewerContact: reviewForm.reviewerContact.trim(),
+    })
+    ElMessage.success('已驳回')
+    subDetail.visible = false
+    await Promise.all([loadPending(), loadReviewed()])
+  } catch (e: unknown) {
+    ElMessage.error((e as Error)?.message || '驳回失败')
+  }
 }
 
 async function cancel(row: SubRow) {
@@ -239,9 +321,9 @@ async function testApi(row: SubRow) {
   )
 }
 
-function cancelFavorite(row: PortalFavorite) {
-  removeFavorite(row.catalogId, 'GOV')
-  loadFavorites()
+async function cancelFavorite(row: PortalFavorite) {
+  await removeFavorite(row.govResourceId || row.catalogId, 'GOV')
+  await loadFavorites()
   ElMessage.success('已取消订阅')
 }
 
@@ -275,7 +357,7 @@ onMounted(() => {
 })
 onActivated(() => {
   syncTabFromRoute()
-  if (activeTab.value === 'favorites') loadFavorites()
+  void load()
 })
 </script>
 
@@ -404,10 +486,61 @@ onActivated(() => {
         />
       </el-tab-pane>
 
+      <el-tab-pane label="已审批" name="reviewed" lazy>
+        <el-form inline class="portal-inline-form portal-inline-form--block">
+          <el-form-item class="portal-form-actions">
+            <el-button type="primary" @click="loadReviewed">刷新</el-button>
+          </el-form-item>
+        </el-form>
+        <el-empty v-if="!reviewedRows.length && !loading" description="暂无审批历史" :image-size="72" />
+        <el-table
+          v-else
+          v-loading="loading"
+          :data="pagedReviewed"
+          stripe
+          size="small"
+          class="clickable-table"
+          @row-click="(row: SubRow) => openDetail(row, 'reviewed')"
+        >
+          <el-table-column label="资源" min-width="140" show-overflow-tooltip>
+            <template #default="{ row }">
+              <button type="button" class="link-title" @click.stop="openDetail(row, 'reviewed')">
+                {{ row.resourceName || row.resourceCode || row.resourceId }}
+              </button>
+            </template>
+          </el-table-column>
+          <el-table-column prop="applicantOrg" label="申请单位" width="140" show-overflow-tooltip />
+          <el-table-column label="共享方式" width="100">
+            <template #default="{ row }">{{ shareLabel(row.shareMode) }}</template>
+          </el-table-column>
+          <el-table-column label="审批结果" width="100">
+            <template #default="{ row }">
+              <el-tag size="small" :type="statusTagType(row.status)">{{ statusLabel(row.status) }}</el-tag>
+            </template>
+          </el-table-column>
+          <el-table-column label="审批人" width="110" show-overflow-tooltip>
+            <template #default="{ row }">{{ row.reviewedBy || '—' }}</template>
+          </el-table-column>
+          <el-table-column label="审批时间" width="160">
+            <template #default="{ row }">{{ fmtTime(row.reviewedAt) }}</template>
+          </el-table-column>
+          <el-table-column label="操作" width="90" fixed="right">
+            <template #default="{ row }">
+              <el-button link type="primary" @click.stop="openDetail(row, 'reviewed')">详情</el-button>
+            </template>
+          </el-table-column>
+        </el-table>
+        <PortalPagination
+          v-if="reviewedRows.length"
+          v-model:page="reviewedPage"
+          v-model:page-size="reviewedPageSize"
+          :total="reviewedRows.length"
+        />
+      </el-tab-pane>
+
       <el-tab-pane label="我的订阅" name="favorites" lazy>
         <el-empty v-if="!favoriteRows.length" description="暂无订阅，请到资源目录门户点击「订阅」" :image-size="72" />
         <el-table v-else :data="pagedFav" stripe size="small">
-          <el-table-column prop="catalogCode" label="资源编码" width="130" show-overflow-tooltip />
           <el-table-column label="资源名称" min-width="160" show-overflow-tooltip>
             <template #default="{ row }">
               <button type="button" class="link-title" @click="openFavorite(row)">{{ row.title }}</button>
@@ -494,6 +627,7 @@ onActivated(() => {
             <el-descriptions-item label="状态">{{ statusLabel(subDetail.row.status) }}</el-descriptions-item>
             <el-descriptions-item label="申请时间">{{ fmtTime(subDetail.row.createdAt) }}</el-descriptions-item>
             <el-descriptions-item v-if="subDetail.row.reviewedBy" label="审批人">{{ subDetail.row.reviewedBy }}</el-descriptions-item>
+            <el-descriptions-item v-if="subDetail.row.reviewerContact" label="联系方式">{{ subDetail.row.reviewerContact }}</el-descriptions-item>
             <el-descriptions-item v-if="subDetail.row.reviewedAt" label="审批时间">{{ fmtTime(subDetail.row.reviewedAt) }}</el-descriptions-item>
             <el-descriptions-item v-if="subDetail.row.reviewComment" label="审批意见">{{ subDetail.row.reviewComment }}</el-descriptions-item>
             <el-descriptions-item v-if="subDetail.row.authorization?.authorizationCode" label="授权码">
@@ -503,13 +637,50 @@ onActivated(() => {
           </el-descriptions>
         </section>
 
+        <section class="detail-block">
+          <h4>审批流程</h4>
+          <el-table
+            :data="subDetail.row.approvalFlow || []"
+            size="small"
+            stripe
+            border
+            empty-text="暂无审批记录"
+          >
+            <el-table-column prop="step" label="环节" width="110" />
+            <el-table-column label="状态" width="90">
+              <template #default="{ row }">
+                <el-tag size="small" :type="flowStatusTag(row.status)">{{ row.result || row.status }}</el-tag>
+              </template>
+            </el-table-column>
+            <el-table-column label="处理人" width="110" show-overflow-tooltip>
+              <template #default="{ row }">{{ row.actor || '—' }}</template>
+            </el-table-column>
+            <el-table-column label="时间" width="160">
+              <template #default="{ row }">{{ fmtTime(row.time) }}</template>
+            </el-table-column>
+            <el-table-column prop="comment" label="结果/意见" min-width="120" show-overflow-tooltip />
+          </el-table>
+        </section>
+
         <div v-if="subDetail.mode === 'pending' && subDetail.row.status === 'PENDING'" class="sub-detail-ops">
-          <el-input
-            v-model="reviewNote"
-            placeholder="审批意见（驳回时建议填写）"
-            clearable
-            style="margin-bottom: 12px"
-          />
+          <el-form label-width="88px" class="review-meta-form" @submit.prevent>
+            <el-form-item label="审批人" required>
+              <el-input v-model="reviewForm.reviewerName" maxlength="64" placeholder="请填写审批人" clearable />
+            </el-form-item>
+            <el-form-item label="联系方式" required>
+              <el-input v-model="reviewForm.reviewerContact" maxlength="64" placeholder="请填写手机号或固话" clearable />
+            </el-form-item>
+            <el-form-item label="审批意见">
+              <el-input
+                v-model="reviewForm.note"
+                type="textarea"
+                :rows="3"
+                maxlength="500"
+                show-word-limit
+                placeholder="通过可填同意；驳回时必须填写驳回意见"
+              />
+            </el-form-item>
+          </el-form>
           <el-button type="success" @click="approve(subDetail.row)">通过</el-button>
           <el-button type="danger" @click="reject(subDetail.row)">驳回</el-button>
         </div>

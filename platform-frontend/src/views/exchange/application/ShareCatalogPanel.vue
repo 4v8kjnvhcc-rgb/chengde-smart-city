@@ -7,7 +7,7 @@ import { statusLabel } from '@/utils/status-label'
 import PortalPagination from '@/components/common/PortalPagination.vue'
 import ResourceApplyDialog from './ResourceApplyDialog.vue'
 import type { ApplyResource } from './ResourceApplyDialog.vue'
-import { addFavorite, isFavorited, removeFavorite } from './portal-favorites'
+import { addFavorite, fetchFavorites, isFavorited, removeFavorite } from './portal-favorites'
 
 export interface CatalogFacet {
   code?: string
@@ -58,9 +58,8 @@ const SHARE_ATTR_OPTS = [
 ]
 const OPEN_ATTR_OPTS = [
   { value: '', label: '全部' },
-  { value: 'SOCIAL_OPEN', label: '可对社会开放' },
-  { value: 'NOT_OPEN', label: '不可对社会开放' },
-  { value: 'PARTIAL_OPEN', label: '部分对社会开放' },
+  { value: 'SOCIAL_OPEN', label: '开放' },
+  { value: 'NOT_OPEN', label: '不开放' },
 ]
 const RESOURCE_TYPE_OPTS = [
   { value: '', label: '全部' },
@@ -117,18 +116,37 @@ function shareAttrLabel(code?: string) {
 
 function openAttrLabel(code?: string) {
   if (!code) return '—'
+  if (code === 'SOCIAL_OPEN' || code === 'OPEN') return '开放'
+  if (code === 'NOT_OPEN' || code === 'PARTIAL_OPEN' || code === 'PARTIAL') return '不开放'
   const hit = OPEN_ATTR_OPTS.find((o) => o.value === code)
-  if (hit) return hit.label
-  if (code === 'OPEN') return '可对社会开放'
-  return statusLabel(code)
+  return hit?.label || statusLabel(code)
 }
 
 function openAttrOk(code?: string) {
   return code === 'SOCIAL_OPEN' || code === 'OPEN'
 }
 
-function openAttrPartial(code?: string) {
-  return code === 'PARTIAL_OPEN' || code === 'PARTIAL'
+const appliedCatalogIds = ref<Set<string>>(new Set())
+
+function isApplied(id?: number | string | null) {
+  if (id == null) return false
+  return appliedCatalogIds.value.has(String(id))
+}
+
+async function loadApplied() {
+  try {
+    const res = await api.get('/exchange/portal/subscriptions', { params: { scope: 'mine' } })
+    const ids = new Set<string>()
+    for (const row of (res.data || []) as Array<{ catalogId?: number | string; status?: string }>) {
+      const st = String(row.status || '').toUpperCase()
+      if (['PENDING', 'APPROVED'].includes(st) && row.catalogId != null) {
+        ids.add(String(row.catalogId))
+      }
+    }
+    appliedCatalogIds.value = ids
+  } catch {
+    appliedCatalogIds.value = new Set()
+  }
 }
 
 async function loadCatalog() {
@@ -149,6 +167,7 @@ async function loadCatalog() {
     rows.value = res.data || []
     selectedIds.value = []
     page.value = 1
+    await loadApplied()
   } catch (e: unknown) {
     ElMessage.error((e as Error)?.message || '加载共享资源失败')
   } finally {
@@ -225,6 +244,7 @@ async function openDetail(row: CatalogRow) {
     const [res, subRes] = await Promise.all([
       api.get(`/exchange/portal/catalog/${row.id}`),
       api.get('/exchange/portal/subscriptions', { params: { scope: 'mine' } }),
+      fetchFavorites('PORTAL'),
     ])
     detail.value = res.data
     const mine = (subRes.data || []) as { id?: number; catalogId?: number; status?: string }[]
@@ -258,6 +278,10 @@ function applyRow(row: CatalogRow) {
 function openApplyForm(row?: CatalogRow | Record<string, unknown> | null) {
   const src = row || detail.value
   if (!src) return
+  if (isApplied(src.id as number | string)) {
+    ElMessage.warning('该目录已申请，不能再次申请')
+    return
+  }
   applyTarget.value = {
     id: src.id as number | string,
     title: String(src.title || ''),
@@ -276,23 +300,28 @@ function applyDetail() {
   openApplyForm(detail.value)
 }
 
-function toggleSubscribe() {
+async function toggleSubscribe() {
   if (!detail.value) return
   const id = detail.value.id as number | string
   if (!subscribed.value) {
-    addFavorite({
-      catalogId: String(id),
-      title: String(detail.value.title || ''),
-      catalogCode: detail.value.catalogCode as string | undefined,
-      providerOrg: detail.value.providerOrg as string | undefined,
-      resourceType: detail.value.resourceType as string | undefined,
-      resourceTypeLabel: detail.value.resourceTypeLabel as string | undefined,
-      shareAttr: detail.value.shareAttr as string | undefined,
-      openAttr: detail.value.openAttr as string | undefined,
-      updatedAt: detail.value.updatedAt as string | undefined,
-    })
-    subscribed.value = true
-    ElMessage.success('已订阅，可在「个人空间 · 我的订阅」查看')
+    try {
+      await addFavorite({
+        catalogId: String(id),
+        title: String(detail.value.title || ''),
+        catalogCode: detail.value.catalogCode as string | undefined,
+        providerOrg: detail.value.providerOrg as string | undefined,
+        resourceType: detail.value.resourceType as string | undefined,
+        resourceTypeLabel: detail.value.resourceTypeLabel as string | undefined,
+        shareAttr: detail.value.shareAttr as string | undefined,
+        openAttr: detail.value.openAttr as string | undefined,
+        updatedAt: detail.value.updatedAt as string | undefined,
+        source: 'PORTAL',
+      })
+      subscribed.value = true
+      ElMessage.success('已订阅，可在「个人空间 · 我的订阅」查看')
+    } catch (e: unknown) {
+      ElMessage.error((e as Error)?.message || '订阅失败')
+    }
     return
   }
   void ElMessageBox.confirm('确认取消订阅该资源？取消后「我的订阅」中将不再显示。', '取消订阅', {
@@ -309,9 +338,13 @@ function toggleSubscribe() {
       }
       followSubId.value = null
     }
-    removeFavorite(id)
-    subscribed.value = false
-    ElMessage.success('已取消订阅')
+    try {
+      await removeFavorite(id, 'PORTAL')
+      subscribed.value = false
+      ElMessage.success('已取消订阅')
+    } catch (e: unknown) {
+      ElMessage.error((e as Error)?.message || '取消失败')
+    }
   }).catch(() => undefined)
 }
 
@@ -319,6 +352,11 @@ async function submitApplyPayload(payload: Record<string, unknown>) {
   try {
     await api.post('/exchange/portal/subscriptions', payload)
     ElMessage.success('资源申请已提交，可在「个人空间」查看')
+    if (payload.catalogId != null) {
+      appliedCatalogIds.value = new Set([...appliedCatalogIds.value, String(payload.catalogId)])
+    } else if (applyTarget.value?.id != null) {
+      appliedCatalogIds.value = new Set([...appliedCatalogIds.value, String(applyTarget.value.id)])
+    }
     applyVisible.value = false
     emit('submitted')
     await loadCatalog()
@@ -381,9 +419,9 @@ defineExpose({ loadCatalog, openDetail, applyKeyword })
             <span class="attr-pill attr-pill--ok">✓ {{ shareAttrLabel(String(detail.shareAttr || '')) }}</span>
             <span
               class="attr-pill"
-              :class="openAttrOk(String(detail.openAttr || '')) ? 'attr-pill--ok' : openAttrPartial(String(detail.openAttr || '')) ? 'attr-pill--partial' : 'attr-pill--bad'"
+              :class="openAttrOk(String(detail.openAttr || '')) ? 'attr-pill--ok' : 'attr-pill--bad'"
             >
-              {{ openAttrOk(String(detail.openAttr || '')) ? '✓' : openAttrPartial(String(detail.openAttr || '')) ? '◐' : '✕' }}
+              {{ openAttrOk(String(detail.openAttr || '')) ? '✓' : '✕' }}
               {{ openAttrLabel(String(detail.openAttr || '')) }}
             </span>
           </div>
@@ -396,7 +434,8 @@ defineExpose({ loadCatalog, openDetail, applyKeyword })
             <div><em>共享属性</em><span class="c-ok">✓ {{ shareAttrLabel(String(detail.shareAttr || '')) }}</span></div>
             <div>
               <em>开放属性</em>
-              <span :class="openAttrOk(String(detail.openAttr || '')) ? 'c-ok' : 'c-warn'">
+              <span :class="openAttrOk(String(detail.openAttr || '')) ? 'c-ok' : 'c-bad'">
+                {{ openAttrOk(String(detail.openAttr || '')) ? '✓' : '✕' }}
                 {{ openAttrLabel(String(detail.openAttr || '')) }}
               </span>
             </div>
@@ -541,7 +580,13 @@ defineExpose({ loadCatalog, openDetail, applyKeyword })
             plain
             @click="toggleSubscribe"
           >{{ subscribed ? '已订阅' : '订阅' }}</el-button>
-          <el-button type="primary" @click="applyDetail">资源申请</el-button>
+          <el-button
+            type="primary"
+            :disabled="isApplied(detail.id as number | string)"
+            @click="applyDetail"
+          >
+            {{ isApplied(detail.id as number | string) ? '已申请' : '资源申请' }}
+          </el-button>
         </div>
       </template>
     </div>
@@ -674,7 +719,14 @@ defineExpose({ loadCatalog, openDetail, applyKeyword })
               <div class="res-card__stats">
                 <span class="stat"><i class="stat-ico stat-ico--doc" />申请量 {{ row.applyCount ?? 0 }}</span>
                 <span class="stat"><i class="stat-ico stat-ico--eye" />访问量 {{ row.visitCount ?? row.hotScore ?? 0 }}</span>
-                <el-button type="primary" size="small" @click.stop="applyRow(row)">申请</el-button>
+                <el-button
+                  type="primary"
+                  size="small"
+                  :disabled="isApplied(row.id)"
+                  @click.stop="isApplied(row.id) ? undefined : applyRow(row)"
+                >
+                  {{ isApplied(row.id) ? '已申请' : '申请' }}
+                </el-button>
               </div>
             </div>
             <div class="res-card__meta">
@@ -682,8 +734,8 @@ defineExpose({ loadCatalog, openDetail, applyKeyword })
               <div>共享属性：<span class="c-ok">✓ {{ shareAttrLabel(row.shareAttr) }}</span></div>
               <div>
                 开放属性：
-                <span :class="openAttrOk(row.openAttr) ? 'c-ok' : 'c-warn'">
-                  {{ openAttrOk(row.openAttr) ? '✓' : openAttrPartial(row.openAttr) ? '◐' : '✕' }}
+                <span :class="openAttrOk(row.openAttr) ? 'c-ok' : 'c-bad'">
+                  {{ openAttrOk(row.openAttr) ? '✓' : '✕' }}
                   {{ openAttrLabel(row.openAttr) }}
                 </span>
               </div>
@@ -722,7 +774,9 @@ defineExpose({ loadCatalog, openDetail, applyKeyword })
             </el-table-column>
             <el-table-column label="开放属性" width="140">
               <template #default="{ row }">
-                <span :class="openAttrOk(row.openAttr) ? 'c-ok' : 'c-warn'">{{ openAttrLabel(row.openAttr) }}</span>
+                <span :class="openAttrOk(row.openAttr) ? 'c-ok' : 'c-bad'">
+                  {{ openAttrOk(row.openAttr) ? '✓' : '✕' }} {{ openAttrLabel(row.openAttr) }}
+                </span>
               </template>
             </el-table-column>
             <el-table-column label="申请量" width="90">
@@ -739,7 +793,14 @@ defineExpose({ loadCatalog, openDetail, applyKeyword })
             <el-table-column label="操作" width="120" fixed="right">
               <template #default="{ row }">
                 <el-button link type="primary" @click="openDetail(row)">预览</el-button>
-                <el-button link type="success" @click="applyRow(row)">申请</el-button>
+                <el-button
+                  link
+                  type="success"
+                  :disabled="isApplied(row.id)"
+                  @click="applyRow(row)"
+                >
+                  {{ isApplied(row.id) ? '已申请' : '申请' }}
+                </el-button>
               </template>
             </el-table-column>
           </el-table>
@@ -876,7 +937,7 @@ defineExpose({ loadCatalog, openDetail, applyKeyword })
 }
 .type-tag--sm { margin-left: 6px; font-size: 11px; }
 .c-ok { color: #18a058; }
-.c-warn { color: #c27a00; }
+.c-bad { color: #d03050; }
 .link-title {
   border: 0; background: transparent; color: #1677ff; cursor: pointer; padding: 0; font-size: 13px;
 }

@@ -280,6 +280,7 @@ onActivated(() => {
         <el-table-column label="是否涉密" width="90">
           <template #default="{ row }">{{ row.secretFlag === 1 ? '是' : '否' }}</template>
         </el-table-column>
+        <el-table-column prop="sortOrder" label="排序" width="80" align="center" />
         <el-table-column prop="description" label="描述" min-width="120" show-overflow-tooltip />
         <el-table-column label="操作" width="240" fixed="right">
           <template #default="{ row }">
@@ -327,6 +328,9 @@ onActivated(() => {
             <el-radio :value="0">否</el-radio>
             <el-radio :value="1">是</el-radio>
           </el-radio-group>
+        </el-form-item>
+        <el-form-item label="排序">
+          <el-input-number v-model="form.sortOrder" :min="0" :step="1" controls-position="right" style="width: 100%" />
         </el-form-item>
         <el-form-item label="描述">
           <el-input v-model="form.description" type="textarea" :rows="3" placeholder="选填" />

@@ -1,7 +1,10 @@
-/** 门户 / 目录门户「订阅/收藏」——个人空间「我的订阅」与目录「我的订阅」数据源 */
+/** 门户 / 目录门户「订阅/收藏」——两端共用服务端表 biz_resource_favorite */
+
+import api from '@/api/http'
 
 export interface PortalFavorite {
-  catalogId: string
+  id?: number
+  catalogId: string | number
   title: string
   catalogCode?: string
   providerOrg?: string
@@ -11,90 +14,136 @@ export interface PortalFavorite {
   openAttr?: string
   updatedAt?: string
   followedAt: string
-  /** PORTAL=部门共享门户；GOV=资源目录门户 */
+  /** @deprecated 已统一服务端存储，保留兼容 */
   source?: 'PORTAL' | 'GOV'
-  /** 编目资源 ID（source=GOV 时） */
   govResourceId?: number
 }
 
 const LEGACY_KEY = 'portal-catalog-follow'
 const STORE_KEY = 'portal-catalog-favorites-v1'
 
-function readRaw(): PortalFavorite[] {
+/** 内存缓存，避免频繁请求；写操作后刷新 */
+let cache: PortalFavorite[] | null = null
+let cacheAt = 0
+const CACHE_TTL_MS = 5_000
+
+function fromApi(row: Record<string, unknown>): PortalFavorite {
+  return {
+    id: row.id == null ? undefined : Number(row.id),
+    catalogId: row.catalogId != null ? String(row.catalogId) : String(row.govResourceId || ''),
+    title: String(row.title || ''),
+    catalogCode: row.catalogCode != null ? String(row.catalogCode) : undefined,
+    providerOrg: row.providerOrg != null ? String(row.providerOrg) : undefined,
+    resourceType: row.resourceType != null ? String(row.resourceType) : undefined,
+    resourceTypeLabel: row.resourceTypeLabel != null ? String(row.resourceTypeLabel) : undefined,
+    followedAt: row.followedAt != null ? String(row.followedAt) : new Date().toISOString(),
+    govResourceId: row.govResourceId == null ? undefined : Number(row.govResourceId),
+  }
+}
+
+async function migrateLocalIfNeeded(): Promise<void> {
   try {
     const raw = localStorage.getItem(STORE_KEY)
-    if (raw) {
-      const arr = JSON.parse(raw)
-      return Array.isArray(arr) ? (arr as PortalFavorite[]) : []
+    if (!raw) return
+    const arr = JSON.parse(raw)
+    if (!Array.isArray(arr) || !arr.length) {
+      localStorage.removeItem(STORE_KEY)
+      localStorage.removeItem(LEGACY_KEY)
+      return
     }
+    for (const item of arr as PortalFavorite[]) {
+      try {
+        await api.post('/exchange/portal/favorites', {
+          catalogId: item.source === 'GOV' ? undefined : item.catalogId,
+          govResourceId: item.govResourceId || (item.source === 'GOV' ? item.catalogId : undefined),
+          title: item.title,
+          catalogCode: item.catalogCode,
+          providerOrg: item.providerOrg,
+          resourceType: item.resourceType,
+          resourceTypeLabel: item.resourceTypeLabel,
+        })
+      } catch {
+        /* ignore single migrate failure */
+      }
+    }
+    localStorage.removeItem(STORE_KEY)
+    localStorage.removeItem(LEGACY_KEY)
   } catch {
     /* ignore */
   }
-  // 兼容旧版仅存 id 的列表
-  try {
-    const legacy = localStorage.getItem(LEGACY_KEY)
-    if (!legacy) return []
-    const ids = JSON.parse(legacy)
-    if (!Array.isArray(ids)) return []
-    const migrated: PortalFavorite[] = ids.map((id: unknown) => ({
-      catalogId: String(id),
-      title: `资源 #${id}`,
-      source: 'PORTAL' as const,
-      followedAt: new Date().toISOString(),
-    }))
-    writeRaw(migrated)
-    return migrated
-  } catch {
-    return []
-  }
 }
 
-function writeRaw(list: PortalFavorite[]) {
-  localStorage.setItem(STORE_KEY, JSON.stringify(list))
-  // 同步旧 key，供其它未改造页面 isFollowed 兼容（仅门户 id）
-  localStorage.setItem(
-    LEGACY_KEY,
-    JSON.stringify(list.filter((x) => x.source !== 'GOV').map((x) => x.catalogId)),
+export async function fetchFavorites(_source?: 'PORTAL' | 'GOV'): Promise<PortalFavorite[]> {
+  if (cache && Date.now() - cacheAt < CACHE_TTL_MS) {
+    return cache
+  }
+  await migrateLocalIfNeeded()
+  const res = await api.get('/exchange/portal/favorites')
+  const list = ((res.data || []) as Record<string, unknown>[]).map(fromApi)
+  cache = list
+  cacheAt = Date.now()
+  return list
+}
+
+export function invalidateFavoritesCache() {
+  cache = null
+  cacheAt = 0
+}
+
+/** 同步兼容：优先返回缓存；无缓存时返回空（调用方应 await fetchFavorites） */
+export function listFavorites(_source?: 'PORTAL' | 'GOV'): PortalFavorite[] {
+  return cache ? cache.slice() : []
+}
+
+export function isFavorited(catalogId: number | string, _source: 'PORTAL' | 'GOV' = 'PORTAL'): boolean {
+  const id = String(catalogId)
+  return (cache || []).some(
+    (x) => String(x.catalogId) === id || String(x.govResourceId || '') === id,
   )
 }
 
-export function listFavorites(source?: 'PORTAL' | 'GOV'): PortalFavorite[] {
-  const all = readRaw().slice().sort((a, b) => String(b.followedAt).localeCompare(String(a.followedAt)))
-  if (!source) return all
-  return all.filter((x) => (x.source || 'PORTAL') === source)
-}
-
-export function isFavorited(catalogId: number | string, source: 'PORTAL' | 'GOV' = 'PORTAL'): boolean {
-  const id = String(catalogId)
-  return readRaw().some((x) => x.catalogId === id && (x.source || 'PORTAL') === source)
-}
-
-export function addFavorite(item: Omit<PortalFavorite, 'followedAt'> & { followedAt?: string }): void {
-  const id = String(item.catalogId)
-  const src = item.source || 'PORTAL'
-  const list = readRaw().filter((x) => !(x.catalogId === id && (x.source || 'PORTAL') === src))
-  list.unshift({
-    catalogId: id,
-    title: item.title || `资源 #${id}`,
+export async function addFavorite(
+  item: Omit<PortalFavorite, 'followedAt'> & { followedAt?: string },
+): Promise<PortalFavorite> {
+  const res = await api.post('/exchange/portal/favorites', {
+    catalogId: item.source === 'GOV' && !item.govResourceId ? undefined : item.catalogId,
+    govResourceId:
+      item.govResourceId ||
+      (item.source === 'GOV' ? Number(item.catalogId) || undefined : undefined),
+    title: item.title,
     catalogCode: item.catalogCode,
     providerOrg: item.providerOrg,
     resourceType: item.resourceType,
     resourceTypeLabel: item.resourceTypeLabel,
-    shareAttr: item.shareAttr,
-    openAttr: item.openAttr,
-    updatedAt: item.updatedAt,
-    source: src,
-    govResourceId: item.govResourceId,
-    followedAt: item.followedAt || new Date().toISOString(),
   })
-  writeRaw(list)
+  invalidateFavoritesCache()
+  await fetchFavorites()
+  return fromApi((res.data || {}) as Record<string, unknown>)
 }
 
-export function removeFavorite(catalogId: number | string, source: 'PORTAL' | 'GOV' = 'PORTAL'): void {
+export async function removeFavorite(
+  catalogId: number | string,
+  source: 'PORTAL' | 'GOV' = 'PORTAL',
+): Promise<void> {
   const id = String(catalogId)
-  writeRaw(readRaw().filter((x) => !(x.catalogId === id && (x.source || 'PORTAL') === source)))
+  const hit = (cache || []).find(
+    (x) =>
+      (source === 'GOV'
+        ? String(x.govResourceId || x.catalogId) === id
+        : String(x.catalogId) === id) || String(x.govResourceId || '') === id,
+  )
+  if (hit?.id) {
+    await api.post(`/exchange/portal/favorites/${hit.id}/remove`)
+  } else {
+    await api.post('/exchange/portal/favorites/remove', {
+      catalogId: source === 'PORTAL' ? catalogId : undefined,
+      govResourceId: source === 'GOV' ? catalogId : hit?.govResourceId,
+    })
+  }
+  invalidateFavoritesCache()
+  await fetchFavorites()
 }
 
-export function favoriteCount(source?: 'PORTAL' | 'GOV'): number {
-  return listFavorites(source).length
+export function favoriteCount(_source?: 'PORTAL' | 'GOV'): number {
+  return (cache || []).length
 }

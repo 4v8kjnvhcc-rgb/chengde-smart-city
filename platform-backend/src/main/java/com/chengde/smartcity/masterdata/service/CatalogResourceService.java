@@ -20,11 +20,16 @@ import com.chengde.smartcity.masterdata.mapper.GovCatalogResourceVersionMapper;
 import com.chengde.smartcity.masterdata.mapper.GovMetadataRegistryMapper;
 import com.chengde.smartcity.masterdata.support.DataLayerSupport;
 import com.chengde.smartcity.security.UserPrincipal;
+import com.chengde.smartcity.system.entity.SysOrg;
+import com.chengde.smartcity.system.entity.SysUser;
+import com.chengde.smartcity.system.mapper.SysOrgMapper;
+import com.chengde.smartcity.system.mapper.SysUserMapper;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -69,6 +74,8 @@ public class CatalogResourceService {
     private final IngDataSourceMapper ingDataSourceMapper;
     private final JdbcProbeService jdbcProbeService;
     private final MetadataSubsystemService metadataSubsystemService;
+    private final SysUserMapper sysUserMapper;
+    private final SysOrgMapper orgMapper;
 
     public CatalogResourceService(GovCatalogResourceMapper resourceMapper,
                                   GovCatalogCategoryMapper categoryMapper,
@@ -79,7 +86,9 @@ public class CatalogResourceService {
                                   CatalogCategoryService categoryService,
                                   IngDataSourceMapper ingDataSourceMapper,
                                   JdbcProbeService jdbcProbeService,
-                                  MetadataSubsystemService metadataSubsystemService) {
+                                  MetadataSubsystemService metadataSubsystemService,
+                                  SysUserMapper sysUserMapper,
+                                  SysOrgMapper orgMapper) {
         this.resourceMapper = resourceMapper;
         this.categoryMapper = categoryMapper;
         this.approvalMapper = approvalMapper;
@@ -90,6 +99,8 @@ public class CatalogResourceService {
         this.ingDataSourceMapper = ingDataSourceMapper;
         this.jdbcProbeService = jdbcProbeService;
         this.metadataSubsystemService = metadataSubsystemService;
+        this.sysUserMapper = sysUserMapper;
+        this.orgMapper = orgMapper;
     }
 
     public List<GovCatalogResource> list(Long categoryId, String resourceType, String publishStatus,
@@ -125,6 +136,29 @@ public class CatalogResourceService {
                                          String sourcePathType, String providerOrg, Boolean unboundOnly,
                                          String catalogOrigin, String shareType, Boolean excludeApprovalDraft,
                                          String resourceFormat) {
+        return list(categoryId, resourceType, publishStatus, approvalStatus, keyword,
+                sourcePathType, providerOrg, unboundOnly, catalogOrigin, shareType, excludeApprovalDraft,
+                resourceFormat, null);
+    }
+
+    public List<GovCatalogResource> list(Long categoryId, String resourceType, String publishStatus,
+                                         String approvalStatus, String keyword,
+                                         String sourcePathType, String providerOrg, Boolean unboundOnly,
+                                         String catalogOrigin, String shareType, Boolean excludeApprovalDraft,
+                                         String resourceFormat, UserPrincipal operator) {
+        return list(categoryId, resourceType, publishStatus, approvalStatus, keyword,
+                sourcePathType, providerOrg, unboundOnly, catalogOrigin, shareType, excludeApprovalDraft,
+                resourceFormat, operator, false);
+    }
+
+    /**
+     * @param forPortal true=资源目录门户浏览：不按提供方组织隔离，与部门数据共享门户一致展示全部已发布目录
+     */
+    public List<GovCatalogResource> list(Long categoryId, String resourceType, String publishStatus,
+                                         String approvalStatus, String keyword,
+                                         String sourcePathType, String providerOrg, Boolean unboundOnly,
+                                         String catalogOrigin, String shareType, Boolean excludeApprovalDraft,
+                                         String resourceFormat, UserPrincipal operator, boolean forPortal) {
         LambdaQueryWrapper<GovCatalogResource> q = new LambdaQueryWrapper<GovCatalogResource>()
                 .orderByDesc(GovCatalogResource::getId);
         if (Boolean.TRUE.equals(unboundOnly)) {
@@ -140,6 +174,11 @@ public class CatalogResourceService {
         }
         if (approvalStatus != null && !approvalStatus.isBlank()) {
             q.eq(GovCatalogResource::getApprovalStatus, approvalStatus);
+            // 「草稿」筛选不含已下线（已下线用 publishStatus=OFFLINE）
+            if ("DRAFT".equalsIgnoreCase(approvalStatus.trim())) {
+                q.and(w -> w.isNull(GovCatalogResource::getPublishStatus)
+                        .or().ne(GovCatalogResource::getPublishStatus, "OFFLINE"));
+            }
         }
         if (Boolean.TRUE.equals(excludeApprovalDraft)) {
             // 目录注册发布：仅编目「提交」后可见（TO_REGISTER），及已提交发布/下线审批中的（PENDING）
@@ -150,6 +189,10 @@ public class CatalogResourceService {
         }
         if (providerOrg != null && !providerOrg.isBlank()) {
             q.like(GovCatalogResource::getProviderOrg, providerOrg.trim());
+        }
+        // 组织隔离：非超管/平台管理员仅能看本机构提供方目录（门户浏览除外）
+        if (!forPortal) {
+            applyProviderOrgScope(q, operator);
         }
         if (catalogOrigin != null && !catalogOrigin.isBlank()) {
             q.eq(GovCatalogResource::getCatalogOrigin, catalogOrigin.trim().toUpperCase(Locale.ROOT));
@@ -169,6 +212,38 @@ public class CatalogResourceService {
                     .or().like(GovCatalogResource::getDescription, keyword));
         }
         return resourceMapper.selectList(q);
+    }
+
+    private void applyProviderOrgScope(LambdaQueryWrapper<GovCatalogResource> q, UserPrincipal operator) {
+        if (operator == null || operator.isSystemAdmin() || operator.isPlatformAdmin()) {
+            return;
+        }
+        String orgName = resolveOrgName(operator.getOrgId());
+        if (orgName == null || orgName.isBlank()) {
+            q.eq(GovCatalogResource::getId, -1L);
+            return;
+        }
+        q.eq(GovCatalogResource::getProviderOrg, orgName);
+    }
+
+    private String resolveOrgName(Long orgId) {
+        if (orgId == null) {
+            return null;
+        }
+        SysOrg org = orgMapper.selectById(orgId);
+        return org == null ? null : org.getOrgName();
+    }
+
+    private void assertResourceOrgAccess(UserPrincipal operator, GovCatalogResource r) {
+        if (operator == null || operator.isSystemAdmin() || operator.isPlatformAdmin()) {
+            return;
+        }
+        String orgName = resolveOrgName(operator.getOrgId());
+        if (orgName == null || orgName.isBlank()
+                || r.getProviderOrg() == null
+                || !orgName.equals(r.getProviderOrg())) {
+            throw new BusinessException(403, "无权访问其他部门的目录数据");
+        }
     }
 
     /** 可编目登记对象：TABLE/资产类，排除过程层 DWD */
@@ -277,22 +352,32 @@ public class CatalogResourceService {
         if (sourceId == null) {
             throw new BusinessException(400, "sourceId 必填");
         }
-        List<String> names = listBindTableNames(sourceId);
+        List<Map<String, Object>> summaries = listBindTableSummaries(sourceId);
         List<Map<String, Object>> out = new ArrayList<>();
-        for (String name : names) {
+        for (Map<String, Object> summary : summaries) {
+            String name = String.valueOf(summary.getOrDefault("tableName", "")).trim();
+            if (name.isEmpty()) {
+                continue;
+            }
             Map<String, Object> row = new LinkedHashMap<>();
             row.put("tableName", name);
             row.put("sourceTable", name);
+            String remark = str(summary.get("remarks"), null);
             GovMetadataRegistry meta = findMetadataBySourceTable(sourceId, name);
             if (meta != null) {
                 row.put("metadataEntryCode", meta.getEntryCode());
                 row.put("entryName", meta.getEntryName());
                 row.put("dataLayer", resolveLayer(meta));
                 row.put("catalogable", !DataLayerSupport.isProcessLayer(resolveLayer(meta)));
+                if (remark == null || remark.isBlank()) {
+                    remark = meta.getEntryName();
+                }
             } else {
                 row.put("metadataEntryCode", null);
                 row.put("catalogable", !isPlatformDwd(sourceId));
             }
+            row.put("tableComment", remark);
+            row.put("chineseName", remark);
             out.add(row);
         }
         return out;
@@ -336,19 +421,38 @@ public class CatalogResourceService {
     }
 
     private List<String> listBindTableNames(Long sourceId) {
+        List<String> names = new ArrayList<>();
+        for (Map<String, Object> t : listBindTableSummaries(sourceId)) {
+            Object n = t.get("tableName");
+            if (n != null && !String.valueOf(n).isBlank()) {
+                names.add(String.valueOf(n));
+            }
+        }
+        return names;
+    }
+
+    /** 编目选表：表名 + 表注释（中文名称）。 */
+    private List<Map<String, Object>> listBindTableSummaries(Long sourceId) {
         if (isPlatformLayerId(sourceId)) {
             String database = platformLayerDatabase(sourceId);
-            List<String> names = new ArrayList<>();
-            // 复用采集侧探表，再只取表名
+            List<Map<String, Object>> out = new ArrayList<>();
             for (Map<String, Object> t : metadataSubsystemService.listCollectDataSourceTables(sourceId)) {
                 Object n = t.get("sourceTable");
                 if (n == null) n = t.get("tableName");
-                if (n != null && !String.valueOf(n).isBlank()) {
-                    names.add(String.valueOf(n));
+                if (n == null || String.valueOf(n).isBlank()) {
+                    continue;
                 }
+                Map<String, Object> row = new LinkedHashMap<>();
+                row.put("tableName", String.valueOf(n));
+                Object remark = t.get("remarks");
+                if (remark == null) remark = t.get("tableComment");
+                if (remark == null) remark = t.get("tableNameZh");
+                row.put("remarks", remark == null || String.valueOf(remark).isBlank()
+                        ? null : String.valueOf(remark).trim());
+                out.add(row);
             }
-            if (!names.isEmpty() || database == null) {
-                return names;
+            if (!out.isEmpty() || database == null) {
+                return out;
             }
         }
         IngDataSource ds = ingDataSourceMapper.selectById(sourceId);
@@ -356,7 +460,7 @@ public class CatalogResourceService {
             throw new BusinessException(404, "登记数据源不存在");
         }
         JdbcProbeService.ConnConfig conn = jdbcProbeService.parse(ds.getSourceType(), ds.getConnConfigJson());
-        return jdbcProbeService.listTableNames(conn);
+        return jdbcProbeService.listTableSummaries(conn);
     }
 
     private Map<String, Object> describeTableRaw(Long sourceId, String tableName) {
@@ -453,10 +557,24 @@ public class CatalogResourceService {
         return require(id);
     }
 
+    public GovCatalogResource get(UserPrincipal operator, Long id) {
+        GovCatalogResource r = require(id);
+        assertResourceOrgAccess(operator, r);
+        return r;
+    }
+
     @Transactional
     public Long create(UserPrincipal operator, Map<String, Object> body) {
         GovCatalogResource r = new GovCatalogResource();
         applyBody(r, body, true);
+        // 部门账号：信息资源提供方强制为本机构，防止越权编目
+        if (operator != null && !operator.isSystemAdmin() && !operator.isPlatformAdmin()) {
+            String orgName = resolveOrgName(operator.getOrgId());
+            if (orgName == null || orgName.isBlank()) {
+                throw new BusinessException(400, "当前账号未绑定组织机构，无法编目");
+            }
+            r.setProviderOrg(orgName);
+        }
         enrichFromMetadata(r, true);
         assertCatalogable(r, false);
         validateShareOpen(r);
@@ -537,11 +655,24 @@ public class CatalogResourceService {
     @Transactional
     public void update(UserPrincipal operator, Long id, Map<String, Object> body) {
         GovCatalogResource r = require(id);
+        assertResourceOrgAccess(operator, r);
         if ("PUBLISHED".equalsIgnoreCase(r.getPublishStatus())) {
             throw new BusinessException(400, "已发布资源不可直接编辑，请先下线");
         }
         if ("PENDING".equalsIgnoreCase(r.getApprovalStatus())) {
             throw new BusinessException(400, "审批中不可编辑");
+        }
+        if ("TO_REGISTER".equalsIgnoreCase(r.getApprovalStatus())) {
+            throw new BusinessException(400, "待发布状态不可编辑，请先撤回");
+        }
+        // 部门账号不可改提供方到其他机构
+        if (operator != null && !operator.isSystemAdmin() && !operator.isPlatformAdmin()
+                && body != null && body.containsKey("providerOrg")) {
+            String orgName = resolveOrgName(operator.getOrgId());
+            String next = str(body.get("providerOrg"), null);
+            if (orgName != null && next != null && !orgName.equals(next)) {
+                throw new BusinessException(403, "部门管理员不可修改信息资源提供方");
+            }
         }
         applyBody(r, body, false);
         enrichFromMetadata(r, false);
@@ -570,13 +701,16 @@ public class CatalogResourceService {
             throw new BusinessException(400, "已发布资源请先下线后再删除");
         }
         String approval = r.getApprovalStatus() == null ? "DRAFT" : r.getApprovalStatus().toUpperCase(Locale.ROOT);
-        // 草稿：直接删除
-        if ("DRAFT".equals(approval)) {
+        if ("TO_REGISTER".equals(approval)) {
+            throw new BusinessException(400, "待发布状态请先撤回再删除");
+        }
+        // 草稿 / 驳回待提交 / 已撤回：直接删除
+        if ("DRAFT".equals(approval) || "REJECTED".equals(approval) || "WITHDRAWN".equals(approval)) {
             offlinePortal(r);
             resourceMapper.deleteById(r.getId());
             return;
         }
-        // 已通过 / 待注册发布等：走删除审批
+        // 已通过等：走删除审批
         if (!"DRAFT".equalsIgnoreCase(r.getPublishStatus())
                 && !"OFFLINE".equalsIgnoreCase(r.getPublishStatus())) {
             throw new BusinessException(400, "仅草稿或已下线资源可提交删除审批");
@@ -662,17 +796,31 @@ public class CatalogResourceService {
         return r;
     }
 
+    /**
+     * 编目页「撤回」：待发布（TO_REGISTER）退回草稿，离开注册发布可见范围。
+     */
+    @Transactional
+    public GovCatalogResource withdrawFromRegister(UserPrincipal operator, Long id) {
+        GovCatalogResource r = require(id);
+        if (!"TO_REGISTER".equalsIgnoreCase(r.getApprovalStatus())) {
+            throw new BusinessException(400, "仅待发布状态可撤回为草稿");
+        }
+        r.setApprovalStatus("DRAFT");
+        touch(r, operator);
+        resourceMapper.updateById(r);
+        return r;
+    }
+
     @Transactional
     public GovCatalogApproval approve(UserPrincipal operator, Long approvalId, Map<String, Object> body) {
+        assertCatalogAdmin(operator);
         GovCatalogApproval a = requireApproval(approvalId);
         if (!"PENDING".equalsIgnoreCase(a.getStatus())) {
             throw new BusinessException(400, "仅待处理审批可通过");
         }
+        applyReviewerFields(a, body == null ? Map.of() : body);
         a.setStatus("APPROVED");
-        a.setReviewComment(str(body.get("comment"), null));
-        if (operator != null) {
-            a.setReviewedBy(operator.getUsername());
-        }
+        a.setReviewComment(str(body == null ? null : body.get("comment"), "同意"));
         a.setReviewedAt(LocalDateTime.now());
         approvalMapper.updateById(a);
 
@@ -723,19 +871,19 @@ public class CatalogResourceService {
 
     @Transactional
     public GovCatalogApproval reject(UserPrincipal operator, Long approvalId, Map<String, Object> body) {
+        assertCatalogAdmin(operator);
         GovCatalogApproval a = requireApproval(approvalId);
         if (!"PENDING".equalsIgnoreCase(a.getStatus())) {
             throw new BusinessException(400, "仅待处理审批可驳回");
         }
-        String comment = str(body.get("comment"), null);
+        Map<String, Object> payload = body == null ? Map.of() : body;
+        String comment = str(payload.get("comment"), null);
         if (comment == null || comment.isBlank()) {
-            throw new BusinessException(400, "驳回须填写审批意见");
+            throw new BusinessException(400, "驳回须填写驳回意见");
         }
+        applyReviewerFields(a, payload);
         a.setStatus("REJECTED");
         a.setReviewComment(comment);
-        if (operator != null) {
-            a.setReviewedBy(operator.getUsername());
-        }
         a.setReviewedAt(LocalDateTime.now());
         approvalMapper.updateById(a);
 
@@ -771,7 +919,8 @@ public class CatalogResourceService {
         }
         if (a.getResourceId() != null) {
             GovCatalogResource r = require(a.getResourceId());
-            r.setApprovalStatus("WITHDRAWN");
+            // 待审核撤回后回到待发布，可再次在注册发布页发布
+            r.setApprovalStatus("TO_REGISTER");
             touch(r, operator);
             resourceMapper.updateById(r);
         }
@@ -823,10 +972,22 @@ public class CatalogResourceService {
     public void adminForceDelete(UserPrincipal operator, Long id, Map<String, Object> body) {
         assertCatalogAdmin(operator);
         GovCatalogResource r = require(id);
-        if ("PENDING".equalsIgnoreCase(r.getApprovalStatus())) {
-            throw new BusinessException(400, "审批中不可删除，请先处理待审申请");
-        }
         String comment = str(body == null ? null : body.get("comment"), "管理员即时删除");
+        // 待审核也可删除：先撤销待审单，再删资源
+        if ("PENDING".equalsIgnoreCase(r.getApprovalStatus())) {
+            List<GovCatalogApproval> pending = approvalMapper.selectList(new LambdaQueryWrapper<GovCatalogApproval>()
+                    .eq(GovCatalogApproval::getResourceId, r.getId())
+                    .eq(GovCatalogApproval::getStatus, "PENDING"));
+            for (GovCatalogApproval a : pending) {
+                a.setStatus("WITHDRAWN");
+                a.setReviewedAt(LocalDateTime.now());
+                if (operator != null) {
+                    a.setReviewedBy(operator.getUsername());
+                }
+                a.setReviewComment(comment);
+                approvalMapper.updateById(a);
+            }
+        }
         if ("PUBLISHED".equalsIgnoreCase(r.getPublishStatus())) {
             offlinePortal(r);
         }
@@ -838,6 +999,26 @@ public class CatalogResourceService {
         if (operator == null || !(operator.isSystemAdmin() || operator.isPlatformAdmin())) {
             throw new BusinessException(403, "仅平台管理员可执行此操作");
         }
+    }
+
+    /** 审批须填写审批人、联系方式；驳回时意见另校验。 */
+    private void applyReviewerFields(GovCatalogApproval a, Map<String, Object> body) {
+        String reviewerName = str(body.get("reviewerName"), null);
+        if (reviewerName == null || reviewerName.isBlank()) {
+            reviewerName = str(body.get("reviewedBy"), null);
+        }
+        if (reviewerName == null || reviewerName.isBlank()) {
+            throw new BusinessException(400, "请填写审批人");
+        }
+        String contact = str(body.get("reviewerContact"), null);
+        if (contact == null || contact.isBlank()) {
+            contact = str(body.get("contact"), null);
+        }
+        if (contact == null || contact.isBlank()) {
+            throw new BusinessException(400, "请填写联系方式");
+        }
+        a.setReviewedBy(reviewerName.trim());
+        a.setReviewerContact(contact.trim());
     }
 
     private void insertApprovedAudit(UserPrincipal operator, GovCatalogResource r, String actionType, String comment) {
@@ -1036,6 +1217,11 @@ public class CatalogResourceService {
      * @param scope RESOURCE=资源目录审批；CATEGORY=资源分类审批；空=全部（仍排除 BIND/UNBIND）
      */
     public List<Map<String, Object>> listApprovals(Long resourceId, String status, String catalogOrigin, String scope) {
+        return listApprovals(resourceId, status, catalogOrigin, scope, null);
+    }
+
+    public List<Map<String, Object>> listApprovals(Long resourceId, String status, String catalogOrigin, String scope,
+                                                   UserPrincipal operator) {
         LambdaQueryWrapper<GovCatalogApproval> q = new LambdaQueryWrapper<GovCatalogApproval>()
                 .orderByDesc(GovCatalogApproval::getId);
         if (resourceId != null) {
@@ -1056,6 +1242,30 @@ public class CatalogResourceService {
             q.notIn(GovCatalogApproval::getActionType, "CAT_CREATE", "CAT_UPDATE", "CAT_DELETE");
         }
         List<GovCatalogApproval> rows = approvalMapper.selectList(q);
+        // 组织隔离：非管理员仅看本部门资源相关审批
+        if (operator != null && !operator.isSystemAdmin() && !operator.isPlatformAdmin()) {
+            String orgName = resolveOrgName(operator.getOrgId());
+            if (orgName == null || orgName.isBlank()) {
+                rows = List.of();
+            } else {
+                final String scopeOrg = orgName;
+                rows = rows.stream().filter(a -> {
+                    if (a.getResourceId() == null) return false;
+                    GovCatalogResource r = resourceMapper.selectById(a.getResourceId());
+                    return r != null && scopeOrg.equals(r.getProviderOrg());
+                }).collect(Collectors.toList());
+            }
+        }
+        Set<String> usernames = new HashSet<>();
+        for (GovCatalogApproval a : rows) {
+            if (a.getSubmittedBy() != null && !a.getSubmittedBy().isBlank()) {
+                usernames.add(a.getSubmittedBy());
+            }
+            if (a.getReviewedBy() != null && !a.getReviewedBy().isBlank()) {
+                usernames.add(a.getReviewedBy());
+            }
+        }
+        Map<String, String> userDisplayNames = resolveUserDisplayNames(usernames);
         List<Map<String, Object>> out = new ArrayList<>();
         for (GovCatalogApproval a : rows) {
             Map<String, Object> m = new LinkedHashMap<>();
@@ -1067,9 +1277,10 @@ public class CatalogResourceService {
             m.put("status", a.getStatus());
             m.put("submitComment", a.getSubmitComment());
             m.put("reviewComment", a.getReviewComment());
-            m.put("submittedBy", a.getSubmittedBy());
+            m.put("submittedBy", userDisplayNames.getOrDefault(a.getSubmittedBy(), a.getSubmittedBy()));
             m.put("submittedAt", a.getSubmittedAt());
             m.put("reviewedBy", a.getReviewedBy());
+            m.put("reviewerContact", a.getReviewerContact());
             m.put("reviewedAt", a.getReviewedAt());
             m.put("payloadJson", a.getPayloadJson());
             if (a.getResourceId() != null) {
@@ -2018,5 +2229,24 @@ public class CatalogResourceService {
             return def;
         }
         return new BigDecimal(String.valueOf(v));
+    }
+
+    /** username → displayName；无匹配时回落原值 */
+    private Map<String, String> resolveUserDisplayNames(Set<String> usernames) {
+        Map<String, String> out = new HashMap<>();
+        if (usernames == null || usernames.isEmpty()) {
+            return out;
+        }
+        List<SysUser> users = sysUserMapper.selectList(new LambdaQueryWrapper<SysUser>()
+                .in(SysUser::getUsername, usernames));
+        for (SysUser u : users) {
+            if (u.getUsername() == null) {
+                continue;
+            }
+            String label = u.getDisplayName();
+            out.put(u.getUsername(),
+                    (label != null && !label.isBlank()) ? label.trim() : u.getUsername());
+        }
+        return out;
     }
 }

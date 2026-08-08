@@ -99,6 +99,39 @@ public class PortalController {
         return ApiResponse.ok(null);
     }
 
+    @GetMapping("/favorites")
+    @PreAuthorize("isAuthenticated()")
+    public ApiResponse<List<Map<String, Object>>> favorites(@AuthenticationPrincipal UserPrincipal principal) {
+        return ApiResponse.ok(service.listFavorites(principal));
+    }
+
+    @PostMapping("/favorites")
+    @PreAuthorize("isAuthenticated()")
+    public ApiResponse<Map<String, Object>> addFavorite(@AuthenticationPrincipal UserPrincipal principal,
+                                                        @RequestBody Map<String, Object> body) {
+        return ApiResponse.ok(service.addFavorite(principal, body));
+    }
+
+    @PostMapping("/favorites/{id}/remove")
+    @PreAuthorize("isAuthenticated()")
+    public ApiResponse<Void> removeFavorite(@AuthenticationPrincipal UserPrincipal principal,
+                                            @PathVariable Long id) {
+        service.removeFavorite(principal, id);
+        return ApiResponse.ok(null);
+    }
+
+    @PostMapping("/favorites/remove")
+    @PreAuthorize("isAuthenticated()")
+    public ApiResponse<Void> removeFavoriteByResource(@AuthenticationPrincipal UserPrincipal principal,
+                                                      @RequestBody Map<String, Object> body) {
+        Long catalogId = body.get("catalogId") == null ? null
+                : Long.valueOf(String.valueOf(body.get("catalogId")));
+        Long govResourceId = body.get("govResourceId") == null ? null
+                : Long.valueOf(String.valueOf(body.get("govResourceId")));
+        service.removeFavoriteByResource(principal, catalogId, govResourceId);
+        return ApiResponse.ok(null);
+    }
+
     @GetMapping("/situations")
     @PreAuthorize("isAuthenticated()")
     public ApiResponse<List<Map<String, Object>>> situations() {

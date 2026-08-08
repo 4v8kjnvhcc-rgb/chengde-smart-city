@@ -120,15 +120,31 @@ public class JdbcProbeService {
 
     /** 仅列出表名（编目选表用，避免全库拉列信息过慢）。 */
     public List<String> listTableNames(ConnConfig c) {
+        List<String> names = new ArrayList<>();
+        for (Map<String, Object> row : listTableSummaries(c)) {
+            Object n = row.get("tableName");
+            if (n != null && !String.valueOf(n).isBlank()) {
+                names.add(String.valueOf(n));
+            }
+        }
+        return names;
+    }
+
+    /** 列出表名与表注释（编目选表展示中文名称）。 */
+    public List<Map<String, Object>> listTableSummaries(ConnConfig c) {
         try (Connection conn = open(c)) {
-            List<String> names = new ArrayList<>();
+            List<Map<String, Object>> out = new ArrayList<>();
             DatabaseMetaData md = conn.getMetaData();
             try (ResultSet rs = md.getTables(c.database, null, "%", new String[]{"TABLE"})) {
                 while (rs.next()) {
-                    names.add(rs.getString("TABLE_NAME"));
+                    Map<String, Object> row = new LinkedHashMap<>();
+                    row.put("tableName", rs.getString("TABLE_NAME"));
+                    String remarks = rs.getString("REMARKS");
+                    row.put("remarks", remarks == null || remarks.isBlank() ? null : remarks.trim());
+                    out.add(row);
                 }
             }
-            return names;
+            return out;
         } catch (BusinessException be) {
             throw be;
         } catch (Exception e) {

@@ -11,8 +11,7 @@ import SubscribeApplyPanel from './SubscribeApplyPanel.vue'
 import PortalPagination from '@/components/common/PortalPagination.vue'
 import { statusLabel } from '@/utils/status-label'
 import {
-  favoriteCount,
-  listFavorites,
+  fetchFavorites,
   removeFavorite,
   type PortalFavorite,
 } from './portal-favorites'
@@ -49,6 +48,15 @@ interface HomeData {
   hotResources: CatalogRow[]
 }
 
+interface ApprovalFlowStep {
+  step: string
+  status: string
+  result: string
+  actor?: string
+  time?: string
+  comment?: string
+}
+
 interface Subscription {
   id: number
   catalogId: number
@@ -59,6 +67,10 @@ interface Subscription {
   purpose: string
   status: string
   approverNote?: string
+  reviewComment?: string
+  reviewedBy?: string
+  reviewerContact?: string
+  reviewedAt?: string
   applyPayload?: Record<string, unknown> | string | null
   createdBy?: string
   createdAt?: string
@@ -66,6 +78,7 @@ interface Subscription {
   taskId?: number
   taskType?: string
   taskStatus?: string
+  approvalFlow?: ApprovalFlowStep[]
 }
 
 const auth = useAuthStore()
@@ -84,6 +97,7 @@ const catalogView = ref<'table' | 'card'>('table')
 const catalogRows = ref<CatalogRow[]>([])
 const subscriptions = ref<Subscription[]>([])
 const pendingSubsList = ref<Subscription[]>([])
+const reviewedSubsList = ref<Subscription[]>([])
 const myFavorites = ref<PortalFavorite[]>([])
 const catalogOptions = ref<CatalogRow[]>([])
 const preview = reactive<{ visible: boolean; row: CatalogRow | null }>({ visible: false, row: null })
@@ -101,8 +115,16 @@ const subForm = reactive({
   resourceType: 'TABLE',
   purpose: '',
 })
-const reviewNote = ref('')
-const subDetail = reactive<{ visible: boolean; row: Subscription | null; mode: 'mine' | 'pending' }>({
+const reviewForm = reactive({
+  reviewerName: '',
+  reviewerContact: '',
+  note: '',
+})
+const subDetail = reactive<{
+  visible: boolean
+  row: Subscription | null
+  mode: 'mine' | 'pending' | 'reviewed'
+}>({
   visible: false,
   row: null,
   mode: 'mine',
@@ -157,13 +179,16 @@ async function loadCatalog() {
 }
 
 async function loadSubscriptions() {
-  const [mineRes, pendingRes] = await Promise.all([
+  const [mineRes, pendingRes, reviewedRes, favs] = await Promise.all([
     api.get('/exchange/portal/subscriptions', { params: { scope: 'mine' } }),
     api.get('/exchange/portal/subscriptions', { params: { scope: 'pending' } }),
+    api.get('/exchange/portal/subscriptions', { params: { scope: 'reviewed' } }),
+    fetchFavorites('PORTAL'),
   ])
   subscriptions.value = mineRes.data || []
   pendingSubsList.value = pendingRes.data || []
-  myFavorites.value = listFavorites('PORTAL')
+  reviewedSubsList.value = reviewedRes.data || []
+  myFavorites.value = favs
 }
 
 const shareBrowseMode = ref<'theme' | 'dept'>('theme')
@@ -275,20 +300,53 @@ async function submitSubscription() {
 }
 
 async function reviewSub(id: number, action: 'APPROVE' | 'REJECT') {
-  const res = await api.post(`/exchange/portal/subscriptions/${id}/review`, {
-    action,
-    approverNote: reviewNote.value,
-  })
-  ElMessage.success(action === 'APPROVE' ? `已通过${res.data?.taskId ? `，任务 #${res.data.taskId}` : ''}` : '已驳回')
-  reviewNote.value = ''
-  subDetail.visible = false
-  await loadSubscriptions()
+  if (!reviewForm.reviewerName.trim()) {
+    ElMessage.warning('请填写审批人')
+    return
+  }
+  if (!reviewForm.reviewerContact.trim()) {
+    ElMessage.warning('请填写联系方式')
+    return
+  }
+  if (action === 'REJECT' && !reviewForm.note.trim()) {
+    ElMessage.warning('驳回须填写驳回意见')
+    return
+  }
+  try {
+    const res = await api.post(`/exchange/portal/subscriptions/${id}/review`, {
+      action,
+      approverNote: reviewForm.note,
+      reviewerName: reviewForm.reviewerName.trim(),
+      reviewerContact: reviewForm.reviewerContact.trim(),
+    })
+    ElMessage.success(action === 'APPROVE' ? `已通过${res.data?.taskId ? `，任务 #${res.data.taskId}` : ''}` : '已驳回')
+    reviewForm.note = ''
+    subDetail.visible = false
+    await loadSubscriptions()
+  } catch (e: unknown) {
+    ElMessage.error((e as Error)?.message || '审批失败')
+  }
 }
 
-function openSubDetail(row: Subscription, mode: 'mine' | 'pending') {
+function openSubDetail(row: Subscription, mode: 'mine' | 'pending' | 'reviewed') {
   subDetail.row = row
   subDetail.mode = mode
   subDetail.visible = true
+  if (mode === 'pending') {
+    reviewForm.reviewerName = auth.user?.displayName || auth.user?.username || ''
+    reviewForm.reviewerContact = auth.user?.phone || ''
+    reviewForm.note = ''
+  }
+}
+
+function fmtFlowTime(v?: string) {
+  return v ? String(v).replace('T', ' ').slice(0, 19) : '—'
+}
+
+function flowStatusTag(s?: string) {
+  if (s === 'APPROVED' || s === 'DONE') return 'success'
+  if (s === 'REJECTED' || s === 'CANCELLED') return 'danger'
+  return 'warning'
 }
 
 function payloadEntries(row: Subscription | null): { label: string; value: string; section?: string }[] {
@@ -304,6 +362,8 @@ function payloadEntries(row: Subscription | null): { label: string; value: strin
     { label: '申请人', value: row.createdBy || '—', section: 'base' },
     { label: '申请时间', value: row.createdAt ? String(row.createdAt).replace('T', ' ').slice(0, 19) : '—', section: 'base' },
   ]
+  if (row.reviewedBy) base.push({ label: '审批人', value: row.reviewedBy, section: 'base' })
+  if (row.reviewerContact) base.push({ label: '联系方式', value: row.reviewerContact, section: 'base' })
   if (row.approverNote) base.push({ label: '审批意见', value: row.approverNote, section: 'base' })
   if (row.taskId) base.push({ label: '交换任务', value: `#${row.taskId} ${row.taskStatus || ''}`, section: 'base' })
 
@@ -343,18 +403,24 @@ function payloadEntries(row: Subscription | null): { label: string; value: strin
 
 const pendingSubs = computed(() => pendingSubsList.value)
 const mySubs = computed(() => subscriptions.value)
-const myspaceInnerTab = ref<'mine' | 'pending' | 'favorites'>('mine')
+const reviewedSubs = computed(() => reviewedSubsList.value)
+const myspaceInnerTab = ref<'mine' | 'pending' | 'reviewed' | 'favorites'>('mine')
 const myspacePage = ref(1)
 const myspacePageSize = ref(10)
 const pendingPage = ref(1)
 const pendingPageSize = ref(10)
+const reviewedPage = ref(1)
+const reviewedPageSize = ref(10)
 const favoritesPage = ref(1)
 const favoritesPageSize = ref(10)
 
-function setMyspaceInnerTab(tab: 'mine' | 'pending' | 'favorites') {
+async function setMyspaceInnerTab(tab: 'mine' | 'pending' | 'reviewed' | 'favorites') {
   myspaceInnerTab.value = tab
   if (tab === 'favorites') {
-    myFavorites.value = listFavorites('PORTAL')
+    myFavorites.value = await fetchFavorites('PORTAL')
+  } else if (tab === 'reviewed') {
+    const res = await api.get('/exchange/portal/subscriptions', { params: { scope: 'reviewed' } })
+    reviewedSubsList.value = res.data || []
   }
 }
 const pagedMySubs = computed(() => {
@@ -364,6 +430,10 @@ const pagedMySubs = computed(() => {
 const pagedPendingSubs = computed(() => {
   const start = (pendingPage.value - 1) * pendingPageSize.value
   return pendingSubs.value.slice(start, start + pendingPageSize.value)
+})
+const pagedReviewedSubs = computed(() => {
+  const start = (reviewedPage.value - 1) * reviewedPageSize.value
+  return reviewedSubs.value.slice(start, start + reviewedPageSize.value)
 })
 const pagedFavorites = computed(() => {
   const start = (favoritesPage.value - 1) * favoritesPageSize.value
@@ -376,8 +446,8 @@ function favoriteShareLabel(f: PortalFavorite) {
 }
 
 async function cancelFavorite(row: PortalFavorite) {
-  removeFavorite(row.catalogId, 'PORTAL')
-  myFavorites.value = listFavorites('PORTAL')
+  await removeFavorite(row.catalogId, 'PORTAL')
+  myFavorites.value = await fetchFavorites('PORTAL')
   ElMessage.success('已取消订阅')
 }
 
@@ -474,8 +544,8 @@ onMounted(() => {
           <button type="button" class="theme-hero" @click="setTab('catalog')">
             <div class="theme-hero__title">主题信息资源</div>
             <div class="theme-hero__metrics">
-              <div><span>接口总数</span><b class="c-cyan">{{ themeApiTotal || home?.apiServiceTotal || 0 }}</b></div>
-              <div><span>数据库表</span><b class="c-amber">{{ themeDataTotal || home?.openResourceTotal || 0 }}</b></div>
+              <div><span>接口</span><b class="c-cyan">{{ themeApiTotal || home?.apiServiceTotal || 0 }}</b></div>
+              <div><span>库表</span><b class="c-amber">{{ themeDataTotal || home?.openResourceTotal || 0 }}</b></div>
             </div>
           </button>
           <button
@@ -491,8 +561,8 @@ onMounted(() => {
               <span class="theme-card__chev">›</span>
             </div>
             <div class="theme-card__nums">
-              <span>接口数 <b class="c-green">{{ t.apiCount ?? 0 }}</b></span>
-              <span>数据库表数 <b class="c-amber">{{ t.dataCount ?? t.count ?? 0 }}</b></span>
+              <span>接口 <b class="c-green">{{ t.apiCount ?? 0 }}</b></span>
+              <span>库表 <b class="c-amber">{{ t.dataCount ?? t.count ?? 0 }}</b></span>
             </div>
           </button>
           <div v-if="!(home?.themes?.length)" class="theme-empty">暂无已发布的主题资源目录</div>
@@ -502,8 +572,8 @@ onMounted(() => {
           <button type="button" class="theme-hero" @click="setTab('catalog')">
             <div class="theme-hero__title">部门信息资源</div>
             <div class="theme-hero__metrics">
-              <div><span>接口总数</span><b class="c-cyan">{{ deptApiTotal || home?.apiServiceTotal || 0 }}</b></div>
-              <div><span>数据库表</span><b class="c-amber">{{ deptDataTotal || home?.openResourceTotal || 0 }}</b></div>
+              <div><span>接口</span><b class="c-cyan">{{ deptApiTotal || home?.apiServiceTotal || 0 }}</b></div>
+              <div><span>库表</span><b class="c-amber">{{ deptDataTotal || home?.openResourceTotal || 0 }}</b></div>
             </div>
           </button>
           <button
@@ -519,8 +589,8 @@ onMounted(() => {
               <span class="theme-card__chev">›</span>
             </div>
             <div class="theme-card__nums">
-              <span>接口数 <b class="c-green">{{ p.apiCount ?? 0 }}</b></span>
-              <span>数据库表数 <b class="c-amber">{{ p.dataCount ?? p.count ?? 0 }}</b></span>
+              <span>接口 <b class="c-green">{{ p.apiCount ?? 0 }}</b></span>
+              <span>库表 <b class="c-amber">{{ p.dataCount ?? p.count ?? 0 }}</b></span>
             </div>
           </button>
           <div v-if="!(home?.providers?.length)" class="theme-empty">暂无已发布的部门资源目录</div>
@@ -629,10 +699,19 @@ onMounted(() => {
             <button
               type="button"
               class="myspace-stat"
+              :class="{ 'is-active': myspaceInnerTab === 'reviewed' }"
+              @click="setMyspaceInnerTab('reviewed')"
+            >
+              <b>{{ reviewedSubs.length }}</b>
+              <span>已审批</span>
+            </button>
+            <button
+              type="button"
+              class="myspace-stat"
               :class="{ 'is-active': myspaceInnerTab === 'favorites' }"
               @click="setMyspaceInnerTab('favorites')"
             >
-              <b>{{ myFavorites.length || favoriteCount() }}</b>
+              <b>{{ myFavorites.length }}</b>
               <span>我的订阅</span>
             </button>
           </div>
@@ -651,7 +730,6 @@ onMounted(() => {
                 class="clickable-table"
                 @row-click="(row: Subscription) => openSubDetail(row, 'mine')"
               >
-                <el-table-column prop="id" label="编号" width="80" />
                 <el-table-column label="资源" min-width="180">
                   <template #default="{ row }">
                     <button type="button" class="link-title" @click.stop="openSubDetail(row, 'mine')">
@@ -726,6 +804,55 @@ onMounted(() => {
               </template>
             </el-tab-pane>
 
+            <el-tab-pane name="reviewed">
+              <template #label>
+                <span>已审批</span>
+                <span v-if="reviewedSubs.length" class="myspace-tab-count">{{ reviewedSubs.length }}</span>
+              </template>
+              <el-empty v-if="!reviewedSubs.length" description="暂无审批历史" :image-size="72" />
+              <template v-else>
+                <el-table
+                  :data="pagedReviewedSubs"
+                  stripe
+                  class="clickable-table"
+                  @row-click="(row: Subscription) => openSubDetail(row, 'reviewed')"
+                >
+                  <el-table-column label="资源" min-width="180">
+                    <template #default="{ row }">
+                      <button type="button" class="link-title" @click.stop="openSubDetail(row, 'reviewed')">
+                        {{ row.catalogTitle || row.catalogId }}
+                      </button>
+                    </template>
+                  </el-table-column>
+                  <el-table-column prop="applicantOrg" label="申请单位" width="150" show-overflow-tooltip />
+                  <el-table-column label="共享方式" width="110">
+                    <template #default="{ row }">{{ shareLabel(row.resourceType) }}</template>
+                  </el-table-column>
+                  <el-table-column label="审批结果" width="100">
+                    <template #default="{ row }">
+                      <el-tag :type="$statusTagType(row.status)" size="small">{{ $statusLabel(row.status) }}</el-tag>
+                    </template>
+                  </el-table-column>
+                  <el-table-column label="审批人" width="110" show-overflow-tooltip>
+                    <template #default="{ row }">{{ row.reviewedBy || '—' }}</template>
+                  </el-table-column>
+                  <el-table-column label="审批时间" width="170">
+                    <template #default="{ row }">{{ fmtFlowTime(row.reviewedAt) }}</template>
+                  </el-table-column>
+                  <el-table-column label="操作" width="90" fixed="right">
+                    <template #default="{ row }">
+                      <el-button link type="primary" @click.stop="openSubDetail(row, 'reviewed')">详情</el-button>
+                    </template>
+                  </el-table-column>
+                </el-table>
+                <PortalPagination
+                  v-model:page="reviewedPage"
+                  v-model:page-size="reviewedPageSize"
+                  :total="reviewedSubs.length"
+                />
+              </template>
+            </el-tab-pane>
+
             <el-tab-pane name="favorites">
               <template #label>
                 <span>我的订阅</span>
@@ -740,9 +867,6 @@ onMounted(() => {
                         {{ row.title || row.catalogId }}
                       </button>
                     </template>
-                  </el-table-column>
-                  <el-table-column label="编码" width="140" show-overflow-tooltip>
-                    <template #default="{ row }">{{ row.catalogCode || '—' }}</template>
                   </el-table-column>
                   <el-table-column label="提供方" width="140" show-overflow-tooltip>
                     <template #default="{ row }">{{ row.providerOrg || '—' }}</template>
@@ -774,7 +898,11 @@ onMounted(() => {
       </div>
     </div>
 
-    <el-drawer v-model="subDetail.visible" :title="subDetail.mode === 'mine' ? '申请详情' : '审批详情'" size="640px">
+    <el-drawer
+      v-model="subDetail.visible"
+      :title="subDetail.mode === 'mine' ? '申请详情' : '审批详情'"
+      size="640px"
+    >
       <template v-if="subDetail.row">
         <section class="detail-block">
           <h4>资源与办理</h4>
@@ -800,13 +928,49 @@ onMounted(() => {
             </el-descriptions-item>
           </el-descriptions>
         </section>
+        <section class="detail-block">
+          <h4>审批流程</h4>
+          <el-table
+            :data="subDetail.row.approvalFlow || []"
+            size="small"
+            stripe
+            border
+            empty-text="暂无审批记录"
+          >
+            <el-table-column prop="step" label="环节" width="110" />
+            <el-table-column label="状态" width="90">
+              <template #default="{ row }">
+                <el-tag size="small" :type="flowStatusTag(row.status)">{{ row.result || row.status }}</el-tag>
+              </template>
+            </el-table-column>
+            <el-table-column label="处理人" width="110" show-overflow-tooltip>
+              <template #default="{ row }">{{ row.actor || '—' }}</template>
+            </el-table-column>
+            <el-table-column label="时间" width="160">
+              <template #default="{ row }">{{ fmtFlowTime(row.time) }}</template>
+            </el-table-column>
+            <el-table-column prop="comment" label="结果/意见" min-width="120" show-overflow-tooltip />
+          </el-table>
+        </section>
         <div v-if="subDetail.mode === 'pending' && subDetail.row.status === 'PENDING'" class="sub-detail-ops">
-          <el-input
-            v-model="reviewNote"
-            placeholder="审批意见（驳回时建议填写）"
-            clearable
-            style="margin-bottom: 12px"
-          />
+          <el-form label-width="88px" class="review-meta-form" @submit.prevent>
+            <el-form-item label="审批人" required>
+              <el-input v-model="reviewForm.reviewerName" maxlength="64" placeholder="请填写审批人" clearable />
+            </el-form-item>
+            <el-form-item label="联系方式" required>
+              <el-input v-model="reviewForm.reviewerContact" maxlength="64" placeholder="请填写手机号或固话" clearable />
+            </el-form-item>
+            <el-form-item label="审批意见">
+              <el-input
+                v-model="reviewForm.note"
+                type="textarea"
+                :rows="3"
+                maxlength="500"
+                show-word-limit
+                placeholder="通过可填同意；驳回时必须填写驳回意见"
+              />
+            </el-form-item>
+          </el-form>
           <el-button type="success" @click="reviewSub(subDetail.row.id, 'APPROVE')">通过</el-button>
           <el-button type="danger" @click="reviewSub(subDetail.row.id, 'REJECT')">驳回</el-button>
         </div>

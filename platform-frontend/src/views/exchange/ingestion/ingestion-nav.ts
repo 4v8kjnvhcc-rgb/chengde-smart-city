@@ -312,7 +312,30 @@ export function moduleKeyFromRegisterPath(path?: string): string | null {
   }
 }
 
+/** 归集侧部门管理员红框：编目 / 分类 / 注册发布 */
+const DEPT_INGEST_CATALOG_KEYS: CatalogSubKey[] = [
+  'catalog.resources',
+  'catalog.classify',
+  'catalog.publish',
+]
+
 export function filterCollectNavItems(opts: { isSystemAdmin: boolean; permissions: string[] }): HubNavItem[] {
+  // 部门管理员：采集汇聚侧仅保留「指标与目录体系构建」红框三菜单
+  if (!opts.isSystemAdmin) {
+    const catalogMeta = COLLECT_MODULES.find((m) => m.key === 'catalog')
+    if (!catalogMeta) return []
+    return [
+      {
+        key: 'catalog',
+        label: catalogMeta.label,
+        subLabel: catalogMeta.subLabel,
+        children: DEPT_INGEST_CATALOG_KEYS.map((k) => ({
+          key: k,
+          label: CATALOG_SUB_LABELS[k],
+        })),
+      },
+    ]
+  }
   return filterIngestionModules(COLLECT_MODULES, opts)
     .map((m) => toCollectNavItem(m, opts))
     .filter((item) => {
@@ -327,6 +350,11 @@ export function isCollectModuleAllowed(
   allowed: IngestionModuleMeta[],
   opts?: { isSystemAdmin: boolean; permissions: string[] },
 ): boolean {
+  // 部门管理员：仅红框三菜单
+  if (opts && !opts.isSystemAdmin) {
+    if (moduleKey === 'catalog') return true
+    return (DEPT_INGEST_CATALOG_KEYS as readonly string[]).includes(moduleKey)
+  }
   if (allowed.some((m) => m.key === moduleKey)) return true
   if (isQualitySubKey(moduleKey) || moduleKey === 'quality') {
     return allowed.some((m) => m.key === 'quality')
@@ -336,6 +364,7 @@ export function isCollectModuleAllowed(
   }
   if (isCatalogSubKey(moduleKey) || moduleKey === 'catalog') {
     if (!allowed.some((m) => m.key === 'catalog')) return false
+    if (moduleKey === 'catalog.approvals') return !!opts?.isSystemAdmin
     if (!opts || opts.isSystemAdmin || moduleKey === 'catalog') return true
     const p = CATALOG_SUB_PERMISSIONS[moduleKey as CatalogSubKey]
     return opts.permissions.includes(p) || opts.permissions.includes('hub:ingestion:collect:catalog')
@@ -345,6 +374,7 @@ export function isCollectModuleAllowed(
 
 /** 目录模块：落到当前账号有权访问的第一个子页 */
 export function firstAllowedCatalogModule(opts: { isSystemAdmin: boolean; permissions: string[] }): CatalogSubKey {
+  if (!opts.isSystemAdmin) return 'catalog.resources'
   for (const k of CATALOG_SUB_KEYS) {
     if (opts.isSystemAdmin) return k
     const p = CATALOG_SUB_PERMISSIONS[k]
@@ -405,6 +435,8 @@ function toCollectNavItem(
   if (m.key === 'catalog') {
     const children = CATALOG_SUB_KEYS
       .filter((k) => {
+        // 部门管理员无目录审批权限，仅超管可见
+        if (k === 'catalog.approvals') return !!opts?.isSystemAdmin
         if (!opts || opts.isSystemAdmin) return true
         const p = CATALOG_SUB_PERMISSIONS[k]
         return opts.permissions.includes(p) || opts.permissions.includes('hub:ingestion:collect:catalog')

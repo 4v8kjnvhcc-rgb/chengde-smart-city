@@ -16,6 +16,10 @@ public class BizPortalSubscription {
     private String applyPayload;
     private String status;
     private String approverNote;
+    private String reviewedBy;
+    private String reviewerContact;
+    private LocalDateTime reviewedAt;
+    private Long govSubscriptionId;
     private String createdBy;
     private LocalDateTime createdAt;
     private LocalDateTime updatedAt;
@@ -36,6 +40,14 @@ public class BizPortalSubscription {
     public void setStatus(String status) { this.status = status; }
     public String getApproverNote() { return approverNote; }
     public void setApproverNote(String approverNote) { this.approverNote = approverNote; }
+    public String getReviewedBy() { return reviewedBy; }
+    public void setReviewedBy(String reviewedBy) { this.reviewedBy = reviewedBy; }
+    public String getReviewerContact() { return reviewerContact; }
+    public void setReviewerContact(String reviewerContact) { this.reviewerContact = reviewerContact; }
+    public LocalDateTime getReviewedAt() { return reviewedAt; }
+    public void setReviewedAt(LocalDateTime reviewedAt) { this.reviewedAt = reviewedAt; }
+    public Long getGovSubscriptionId() { return govSubscriptionId; }
+    public void setGovSubscriptionId(Long govSubscriptionId) { this.govSubscriptionId = govSubscriptionId; }
     public String getCreatedBy() { return createdBy; }
     public void setCreatedBy(String createdBy) { this.createdBy = createdBy; }
     public LocalDateTime getCreatedAt() { return createdAt; }

@@ -9,7 +9,7 @@ import { useClientPager } from '@/composables/useClientPager'
 import { statusLabel } from '@/utils/status-label'
 import ResourceApplyDialog from '@/views/exchange/application/ResourceApplyDialog.vue'
 import type { ApplyResource } from '@/views/exchange/application/ResourceApplyDialog.vue'
-import { addFavorite, isFavorited, removeFavorite } from '@/views/exchange/application/portal-favorites'
+import { addFavorite, fetchFavorites, isFavorited, removeFavorite } from '@/views/exchange/application/portal-favorites'
 
 const route = useRoute()
 const router = useRouter()
@@ -43,25 +43,26 @@ const SHARE_TYPE_ZH: Record<string, string> = {
   NOT_SHARE: '不予共享',
 }
 const OPEN_TYPE_ZH: Record<string, string> = {
-  SOCIAL_OPEN: '可对社会开放',
-  OPEN: '可对社会开放',
-  PARTIAL_OPEN: '部分开放',
-  PARTIAL: '部分开放',
-  NOT_OPEN: '不予开放',
+  SOCIAL_OPEN: '开放',
+  OPEN: '开放',
+  PARTIAL_OPEN: '不开放',
+  PARTIAL: '不开放',
+  NOT_OPEN: '不开放',
 }
 const TYPE_ZH: Record<string, string> = { DATA: '数据', SERVICE: '服务' }
 const FORMAT_ZH: Record<string, string> = {
-  DATABASE: '数据库',
+  DATABASE: '库表',
   API: '接口',
   FILE: '文件',
   OTHER: '其他',
 }
 
+const keyword = ref('')
 const providerOrg = ref('')
 const shareType = ref('')
 const resourceFormat = ref('')
 const openType = ref('')
-const viewMode = ref<'card' | 'table'>('card')
+const viewMode = ref<'card' | 'table'>('table')
 const cards = ref<CatalogRes[]>([])
 const {
   page: cardPage,
@@ -82,6 +83,8 @@ const subscribed = ref(false)
 
 const applyVisible = ref(false)
 const applyTarget = ref<ApplyResource | null>(null)
+/** 本部门/本人已申请（待审/已通过/已分发）的资源 id，不可再次申请 */
+const appliedResourceIds = ref<Set<number>>(new Set())
 
 const providerOptions = computed(() => {
   const set = new Set<string>()
@@ -113,6 +116,10 @@ function openAttrLabel(code?: string) {
 
 function openAttrOk(code?: string) {
   return code === 'SOCIAL_OPEN' || code === 'OPEN'
+}
+
+function isApplied(row: CatalogRes) {
+  return appliedResourceIds.value.has(row.id)
 }
 
 function toApplyResourceType(row: CatalogRes | DetailMap): string {
@@ -229,9 +236,25 @@ function matchOpenType(code?: string, filter?: string) {
   if (!filter) return true
   if (!code) return false
   if (code === filter) return true
-  if (filter === 'SOCIAL_OPEN' && code === 'OPEN') return true
-  if (filter === 'PARTIAL_OPEN' && code === 'PARTIAL') return true
+  if (filter === 'SOCIAL_OPEN' && (code === 'OPEN' || code === 'SOCIAL_OPEN')) return true
+  if (filter === 'NOT_OPEN' && (code === 'NOT_OPEN' || code === 'PARTIAL_OPEN' || code === 'PARTIAL')) return true
   return false
+}
+
+async function loadApplied() {
+  try {
+    const res = await api.get('/governance/catalog/subscriptions')
+    const ids = new Set<number>()
+    for (const row of (res.data || []) as Array<{ resourceId?: number; status?: string }>) {
+      const st = String(row.status || '').toUpperCase()
+      if (['PENDING', 'APPROVED', 'DISTRIBUTED'].includes(st) && row.resourceId != null) {
+        ids.add(Number(row.resourceId))
+      }
+    }
+    appliedResourceIds.value = ids
+  } catch {
+    appliedResourceIds.value = new Set()
+  }
 }
 
 async function load() {
@@ -240,6 +263,8 @@ async function load() {
     const res = await api.get('/governance/catalog/resources-mgmt', {
       params: {
         publishStatus: 'PUBLISHED',
+        forPortal: true,
+        keyword: keyword.value.trim() || undefined,
         providerOrg: providerOrg.value || undefined,
         shareType: shareType.value || undefined,
         resourceFormat: resourceFormat.value || undefined,
@@ -250,6 +275,7 @@ async function load() {
       ? list.filter((c) => matchOpenType(c.openType, openType.value))
       : list
     resetCardPage()
+    await loadApplied()
   } catch {
     ElMessage.error('加载目录门户失败')
   } finally {
@@ -258,6 +284,7 @@ async function load() {
 }
 
 function resetFilters() {
+  keyword.value = ''
   providerOrg.value = ''
   shareType.value = ''
   resourceFormat.value = ''
@@ -286,12 +313,13 @@ async function tryOpenFromRoute() {
 /** 第一步：打开资源详情（同政务共享资源详情页） */
 async function openDetail(row: CatalogRes) {
   applySource.value = row
-  subscribed.value = isFavorited(row.id, 'GOV')
   detailVisible.value = true
   detailLoading.value = true
   detail.value = null
   activeChild.value = 0
   try {
+    await fetchFavorites('GOV')
+    subscribed.value = isFavorited(row.id, 'GOV') || (row.portalCatalogId != null && isFavorited(row.portalCatalogId, 'PORTAL'))
     if (row.portalCatalogId) {
       const res = await api.get(`/exchange/portal/catalog/${row.portalCatalogId}`)
       detail.value = res.data as DetailMap
@@ -316,36 +344,40 @@ function closeDetail() {
   }
 }
 
-function toggleSubscribe() {
+async function toggleSubscribe() {
   const row = applySource.value
   if (!row) return
   if (!subscribed.value) {
     const d = detail.value
-    addFavorite({
-      catalogId: String(row.id),
-      title: String(d?.title || row.resourceName || ''),
-      catalogCode: String(d?.catalogCode || row.resourceCode || ''),
-      providerOrg: String(d?.providerOrg || row.providerOrg || ''),
-      resourceType: toApplyResourceType(d?.resourceType ? d : row),
-      resourceTypeLabel: String(d?.resourceTypeLabel || ''),
-      shareAttr: String(d?.shareAttr || row.shareType || ''),
-      openAttr: String(d?.openAttr || row.openType || ''),
-      updatedAt: formatUpdatedAt(d?.updatedAt || row.updatedAt),
-      source: 'GOV',
-      govResourceId: row.id,
-    })
-    subscribed.value = true
-    void ElMessageBox.confirm('已订阅该资源，是否前往「我的订阅」查看？', '订阅成功', {
-      confirmButtonText: '去我的订阅',
-      cancelButtonText: '继续浏览',
-      type: 'success',
-    })
-      .then(() => {
-        router.push({
-          query: { ...route.query, tab: 'catalog', cSub: 'subscriptions', subTab: 'favorites' },
-        })
+    try {
+      await addFavorite({
+        catalogId: String(row.portalCatalogId || row.id),
+        title: String(d?.title || row.resourceName || ''),
+        catalogCode: String(d?.catalogCode || row.resourceCode || ''),
+        providerOrg: String(d?.providerOrg || row.providerOrg || ''),
+        resourceType: toApplyResourceType(d?.resourceType ? d : row),
+        resourceTypeLabel: String(d?.resourceTypeLabel || ''),
+        shareAttr: String(d?.shareAttr || row.shareType || ''),
+        openAttr: String(d?.openAttr || row.openType || ''),
+        updatedAt: formatUpdatedAt(d?.updatedAt || row.updatedAt),
+        source: 'GOV',
+        govResourceId: row.id,
       })
-      .catch(() => undefined)
+      subscribed.value = true
+      void ElMessageBox.confirm('已订阅该资源，是否前往「我的订阅」查看？', '订阅成功', {
+        confirmButtonText: '去我的订阅',
+        cancelButtonText: '继续浏览',
+        type: 'success',
+      })
+        .then(() => {
+          router.push({
+            query: { ...route.query, tab: 'catalog', cSub: 'subscriptions', subTab: 'favorites' },
+          })
+        })
+        .catch(() => undefined)
+    } catch (e: unknown) {
+      ElMessage.error((e as Error)?.message || '订阅失败')
+    }
     return
   }
   void ElMessageBox.confirm('确认取消订阅该资源？取消后「我的订阅」中将不再显示。', '取消订阅', {
@@ -353,10 +385,14 @@ function toggleSubscribe() {
     confirmButtonText: '取消订阅',
     cancelButtonText: '再想想',
   })
-    .then(() => {
-      removeFavorite(row.id, 'GOV')
-      subscribed.value = false
-      ElMessage.success('已取消订阅')
+    .then(async () => {
+      try {
+        await removeFavorite(row.id, 'GOV')
+        subscribed.value = false
+        ElMessage.success('已取消订阅')
+      } catch (e: unknown) {
+        ElMessage.error((e as Error)?.message || '取消失败')
+      }
     })
     .catch(() => undefined)
 }
@@ -366,6 +402,10 @@ function openApplyForm() {
   const d = detail.value
   const row = applySource.value
   if (!d || !row) return
+  if (isApplied(row)) {
+    ElMessage.warning('该目录已申请，不能再次申请')
+    return
+  }
   const rt = toApplyResourceType(d.resourceType ? d : row)
   applyTarget.value = {
     id: row.portalCatalogId || row.id,
@@ -400,6 +440,7 @@ async function submitApplyPayload(payload: Record<string, unknown>) {
       })
       ElMessage.success('资源申请已提交，可在「资源申请订阅」查看')
     }
+    appliedResourceIds.value = new Set([...appliedResourceIds.value, row.id])
     applyVisible.value = false
     applyTarget.value = null
   } catch (e: unknown) {
@@ -431,8 +472,11 @@ onActivated(() => {
           <div class="share-detail__tags">
             <span class="type-tag">{{ detail.resourceTypeLabel || '资源' }}</span>
             <span class="attr-pill attr-pill--ok">✓ {{ shareAttrLabel(String(detail.shareAttr || '')) }}</span>
-            <span class="attr-pill" :class="openAttrOk(String(detail.openAttr || '')) ? 'attr-pill--ok' : 'attr-pill--warn'">
-              {{ openAttrOk(String(detail.openAttr || '')) ? '✓' : '◐' }}
+            <span
+              class="attr-pill"
+              :class="openAttrOk(String(detail.openAttr || '')) ? 'attr-pill--ok' : 'attr-pill--bad'"
+            >
+              {{ openAttrOk(String(detail.openAttr || '')) ? '✓' : '✕' }}
               {{ openAttrLabel(String(detail.openAttr || '')) }}
             </span>
           </div>
@@ -445,7 +489,8 @@ onActivated(() => {
             <div><em>共享属性</em><span class="c-ok">✓ {{ shareAttrLabel(String(detail.shareAttr || '')) }}</span></div>
             <div>
               <em>开放属性</em>
-              <span :class="openAttrOk(String(detail.openAttr || '')) ? 'c-ok' : 'c-warn'">
+              <span :class="openAttrOk(String(detail.openAttr || '')) ? 'c-ok' : 'c-bad'">
+                {{ openAttrOk(String(detail.openAttr || '')) ? '✓' : '✕' }}
                 {{ openAttrLabel(String(detail.openAttr || '')) }}
               </span>
             </div>
@@ -574,13 +619,27 @@ onActivated(() => {
           <el-button :type="subscribed ? 'default' : 'primary'" plain @click="toggleSubscribe">
             {{ subscribed ? '已订阅' : '订阅' }}
           </el-button>
-          <el-button type="primary" @click="openApplyForm">资源申请</el-button>
+          <el-button
+            type="primary"
+            :disabled="!!applySource && isApplied(applySource)"
+            @click="openApplyForm"
+          >
+            {{ applySource && isApplied(applySource) ? '已申请' : '资源申请' }}
+          </el-button>
         </div>
       </template>
     </div>
 
     <template v-else>
       <el-form inline class="portal-inline-form portal-inline-form--block">
+        <el-form-item label="目录名称" class="portal-field-md">
+          <el-input
+            v-model="keyword"
+            clearable
+            placeholder="请输入目录名称"
+            @keyup.enter="load"
+          />
+        </el-form-item>
         <el-form-item label="提供方" class="portal-field-md">
           <el-select v-model="providerOrg" clearable filterable allow-create placeholder="全部">
             <el-option v-for="p in providerOptions" :key="p" :label="p" :value="p" />
@@ -593,18 +652,17 @@ onActivated(() => {
             <el-option label="不予共享" value="NOT_SHARE" />
           </el-select>
         </el-form-item>
-        <el-form-item label="资源形态" class="portal-field-sm">
+        <el-form-item label="资源类型" class="portal-field-sm">
           <el-select v-model="resourceFormat" clearable placeholder="全部">
-            <el-option label="数据库" value="DATABASE" />
+            <el-option label="库表" value="DATABASE" />
             <el-option label="接口" value="API" />
             <el-option label="文件" value="FILE" />
           </el-select>
         </el-form-item>
         <el-form-item label="开放属性" class="portal-field-md">
           <el-select v-model="openType" clearable placeholder="全部">
-            <el-option label="可对社会开放" value="SOCIAL_OPEN" />
-            <el-option label="部分开放" value="PARTIAL_OPEN" />
-            <el-option label="不予开放" value="NOT_OPEN" />
+            <el-option label="开放" value="SOCIAL_OPEN" />
+            <el-option label="不开放" value="NOT_OPEN" />
           </el-select>
         </el-form-item>
         <el-form-item label="视图" class="portal-field-sm">
@@ -624,12 +682,6 @@ onActivated(() => {
         <div v-for="item in pagedCards" :key="item.id" class="portal-card">
           <div class="portal-card__head">
             <span class="portal-card__title">{{ item.resourceName }}</span>
-            <span>
-              <el-tag v-if="item.sourcePathType" size="small" type="primary">
-                {{ item.sourcePathType === 'DIRECT' ? '直通' : '加工' }}
-              </el-tag>
-              <el-tag size="small" type="success">{{ statusLabel(item.publishStatus) }}</el-tag>
-            </span>
           </div>
           <div class="portal-card__code">{{ item.resourceCode }}</div>
           <div class="portal-card__meta">
@@ -639,31 +691,31 @@ onActivated(() => {
           </div>
           <p class="portal-card__desc">{{ item.description || item.categoryPath || '暂无描述' }}</p>
           <div class="portal-card__actions">
-            <el-button type="primary" size="small" @click="openDetail(item)">资源申请</el-button>
+            <el-button type="primary" size="small" @click="openDetail(item)">
+              {{ isApplied(item) ? '已申请' : '资源申请' }}
+            </el-button>
           </div>
         </div>
       </div>
 
       <el-table v-else v-loading="loading" :data="pagedCards" stripe size="small">
-        <el-table-column prop="resourceCode" label="编码" width="130" />
         <el-table-column prop="resourceName" label="名称" min-width="140" />
-        <el-table-column label="类型" width="70">
-          <template #default="{ row }">{{ TYPE_ZH[row.resourceType] || $statusLabel(row.resourceType) }}</template>
-        </el-table-column>
-        <el-table-column label="来源" width="80">
-          <template #default="{ row }">{{ row.sourcePathType === 'PROCESSED' ? '加工' : '直通' }}</template>
-        </el-table-column>
         <el-table-column prop="providerOrg" label="提供方" width="120" show-overflow-tooltip />
         <el-table-column prop="categoryPath" label="分类" min-width="120" show-overflow-tooltip />
-        <el-table-column label="资源形态" width="90">
+        <el-table-column label="资源类型" width="90">
           <template #default="{ row }">{{ FORMAT_ZH[row.resourceFormat || ''] || '—' }}</template>
         </el-table-column>
         <el-table-column label="共享" width="110">
           <template #default="{ row }">{{ SHARE_TYPE_ZH[row.shareType || ''] || '—' }}</template>
         </el-table-column>
+        <el-table-column label="开放" width="90">
+          <template #default="{ row }">{{ openAttrLabel(row.openType) }}</template>
+        </el-table-column>
         <el-table-column label="操作" width="110" fixed="right">
           <template #default="{ row }">
-            <el-button link type="primary" @click="openDetail(row)">资源申请</el-button>
+            <el-button link type="primary" @click="openDetail(row)">
+              {{ isApplied(row) ? '已申请' : '资源申请' }}
+            </el-button>
           </template>
         </el-table-column>
       </el-table>
@@ -753,7 +805,7 @@ onActivated(() => {
   background: #f2f3f5; color: #4e5969;
 }
 .attr-pill--ok { background: #e8ffea; color: #00a870; }
-.attr-pill--warn { background: #fff7e8; color: #c27a00; }
+.attr-pill--bad { background: #ffece8; color: #d03050; }
 .detail-sec { margin-bottom: 18px; }
 .detail-sec h4 {
   margin: 0 0 10px; font-size: 15px; font-weight: 700;
@@ -768,7 +820,7 @@ onActivated(() => {
   display: block; font-style: normal; color: #909399; font-size: 12px; margin-bottom: 2px;
 }
 .c-ok { color: #18a058; }
-.c-warn { color: #c27a00; }
+.c-bad { color: #d03050; }
 .split { display: flex; gap: 0; border: 1px solid #eef1f6; border-radius: 6px; overflow: hidden; min-height: 220px; }
 .subside {
   width: 180px; flex-shrink: 0; background: #fafbfd; border-right: 1px solid #eef1f6; padding: 10px 8px;

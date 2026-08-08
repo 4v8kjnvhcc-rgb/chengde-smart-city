@@ -37,7 +37,8 @@ public class CatalogResourceController {
 
     @GetMapping
     @PreAuthorize("isAuthenticated()")
-    public ApiResponse<List<GovCatalogResource>> list(@RequestParam(required = false) Long categoryId,
+    public ApiResponse<List<GovCatalogResource>> list(@AuthenticationPrincipal UserPrincipal principal,
+                                                      @RequestParam(required = false) Long categoryId,
                                                       @RequestParam(required = false) String resourceType,
                                                       @RequestParam(required = false) String publishStatus,
                                                       @RequestParam(required = false) String approvalStatus,
@@ -48,9 +49,11 @@ public class CatalogResourceController {
                                                       @RequestParam(required = false) String catalogOrigin,
                                                       @RequestParam(required = false) String shareType,
                                                       @RequestParam(required = false) String resourceFormat,
-                                                      @RequestParam(required = false) Boolean excludeApprovalDraft) {
+                                                      @RequestParam(required = false) Boolean excludeApprovalDraft,
+                                                      @RequestParam(required = false) Boolean forPortal) {
         return ApiResponse.ok(service.list(categoryId, resourceType, publishStatus, approvalStatus, keyword,
-                sourcePathType, providerOrg, unboundOnly, catalogOrigin, shareType, excludeApprovalDraft, resourceFormat));
+                sourcePathType, providerOrg, unboundOnly, catalogOrigin, shareType, excludeApprovalDraft, resourceFormat,
+                principal, Boolean.TRUE.equals(forPortal)));
     }
 
     @GetMapping("/eligible-metadata")
@@ -82,11 +85,12 @@ public class CatalogResourceController {
 
     @GetMapping("/approvals")
     @PreAuthorize("isAuthenticated()")
-    public ApiResponse<List<Map<String, Object>>> approvals(@RequestParam(required = false) Long resourceId,
+    public ApiResponse<List<Map<String, Object>>> approvals(@AuthenticationPrincipal UserPrincipal principal,
+                                                            @RequestParam(required = false) Long resourceId,
                                                             @RequestParam(required = false) String status,
                                                             @RequestParam(required = false) String catalogOrigin,
                                                             @RequestParam(required = false) String scope) {
-        return ApiResponse.ok(service.listApprovals(resourceId, status, catalogOrigin, scope));
+        return ApiResponse.ok(service.listApprovals(resourceId, status, catalogOrigin, scope, principal));
     }
 
     @GetMapping("/{id}/versions")
@@ -119,14 +123,16 @@ public class CatalogResourceController {
 
     @GetMapping("/{id}")
     @PreAuthorize("isAuthenticated()")
-    public ApiResponse<GovCatalogResource> get(@PathVariable Long id) {
-        return ApiResponse.ok(service.get(id));
+    public ApiResponse<GovCatalogResource> get(@AuthenticationPrincipal UserPrincipal principal,
+                                               @PathVariable Long id) {
+        return ApiResponse.ok(service.get(principal, id));
     }
 
     @GetMapping("/{id}/approvals")
     @PreAuthorize("isAuthenticated()")
-    public ApiResponse<List<Map<String, Object>>> resourceApprovals(@PathVariable Long id) {
-        return ApiResponse.ok(service.listApprovals(id, null));
+    public ApiResponse<List<Map<String, Object>>> resourceApprovals(@AuthenticationPrincipal UserPrincipal principal,
+                                                                    @PathVariable Long id) {
+        return ApiResponse.ok(service.listApprovals(id, null, null, null, principal));
     }
 
     @PostMapping
@@ -213,6 +219,14 @@ public class CatalogResourceController {
     public ApiResponse<GovCatalogResource> submitToRegister(@AuthenticationPrincipal UserPrincipal principal,
                                                             @PathVariable Long id) {
         return ApiResponse.ok(service.submitToRegister(principal, id));
+    }
+
+    /** 编目「撤回」：待发布退回草稿 */
+    @PostMapping("/{id}/withdraw-register")
+    @PreAuthorize("isAuthenticated()")
+    public ApiResponse<GovCatalogResource> withdrawFromRegister(@AuthenticationPrincipal UserPrincipal principal,
+                                                                @PathVariable Long id) {
+        return ApiResponse.ok(service.withdrawFromRegister(principal, id));
     }
 
     @PostMapping("/{id}/publish")

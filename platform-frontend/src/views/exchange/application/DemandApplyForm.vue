@@ -1,10 +1,12 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref, watch } from 'vue'
 import api from '@/api/http'
-import { ElMessage } from 'element-plus'
+import { ElMessage, type UploadRequestOptions } from 'element-plus'
 import { Plus } from '@element-plus/icons-vue'
 import { useAuthStore } from '@/stores/auth'
 import { statusLabel } from '@/utils/status-label'
+import type { DemandAttachment, DemandFormModel } from './demand-apply-model'
+import { normalizeAttachments, normalizeDataItems } from './demand-apply-model'
 
 /** 选择目录列特殊值：门户中未找到所需目录 */
 const CATALOG_NOT_FOUND = '未找到所需目录'
@@ -14,33 +16,6 @@ const RESOURCE_TYPE_ZH: Record<string, string> = {
   TABLE: '库表',
   API: '接口',
   FILE: '文件',
-}
-
-export interface DemandFormModel {
-  id?: number
-  providerOrg: string
-  providerOrgId?: number
-  targetCatalogId?: number
-  catalogTitle: string
-  dataName: string
-  systemNames: string[]
-  dataItems: string[]
-  serviceDemandType: 'GOV' | 'NON_GOV'
-  matterIds: number[]
-  matterNames: string[]
-  matterCodes: string[]
-  matterMaterials: string
-  usageScenario: string
-  demandBasis: string
-  shareProvideMode: string
-  updateFrequency: string
-  requesterOrg: string
-  contactName: string
-  contactPhone: string
-  contactEmail: string
-  demandType: 'STRUCTURED' | 'UNSTRUCTURED'
-  templateCode: string
-  demandContent: string
 }
 
 interface OrgNode {
@@ -118,7 +93,11 @@ const form = reactive<DemandFormModel>({
   demandType: 'STRUCTURED',
   templateCode: '',
   demandContent: '',
+  attachments: [],
 })
+
+const uploading = ref(false)
+const isStructured = computed(() => form.demandType !== 'UNSTRUCTURED')
 
 /** 已选事项展示：编码 + 名称 */
 const matterDisplayText = computed(() => {
@@ -284,11 +263,13 @@ function syncFromProps() {
     ...form,
     ...src,
     systemNames: src.systemNames?.length ? [...src.systemNames] : [''],
-    dataItems: src.dataItems ? [...src.dataItems] : [],
+    dataItems: normalizeDataItems(src.dataItems),
     matterIds: src.matterIds ? [...src.matterIds] : [],
     matterNames: src.matterNames ? [...src.matterNames] : [],
     matterCodes: src.matterCodes ? [...src.matterCodes] : [],
+    attachments: normalizeAttachments(src.attachments),
     shareProvideMode: normalizeShareProvideMode(src.shareProvideMode),
+    demandType: src.demandType === 'UNSTRUCTURED' ? 'UNSTRUCTURED' : 'STRUCTURED',
   })
   // 旧数据仅有 matterIds/names 时，从事项列表回填编码
   if (form.matterIds.length && (!form.matterCodes.length || form.matterCodes.every((c) => !c))) {
@@ -349,19 +330,32 @@ async function loadRefs() {
   await loadDeptPortalUrl()
 }
 
+function flushPendingDataItem() {
+  const name = dataItemInput.value.trim()
+  if (!name) return
+  if (!form.dataItems.includes(name)) form.dataItems.push(name)
+  dataItemInput.value = ''
+}
+
 function snapshot(): DemandFormModel {
+  flushPendingDataItem()
   return {
     ...form,
     systemNames: form.systemNames.map((s) => s.trim()).filter(Boolean),
-    dataItems: [...form.dataItems],
+    dataItems: normalizeDataItems(form.dataItems),
     matterIds: [...form.matterIds],
     matterNames: [...form.matterNames],
     matterCodes: [...(form.matterCodes || [])],
+    attachments: normalizeAttachments(form.attachments),
     shareProvideMode: normalizeShareProvideMode(form.shareProvideMode),
   }
 }
 
 function validate(strict: boolean): boolean {
+  if (!form.demandType) {
+    ElMessage.warning('请先选择结构化或非结构化需求')
+    return false
+  }
   if (!form.providerOrg) {
     ElMessage.warning('请选择数据提供单位')
     return false
@@ -374,15 +368,21 @@ function validate(strict: boolean): boolean {
     ElMessage.warning('请填写数据名称')
     return false
   }
-  if (strict && !form.dataItems.length) {
-    ElMessage.warning('请填写数据项')
+  if (isStructured.value) {
+    flushPendingDataItem()
+    if (strict && !form.dataItems.length) {
+      ElMessage.warning('请填写数据项')
+      return false
+    }
+  } else if (strict && !form.demandContent.trim() && !form.demandBasis.trim()) {
+    ElMessage.warning('请填写非结构化需求内容')
     return false
   }
   if (strict && form.serviceDemandType === 'GOV' && !form.matterIds.length) {
     ElMessage.warning('请选择事项名称')
     return false
   }
-  if (strict && !form.usageScenario.trim() && !form.demandBasis.trim()) {
+  if (strict && !form.usageScenario.trim() && !form.demandBasis.trim() && !form.demandContent.trim()) {
     ElMessage.warning('请填写使用场景或需求依据')
     return false
   }
@@ -413,6 +413,35 @@ function onSubmit() {
   const v = snapshot()
   emit('update:modelValue', v)
   emit('submit', v)
+}
+
+async function uploadAttachment(options: UploadRequestOptions) {
+  const file = options.file
+  if (!file) return
+  uploading.value = true
+  try {
+    const fd = new FormData()
+    fd.append('file', file)
+    const res = await api.post('/exchange/supply/attachments/upload', fd)
+    const data = (res.data || {}) as DemandAttachment
+    const item: DemandAttachment = {
+      fileName: String(data.fileName || file.name || '附件'),
+      filePath: data.filePath ? String(data.filePath) : undefined,
+      url: data.url ? String(data.url) : undefined,
+      size: data.size != null ? Number(data.size) : file.size,
+    }
+    form.attachments = [...form.attachments, item]
+    options.onSuccess?.(data)
+    ElMessage.success(`已上传：${item.fileName}`)
+  } catch (e: unknown) {
+    ElMessage.error((e as Error)?.message || '附件上传失败')
+  } finally {
+    uploading.value = false
+  }
+}
+
+function removeAttachment(idx: number) {
+  form.attachments = form.attachments.filter((_, i) => i !== idx)
 }
 
 function addSystemName() {
@@ -565,15 +594,27 @@ defineExpose({ snapshot, validate, form })
           <el-button v-if="!readonly" link type="primary" @click="addSystemName">+ 继续添加</el-button>
         </div>
       </el-form-item>
-      <el-form-item label="数据项" required>
+      <el-form-item label="需求模型" required>
+        <div class="demand-type-block">
+          <el-radio-group v-model="form.demandType" :disabled="readonly" class="demand-type-group">
+            <el-radio-button value="STRUCTURED">结构化需求</el-radio-button>
+            <el-radio-button value="UNSTRUCTURED">非结构化需求</el-radio-button>
+          </el-radio-group>
+          <p v-if="!readonly" class="demand-type-hint">
+            {{ isStructured ? '结构化：需填写多个数据项等信息。' : '非结构化：通过文字描述表达数据需求。' }}
+          </p>
+        </div>
+      </el-form-item>
+      <el-form-item v-if="isStructured" label="数据项" required>
         <div class="data-items">
           <el-tag
-            v-for="it in form.dataItems"
-            :key="it"
+            v-for="(it, idx) in form.dataItems"
+            :key="`di-${idx}-${it}`"
             :closable="!readonly"
             class="data-tag"
             @close="removeDataItem(it)"
           >{{ it }}</el-tag>
+          <span v-if="readonly && !form.dataItems.length" class="muted">—</span>
           <template v-if="!readonly">
             <el-input
               v-model="dataItemInput"
@@ -584,6 +625,15 @@ defineExpose({ snapshot, validate, form })
             <el-button type="primary" plain :icon="Plus" @click="addDataItem">新增数据项</el-button>
           </template>
         </div>
+      </el-form-item>
+      <el-form-item v-else label="需求内容" required>
+        <el-input
+          v-model="form.demandContent"
+          type="textarea"
+          :rows="4"
+          :disabled="readonly"
+          placeholder="请用文字描述所需数据需求（非结构化）"
+        />
       </el-form-item>
       <el-form-item label="需求类型" required>
         <el-radio-group v-model="form.serviceDemandType" :disabled="readonly">
@@ -619,7 +669,35 @@ defineExpose({ snapshot, validate, form })
         </el-select>
       </el-form-item>
       <el-form-item label="附件">
-        <el-button type="primary" :disabled="readonly">点击上传</el-button>
+        <div class="attach-block">
+          <el-upload
+            v-if="!readonly"
+            :show-file-list="false"
+            :http-request="uploadAttachment"
+            :disabled="uploading"
+          >
+            <el-button type="primary" :loading="uploading">点击上传</el-button>
+          </el-upload>
+          <div v-if="form.attachments.length" class="attach-list">
+            <div v-for="(f, idx) in form.attachments" :key="`att-${idx}-${f.fileName}`" class="attach-item">
+              <el-link
+                v-if="f.url"
+                :href="f.url"
+                target="_blank"
+                type="primary"
+                :underline="false"
+              >{{ f.fileName }}</el-link>
+              <span v-else>{{ f.fileName }}</span>
+              <el-button
+                v-if="!readonly"
+                link
+                type="danger"
+                @click="removeAttachment(idx)"
+              >删除</el-button>
+            </div>
+          </div>
+          <span v-else-if="readonly" class="muted">无附件</span>
+        </div>
       </el-form-item>
     </el-form>
 
@@ -772,8 +850,12 @@ defineExpose({ snapshot, validate, form })
 }
 .pick-row .el-input { flex: 1; }
 .multi-col { display: flex; flex-direction: column; gap: 8px; width: 100%; }
-.data-items { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; }
+.data-items { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; width: 100%; }
 .data-tag { margin: 0; }
+.attach-block { display: flex; flex-direction: column; gap: 8px; width: 100%; }
+.attach-list { display: flex; flex-direction: column; gap: 4px; }
+.attach-item { display: flex; align-items: center; gap: 10px; font-size: 13px; color: #303133; }
+.muted { color: #909399; font-size: 13px; }
 .footer-actions {
   display: flex;
   justify-content: flex-end;
@@ -814,5 +896,25 @@ defineExpose({ snapshot, validate, form })
   display: flex;
   justify-content: flex-end;
   gap: 10px;
+}
+.demand-type-block {
+  width: 100%;
+}
+.demand-type-group {
+  display: flex;
+  width: 100%;
+  max-width: 420px;
+}
+.demand-type-group :deep(.el-radio-button) {
+  flex: 1;
+}
+.demand-type-group :deep(.el-radio-button__inner) {
+  width: 100%;
+}
+.demand-type-hint {
+  margin: 8px 0 0;
+  font-size: 13px;
+  color: #909399;
+  line-height: 1.5;
 }
 </style>

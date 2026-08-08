@@ -9,10 +9,17 @@ import com.chengde.smartcity.exchange.entity.BizDemandTemplate;
 import com.chengde.smartcity.exchange.entity.BizSupplyManifest;
 import com.chengde.smartcity.exchange.service.SupplyDemandService;
 import com.chengde.smartcity.security.UserPrincipal;
+import java.nio.file.Path;
 import java.util.List;
 import java.util.Map;
+import org.springframework.core.io.FileSystemResource;
+import org.springframework.core.io.Resource;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.MediaType;
+import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
@@ -21,6 +28,7 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.multipart.MultipartFile;
 
 @RestController
 @RequestMapping("/api/v1/exchange/supply")
@@ -70,9 +78,10 @@ public class SupplyDemandController {
     }
 
     @GetMapping("/demands")
-    public ApiResponse<List<BizDataDemand>> demands(@RequestParam(required = false) String stage,
+    public ApiResponse<List<BizDataDemand>> demands(@AuthenticationPrincipal UserPrincipal principal,
+                                                    @RequestParam(required = false) String stage,
                                                     @RequestParam(required = false) String status) {
-        return ApiResponse.ok(service.listDemands(stage, status));
+        return ApiResponse.ok(service.listDemands(principal, stage, status));
     }
 
     @GetMapping("/demands/{id}/track")
@@ -205,6 +214,26 @@ public class SupplyDemandController {
         return ApiResponse.ok(null);
     }
 
+    /** 需求填报附件上传 */
+    @PostMapping(value = "/attachments/upload", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+    @PreAuthorize("hasAuthority('portal:supply:create') or hasAuthority('portal:supply:approve') or hasRole('SYSTEM_ADMIN')")
+    public ApiResponse<Map<String, Object>> uploadAttachment(@AuthenticationPrincipal UserPrincipal principal,
+                                                             @RequestParam("file") MultipartFile file) {
+        return ApiResponse.ok(service.uploadAttachment(principal, file));
+    }
+
+    /** 需求填报附件下载 */
+    @GetMapping("/attachments/{fileName}")
+    @PreAuthorize("isAuthenticated()")
+    public ResponseEntity<Resource> downloadAttachment(@PathVariable String fileName) {
+        Path path = service.resolveAttachment(fileName);
+        Resource resource = new FileSystemResource(path);
+        return ResponseEntity.ok()
+                .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"" + fileName + "\"")
+                .contentType(MediaType.APPLICATION_OCTET_STREAM)
+                .body(resource);
+    }
+
     @PostMapping("/demands/{id}/supervise")
     @PreAuthorize("hasAuthority('portal:supply:approve') or hasAuthority('system:exchange:supply-config') or hasRole('SYSTEM_ADMIN')")
     public ApiResponse<Void> supervise(@AuthenticationPrincipal UserPrincipal principal,
@@ -321,6 +350,14 @@ public class SupplyDemandController {
         return ApiResponse.ok(service.listCenter(listType, principal));
     }
 
+    @GetMapping("/list-center/audit-flow")
+    public ApiResponse<Map<String, Object>> listCenterAuditFlow(
+            @RequestParam(required = false) String listType,
+            @RequestParam(required = false) String kind,
+            @RequestParam Long id) {
+        return ApiResponse.ok(service.listCenterAuditFlow(listType, kind, id));
+    }
+
     @GetMapping("/catalog-manifest")
     public ApiResponse<List<BizCatalogItem>> catalogManifest(
             @RequestParam(required = false, defaultValue = "all") String scope) {
@@ -371,6 +408,21 @@ public class SupplyDemandController {
                                               @PathVariable Long id,
                                               @RequestBody Map<String, Object> body) {
         service.processObjection(principal, id, body);
+        return ApiResponse.ok(null);
+    }
+
+    @PutMapping("/objections/{id}")
+    public ApiResponse<Void> updateObjection(@AuthenticationPrincipal UserPrincipal principal,
+                                             @PathVariable Long id,
+                                             @RequestBody Map<String, Object> body) {
+        service.updateObjection(principal, id, body);
+        return ApiResponse.ok(null);
+    }
+
+    @DeleteMapping("/objections/{id}")
+    public ApiResponse<Void> deleteObjection(@AuthenticationPrincipal UserPrincipal principal,
+                                             @PathVariable Long id) {
+        service.deleteObjection(principal, id);
         return ApiResponse.ok(null);
     }
 

@@ -41,6 +41,12 @@ public class CatalogSubscriptionController {
         return ApiResponse.ok(service.listPending(principal));
     }
 
+    @GetMapping("/reviewed")
+    @PreAuthorize("isAuthenticated()")
+    public ApiResponse<List<Map<String, Object>>> reviewed(@AuthenticationPrincipal UserPrincipal principal) {
+        return ApiResponse.ok(service.listReviewed(principal));
+    }
+
     @GetMapping("/{id}")
     @PreAuthorize("isAuthenticated()")
     public ApiResponse<Map<String, Object>> get(@PathVariable Long id) {

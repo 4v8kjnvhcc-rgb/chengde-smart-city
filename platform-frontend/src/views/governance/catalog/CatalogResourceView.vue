@@ -6,10 +6,20 @@ import { ElMessage, ElMessageBox, type InputInstance } from 'element-plus'
 import PageCard from '@/components/common/PageCard.vue'
 import PortalPagination from '@/components/common/PortalPagination.vue'
 import { useClientPager } from '@/composables/useClientPager'
-import { statusLabel, statusTagType } from '@/utils/status-label'
+import { useAuthStore } from '@/stores/auth'
+import {
+  catalogResourceStatusCode,
+  catalogResourceStatusLabel,
+  statusLabel,
+  statusTagType,
+} from '@/utils/status-label'
 import { ingestionApi } from '@/views/exchange/ingestion/useIngestionHub'
 
 const router = useRouter()
+const auth = useAuthStore()
+/** 超级管理员可选任意提供方；部门管理员锁定为本机构 */
+const isSuperAdmin = computed(() => !!auth.isSystemAdmin)
+const currentDeptName = computed(() => auth.user?.orgName || '（未绑定部门）')
 
 interface CategoryNode {
   id: number
@@ -124,6 +134,8 @@ interface BindTable {
   metadataEntryCode?: string
   catalogable?: boolean
   entryName?: string
+  tableComment?: string
+  chineseName?: string
 }
 
 interface ApiParamRow {
@@ -190,8 +202,6 @@ const DS_ADAPTERS = [
 ] as const
 const PARAM_TYPE_OPTS = ['字符串', '整数', '浮点数', '布尔', '对象', '数组', '日期', '日期时间']
 const FILE_MAX_BYTES = 100 * 1024 * 1024
-const SHARE_CONDITION_OPTS = ['需申请审批', '需签署共享协议', '仅限本系统内使用', '按授权范围使用']
-const OPEN_CONDITION_OPTS = ['无条件开放', '需实名认证', '需申请审批', '仅限政务用户']
 
 const props = withDefaults(defineProps<{ catalogOrigin?: 'INGEST' | 'GOVERNANCE' }>(), {
   catalogOrigin: 'GOVERNANCE',
@@ -230,11 +240,19 @@ const query = reactive({
   resourceName: '',
   approvalStatus: '',
   shareType: '',
+  resourceFormat: '',
   categoryId: undefined as number | undefined,
 })
 const dialogVisible = ref(false)
 const editMode = ref(false)
+const viewMode = ref(false)
 const editingId = ref<number | null>(null)
+const batchColumnVisible = ref(false)
+const batchColumnForm = reactive({
+  sensLevel: '1级',
+  shareLevel: 'CONDITIONAL',
+  displayFlag: true,
+})
 const wizardStep = ref(0)
 const saving = ref(false)
 const versionDrawerVisible = ref(false)
@@ -624,11 +642,14 @@ async function loadOrgs() {
 async function loadResources() {
   loading.value = true
   try {
+    const st = (query.approvalStatus || '').toUpperCase()
     const res = await api.get('/governance/catalog/resources-mgmt', {
       params: {
         keyword: query.resourceName || undefined,
-        approvalStatus: query.approvalStatus || undefined,
+        approvalStatus: st && st !== 'OFFLINE' ? st : undefined,
+        publishStatus: st === 'OFFLINE' ? 'OFFLINE' : undefined,
         shareType: query.shareType || undefined,
+        resourceFormat: query.resourceFormat || undefined,
         categoryId: query.categoryId || undefined,
         catalogOrigin: props.catalogOrigin,
       },
@@ -646,12 +667,20 @@ function resetQuery() {
   query.resourceName = ''
   query.approvalStatus = ''
   query.shareType = ''
+  query.resourceFormat = ''
   query.categoryId = undefined
   void loadResources()
 }
 
+function applyLockedProviderOrg() {
+  if (!isSuperAdmin.value) {
+    form.providerOrg = auth.user?.orgName || ''
+  }
+}
+
 function resetForm() {
   editMode.value = false
+  viewMode.value = false
   editingId.value = null
   wizardStep.value = 0
   apiTab.value = 'basic'
@@ -660,6 +689,7 @@ function resetForm() {
   form.resourceType = 'DATA'
   form.categoryId = undefined
   form.providerOrg = ''
+  applyLockedProviderOrg()
   form.resourceFormat = 'DATABASE'
   form.shareType = 'OPEN'
   form.shareCondition = ''
@@ -708,7 +738,7 @@ function onMetaPick(code: string) {
   if (!form.resourceName) form.resourceName = m.entryName
   form.physicalTableName = m.physicalTableName || ''
   form.sourcePathType = m.sourcePathType || 'DIRECT'
-  if (m.ownerName && !form.providerOrg) form.providerOrg = m.ownerName
+  if (isSuperAdmin.value && m.ownerName && !form.providerOrg) form.providerOrg = m.ownerName
 }
 
 function openCreate() {
@@ -772,22 +802,15 @@ function parseExt(row: CatalogRes) {
   }
 }
 
-function openEdit(row: CatalogRes) {
-  if (row.publishStatus === 'PUBLISHED') {
-    ElMessage.warning('已发布不可编辑，请先下线')
-    return
-  }
-  resetForm()
-  editMode.value = true
-  editingId.value = row.id
-  wizardStep.value = 0
-  void ensureCategoryLoaded()
-  void loadOrgs()
+function fillFormFromRow(row: CatalogRes) {
   form.resourceCode = row.resourceCode
   form.resourceName = row.resourceName
   form.resourceType = row.resourceType || 'DATA'
   form.categoryId = row.categoryId
   form.providerOrg = row.providerOrg || ''
+  if (!isSuperAdmin.value) {
+    form.providerOrg = auth.user?.orgName || form.providerOrg
+  }
   form.resourceFormat = row.resourceFormat || 'DATABASE'
   form.shareType = row.shareType || 'OPEN'
   form.shareCondition = row.shareCondition || ''
@@ -874,9 +897,81 @@ function openEdit(row: CatalogRes) {
         : []
     }
   }
-  void loadEligibleMeta(row.metadataEntryCode)
+}
+
+function openEdit(row: CatalogRes) {
+  const st = (row.approvalStatus || '').toUpperCase()
+  if (st === 'PENDING') {
+    ElMessage.warning('审批中不可编辑')
+    return
+  }
+  if (st === 'TO_REGISTER') {
+    ElMessage.warning('待发布不可编辑，请先撤回')
+    return
+  }
+  if (row.publishStatus === 'PUBLISHED') {
+    ElMessage.warning('已发布不可编辑，请先下线')
+    return
+  }
+  resetForm()
+  editMode.value = true
+  viewMode.value = false
+  editingId.value = row.id
+  wizardStep.value = 0
+  void ensureCategoryLoaded()
   void loadOrgs()
-  void loadCategoryOptions()
+  fillFormFromRow(row)
+  void loadEligibleMeta(row.metadataEntryCode)
+  dialogVisible.value = true
+}
+
+interface ApprovalFlowRow {
+  id: number
+  actionType?: string
+  status?: string
+  submitComment?: string
+  reviewComment?: string
+  submittedBy?: string
+  submittedAt?: string
+  reviewedBy?: string
+  reviewedAt?: string
+}
+
+const approvalFlowRows = ref<ApprovalFlowRow[]>([])
+const approvalFlowLoading = ref(false)
+
+const ACTION_FLOW_ZH: Record<string, string> = {
+  PUBLISH: '发布',
+  OFFLINE: '下线',
+  UPDATE: '变更',
+  DELETE: '删除',
+  CREATE: '编目新增',
+}
+
+async function loadApprovalFlow(resourceId: number) {
+  approvalFlowLoading.value = true
+  approvalFlowRows.value = []
+  try {
+    const res = await api.get(`/governance/catalog/resources-mgmt/${resourceId}/approvals`)
+    approvalFlowRows.value = (res.data || []) as ApprovalFlowRow[]
+  } catch {
+    approvalFlowRows.value = []
+  } finally {
+    approvalFlowLoading.value = false
+  }
+}
+
+function openView(row: CatalogRes) {
+  resetForm()
+  editMode.value = false
+  viewMode.value = true
+  editingId.value = row.id
+  wizardStep.value = 0
+  void ensureCategoryLoaded()
+  void loadOrgs()
+  fillFormFromRow(row)
+  void loadEligibleMeta(row.metadataEntryCode)
+  void loadApprovalFlow(row.id)
   dialogVisible.value = true
 }
 
@@ -897,8 +992,8 @@ function validateStep1(): boolean {
     ElMessage.warning('请选择共享类型')
     return false
   }
-  if (form.shareType === 'CONDITIONAL' && !form.shareCondition) {
-    ElMessage.warning('有条件共享须选择共享条件')
+  if (form.shareType === 'CONDITIONAL' && !form.shareCondition?.trim()) {
+    ElMessage.warning('有条件共享须填写共享条件')
     return false
   }
   if (form.shareType === 'NOT_SHARE' && !form.notShareReason?.trim()) {
@@ -909,8 +1004,8 @@ function validateStep1(): boolean {
     ElMessage.warning('请选择是否向社会开放')
     return false
   }
-  if (form.openType === 'SOCIAL_OPEN' && !form.openCondition) {
-    ElMessage.warning('对社会开放须选择开放条件')
+  if (form.openType === 'SOCIAL_OPEN' && !form.openCondition?.trim()) {
+    ElMessage.warning('向社会开放须填写开放条件')
     return false
   }
   if (form.openType === 'NOT_OPEN' && !form.notOpenReason?.trim()) {
@@ -1001,7 +1096,7 @@ function validateStep2(): boolean {
 }
 
 function goNext() {
-  if (!validateStep1()) return
+  if (!viewMode.value && !validateStep1()) return
   wizardStep.value = 1
   apiTab.value = 'basic'
   if (form.resourceFormat === 'API') {
@@ -1125,6 +1220,7 @@ function removeColumnRow(idx: number) {
 }
 
 async function openDsPicker() {
+  if (viewMode.value) return
   dsPickerVisible.value = true
   dsPickerSelected.value = null
   dsPickerCat.value = 'SOURCE'
@@ -1171,12 +1267,15 @@ async function confirmDsPicker() {
   form.metadataEntryCode = ''
   form.physicalTableName = ''
   columnRows.value = []
-  if (row.systemName && !form.providerOrg) form.providerOrg = String(row.systemName)
+  if (isSuperAdmin.value && row.systemName && !form.providerOrg) {
+    form.providerOrg = String(row.systemName)
+  }
   dsPickerVisible.value = false
   await openTablePicker()
 }
 
 async function openTablePicker() {
+  if (viewMode.value) return
   if (!bindSourceId.value) {
     ElMessage.warning('请先选择数据源')
     return
@@ -1222,7 +1321,7 @@ async function loadBindColumns(tableName: string) {
     form.physicalTableName = d.physicalTableName || tableName
     form.metadataEntryCode = d.metadataEntryCode || ''
     form.sourcePathType = d.sourcePathType || 'DIRECT'
-    if (d.ownerName && !form.providerOrg) form.providerOrg = d.ownerName
+    if (isSuperAdmin.value && d.ownerName && !form.providerOrg) form.providerOrg = d.ownerName
     if (!form.resourceName && (d.entryName || tableName)) {
       form.resourceName = d.entryName || tableName
     }
@@ -1576,13 +1675,14 @@ async function submitOffline(row: CatalogRes) {
 
 /** 提交：草稿进入注册发布可见范围，并跳转目录注册发布页 */
 async function tipGoPublish(row: CatalogRes) {
-  const st = (row.approvalStatus || '').toUpperCase()
+  if (!canSubmitToRegister(row)) {
+    ElMessage.warning('当前状态不可提交')
+    return
+  }
   try {
-    if (st === 'DRAFT' || st === 'REJECTED' || st === 'WITHDRAWN' || st === 'APPROVED') {
-      await api.post(`/governance/catalog/resources-mgmt/${row.id}/submit-register`)
-      ElMessage.success(`已提交，可在「${publishEntryName.value}」关联分类并发布`)
-      await loadResources()
-    }
+    await api.post(`/governance/catalog/resources-mgmt/${row.id}/submit-register`)
+    ElMessage.success(`已提交，可在「${publishEntryName.value}」关联分类并发布`)
+    await loadResources()
   } catch (e: any) {
     ElMessage.error(e?.response?.data?.message || e?.message || '提交失败')
     return
@@ -1600,22 +1700,68 @@ async function tipGoPublish(row: CatalogRes) {
   }
 }
 
+function approvalOf(row: CatalogRes) {
+  return (row.approvalStatus || 'DRAFT').toUpperCase()
+}
+
+/** 草稿 / 驳回待提交 / 已撤回：可编辑提交删除 */
+function isEditableCatalogRow(row: CatalogRes) {
+  const st = approvalOf(row)
+  return st === 'DRAFT' || st === 'REJECTED' || st === 'WITHDRAWN'
+}
+
 function canSubmitToRegister(row: CatalogRes) {
   if (row.publishStatus === 'PUBLISHED') return false
-  if (row.approvalStatus === 'PENDING') return false
-  return true
+  return isEditableCatalogRow(row)
 }
 
-/** 草稿：可直接删除 */
+function isPendingRow(row: CatalogRes) {
+  return approvalOf(row) === 'PENDING'
+}
+
+function isToRegisterRow(row: CatalogRes) {
+  return approvalOf(row) === 'TO_REGISTER'
+}
+
+function openBatchColumnSetting() {
+  if (!columnRows.value.length) {
+    ElMessage.warning('请先选择数据表加载字段')
+    return
+  }
+  batchColumnForm.sensLevel = '1级'
+  batchColumnForm.shareLevel = 'CONDITIONAL'
+  batchColumnForm.displayFlag = true
+  batchColumnVisible.value = true
+}
+
+function applyBatchColumnSetting() {
+  for (const row of columnRows.value) {
+    row.sensLevel = batchColumnForm.sensLevel
+    row.shareLevel = batchColumnForm.shareLevel
+    row.displayFlag = batchColumnForm.displayFlag
+  }
+  batchColumnVisible.value = false
+  ElMessage.success(`已批量设置 ${columnRows.value.length} 个字段`)
+}
+
+/** 待发布撤回为草稿 */
+async function withdrawToDraft(row: CatalogRes) {
+  await ElMessageBox.confirm(`确认撤回「${row.resourceName}」？撤回后回到草稿。`, '撤回', { type: 'warning' })
+  await api.post(`/governance/catalog/resources-mgmt/${row.id}/withdraw-register`)
+  ElMessage.success('已撤回为草稿')
+  await loadResources()
+}
+
+/** 草稿：可直接删除（驳回待提交等同草稿直接删） */
 function isDraftRow(row: CatalogRes) {
-  return (row.approvalStatus || 'DRAFT').toUpperCase() === 'DRAFT'
+  const st = approvalOf(row)
+  return st === 'DRAFT' || st === 'REJECTED' || st === 'WITHDRAWN'
 }
 
-/** 草稿可删；审批中/已发布不可删；已通过等走删除审批 */
+/** 草稿/驳回可删；待发布/待审核/已发布不可删 */
 function canDeleteRow(row: CatalogRes) {
-  if (row.approvalStatus === 'PENDING') return false
   if (row.publishStatus === 'PUBLISHED') return false
-  return true
+  return isEditableCatalogRow(row)
 }
 
 async function openVersions(row: CatalogRes) {
@@ -1735,18 +1881,24 @@ onActivated(async () => {
           <el-option v-for="c in categorySelectOptions" :key="c.id" :label="c.label" :value="c.id" />
         </el-select>
       </el-form-item>
-      <el-form-item label="审核状态" class="portal-field-md">
+      <el-form-item label="状态" class="portal-field-md">
         <el-select v-model="query.approvalStatus" clearable placeholder="全部">
           <el-option label="草稿" value="DRAFT" />
-          <el-option label="待注册发布" value="TO_REGISTER" />
-          <el-option label="待审批" value="PENDING" />
-          <el-option label="已通过" value="APPROVED" />
-          <el-option label="已拒绝" value="REJECTED" />
+          <el-option label="待发布" value="TO_REGISTER" />
+          <el-option label="待审核" value="PENDING" />
+          <el-option label="已审核" value="APPROVED" />
+          <el-option label="驳回待提交" value="REJECTED" />
+          <el-option label="已下线" value="OFFLINE" />
         </el-select>
       </el-form-item>
       <el-form-item label="共享方式" class="portal-field-md">
         <el-select v-model="query.shareType" clearable placeholder="全部">
           <el-option v-for="(lab, val) in SHARE_ZH" :key="val" :label="lab" :value="val" />
+        </el-select>
+      </el-form-item>
+      <el-form-item label="数据格式" class="portal-field-md">
+        <el-select v-model="query.resourceFormat" clearable placeholder="全部">
+          <el-option v-for="(lab, val) in FORMAT_ZH" :key="val" :label="lab" :value="val" />
         </el-select>
       </el-form-item>
       <el-form-item class="portal-form-actions">
@@ -1769,11 +1921,7 @@ onActivated(async () => {
       @selection-change="(rows: CatalogRes[]) => (selectedRows = rows)"
     >
       <el-table-column type="selection" width="42" />
-      <el-table-column prop="resourceCode" label="编码" width="130" />
       <el-table-column prop="resourceName" label="名称" min-width="140" />
-      <el-table-column label="类型" width="70">
-        <template #default="{ row }">{{ TYPE_ZH[row.resourceType] || $statusLabel(row.resourceType) }}</template>
-      </el-table-column>
       <el-table-column label="来源路径" width="90">
         <template #default="{ row }">
           <el-tag v-if="row.sourcePathType" size="small" :type="row.sourcePathType === 'PROCESSED' ? 'warning' : 'success'">
@@ -1782,45 +1930,59 @@ onActivated(async () => {
           <span v-else>—</span>
         </template>
       </el-table-column>
-      <el-table-column label="质量分" width="72">
-        <template #default="{ row }">{{ row.qualityScore ?? '—' }}</template>
-      </el-table-column>
-      <el-table-column prop="metadataEntryCode" label="元数据条目" width="150" show-overflow-tooltip>
-        <template #default="{ row }">{{ row.metadataEntryCode || '—' }}</template>
-      </el-table-column>
       <el-table-column prop="providerOrg" label="提供方" width="110" show-overflow-tooltip />
-      <el-table-column label="格式" width="70">
+      <el-table-column label="信息资源格式" width="110">
         <template #default="{ row }">{{ FORMAT_ZH[row.resourceFormat!] || $statusLabel(row.resourceFormat) || '—' }}</template>
       </el-table-column>
       <el-table-column label="共享方式" width="110">
         <template #default="{ row }">{{ SHARE_ZH[row.shareType!] || $statusLabel(row.shareType) || '—' }}</template>
       </el-table-column>
-      <el-table-column label="发布" width="90">
+      <el-table-column label="状态" width="110">
         <template #default="{ row }">
-          <el-tag size="small" :type="statusTagType(row.publishStatus)">{{ statusLabel(row.publishStatus) }}</el-tag>
+          <el-tag
+            size="small"
+            :type="statusTagType(catalogResourceStatusCode(row.approvalStatus, row.publishStatus))"
+          >
+            {{ catalogResourceStatusLabel(row.approvalStatus, row.publishStatus) }}
+          </el-tag>
         </template>
       </el-table-column>
-      <el-table-column label="审核状态" width="90">
+      <el-table-column label="操作" width="300" fixed="right">
         <template #default="{ row }">
-          <el-tag size="small" :type="statusTagType(row.approvalStatus)">{{ statusLabel(row.approvalStatus) }}</el-tag>
-        </template>
-      </el-table-column>
-      <el-table-column label="操作" width="280" fixed="right">
-        <template #default="{ row }">
-          <el-button link type="primary" @click="openEdit(row)">编辑</el-button>
-          <el-button link @click="openVersions(row)">版本</el-button>
-          <el-button
-            v-if="canSubmitToRegister(row)"
-            link
-            type="primary"
-            @click="tipGoPublish(row)"
-          >提交</el-button>
-          <el-button
-            v-if="row.publishStatus === 'PUBLISHED' && row.approvalStatus !== 'PENDING'"
-            link
-            @click="submitOffline(row)"
-          >提交下线</el-button>
-          <el-button v-if="canDeleteRow(row)" link type="danger" @click="removeOne(row)">删除</el-button>
+          <!-- 待发布：查看、撤回、版本 -->
+          <template v-if="isToRegisterRow(row)">
+            <el-button link type="primary" @click="openView(row)">查看</el-button>
+            <el-button link type="info" @click="withdrawToDraft(row)">撤回</el-button>
+            <el-button link @click="openVersions(row)">版本</el-button>
+          </template>
+          <!-- 待审核：查看、版本（撤回在注册发布） -->
+          <template v-else-if="isPendingRow(row)">
+            <el-button link type="primary" @click="openView(row)">查看</el-button>
+            <el-button link @click="openVersions(row)">版本</el-button>
+          </template>
+          <!-- 草稿 / 驳回待提交：查看、编辑、提交、删除、版本 -->
+          <template v-else-if="isEditableCatalogRow(row)">
+            <el-button link type="primary" @click="openView(row)">查看</el-button>
+            <el-button link type="primary" @click="openEdit(row)">编辑</el-button>
+            <el-button
+              v-if="canSubmitToRegister(row)"
+              link
+              type="primary"
+              @click="tipGoPublish(row)"
+            >提交</el-button>
+            <el-button v-if="canDeleteRow(row)" link type="danger" @click="removeOne(row)">删除</el-button>
+            <el-button link @click="openVersions(row)">版本</el-button>
+          </template>
+          <!-- 已审核等：查看、版本；已发布可提交下线 -->
+          <template v-else>
+            <el-button link type="primary" @click="openView(row)">查看</el-button>
+            <el-button
+              v-if="row.publishStatus === 'PUBLISHED'"
+              link
+              @click="submitOffline(row)"
+            >提交下线</el-button>
+            <el-button link @click="openVersions(row)">版本</el-button>
+          </template>
         </template>
       </el-table-column>
     </el-table>
@@ -1829,7 +1991,7 @@ onActivated(async () => {
 
     <el-dialog
       v-model="dialogVisible"
-      :title="editMode ? '编辑资源' : '手动新增数据资源'"
+      :title="viewMode ? '查看数据资源' : editMode ? '编辑资源' : '手动新增数据资源'"
       width="960px"
       destroy-on-close
       append-to-body
@@ -1841,7 +2003,7 @@ onActivated(async () => {
       </el-steps>
 
       <!-- 步骤1：基本信息 -->
-      <el-form v-show="wizardStep === 0" label-width="130px">
+      <el-form v-show="wizardStep === 0" label-width="130px" :disabled="viewMode">
         <el-form-item label="信息资源名称" required>
           <el-input v-model="form.resourceName" maxlength="128" show-word-limit placeholder="清晰唯一，同提供方勿重名" />
         </el-form-item>
@@ -1850,6 +2012,7 @@ onActivated(async () => {
         </el-form-item>
         <el-form-item label="信息资源提供方" required>
           <el-tree-select
+            v-if="isSuperAdmin"
             v-model="form.providerOrg"
             :data="orgTree"
             filterable
@@ -1858,6 +2021,7 @@ onActivated(async () => {
             placeholder="选择具体部门/提供方"
             style="width: 100%"
           />
+          <el-input v-else :model-value="form.providerOrg || currentDeptName" disabled />
         </el-form-item>
         <el-form-item label="信息资源格式" required>
           <el-select v-model="form.resourceFormat" style="width: 100%" placeholder="决定下一步关联形态">
@@ -1873,18 +2037,14 @@ onActivated(async () => {
           </el-select>
         </el-form-item>
         <el-form-item label="共享条件" :required="shareConditionEnabled">
-          <el-select
+          <el-input
             v-model="form.shareCondition"
-            :disabled="!shareConditionEnabled"
-            filterable
-            allow-create
-            default-first-option
+            :disabled="!shareConditionEnabled || viewMode"
             clearable
-            style="width: 100%"
-            placeholder="有条件共享时必选"
-          >
-            <el-option v-for="o in SHARE_CONDITION_OPTS" :key="o" :label="o" :value="o" />
-          </el-select>
+            maxlength="256"
+            show-word-limit
+            placeholder="有条件共享时必填"
+          />
         </el-form-item>
         <el-form-item v-if="notShareReasonEnabled" label="不共享理由" required>
           <el-input v-model="form.notShareReason" type="textarea" :rows="2" placeholder="不予共享时必填" />
@@ -1895,18 +2055,14 @@ onActivated(async () => {
           </el-select>
         </el-form-item>
         <el-form-item label="开放条件" :required="openConditionEnabled">
-          <el-select
+          <el-input
             v-model="form.openCondition"
-            :disabled="!openConditionEnabled"
-            filterable
-            allow-create
-            default-first-option
+            :disabled="!openConditionEnabled || viewMode"
             clearable
-            style="width: 100%"
-            placeholder="开放时必选"
-          >
-            <el-option v-for="o in OPEN_CONDITION_OPTS" :key="o" :label="o" :value="o" />
-          </el-select>
+            maxlength="256"
+            show-word-limit
+            placeholder="开放时必填"
+          />
         </el-form-item>
         <el-form-item v-if="notOpenReasonEnabled" label="不开放理由" required>
           <el-input v-model="form.notOpenReason" type="textarea" :rows="2" placeholder="不开放时必填" />
@@ -2015,6 +2171,10 @@ onActivated(async () => {
               </div>
             </el-form-item>
           </el-form>
+          <div v-if="columnRows.length && !viewMode" class="section-head">
+            <span>字段共享属性</span>
+            <el-button size="small" type="primary" plain @click="openBatchColumnSetting">批量设置</el-button>
+          </div>
           <el-table
             v-loading="columnsLoading"
             :data="columnRows"
@@ -2026,36 +2186,27 @@ onActivated(async () => {
           >
             <el-table-column prop="columnName" label="名称" width="140" show-overflow-tooltip />
             <el-table-column label="中文名称" min-width="140">
-              <template #default="{ row }"><el-input v-model="row.columnNameZh" size="small" /></template>
+              <template #default="{ row }"><el-input v-model="row.columnNameZh" size="small" :disabled="viewMode" /></template>
             </el-table-column>
             <el-table-column label="类型" width="90">
               <template #default="{ row }">{{ row.dataTypeZh || dataTypeToZh(row.dataType) }}</template>
             </el-table-column>
             <el-table-column label="数据敏感级别" width="120">
               <template #default="{ row }">
-                <el-select v-model="row.sensLevel" size="small" style="width: 100%">
+                <el-select v-model="row.sensLevel" size="small" style="width: 100%" :disabled="viewMode">
                   <el-option v-for="o in SENS_LEVEL_OPTS" :key="o" :label="o" :value="o" />
                 </el-select>
               </template>
             </el-table-column>
             <el-table-column label="共享类型" width="130">
               <template #default="{ row }">
-                <el-select v-model="row.shareLevel" size="small" style="width: 100%">
+                <el-select v-model="row.shareLevel" size="small" style="width: 100%" :disabled="viewMode">
                   <el-option v-for="(lab, val) in SHARE_LEVEL_ZH" :key="val" :label="lab" :value="val" />
                 </el-select>
               </template>
             </el-table-column>
             <el-table-column label="是否展示项" width="90" align="center">
-              <template #default="{ row }"><el-checkbox v-model="row.displayFlag" /></template>
-            </el-table-column>
-            <el-table-column label="是否搜索项" width="90" align="center">
-              <template #default="{ row }"><el-checkbox v-model="row.searchFlag" /></template>
-            </el-table-column>
-            <el-table-column label="是否统计项" width="90" align="center">
-              <template #default="{ row }"><el-checkbox v-model="row.statFlag" /></template>
-            </el-table-column>
-            <el-table-column label="是否排序项" width="90" align="center">
-              <template #default="{ row }"><el-checkbox v-model="row.sortFlag" /></template>
+              <template #default="{ row }"><el-checkbox v-model="row.displayFlag" :disabled="viewMode" /></template>
             </el-table-column>
           </el-table>
         </template>
@@ -2259,11 +2410,37 @@ onActivated(async () => {
         </template>
       </div>
 
+      <div v-if="viewMode" v-loading="approvalFlowLoading" class="approval-flow-block">
+        <div class="approval-flow-title">审批流程</div>
+        <el-table :data="approvalFlowRows" stripe size="small" empty-text="暂无审批记录">
+          <el-table-column label="操作类型" width="100">
+            <template #default="{ row }">{{ ACTION_FLOW_ZH[row.actionType || ''] || statusLabel(row.actionType) || '—' }}</template>
+          </el-table-column>
+          <el-table-column label="状态" width="100">
+            <template #default="{ row }">
+              <el-tag size="small" :type="statusTagType(row.status)">{{ statusLabel(row.status) }}</el-tag>
+            </template>
+          </el-table-column>
+          <el-table-column prop="submittedBy" label="提交人" width="120" show-overflow-tooltip />
+          <el-table-column prop="submittedAt" label="提交时间" width="166" />
+          <el-table-column prop="reviewedBy" label="审核人" width="120" show-overflow-tooltip />
+          <el-table-column prop="reviewedAt" label="审核时间" width="166" />
+          <el-table-column prop="reviewComment" label="审批结果/意见" min-width="140" show-overflow-tooltip />
+        </el-table>
+      </div>
+
       <template #footer>
-        <el-button @click="dialogVisible = false">取消</el-button>
-        <el-button v-if="wizardStep === 1" @click="goPrev">上一步</el-button>
-        <el-button v-if="wizardStep === 0" type="primary" @click="goNext">下一步</el-button>
-        <el-button v-if="wizardStep === 1" type="primary" :loading="saving" @click="save">提交</el-button>
+        <template v-if="viewMode">
+          <el-button @click="dialogVisible = false">关闭</el-button>
+          <el-button v-if="wizardStep === 1" @click="goPrev">上一步</el-button>
+          <el-button v-if="wizardStep === 0" type="primary" @click="goNext">下一步</el-button>
+        </template>
+        <template v-else>
+          <el-button @click="dialogVisible = false">取消</el-button>
+          <el-button v-if="wizardStep === 1" @click="goPrev">上一步</el-button>
+          <el-button v-if="wizardStep === 0" type="primary" @click="goNext">下一步</el-button>
+          <el-button v-if="wizardStep === 1" type="primary" :loading="saving" @click="save">提交</el-button>
+        </template>
       </template>
     </el-dialog>
 
@@ -2334,7 +2511,7 @@ onActivated(async () => {
     </el-dialog>
 
     <!-- 选择数据表 -->
-    <el-dialog v-model="tablePickerVisible" title="选择数据表" width="560px" destroy-on-close append-to-body>
+    <el-dialog v-model="tablePickerVisible" title="选择数据表" width="720px" destroy-on-close append-to-body>
       <el-alert
         type="info"
         :closable="false"
@@ -2356,8 +2533,11 @@ onActivated(async () => {
             <el-radio v-model="tablePickerSelected" :value="row.tableName">&nbsp;</el-radio>
           </template>
         </el-table-column>
-        <el-table-column prop="tableName" label="表名" min-width="160" />
-        <el-table-column label="元数据" min-width="160" show-overflow-tooltip>
+        <el-table-column prop="tableName" label="表名" min-width="140" />
+        <el-table-column label="中文名称" min-width="140" show-overflow-tooltip>
+          <template #default="{ row }">{{ row.chineseName || row.tableComment || row.entryName || '—' }}</template>
+        </el-table-column>
+        <el-table-column label="元数据" min-width="140" show-overflow-tooltip>
           <template #default="{ row }">{{ row.metadataEntryCode || '未登记' }}</template>
         </el-table-column>
         <el-table-column label="可编目" width="80">
@@ -2523,6 +2703,28 @@ onActivated(async () => {
       </template>
     </el-dialog>
 
+    <el-dialog v-model="batchColumnVisible" title="批量设置字段属性" width="480px" destroy-on-close append-to-body>
+      <el-form label-width="120px">
+        <el-form-item label="数据敏感级别">
+          <el-select v-model="batchColumnForm.sensLevel" style="width: 100%">
+            <el-option v-for="o in SENS_LEVEL_OPTS" :key="o" :label="o" :value="o" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="共享类型">
+          <el-select v-model="batchColumnForm.shareLevel" style="width: 100%">
+            <el-option v-for="(lab, val) in SHARE_LEVEL_ZH" :key="val" :label="lab" :value="val" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="是否展示项">
+          <el-switch v-model="batchColumnForm.displayFlag" />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="batchColumnVisible = false">取消</el-button>
+        <el-button type="primary" @click="applyBatchColumnSetting">应用到全部字段</el-button>
+      </template>
+    </el-dialog>
+
     <el-dialog v-model="batchVisible" title="批量新增数据资源" width="640px" destroy-on-close>
       <el-alert
         type="info"
@@ -2566,6 +2768,16 @@ onActivated(async () => {
 </template>
 
 <style scoped>
+.approval-flow-block {
+  margin-top: 16px;
+  padding-top: 12px;
+  border-top: 1px solid var(--el-border-color-lighter);
+}
+.approval-flow-title {
+  font-size: 14px;
+  font-weight: 600;
+  margin-bottom: 8px;
+}
 .hint {
   font-size: 12px;
   color: var(--el-text-color-secondary);

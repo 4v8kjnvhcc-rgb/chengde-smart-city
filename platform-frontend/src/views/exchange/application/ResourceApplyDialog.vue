@@ -109,7 +109,6 @@ async function onSubmit() {
   if (!form.applicantOrg.trim()) return ElMessage.warning('请填写申请方名称')
   if (!form.contactName.trim()) return ElMessage.warning('请填写联系人')
   if (!form.contactPhone.trim()) return ElMessage.warning('请填写联系电话')
-  if (!form.contactEmail.trim()) return ElMessage.warning('请填写联系邮箱')
   if (!hasText(form.scene)) return ElMessage.warning('请选择或填写使用办事场景')
   if (!form.systemName.trim()) return ElMessage.warning('请填写应用系统名称')
   if (!hasText(form.timeRange)) return ElMessage.warning('请选择或填写使用时间范围')
@@ -193,8 +192,8 @@ defineExpose({ close })
             <el-form-item label="联系电话" required>
               <el-input v-model="form.contactPhone" placeholder="请输入" />
             </el-form-item>
-            <el-form-item label="联系邮箱" required>
-              <el-input v-model="form.contactEmail" placeholder="请输入" />
+            <el-form-item label="联系邮箱">
+              <el-input v-model="form.contactEmail" placeholder="选填" />
             </el-form-item>
           </div>
 

@@ -7,10 +7,12 @@ import com.chengde.smartcity.exchange.entity.BizCatalogItem;
 import com.chengde.smartcity.exchange.entity.BizDemandSupplyTask;
 import com.chengde.smartcity.exchange.entity.BizPortalSituation;
 import com.chengde.smartcity.exchange.entity.BizPortalSubscription;
+import com.chengde.smartcity.exchange.entity.BizResourceFavorite;
 import com.chengde.smartcity.exchange.mapper.BizCatalogItemMapper;
 import com.chengde.smartcity.exchange.mapper.BizDemandSupplyTaskMapper;
 import com.chengde.smartcity.exchange.mapper.BizPortalSituationMapper;
 import com.chengde.smartcity.exchange.mapper.BizPortalSubscriptionMapper;
+import com.chengde.smartcity.exchange.mapper.BizResourceFavoriteMapper;
 import com.chengde.smartcity.integration.config.IntegrationProperties;
 import com.chengde.smartcity.integration.storage.StorageIntegrationClient;
 import com.chengde.smartcity.masterdata.entity.GovCatalogCategory;
@@ -54,6 +56,7 @@ public class PortalService {
 
     private final BizCatalogItemMapper catalogMapper;
     private final BizPortalSubscriptionMapper subscriptionMapper;
+    private final BizResourceFavoriteMapper favoriteMapper;
     private final BizPortalSituationMapper situationMapper;
     private final BizDemandSupplyTaskMapper supplyTaskMapper;
     private final GovCatalogResourceMapper govResourceMapper;
@@ -67,6 +70,7 @@ public class PortalService {
 
     public PortalService(BizCatalogItemMapper catalogMapper,
                          BizPortalSubscriptionMapper subscriptionMapper,
+                         BizResourceFavoriteMapper favoriteMapper,
                          BizPortalSituationMapper situationMapper,
                          BizDemandSupplyTaskMapper supplyTaskMapper,
                          GovCatalogResourceMapper govResourceMapper,
@@ -79,6 +83,7 @@ public class PortalService {
                          CatalogSubscriptionService catalogSubscriptionService) {
         this.catalogMapper = catalogMapper;
         this.subscriptionMapper = subscriptionMapper;
+        this.favoriteMapper = favoriteMapper;
         this.situationMapper = situationMapper;
         this.supplyTaskMapper = supplyTaskMapper;
         this.govResourceMapper = govResourceMapper;
@@ -217,7 +222,16 @@ public class PortalService {
         if (!blank(openAttr)) {
             String want = openAttr.trim().toUpperCase(Locale.ROOT);
             rows = rows.stream()
-                    .filter(r -> want.equalsIgnoreCase(String.valueOf(r.getOrDefault("openAttr", ""))))
+                    .filter(r -> {
+                        String got = String.valueOf(r.getOrDefault("openAttr", "")).trim().toUpperCase(Locale.ROOT);
+                        if (want.equals(got)) return true;
+                        if ("SOCIAL_OPEN".equals(want) && "OPEN".equals(got)) return true;
+                        // 历史「部分开放」并入「不开放」
+                        if ("NOT_OPEN".equals(want) && ("PARTIAL_OPEN".equals(got) || "PARTIAL".equals(got))) {
+                            return true;
+                        }
+                        return false;
+                    })
                     .collect(Collectors.toCollection(ArrayList::new));
         }
         sortCatalogRows(rows, sortBy, sortDir);
@@ -274,11 +288,18 @@ public class PortalService {
     }
 
     /**
-     * @param scope mine=本部门申请；pending=待本部门审批（资源提供方为本机构）；空=仅本部门相关（申请或待审）
+     * @param scope mine=本部门申请；pending=待本部门审批；reviewed=已审批历史；空=仅本部门相关
      */
     public List<Map<String, Object>> listSubscriptions(UserPrincipal operator, String status, String scope) {
-        LambdaQueryWrapper<BizPortalSubscription> q = new LambdaQueryWrapper<BizPortalSubscription>()
-                .orderByDesc(BizPortalSubscription::getId);
+        String scopeKey = nz(scope, "").trim().toLowerCase(Locale.ROOT);
+        LambdaQueryWrapper<BizPortalSubscription> q = new LambdaQueryWrapper<>();
+        if ("reviewed".equals(scopeKey)) {
+            q.in(BizPortalSubscription::getStatus, List.of("APPROVED", "REJECTED"))
+                    .orderByDesc(BizPortalSubscription::getReviewedAt)
+                    .orderByDesc(BizPortalSubscription::getId);
+        } else {
+            q.orderByDesc(BizPortalSubscription::getId);
+        }
         if (status != null && !status.isBlank()) {
             q.eq(BizPortalSubscription::getStatus, status);
         }
@@ -286,7 +307,6 @@ public class PortalService {
         String myOrg = resolveOrgName(operator);
         String username = operator == null ? null : operator.getUsername();
         boolean admin = operator != null && operator.isSystemAdmin();
-        String scopeKey = nz(scope, "").trim().toLowerCase(Locale.ROOT);
 
         List<Map<String, Object>> out = new ArrayList<>();
         for (BizPortalSubscription sub : list) {
@@ -320,6 +340,17 @@ public class PortalService {
                         continue;
                     }
                 }
+            } else if ("reviewed".equals(scopeKey)) {
+                // 本部门作为提供方的已审批历史
+                String st = nz(sub.getStatus(), "").toUpperCase(Locale.ROOT);
+                if (!"APPROVED".equals(st) && !"REJECTED".equals(st)) {
+                    continue;
+                }
+                if (!admin) {
+                    if (blank(myOrg) || !orgNameEquals(myOrg, providerOrg)) {
+                        continue;
+                    }
+                }
             } else if (!admin) {
                 // 未指定 scope：禁止返回全量，仅本部门相关
                 boolean asApplicant = !blank(myOrg) && orgNameEquals(myOrg, sub.getApplicantOrg());
@@ -339,12 +370,18 @@ public class PortalService {
             row.put("applyPayload", parseJsonSafe(sub.getApplyPayload()));
             row.put("status", sub.getStatus());
             row.put("approverNote", sub.getApproverNote());
+            row.put("reviewComment", sub.getApproverNote());
+            row.put("reviewedBy", sub.getReviewedBy());
+            row.put("reviewerContact", sub.getReviewerContact());
+            row.put("reviewedAt", sub.getReviewedAt());
+            row.put("govSubscriptionId", sub.getGovSubscriptionId());
             row.put("createdBy", sub.getCreatedBy());
             row.put("createdAt", sub.getCreatedAt());
             row.put("providerOrg", providerOrg);
             if (cat != null) {
                 row.put("catalogTitle", cat.getTitle());
                 row.put("catalogCode", cat.getCatalogCode());
+                row.put("govResourceId", cat.getGovResourceId());
             }
             String ref = "PORTAL_SUB_" + sub.getId();
             List<BizDemandSupplyTask> tasks = supplyTaskMapper.selectList(new LambdaQueryWrapper<BizDemandSupplyTask>()
@@ -358,9 +395,59 @@ public class PortalService {
                 row.put("taskName", t.getTaskName());
                 row.put("taskStatus", t.getStatus());
             }
+            row.put("approvalFlow", buildPortalApprovalFlow(sub));
             out.add(row);
         }
         return out;
+    }
+
+    private List<Map<String, Object>> buildPortalApprovalFlow(BizPortalSubscription sub) {
+        List<Map<String, Object>> flow = new ArrayList<>();
+        Map<String, Object> submit = new LinkedHashMap<>();
+        submit.put("step", "提交申请");
+        submit.put("status", "DONE");
+        submit.put("result", "已提交");
+        submit.put("actor", sub.getCreatedBy());
+        submit.put("time", sub.getCreatedAt());
+        submit.put("comment", "");
+        flow.add(submit);
+
+        Map<String, Object> review = new LinkedHashMap<>();
+        review.put("step", "提供方审批");
+        String st = nz(sub.getStatus(), "").toUpperCase(Locale.ROOT);
+        if ("PENDING".equals(st)) {
+            review.put("status", "PENDING");
+            review.put("result", "待审批");
+            review.put("actor", "");
+            review.put("time", null);
+            review.put("comment", "");
+        } else if ("APPROVED".equals(st)) {
+            review.put("status", "APPROVED");
+            review.put("result", "已通过");
+            review.put("actor", sub.getReviewedBy());
+            review.put("time", sub.getReviewedAt());
+            review.put("comment", sub.getApproverNote());
+        } else if ("REJECTED".equals(st)) {
+            review.put("status", "REJECTED");
+            review.put("result", "已驳回");
+            review.put("actor", sub.getReviewedBy());
+            review.put("time", sub.getReviewedAt());
+            review.put("comment", sub.getApproverNote());
+        } else if ("CANCELLED".equals(st)) {
+            review.put("status", "CANCELLED");
+            review.put("result", "已取消");
+            review.put("actor", sub.getCreatedBy());
+            review.put("time", sub.getUpdatedAt());
+            review.put("comment", "");
+        } else {
+            review.put("status", st);
+            review.put("result", st);
+            review.put("actor", sub.getReviewedBy());
+            review.put("time", sub.getReviewedAt());
+            review.put("comment", sub.getApproverNote());
+        }
+        flow.add(review);
+        return flow;
     }
 
     @Transactional
@@ -386,6 +473,29 @@ public class PortalService {
         if (purpose.length() > 500) {
             purpose = purpose.substring(0, 500);
         }
+        // 已申请（待审/已通过）不可再次申请
+        final String orgKey = applicantOrg;
+        final String userKey = operator.getUsername();
+        BizPortalSubscription dup = subscriptionMapper.selectOne(new LambdaQueryWrapper<BizPortalSubscription>()
+                .eq(BizPortalSubscription::getCatalogId, catalogId)
+                .in(BizPortalSubscription::getStatus, List.of("PENDING", "APPROVED"))
+                .and(w -> {
+                    if (!blank(userKey)) {
+                        w.eq(BizPortalSubscription::getCreatedBy, userKey);
+                    }
+                    if (!blank(orgKey)) {
+                        if (!blank(userKey)) {
+                            w.or().eq(BizPortalSubscription::getApplicantOrg, orgKey);
+                        } else {
+                            w.eq(BizPortalSubscription::getApplicantOrg, orgKey);
+                        }
+                    }
+                })
+                .orderByDesc(BizPortalSubscription::getId)
+                .last("LIMIT 1"));
+        if (dup != null) {
+            throw new BusinessException(400, "该目录已申请，不能再次申请");
+        }
         String payloadJson = null;
         try {
             Map<String, Object> payload = new LinkedHashMap<>(body);
@@ -404,20 +514,35 @@ public class PortalService {
         sub.setApplyPayload(payloadJson);
         sub.setStatus("PENDING");
         sub.setCreatedBy(operator.getUsername());
+        sub.setCreatedAt(LocalDateTime.now());
+        sub.setUpdatedAt(LocalDateTime.now());
         subscriptionMapper.insert(sub);
 
-        // 同步到数据融合治理平台「资源申请订阅」
-        if (catalog.getGovResourceId() != null) {
+        // 同步到数据融合治理平台「资源申请订阅」（同一业务单，交叉关联）
+        Long govResourceId = catalog.getGovResourceId();
+        if (govResourceId == null) {
+            GovCatalogResource byPortal = govResourceMapper.selectOne(new LambdaQueryWrapper<GovCatalogResource>()
+                    .eq(GovCatalogResource::getPortalCatalogId, catalogId)
+                    .last("LIMIT 1"));
+            if (byPortal != null) {
+                govResourceId = byPortal.getId();
+                catalog.setGovResourceId(govResourceId);
+                catalogMapper.updateById(catalog);
+            }
+        }
+        if (govResourceId != null) {
             try {
                 Map<String, Object> govBody = new LinkedHashMap<>();
-                govBody.put("resourceId", catalog.getGovResourceId());
+                govBody.put("resourceId", govResourceId);
                 govBody.put("shareMode", toGovShareMode(resourceType));
                 govBody.put("applicantOrg", applicantOrg);
                 govBody.put("purpose", purpose);
                 govBody.put("applyPayload", payloadJson);
-                catalogSubscriptionService.create(operator, govBody);
+                govBody.put("portalSubscriptionId", sub.getId());
+                Long govId = catalogSubscriptionService.create(operator, govBody);
+                sub.setGovSubscriptionId(govId);
+                subscriptionMapper.updateById(sub);
             } catch (BusinessException ex) {
-                // 已有待审等业务冲突：门户记录仍保留，治理侧跳过
                 log.warn("sync gov subscription skipped: {}", ex.getMessage());
             }
         }
@@ -496,13 +621,39 @@ public class PortalService {
 
         String action = str(body.get("action"), "APPROVE").toUpperCase(Locale.ROOT);
         boolean approved = "APPROVE".equals(action) || "APPROVED".equals(action);
+        String reviewerName = str(body.get("reviewerName"), str(body.get("reviewedBy"), ""));
+        if (blank(reviewerName)) {
+            throw new BusinessException(400, "请填写审批人");
+        }
+        String reviewerContact = str(body.get("reviewerContact"), str(body.get("contact"), ""));
+        if (blank(reviewerContact)) {
+            throw new BusinessException(400, "请填写联系方式");
+        }
+        String note = str(body.get("approverNote"), str(body.get("comment"), ""));
+        if (!approved && blank(note)) {
+            throw new BusinessException(400, "驳回须填写驳回意见");
+        }
+        LocalDateTime now = LocalDateTime.now();
         sub.setStatus(approved ? "APPROVED" : "REJECTED");
-        sub.setApproverNote(str(body.get("approverNote"), ""));
+        sub.setApproverNote(note);
+        sub.setReviewedBy(reviewerName.trim());
+        sub.setReviewerContact(reviewerContact.trim());
+        sub.setReviewedAt(now);
+        sub.setUpdatedAt(now);
         subscriptionMapper.updateById(sub);
+
+        // 回写治理侧同一申请单
+        try {
+            catalogSubscriptionService.syncReviewFromPortal(
+                    id, sub.getStatus(), note, reviewerName.trim(), now, reviewerContact.trim());
+        } catch (Exception ex) {
+            log.warn("sync gov review from portal failed: {}", ex.getMessage());
+        }
 
         Map<String, Object> out = new LinkedHashMap<>();
         out.put("subscriptionId", id);
         out.put("status", sub.getStatus());
+        out.put("approvalFlow", buildPortalApprovalFlow(sub));
 
         if (approved) {
             BizCatalogItem catalog = catalogMapper.selectById(sub.getCatalogId());
@@ -545,9 +696,200 @@ public class PortalService {
             throw new BusinessException(400, "仅待审批申请可取消");
         }
         sub.setStatus("CANCELLED");
+        sub.setUpdatedAt(LocalDateTime.now());
         subscriptionMapper.updateById(sub);
+        try {
+            catalogSubscriptionService.syncReviewFromPortal(
+                    id, "CANCELLED", null,
+                    operator == null ? null : operator.getUsername(), LocalDateTime.now(), null);
+        } catch (Exception ex) {
+            log.warn("sync gov cancel from portal failed: {}", ex.getMessage());
+        }
         auditService.log(operator.getUserId(), operator.getUsername(), operator.getOrgId(),
                 "PORTAL_SUB_CANCEL", "biz_portal_subscription", String.valueOf(id), null);
+    }
+
+    /** 我的订阅（门户 / 治理目录共用同一张表） */
+    public List<Map<String, Object>> listFavorites(UserPrincipal operator) {
+        if (operator == null || operator.getUserId() == null) {
+            return List.of();
+        }
+        List<BizResourceFavorite> list = favoriteMapper.selectList(new LambdaQueryWrapper<BizResourceFavorite>()
+                .eq(BizResourceFavorite::getUserId, operator.getUserId())
+                .orderByDesc(BizResourceFavorite::getFollowedAt)
+                .orderByDesc(BizResourceFavorite::getId));
+        List<Map<String, Object>> out = new ArrayList<>();
+        for (BizResourceFavorite f : list) {
+            out.add(toFavoriteRow(f));
+        }
+        return out;
+    }
+
+    @Transactional
+    public Map<String, Object> addFavorite(UserPrincipal operator, Map<String, Object> body) {
+        if (operator == null || operator.getUserId() == null) {
+            throw new BusinessException(401, "未登录");
+        }
+        Long catalogId = body.get("catalogId") == null || String.valueOf(body.get("catalogId")).isBlank()
+                ? null : Long.valueOf(String.valueOf(body.get("catalogId")));
+        Long govResourceId = body.get("govResourceId") == null || String.valueOf(body.get("govResourceId")).isBlank()
+                ? null : Long.valueOf(String.valueOf(body.get("govResourceId")));
+        if (catalogId == null && govResourceId == null) {
+            throw new BusinessException(400, "catalogId 或 govResourceId 必填其一");
+        }
+        // 尽量补全两侧 ID，便于双入口导航
+        if (catalogId != null && govResourceId == null) {
+            BizCatalogItem cat = catalogMapper.selectById(catalogId);
+            if (cat != null && cat.getGovResourceId() != null) {
+                govResourceId = cat.getGovResourceId();
+            }
+        }
+        if (govResourceId != null && catalogId == null) {
+            GovCatalogResource gov = govResourceMapper.selectById(govResourceId);
+            if (gov != null && gov.getPortalCatalogId() != null) {
+                catalogId = gov.getPortalCatalogId();
+            } else {
+                BizCatalogItem byGov = catalogMapper.selectOne(new LambdaQueryWrapper<BizCatalogItem>()
+                        .eq(BizCatalogItem::getGovResourceId, govResourceId)
+                        .last("LIMIT 1"));
+                if (byGov != null) {
+                    catalogId = byGov.getId();
+                }
+            }
+        }
+
+        BizResourceFavorite existing = null;
+        if (catalogId != null) {
+            existing = favoriteMapper.selectOne(new LambdaQueryWrapper<BizResourceFavorite>()
+                    .eq(BizResourceFavorite::getUserId, operator.getUserId())
+                    .eq(BizResourceFavorite::getCatalogId, catalogId)
+                    .last("LIMIT 1"));
+        }
+        if (existing == null && govResourceId != null) {
+            existing = favoriteMapper.selectOne(new LambdaQueryWrapper<BizResourceFavorite>()
+                    .eq(BizResourceFavorite::getUserId, operator.getUserId())
+                    .eq(BizResourceFavorite::getGovResourceId, govResourceId)
+                    .last("LIMIT 1"));
+        }
+        if (existing != null) {
+            existing.setTitle(str(body.get("title"), existing.getTitle()));
+            existing.setCatalogCode(str(body.get("catalogCode"), existing.getCatalogCode()));
+            existing.setProviderOrg(str(body.get("providerOrg"), existing.getProviderOrg()));
+            existing.setResourceType(str(body.get("resourceType"), existing.getResourceType()));
+            existing.setResourceTypeLabel(str(body.get("resourceTypeLabel"), existing.getResourceTypeLabel()));
+            if (catalogId != null) {
+                existing.setCatalogId(catalogId);
+            }
+            if (govResourceId != null) {
+                existing.setGovResourceId(govResourceId);
+            }
+            existing.setFollowedAt(LocalDateTime.now());
+            favoriteMapper.updateById(existing);
+            return toFavoriteRow(existing);
+        }
+
+        String title = str(body.get("title"), null);
+        String catalogCode = str(body.get("catalogCode"), null);
+        String providerOrg = str(body.get("providerOrg"), null);
+        String resourceType = str(body.get("resourceType"), null);
+        String resourceTypeLabel = str(body.get("resourceTypeLabel"), null);
+        if (catalogId != null) {
+            BizCatalogItem cat = catalogMapper.selectById(catalogId);
+            if (cat != null) {
+                if (blank(title)) {
+                    title = cat.getTitle();
+                }
+                if (blank(catalogCode)) {
+                    catalogCode = cat.getCatalogCode();
+                }
+                if (blank(providerOrg)) {
+                    providerOrg = cat.getProviderOrg();
+                }
+                if (blank(resourceType)) {
+                    resourceType = cat.getShareModes();
+                }
+            }
+        }
+        if (govResourceId != null) {
+            GovCatalogResource gov = govResourceMapper.selectById(govResourceId);
+            if (gov != null) {
+                if (blank(title)) {
+                    title = gov.getResourceName();
+                }
+                if (blank(catalogCode)) {
+                    catalogCode = gov.getResourceCode();
+                }
+                if (blank(providerOrg)) {
+                    providerOrg = gov.getProviderOrg();
+                }
+                if (blank(resourceType)) {
+                    resourceType = gov.getResourceType();
+                }
+            }
+        }
+        if (blank(title)) {
+            title = catalogId != null ? ("资源 #" + catalogId) : ("资源 #" + govResourceId);
+        }
+
+        BizResourceFavorite fav = new BizResourceFavorite();
+        fav.setUserId(operator.getUserId());
+        fav.setUsername(operator.getUsername());
+        fav.setCatalogId(catalogId);
+        fav.setGovResourceId(govResourceId);
+        fav.setTitle(title);
+        fav.setCatalogCode(catalogCode);
+        fav.setProviderOrg(providerOrg);
+        fav.setResourceType(resourceType);
+        fav.setResourceTypeLabel(resourceTypeLabel);
+        fav.setFollowedAt(LocalDateTime.now());
+        favoriteMapper.insert(fav);
+        return toFavoriteRow(fav);
+    }
+
+    @Transactional
+    public void removeFavorite(UserPrincipal operator, Long id) {
+        if (operator == null || operator.getUserId() == null) {
+            throw new BusinessException(401, "未登录");
+        }
+        BizResourceFavorite fav = favoriteMapper.selectById(id);
+        if (fav == null) {
+            return;
+        }
+        if (!operator.isSystemAdmin() && !Objects.equals(operator.getUserId(), fav.getUserId())) {
+            throw new BusinessException(403, "仅可取消本人订阅");
+        }
+        favoriteMapper.deleteById(id);
+    }
+
+    @Transactional
+    public void removeFavoriteByResource(UserPrincipal operator, Long catalogId, Long govResourceId) {
+        if (operator == null || operator.getUserId() == null) {
+            throw new BusinessException(401, "未登录");
+        }
+        LambdaQueryWrapper<BizResourceFavorite> q = new LambdaQueryWrapper<BizResourceFavorite>()
+                .eq(BizResourceFavorite::getUserId, operator.getUserId());
+        if (catalogId != null) {
+            q.eq(BizResourceFavorite::getCatalogId, catalogId);
+        } else if (govResourceId != null) {
+            q.eq(BizResourceFavorite::getGovResourceId, govResourceId);
+        } else {
+            throw new BusinessException(400, "catalogId 或 govResourceId 必填");
+        }
+        favoriteMapper.delete(q);
+    }
+
+    private Map<String, Object> toFavoriteRow(BizResourceFavorite f) {
+        Map<String, Object> row = new LinkedHashMap<>();
+        row.put("id", f.getId());
+        row.put("catalogId", f.getCatalogId());
+        row.put("govResourceId", f.getGovResourceId());
+        row.put("title", f.getTitle());
+        row.put("catalogCode", f.getCatalogCode());
+        row.put("providerOrg", f.getProviderOrg());
+        row.put("resourceType", f.getResourceType());
+        row.put("resourceTypeLabel", f.getResourceTypeLabel());
+        row.put("followedAt", f.getFollowedAt());
+        return row;
     }
 
     /**

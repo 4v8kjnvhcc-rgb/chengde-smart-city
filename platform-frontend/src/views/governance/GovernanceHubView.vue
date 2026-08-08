@@ -2,8 +2,11 @@
 import { computed, defineAsyncComponent, nextTick, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import HubSideLayout, { type HubNavItem } from '@/components/common/HubSideLayout.vue'
+import { useAuthStore } from '@/stores/auth'
 import { metaSectionItems, resolveMetaSection } from './metadata/meta-nav'
 import GovernanceEtlPanel from './etl/GovernanceEtlPanel.vue'
+
+const auth = useAuthStore()
 
 const MetadataSubsystemView = defineAsyncComponent(() => import('./metadata/MetadataSubsystemView.vue'))
 const StandardsView = defineAsyncComponent(() => import('./quality/StandardsView.vue'))
@@ -24,7 +27,7 @@ const GovernanceComponentsView = defineAsyncComponent(() => import('./etl/Govern
 /** V3.0：数据融合处理下挂五子能力，侧栏三级可见 */
 const FUSION_CAPS = ['script', 'clean', 'schedule', 'execute', 'version'] as const
 
-const navItems: HubNavItem[] = [
+const NAV_BASE: HubNavItem[] = [
   {
     key: 'metadata',
     label: '元数据管理',
@@ -84,6 +87,27 @@ const navItems: HubNavItem[] = [
     ],
   },
 ]
+
+/** 治理侧目录：部门管理员仅红框四项；超管含审批及全部一级模块 */
+const DEPT_CATALOG_KEYS = new Set([
+  'catalog.resources',
+  'catalog.publish',
+  'catalog.subscriptions',
+  'catalog.portal',
+])
+
+const navItems = computed<HubNavItem[]>(() => {
+  if (auth.isSystemAdmin) return NAV_BASE
+  // 部门管理员：只保留「数据目录管理系统」下红框菜单
+  const catalog = NAV_BASE.find((g) => g.key === 'catalog')
+  if (!catalog?.children) return []
+  return [
+    {
+      ...catalog,
+      children: catalog.children.filter((c) => DEPT_CATALOG_KEYS.has(c.key)),
+    },
+  ]
+})
 
 const DEFAULT_NAV = 'metadata.model'
 const activeNav = ref(DEFAULT_NAV)
@@ -152,6 +176,16 @@ let applyingRoute = false
 
 function resolveFromRoute() {
   applyingRoute = true
+  // 部门管理员：仅允许红框目录菜单，默认进编制
+  if (!auth.isSystemAdmin) {
+    let sub = String(route.query.cSub || 'resources')
+    if (sub === 'classify' || sub === 'approvals') sub = 'resources'
+    const key = `catalog.${sub}`
+    activeNav.value = DEPT_CATALOG_KEYS.has(key) ? key : 'catalog.resources'
+    resolveEtlView()
+    nextTick(() => { applyingRoute = false })
+    return
+  }
   const qTab = String(route.query.tab || 'metadata').toLowerCase()
   const mapped = tabMap[qTab] || 'metadata'
   if (mapped === 'etl') {

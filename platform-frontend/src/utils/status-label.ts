@@ -8,7 +8,7 @@ const STATUS_ZH: Record<string, string> = {
   DISABLED: '已停用',
   // 草稿/发布
   DRAFT: '草稿',
-  TO_REGISTER: '待注册发布',
+  TO_REGISTER: '待发布',
   PUBLISHED: '已发布',
   PUBLISH: '发布',
   CREATE: '创建',
@@ -30,7 +30,7 @@ const STATUS_ZH: Record<string, string> = {
   BLOCKED: '阻断',
   // 审批/订阅
   PENDING: '待审核',
-  APPROVED: '审核通过',
+  APPROVED: '已审核',
   REJECTED: '驳回待提交',
   CANCELLED: '已撤销',
   WITHDRAWN: '已撤回',
@@ -71,6 +71,7 @@ const STATUS_ZH: Record<string, string> = {
   PRE_AUDIT: '预审',
   AUDIT: '审核',
   CONFIRMED: '已确认',
+  CATALOG_MOUNTED: '已挂载',
   DISPATCHED: '待确认',
   SUPERVISING: '督办中',
   CORRECTION: '异议回流',
@@ -482,6 +483,28 @@ const STATUS_ZH: Record<string, string> = {
 }
 
 /**
+ * 数据资源目录生命周期状态（列表「状态」列）。
+ * 以 approvalStatus 为主；下线后后端会回到 DRAFT，不再单独展示发布态。
+ * 返回码：DRAFT / TO_REGISTER / PENDING / APPROVED / REJECTED
+ */
+export function catalogResourceStatusCode(approvalStatus?: string | null, publishStatus?: string | null): string {
+  const a = String(approvalStatus ?? 'DRAFT').trim().toUpperCase()
+  const p = String(publishStatus ?? '').trim().toUpperCase()
+  if (a === 'PENDING') return 'PENDING'
+  if (a === 'TO_REGISTER') return 'TO_REGISTER'
+  if (a === 'REJECTED') return 'REJECTED'
+  if (a === 'APPROVED') return 'APPROVED'
+  // 下线后回编目可再编辑，展示「已下线」
+  if (p === 'OFFLINE') return 'OFFLINE'
+  // WITHDRAWN 等历史态按草稿展示（可再编辑提交）
+  return 'DRAFT'
+}
+
+export function catalogResourceStatusLabel(approvalStatus?: string | null, publishStatus?: string | null): string {
+  return statusLabel(catalogResourceStatusCode(approvalStatus, publishStatus))
+}
+
+/**
  * 将后端状态码转为中文；未知码原样返回（便于发现漏映射）。
  * 数值状态：1→启用 / 0→停用（账号等）。
  */
@@ -498,7 +521,7 @@ export function statusLabel(value: unknown): string {
 
 export function statusTagType(value: unknown): 'success' | 'warning' | 'info' | 'danger' | 'primary' {
   const key = String(value ?? '').trim().toUpperCase()
-  if (['ACTIVE', 'ENABLED', 'SUCCESS', 'APPROVED', 'COMPLETED', 'FINISHED', 'CONFIRMED', 'PUBLISHED', 'READY', 'CONFIGURED', 'NORMAL', 'SUBSCRIBED', 'DISTRIBUTED', 'MAPPED', 'MATCHED', 'INDEXED', 'OK', 'IMPLEMENTED', 'ONLINE', 'UP', 'PASS', 'UNDERSTOOD', 'POSITIVE', 'CLEANED', 'CLEANED_IN', 'PUBLIC'].includes(key)) {
+  if (['ACTIVE', 'ENABLED', 'SUCCESS', 'APPROVED', 'COMPLETED', 'FINISHED', 'CONFIRMED', 'CATALOG_MOUNTED', 'PUBLISHED', 'READY', 'CONFIGURED', 'NORMAL', 'SUBSCRIBED', 'DISTRIBUTED', 'MAPPED', 'MATCHED', 'INDEXED', 'OK', 'IMPLEMENTED', 'ONLINE', 'UP', 'PASS', 'UNDERSTOOD', 'POSITIVE', 'CLEANED', 'CLEANED_IN', 'PUBLIC'].includes(key)) {
     return 'success'
   }
   if (['PENDING', 'PENDING_ARCHIVE', 'PENDING_REVIEW', 'RUNNING', 'ANALYZING', 'PRE_AUDITING', 'CORRECTION', 'WAITING', 'DRAFT', 'TO_REGISTER', 'SUPERVISING', 'DISPATCHED', 'PROVIDER_RETURNED', 'FULFILLING', 'PARTIAL', 'WARN', 'POC', 'MEDIUM', 'RAW', 'EXTRACTED', 'TAGGED', 'LEDGER', 'OPEN', 'OTHER', 'PRIVATE', 'UNEVEN', 'WITHDRAW_PENDING'].includes(key)) {

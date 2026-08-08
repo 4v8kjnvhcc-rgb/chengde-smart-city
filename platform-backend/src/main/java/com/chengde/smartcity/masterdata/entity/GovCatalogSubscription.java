@@ -15,9 +15,11 @@ public class GovCatalogSubscription {
     private String shareMode;
     private String purpose;
     private String applyPayload;
+    private Long portalSubscriptionId;
     private String status;
     private String reviewComment;
     private String reviewedBy;
+    private String reviewerContact;
     private LocalDateTime reviewedAt;
     private String distributeResult;
     private LocalDateTime distributeAt;
@@ -38,12 +40,16 @@ public class GovCatalogSubscription {
     public void setPurpose(String purpose) { this.purpose = purpose; }
     public String getApplyPayload() { return applyPayload; }
     public void setApplyPayload(String applyPayload) { this.applyPayload = applyPayload; }
+    public Long getPortalSubscriptionId() { return portalSubscriptionId; }
+    public void setPortalSubscriptionId(Long portalSubscriptionId) { this.portalSubscriptionId = portalSubscriptionId; }
     public String getStatus() { return status; }
     public void setStatus(String status) { this.status = status; }
     public String getReviewComment() { return reviewComment; }
     public void setReviewComment(String reviewComment) { this.reviewComment = reviewComment; }
     public String getReviewedBy() { return reviewedBy; }
     public void setReviewedBy(String reviewedBy) { this.reviewedBy = reviewedBy; }
+    public String getReviewerContact() { return reviewerContact; }
+    public void setReviewerContact(String reviewerContact) { this.reviewerContact = reviewerContact; }
     public LocalDateTime getReviewedAt() { return reviewedAt; }
     public void setReviewedAt(LocalDateTime reviewedAt) { this.reviewedAt = reviewedAt; }
     public String getDistributeResult() { return distributeResult; }

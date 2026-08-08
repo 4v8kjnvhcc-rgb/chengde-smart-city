@@ -19,6 +19,7 @@ public class GovCatalogApproval {
     private String submittedBy;
     private LocalDateTime submittedAt;
     private String reviewedBy;
+    private String reviewerContact;
     private LocalDateTime reviewedAt;
     private String payloadJson;
 
@@ -44,6 +45,8 @@ public class GovCatalogApproval {
     public void setSubmittedAt(LocalDateTime submittedAt) { this.submittedAt = submittedAt; }
     public String getReviewedBy() { return reviewedBy; }
     public void setReviewedBy(String reviewedBy) { this.reviewedBy = reviewedBy; }
+    public String getReviewerContact() { return reviewerContact; }
+    public void setReviewerContact(String reviewerContact) { this.reviewerContact = reviewerContact; }
     public LocalDateTime getReviewedAt() { return reviewedAt; }
     public void setReviewedAt(LocalDateTime reviewedAt) { this.reviewedAt = reviewedAt; }
     public String getPayloadJson() { return payloadJson; }

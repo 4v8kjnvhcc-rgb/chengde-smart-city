@@ -33,8 +33,12 @@ import com.chengde.smartcity.security.UserPrincipal;
 import com.chengde.smartcity.system.entity.AuditLog;
 import com.chengde.smartcity.system.entity.SysOrg;
 import com.chengde.smartcity.system.mapper.SysOrgMapper;
+import java.io.IOException;
 import java.math.BigDecimal;
 import java.math.RoundingMode;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -48,6 +52,7 @@ import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.web.multipart.MultipartFile;
 
 @Service
 public class SupplyDemandService {
@@ -121,6 +126,8 @@ public class SupplyDemandService {
     @Value("${app.exchange.supply.dispatch-downstream:false}")
     private boolean dispatchDownstream;
 
+    private final Path attachmentUploadRoot;
+
     public SupplyDemandService(BizDemandTemplateMapper templateMapper, BizDataDemandMapper demandMapper,
                                BizCatalogItemMapper catalogMapper, BizDemandSupplyTaskMapper supplyTaskMapper,
                                BizCatalogObjectionMapper objectionMapper, BizSupplyManifestMapper manifestMapper,
@@ -128,10 +135,12 @@ public class SupplyDemandService {
                                BizCollectTaskMapper collectTaskMapper,
                                GovCatalogApprovalMapper approvalMapper, GovCatalogResourceMapper govResourceMapper,
                                BizGovMatterMapper matterMapper, BizSupplySettingMapper supplySettingMapper,
-                               SysOrgMapper orgMapper, AuditService auditService) {
+                               SysOrgMapper orgMapper, AuditService auditService,
+                               @Value("${app.upload.dir:./data/uploads}") String uploadDir) {
         this.templateMapper = templateMapper;
         this.demandMapper = demandMapper;
         this.catalogMapper = catalogMapper;
+        this.attachmentUploadRoot = Paths.get(uploadDir, "supply-demand").toAbsolutePath().normalize();
         this.supplyTaskMapper = supplyTaskMapper;
         this.objectionMapper = objectionMapper;
         this.manifestMapper = manifestMapper;
@@ -209,6 +218,13 @@ public class SupplyDemandService {
     }
 
     public List<BizDataDemand> listDemands(String stage, String status) {
+        return listDemands(null, stage, status);
+    }
+
+    /**
+     * 需求列表。部门管理员仅返回与本组织相关（需求方或提供方）的记录；平台/超管看全量。
+     */
+    public List<BizDataDemand> listDemands(UserPrincipal operator, String stage, String status) {
         LambdaQueryWrapper<BizDataDemand> q = new LambdaQueryWrapper<BizDataDemand>()
                 .orderByDesc(BizDataDemand::getUpdatedAt)
                 .orderByDesc(BizDataDemand::getId);
@@ -217,6 +233,14 @@ public class SupplyDemandService {
         }
         if (status != null && !status.isBlank()) {
             q.eq(BizDataDemand::getStatus, status);
+        }
+        if (operator != null && !isListCenterPlatform(operator)) {
+            String orgName = resolveOrgName(operator);
+            if (orgName != null && !orgName.isBlank()) {
+                q.and(w -> w.eq(BizDataDemand::getRequesterOrg, orgName)
+                        .or()
+                        .eq(BizDataDemand::getAssigneeOrg, orgName));
+            }
         }
         return demandMapper.selectList(q);
     }
@@ -271,8 +295,10 @@ public class SupplyDemandService {
                     demand.getConfirmNote(),
                     demand.getUpdatedAt()));
         }
-        if (demand.getCatalogMountedAt() != null) {
-            stages.add(trackStage("目录已挂载", "目录已挂载至门户", demand.getCatalogMountedAt()));
+        if (demand.getCatalogMountedAt() != null || "CATALOG_MOUNTED".equals(demand.getStatus())) {
+            stages.add(trackStage("已挂载",
+                    firstNonBlank(demand.getConfirmNote(), "目录已挂载至门户"),
+                    demand.getCatalogMountedAt() != null ? demand.getCatalogMountedAt() : demand.getUpdatedAt()));
         }
         if ("COMPLETED".equals(demand.getStatus())) {
             stages.add(trackStage("已办结", "需求办结", demand.getUpdatedAt()));
@@ -348,11 +374,63 @@ public class SupplyDemandService {
             case "PROVIDER_RETURNED" -> "提供方退回待裁决";
             case "RETURNED" -> "已退回";
             case "CONFIRMED" -> "已确认";
+            case "CATALOG_MOUNTED" -> "已挂载";
             case "CORRECTION" -> "异议回流";
             case "COMPLETED" -> "已办结";
             case "CANCELLED" -> "已撤销";
             default -> status;
         };
+    }
+
+    /** 需求附件上传 */
+    public Map<String, Object> uploadAttachment(UserPrincipal operator, MultipartFile file) {
+        requireDemandOperator(operator);
+        if (file == null || file.isEmpty()) {
+            throw new BusinessException(400, "请选择附件文件");
+        }
+        String original = file.getOriginalFilename();
+        if (original == null || original.isBlank()) {
+            original = "file.bin";
+        }
+        String safeName = original.replaceAll("[\\\\/:*?\"<>|]", "_");
+        if (safeName.length() > 180) {
+            safeName = safeName.substring(safeName.length() - 180);
+        }
+        try {
+            Files.createDirectories(attachmentUploadRoot);
+            String stored = System.currentTimeMillis() + "_"
+                    + UUID.randomUUID().toString().substring(0, 8) + "_" + safeName;
+            Path target = attachmentUploadRoot.resolve(stored).normalize();
+            if (!target.startsWith(attachmentUploadRoot)) {
+                throw new BusinessException(400, "非法文件路径");
+            }
+            file.transferTo(target);
+            Map<String, Object> r = new LinkedHashMap<>();
+            r.put("fileName", safeName);
+            r.put("filePath", stored);
+            r.put("url", "/api/v1/exchange/supply/attachments/" + stored);
+            r.put("size", file.getSize());
+            r.put("uploadedBy", operator.getUsername());
+            return r;
+        } catch (IOException ex) {
+            log.warn("upload supply demand attachment failed: {}", ex.getMessage());
+            throw new BusinessException(500, "附件上传失败");
+        }
+    }
+
+    public Path resolveAttachment(String relative) {
+        if (relative == null || relative.isBlank()) {
+            throw new BusinessException(404, "附件不存在");
+        }
+        String name = relative.replace("\\", "/");
+        if (name.contains("..") || name.contains("/")) {
+            throw new BusinessException(400, "非法文件路径");
+        }
+        Path target = attachmentUploadRoot.resolve(name).normalize();
+        if (!target.startsWith(attachmentUploadRoot) || !Files.isRegularFile(target)) {
+            throw new BusinessException(404, "附件不存在");
+        }
+        return target;
     }
 
     private String firstNonBlank(String... values) {
@@ -598,7 +676,7 @@ public class SupplyDemandService {
             if (body.get("formPayload") instanceof String) {
                 demand.setFormPayload(String.valueOf(body.get("formPayload")));
             } else {
-                demand.setFormPayload(toJson(castMap(body.get("formPayload"))));
+                demand.setFormPayload(toJsonObject(body.get("formPayload")));
             }
         } else if (body.containsKey("providerOrg") || body.containsKey("dataName")
                 || body.containsKey("dataItems") || body.containsKey("matterIds")) {
@@ -666,17 +744,17 @@ public class SupplyDemandService {
 
         demand.setStage("PRE_AUDIT");
         demand.setStatus("PRE_AUDITING");
+        // 履约路径默认「未在中台·需归集补数」，由平台管理员人工选择
+        demand.setFulfillPath(PATH_COLLECT);
         if (orgCatalogs.isEmpty()) {
             demand.setMatchedCatalogId(null);
             demand.setMatchScore(BigDecimal.ZERO);
-            demand.setFulfillPath(PATH_COLLECT);
             demand.setEvalStatus("UNMATCHED");
             demand.setShareAttr(str(demand.getShareAttr(), "INTERNAL"));
             demand.setAnalysisNote("组织「" + providerOrg + "」暂无已发布到部门数据共享门户的目录，建议分发后由数源部门补编目录或归集补数");
         } else if (best != null && bestScore >= 30) {
             demand.setMatchedCatalogId(Long.valueOf(String.valueOf(best.get("resourceId"))));
             demand.setMatchScore(BigDecimal.valueOf(bestScore).setScale(2, RoundingMode.HALF_UP));
-            demand.setFulfillPath(PATH_AUTHORIZE);
             demand.setEvalStatus("MATCHED");
             demand.setShareAttr(str(demand.getShareAttr(), "CONDITIONAL"));
             demand.setAnalysisNote("组织「" + providerOrg + "」门户目录参考匹配：" + best.get("title")
@@ -684,7 +762,6 @@ public class SupplyDemandService {
         } else if (best != null && bestScore > 0) {
             demand.setMatchedCatalogId(Long.valueOf(String.valueOf(best.get("resourceId"))));
             demand.setMatchScore(BigDecimal.valueOf(bestScore).setScale(2, RoundingMode.HALF_UP));
-            demand.setFulfillPath(PATH_COLLECT);
             demand.setEvalStatus("PARTIAL");
             demand.setShareAttr(str(demand.getShareAttr(), "RESTRICTED"));
             demand.setAnalysisNote("组织「" + providerOrg + "」门户目录弱匹配：" + best.get("title")
@@ -692,7 +769,6 @@ public class SupplyDemandService {
         } else {
             demand.setMatchedCatalogId(null);
             demand.setMatchScore(BigDecimal.ZERO);
-            demand.setFulfillPath(PATH_COLLECT);
             demand.setEvalStatus("UNMATCHED");
             demand.setShareAttr(str(demand.getShareAttr(), "INTERNAL"));
             demand.setAnalysisNote("组织「" + providerOrg + "」有 "
@@ -1049,26 +1125,41 @@ public class SupplyDemandService {
                 "DEMAND_ADMIN_REFUSE_RETURN", "biz_data_demand", String.valueOf(id), note);
     }
 
-    /** 提供部门标记：目录已挂载至门户 */
+    /** 提供部门标记：目录已挂载至门户（须选择门户目录） */
     @Transactional
     public void markCatalogMounted(UserPrincipal operator, Long id, Map<String, Object> body) {
         requireProviderOperator(operator);
         BizDataDemand demand = getDemand(id);
-        if (!"CONFIRMED".equals(demand.getStatus()) && !"SUPERVISING".equals(demand.getStatus())) {
+        if (!"CONFIRMED".equals(demand.getStatus()) && !"SUPERVISING".equals(demand.getStatus())
+                && !"CATALOG_MOUNTED".equals(demand.getStatus())) {
             throw new BusinessException(400, "仅已确认（含挂载督办中）的需求可标记目录已挂载");
         }
-        demand.setCatalogMountedAt(java.time.LocalDateTime.now());
-        if ("SUPERVISING".equals(demand.getStatus()) && demand.getCatalogMountDeadline() != null) {
-            // 挂载完成后若因超时进入督办，恢复为已确认待办结
-            demand.setStatus("CONFIRMED");
-            demand.setStage("AUDIT");
+        Object catalogIdObj = body.get("matchedCatalogId");
+        if (catalogIdObj == null || String.valueOf(catalogIdObj).isBlank()) {
+            catalogIdObj = body.get("catalogId");
         }
-        String tip = str(body.get("confirmNote"), "目录已挂载至部门数据共享门户");
+        if (catalogIdObj == null || String.valueOf(catalogIdObj).isBlank()) {
+            throw new BusinessException(400, "请选择已挂载的目录名称");
+        }
+        Long catalogId = Long.valueOf(String.valueOf(catalogIdObj));
+        BizCatalogItem catalog = catalogMapper.selectById(catalogId);
+        if (catalog == null || !"PUBLISHED".equals(catalog.getPublishStatus())
+                || catalog.getGovResourceId() == null) {
+            throw new BusinessException(400, "仅可选择部门数据共享门户已发布目录");
+        }
+        String provider = demand.getAssigneeOrg() == null ? "" : demand.getAssigneeOrg().trim();
+        if (!provider.isBlank() && catalog.getProviderOrg() != null
+                && !provider.equalsIgnoreCase(catalog.getProviderOrg().trim())) {
+            throw new BusinessException(400, "所选目录不属于当前数据提供部门");
+        }
+        demand.setMatchedCatalogId(catalogId);
+        demand.setCatalogMountedAt(java.time.LocalDateTime.now());
+        demand.setStatus("CATALOG_MOUNTED");
+        demand.setStage("AUDIT");
+        String tip = str(body.get("confirmNote"),
+                "目录已挂载至部门数据共享门户：" + Objects.toString(catalog.getTitle(), ""));
         String prev = demand.getConfirmNote() == null ? "" : demand.getConfirmNote() + " | ";
         demand.setConfirmNote(prev + tip);
-        if (body.get("matchedCatalogId") != null && !String.valueOf(body.get("matchedCatalogId")).isBlank()) {
-            demand.setMatchedCatalogId(Long.valueOf(String.valueOf(body.get("matchedCatalogId"))));
-        }
         demandMapper.updateById(demand);
         auditService.log(operator.getUserId(), operator.getUsername(), operator.getOrgId(),
                 "DEMAND_CATALOG_MOUNTED", "biz_data_demand", String.valueOf(id), tip);
@@ -1122,24 +1213,25 @@ public class SupplyDemandService {
                 "DEMAND_CONFIRM_FEEDBACK", "biz_data_demand", String.valueOf(id), feedback);
     }
 
-    /** 整体办结 */
+    /** 整体办结：由数据需求部门在「已挂载」后确认办结 */
     @Transactional
     public void completeDemand(UserPrincipal operator, Long id, Map<String, Object> body) {
-        requireProviderOperator(operator);
+        requireDemandOperator(operator);
         BizDataDemand demand = getDemand(id);
-        if (!"CONFIRMED".equals(demand.getStatus()) && !"SUPERVISING".equals(demand.getStatus())) {
-            throw new BusinessException(400, "仅已确认（或挂载督办中且已挂载）的需求可办结");
+        boolean mounted = "CATALOG_MOUNTED".equals(demand.getStatus())
+                || (("CONFIRMED".equals(demand.getStatus()) || "SUPERVISING".equals(demand.getStatus()))
+                && demand.getCatalogMountedAt() != null);
+        if (!mounted) {
+            throw new BusinessException(400, "仅「已挂载」的需求可由数据需求部门办结");
         }
-        if (demand.getCatalogMountedAt() == null
-                && (demand.getCatalogMountDeadline() != null || PATH_COLLECT.equals(demand.getFulfillPath()))) {
-            throw new BusinessException(400, "请先完成目录挂载至门户（标记已挂载）后再办结；需求部门方可从门户申请");
-        }
-        if ("SUPERVISING".equals(demand.getStatus()) && demand.getCatalogMountedAt() == null) {
-            throw new BusinessException(400, "挂载督办中请先标记目录已挂载");
+        if (demand.getCatalogMountedAt() == null) {
+            throw new BusinessException(400, "请先由数据提供部门完成目录挂载后再办结");
         }
         demand.setStatus("COMPLETED");
         demand.setStage("SUPPLY");
-        demand.setConfirmNote(str(body.get("confirmNote"), demand.getConfirmNote()));
+        String tip = str(body.get("confirmNote"), "数据需求部门确认办结");
+        String prev = demand.getConfirmNote() == null ? "" : demand.getConfirmNote() + " | ";
+        demand.setConfirmNote(prev + tip);
         if (body.get("confirmFeedback") != null) {
             demand.setConfirmFeedback(String.valueOf(body.get("confirmFeedback")));
         }
@@ -1429,38 +1521,38 @@ public class SupplyDemandService {
                 out.put("title", "目录发布清单");
                 out.put("category", "目录清单");
                 out.put("columns", catalogListColumns());
-                out.put("items", catalogListByApproval("PUBLISH"));
+                out.put("items", filterCatalogRowsByOrg(catalogListByApproval("PUBLISH"), orgName, platform));
             }
             case "catalog-change" -> {
                 out.put("title", "目录变更清单");
                 out.put("category", "目录清单");
                 out.put("columns", catalogListColumns());
-                out.put("items", catalogChangeOrUpdateRows("UPDATE"));
+                out.put("items", filterCatalogRowsByOrg(catalogChangeOrUpdateRows("UPDATE"), orgName, platform));
             }
             case "catalog-offline" -> {
                 out.put("title", "目录下线清单");
                 out.put("category", "目录清单");
                 out.put("columns", catalogListColumns());
-                out.put("items", unifiedCatalogRows("OFFLINE"));
+                out.put("items", filterCatalogRowsByOrg(unifiedCatalogRows("OFFLINE"), orgName, platform));
             }
             case "catalog-access" -> {
                 out.put("title", "数据接入清单");
                 out.put("category", "目录清单");
                 out.put("columns", catalogListColumns());
                 // 与门户/资源目录已发布目录同源（不再用归集任务冒充）
-                out.put("items", unifiedCatalogRows("PUBLISHED"));
+                out.put("items", filterCatalogRowsByOrg(unifiedCatalogRows("PUBLISHED"), orgName, platform));
             }
             case "catalog-update" -> {
                 out.put("title", "数据更新清单");
                 out.put("category", "目录清单");
                 out.put("columns", catalogListColumns());
-                out.put("items", catalogChangeOrUpdateRows("UPDATE"));
+                out.put("items", filterCatalogRowsByOrg(catalogChangeOrUpdateRows("UPDATE"), orgName, platform));
             }
             case "catalog-published" -> {
                 out.put("title", "已发布目录清单");
                 out.put("category", "目录清单");
                 out.put("columns", catalogListColumns());
-                out.put("items", unifiedCatalogRows("PUBLISHED"));
+                out.put("items", filterCatalogRowsByOrg(unifiedCatalogRows("PUBLISHED"), orgName, platform));
             }
             case "sd-demand-audit" -> {
                 out.put("title", "需求审核清单");
@@ -1486,20 +1578,20 @@ public class SupplyDemandService {
                 out.put("items", demandManifestRows(Set.of(
                         "SUBMITTED", "DISPATCHED", "PRE_AUDITING", "ANALYZING", "SUPERVISING", "CORRECTION",
                         "CONFIRMED", "PROVIDER_RETURNED", "RETURNED"),
-                        null, null));
+                        platform ? null : "related", orgName));
             }
             case "sd-auth-history" -> {
                 out.put("title", "历史授权清单");
                 out.put("category", "供需清单");
                 out.put("columns", supplyListColumns());
-                out.put("items", dutyHistoryRows());
+                out.put("items", filterCatalogRowsByOrg(dutyHistoryRows(), orgName, platform));
             }
             case "sd-history" -> {
                 out.put("title", "历史供需清单");
                 out.put("category", "供需清单");
                 out.put("columns", supplyListColumns());
                 out.put("items", demandManifestRows(Set.of("CONFIRMED", "COMPLETED", "CANCELLED", "REJECTED"),
-                        null, null));
+                        platform ? null : "related", orgName));
             }
             case "sd-cascade" -> {
                 out.put("title", "级联下行清单");
@@ -1533,19 +1625,21 @@ public class SupplyDemandService {
                 out.put("title", "异议办结清单");
                 out.put("category", "异议清单");
                 out.put("columns", objectionListColumns());
-                out.put("items", objectionRowsByStatuses(Set.of("CLOSED"), null, null));
+                out.put("items", objectionRowsByStatuses(Set.of("CLOSED"),
+                        platform ? null : "related", orgName));
             }
             case "objection-history" -> {
                 out.put("title", "历史异议清单");
                 out.put("category", "异议清单");
                 out.put("columns", objectionListColumns());
-                out.put("items", objectionRowsByStatuses(Set.of("CLOSED"), null, null));
+                out.put("items", objectionRowsByStatuses(Set.of("CLOSED"),
+                        platform ? null : "related", orgName));
             }
             case "objection-stats" -> {
                 out.put("title", "异议统计分析");
                 out.put("category", "异议清单");
                 out.put("columns", List.of());
-                Map<String, Object> stats = objectionStats();
+                Map<String, Object> stats = objectionStats(platform ? null : "related", orgName);
                 out.put("stats", stats);
                 out.put("items", stats.getOrDefault("byStatus", List.of()));
             }
@@ -1560,6 +1654,268 @@ public class SupplyDemandService {
     /** 兼容旧调用 */
     public Map<String, Object> listCenter(String listType) {
         return listCenter(listType, null);
+    }
+
+    /**
+     * 清单中心查看页：审核流程（状态 / 结果 / 时间）。
+     * kind: catalog | demand | objection（可省略，按 listType 推断）
+     */
+    public Map<String, Object> listCenterAuditFlow(String listType, String kind, Long id) {
+        if (id == null) {
+            throw new BusinessException(400, "缺少记录 id");
+        }
+        String resolved = resolveListCenterKind(listType, kind);
+        List<Map<String, Object>> stages = switch (resolved) {
+            case "objection" -> buildObjectionTrackStages(id);
+            case "demand" -> {
+                BizDataDemand demand = demandMapper.selectById(id);
+                if (demand == null) {
+                    throw new BusinessException(404, "需求不存在");
+                }
+                yield buildDemandTrackStages(demand);
+            }
+            case "catalog" -> buildCatalogTrackStages(id);
+            default -> List.of();
+        };
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("kind", resolved);
+        out.put("id", id);
+        out.put("stages", stages);
+        return out;
+    }
+
+    private static String resolveListCenterKind(String listType, String kind) {
+        if (kind != null && !kind.isBlank()) {
+            String k = kind.trim().toLowerCase();
+            if (k.startsWith("obj")) {
+                return "objection";
+            }
+            if (k.startsWith("dem") || k.startsWith("sd") || "supply".equals(k)) {
+                return "demand";
+            }
+            if (k.startsWith("cat")) {
+                return "catalog";
+            }
+        }
+        String type = listType == null ? "" : listType.trim();
+        if (type.startsWith("objection")) {
+            return "objection";
+        }
+        if (type.startsWith("sd-") || type.startsWith("demand")) {
+            return "demand";
+        }
+        return "catalog";
+    }
+
+    private List<Map<String, Object>> buildObjectionTrackStages(Long id) {
+        BizCatalogObjection obj = objectionMapper.selectById(id);
+        if (obj == null) {
+            throw new BusinessException(404, "异议不存在");
+        }
+        List<AuditLog> logs = auditService.listByResource("biz_catalog_objection", String.valueOf(id));
+        List<Map<String, Object>> stages = new ArrayList<>();
+        for (AuditLog a : logs) {
+            stages.add(trackStage(
+                    objectionActionStatusLabel(a.getAction(), a.getDetail()),
+                    objectionActionResult(a.getAction(), a.getDetail(), obj),
+                    a.getCreatedAt()));
+        }
+        if (!stages.isEmpty()) {
+            return stages;
+        }
+        return synthesizeObjectionTrackStages(obj);
+    }
+
+    private List<Map<String, Object>> synthesizeObjectionTrackStages(BizCatalogObjection obj) {
+        List<Map<String, Object>> stages = new ArrayList<>();
+        String st = normalizeObjectionStatus(obj.getStatus());
+        stages.add(trackStage("草稿", "创建异议", obj.getCreatedAt()));
+        if (Set.of("SUBMITTED", "APPROVED", "REJECTED", "PROCESSED", "CLOSED").contains(st)) {
+            stages.add(trackStage("待审核", "提出方已提交", obj.getUpdatedAt() != null ? obj.getUpdatedAt() : obj.getCreatedAt()));
+        }
+        if ("APPROVED".equals(st) || "PROCESSED".equals(st) || "CLOSED".equals(st)) {
+            stages.add(trackStage("已审核待处理", "审核通过", obj.getUpdatedAt()));
+        }
+        if ("REJECTED".equals(st)) {
+            stages.add(trackStage("驳回待提交",
+                    firstNonBlank(obj.getHandlerNote(), "审核驳回"),
+                    obj.getUpdatedAt()));
+        }
+        if ("PROCESSED".equals(st) || "CLOSED".equals(st)) {
+            stages.add(trackStage("已处理",
+                    firstNonBlank(obj.getHandlerNote(), "接收方已处理"),
+                    obj.getUpdatedAt()));
+        }
+        if ("CLOSED".equals(st)) {
+            stages.add(trackStage("已办结", "提出方办结", obj.getUpdatedAt()));
+        }
+        return stages;
+    }
+
+    private String objectionActionStatusLabel(String action, String detail) {
+        if ("OBJECTION_CREATE".equals(action)) {
+            if (detail != null && detail.toUpperCase().contains("DRAFT")) {
+                return "草稿";
+            }
+            return "待审核";
+        }
+        if ("OBJECTION_UPDATE".equals(action)) {
+            return "草稿";
+        }
+        if ("OBJECTION_DELETE".equals(action)) {
+            return "已删除";
+        }
+        if ("OBJECTION_PROCESS".equals(action) && detail != null) {
+            String d = detail.toUpperCase();
+            if (d.contains("→DRAFT") || d.startsWith("WITHDRAW") || d.startsWith("REVOKE")) {
+                return "草稿";
+            }
+            if (d.contains("→SUBMITTED") || d.startsWith("SUBMIT")) {
+                return "待审核";
+            }
+            if (d.contains("→APPROVED") || d.startsWith("APPROVE")) {
+                return "已审核待处理";
+            }
+            if (d.contains("→REJECTED") || d.startsWith("REJECT")) {
+                return "驳回待提交";
+            }
+            if (d.contains("→PROCESSED") || d.startsWith("PROCESS")) {
+                return "已处理";
+            }
+            if (d.contains("→CLOSED") || d.startsWith("CLOSE")) {
+                return "已办结";
+            }
+        }
+        return action != null ? action : "—";
+    }
+
+    private String objectionActionResult(String action, String detail, BizCatalogObjection obj) {
+        if ("OBJECTION_CREATE".equals(action)) {
+            return "创建异议";
+        }
+        if ("OBJECTION_UPDATE".equals(action)) {
+            return "编辑异议";
+        }
+        if ("OBJECTION_DELETE".equals(action)) {
+            return "删除异议";
+        }
+        if ("OBJECTION_PROCESS".equals(action) && detail != null) {
+            String d = detail.toUpperCase();
+            if (d.startsWith("SUBMIT") || d.contains("→SUBMITTED")) {
+                return "提出方提交";
+            }
+            if (d.startsWith("WITHDRAW") || d.startsWith("REVOKE") || d.contains("→DRAFT")) {
+                return "提出方撤销";
+            }
+            if (d.startsWith("APPROVE") || d.contains("→APPROVED")) {
+                return "接收方审核通过";
+            }
+            if (d.startsWith("REJECT") || d.contains("→REJECTED")) {
+                return firstNonBlank(obj.getHandlerNote(), "接收方驳回");
+            }
+            if (d.startsWith("PROCESS") || d.contains("→PROCESSED")) {
+                return firstNonBlank(obj.getHandlerNote(), "接收方已处理");
+            }
+            if (d.startsWith("CLOSE") || d.contains("→CLOSED")) {
+                return "提出方办结";
+            }
+            return detail;
+        }
+        return detail != null && !detail.isBlank() ? detail : "—";
+    }
+
+    private List<Map<String, Object>> buildCatalogTrackStages(Long catalogOrApprovalId) {
+        // 入参优先按 govResourceId；否则门户目录 id / 审批 id
+        Long govResourceId = catalogOrApprovalId;
+        BizCatalogItem catalog = null;
+        List<GovCatalogApproval> approvals = approvalMapper.selectList(new LambdaQueryWrapper<GovCatalogApproval>()
+                .eq(GovCatalogApproval::getResourceId, catalogOrApprovalId)
+                .orderByAsc(GovCatalogApproval::getId)
+                .last("LIMIT 50"));
+        if (approvals.isEmpty()) {
+            catalog = catalogMapper.selectById(catalogOrApprovalId);
+            if (catalog != null && catalog.getGovResourceId() != null) {
+                govResourceId = catalog.getGovResourceId();
+                approvals = approvalMapper.selectList(new LambdaQueryWrapper<GovCatalogApproval>()
+                        .eq(GovCatalogApproval::getResourceId, govResourceId)
+                        .orderByAsc(GovCatalogApproval::getId)
+                        .last("LIMIT 50"));
+            } else {
+                GovCatalogApproval byId = approvalMapper.selectById(catalogOrApprovalId);
+                if (byId != null) {
+                    govResourceId = byId.getResourceId();
+                    approvals = approvalMapper.selectList(new LambdaQueryWrapper<GovCatalogApproval>()
+                            .eq(GovCatalogApproval::getResourceId, govResourceId)
+                            .orderByAsc(GovCatalogApproval::getId)
+                            .last("LIMIT 50"));
+                }
+            }
+        } else {
+            catalog = catalogMapper.selectOne(new LambdaQueryWrapper<BizCatalogItem>()
+                    .eq(BizCatalogItem::getGovResourceId, govResourceId)
+                    .last("LIMIT 1"));
+        }
+        List<Map<String, Object>> stages = new ArrayList<>();
+        for (GovCatalogApproval a : approvals) {
+            String actionZh = catalogApprovalActionLabel(a.getActionType());
+            if (a.getSubmittedAt() != null || a.getSubmittedBy() != null) {
+                stages.add(trackStage(
+                        actionZh + "·提交",
+                        firstNonBlank(a.getSubmitComment(), "提交人：" + str(a.getSubmittedBy(), "—")),
+                        a.getSubmittedAt()));
+            }
+            if (a.getReviewedAt() != null || (a.getStatus() != null && !"PENDING".equalsIgnoreCase(a.getStatus()))) {
+                stages.add(trackStage(
+                        actionZh + "·" + catalogApprovalStatusLabel(a.getStatus()),
+                        firstNonBlank(a.getReviewComment(), "审批人：" + str(a.getReviewedBy(), "—")),
+                        a.getReviewedAt() != null ? a.getReviewedAt() : a.getSubmittedAt()));
+            }
+        }
+        if (!stages.isEmpty()) {
+            return stages;
+        }
+        if (catalog != null) {
+            String pub = catalog.getPublishStatus() != null ? catalog.getPublishStatus() : "DRAFT";
+            String pubZh = switch (pub.toUpperCase()) {
+                case "PUBLISHED" -> "已发布";
+                case "OFFLINE" -> "已下线";
+                case "DRAFT" -> "草稿";
+                case "PENDING_PUBLISH" -> "待发布";
+                default -> pub;
+            };
+            stages.add(trackStage(
+                    pubZh,
+                    firstNonBlank(catalog.getDescription(), "目录记录"),
+                    catalog.getUpdatedAt() != null ? catalog.getUpdatedAt() : catalog.getCreatedAt()));
+        }
+        return stages;
+    }
+
+    private static String catalogApprovalActionLabel(String actionType) {
+        if (actionType == null || actionType.isBlank()) {
+            return "目录审批";
+        }
+        return switch (actionType.toUpperCase()) {
+            case "PUBLISH" -> "发布";
+            case "UPDATE" -> "变更";
+            case "OFFLINE" -> "下线";
+            case "BIND" -> "挂载";
+            case "UNBIND" -> "解挂";
+            default -> actionType;
+        };
+    }
+
+    private static String catalogApprovalStatusLabel(String status) {
+        if (status == null || status.isBlank()) {
+            return "—";
+        }
+        return switch (status.toUpperCase()) {
+            case "PENDING" -> "待审";
+            case "APPROVED" -> "通过";
+            case "REJECTED" -> "驳回";
+            case "WITHDRAWN" -> "已撤回";
+            default -> status;
+        };
     }
 
     private boolean isListCenterPlatform(UserPrincipal operator) {
@@ -1580,6 +1936,24 @@ public class SupplyDemandService {
         }
         SysOrg org = orgMapper.selectById(operator.getOrgId());
         return org != null ? str(org.getOrgName(), "") : "";
+    }
+
+    /** 清单行按组织隔离：匹配提供方 / 需求方 / 核查方任一 */
+    private List<Map<String, Object>> filterCatalogRowsByOrg(List<Map<String, Object>> rows,
+                                                             String orgName, boolean platform) {
+        if (platform || orgName == null || orgName.isBlank() || rows == null || rows.isEmpty()) {
+            return rows == null ? List.of() : rows;
+        }
+        List<Map<String, Object>> out = new ArrayList<>();
+        for (Map<String, Object> r : rows) {
+            String provider = str(r.get("providerOrg"), "");
+            String requester = str(r.get("requesterOrg"), "");
+            String verify = str(r.get("verifyOrg"), "");
+            if (orgName.equals(provider) || orgName.equals(requester) || orgName.equals(verify)) {
+                out.add(r);
+            }
+        }
+        return out;
     }
 
     private List<String> catalogListColumns() {
@@ -1759,6 +2133,11 @@ public class SupplyDemandService {
                     if (d.getRequesterOrg() == null || !orgName.equals(d.getRequesterOrg())) {
                         continue;
                     }
+                } else if ("related".equals(orgRole)) {
+                    boolean ok = orgName.equals(d.getRequesterOrg()) || orgName.equals(d.getAssigneeOrg());
+                    if (!ok) {
+                        continue;
+                    }
                 }
             }
             Map<String, Object> form = parseFormPayloadMap(d.getFormPayload());
@@ -1880,6 +2259,11 @@ public class SupplyDemandService {
                     if (o.getVerifyOrg() == null || !orgName.equals(o.getVerifyOrg())) {
                         continue;
                     }
+                } else if ("related".equals(orgRole)) {
+                    boolean ok = orgName.equals(o.getProviderOrg()) || orgName.equals(o.getVerifyOrg());
+                    if (!ok) {
+                        continue;
+                    }
                 }
             }
             o.setStatus(st);
@@ -1932,12 +2316,16 @@ public class SupplyDemandService {
         row.put("handlerNote", o.getHandlerNote());
         row.put("createdAt", o.getCreatedAt());
         row.put("createdBy", o.getCreatedBy());
+        // 前端按提出方/接收方/超管裁剪；此处给出状态可用操作全集
         List<String> actions = new ArrayList<>();
         actions.add("view");
-        if ("DRAFT".equals(st)) {
+        if ("DRAFT".equals(st) || "REJECTED".equals(st)) {
+            actions.add("edit");
             actions.add("submit");
+            actions.add("delete");
         }
         if ("SUBMITTED".equals(st)) {
+            actions.add("withdraw");
             actions.add("approve");
             actions.add("reject");
         }
@@ -1953,7 +2341,25 @@ public class SupplyDemandService {
     }
 
     private Map<String, Object> objectionStats() {
+        return objectionStats(null, null);
+    }
+
+    private Map<String, Object> objectionStats(String orgRole, String orgName) {
         List<BizCatalogObjection> all = listObjections(null);
+        if (orgName != null && !orgName.isBlank() && orgRole != null) {
+            all = all.stream().filter(o -> {
+                if ("provider".equals(orgRole)) {
+                    return orgName.equals(o.getProviderOrg());
+                }
+                if ("verify".equals(orgRole)) {
+                    return orgName.equals(o.getVerifyOrg());
+                }
+                if ("related".equals(orgRole)) {
+                    return orgName.equals(o.getProviderOrg()) || orgName.equals(o.getVerifyOrg());
+                }
+                return true;
+            }).toList();
+        }
         Map<String, Long> counts = new LinkedHashMap<>();
         for (String s : List.of("DRAFT", "SUBMITTED", "APPROVED", "REJECTED", "PROCESSED", "CLOSED")) {
             counts.put(s, 0L);
@@ -1967,9 +2373,9 @@ public class SupplyDemandService {
         }
         List<Map<String, Object>> byStatus = new ArrayList<>();
         byStatus.add(Map.of("code", "DRAFT", "title", "草稿", "status", "DRAFT", "count", counts.get("DRAFT")));
-        byStatus.add(Map.of("code", "SUBMITTED", "title", "已提交", "status", "SUBMITTED", "count", counts.get("SUBMITTED")));
-        byStatus.add(Map.of("code", "APPROVED", "title", "已通过待处理", "status", "APPROVED", "count", counts.get("APPROVED")));
-        byStatus.add(Map.of("code", "REJECTED", "title", "已驳回", "status", "REJECTED", "count", counts.get("REJECTED")));
+        byStatus.add(Map.of("code", "SUBMITTED", "title", "待审核", "status", "SUBMITTED", "count", counts.get("SUBMITTED")));
+        byStatus.add(Map.of("code", "APPROVED", "title", "已审核待处理", "status", "APPROVED", "count", counts.get("APPROVED")));
+        byStatus.add(Map.of("code", "REJECTED", "title", "驳回待提交", "status", "REJECTED", "count", counts.get("REJECTED")));
         byStatus.add(Map.of("code", "PROCESSED", "title", "已处理", "status", "PROCESSED", "count", counts.get("PROCESSED")));
         byStatus.add(Map.of("code", "CLOSED", "title", "已办结", "status", "CLOSED", "count", counts.get("CLOSED")));
         List<Map<String, Object>> typeRows = new ArrayList<>();
@@ -2070,6 +2476,9 @@ public class SupplyDemandService {
 
     @Transactional
     public Long createObjection(UserPrincipal operator, Map<String, Object> body) {
+        if (operator != null && operator.isSystemAdmin()) {
+            throw new BusinessException(403, "超级管理员仅可查看/删除异议，不可提交异议");
+        }
         // 仅操作异议表；要求挂已通过的需求，不改需求状态
         Long demandId = body.get("demandId") == null || String.valueOf(body.get("demandId")).isBlank()
                 ? null : Long.valueOf(String.valueOf(body.get("demandId")));
@@ -2126,7 +2535,8 @@ public class SupplyDemandService {
 
     /**
      * 异议状态机（独立，不改需求/目录其它业务状态）：
-     * DRAFT→SUBMITTED→APPROVED|REJECTED→PROCESSED→CLOSED
+     * DRAFT→SUBMITTED(待审核)→APPROVED(已审核待处理)|REJECTED(驳回待提交)→PROCESSED→CLOSED
+     * SUBMITTED 可由提出方 WITHDRAW 回草稿。
      */
     @Transactional
     public void processObjection(UserPrincipal operator, Long id, Map<String, Object> body) {
@@ -2143,23 +2553,52 @@ public class SupplyDemandService {
             throw new BusinessException(400, "异议清单不再回流修改需求状态；请在异议流程内处理或驳回");
         }
 
+        if (operator != null && operator.isSystemAdmin()
+                && Set.of("SUBMIT", "APPROVE", "REJECT", "PROCESS", "PROCESSING", "CLOSE", "CLOSED", "WITHDRAW", "REVOKE")
+                .contains(action)) {
+            throw new BusinessException(403, "超级管理员仅可查看/删除异议，不可审批或提交");
+        }
+
+        String orgName = resolveOrgName(operator);
+        boolean platform = isListCenterPlatform(operator) && (operator == null || !operator.isSystemAdmin());
+        boolean raiser = orgName != null && !orgName.isBlank() && orgName.equals(obj.getProviderOrg());
+        boolean receiver = orgName != null && !orgName.isBlank() && orgName.equals(obj.getVerifyOrg());
+
         String next;
         switch (action) {
             case "SUBMIT" -> {
                 if (!"DRAFT".equals(cur) && !"REJECTED".equals(cur)) {
-                    throw new BusinessException(400, "仅草稿或已驳回可提交");
+                    throw new BusinessException(400, "仅草稿或驳回待提交可提交");
+                }
+                if (!platform && !raiser) {
+                    throw new BusinessException(403, "仅异议提出方可提交");
                 }
                 next = "SUBMITTED";
             }
+            case "WITHDRAW", "REVOKE" -> {
+                if (!"SUBMITTED".equals(cur)) {
+                    throw new BusinessException(400, "仅待审核状态可撤销");
+                }
+                if (!platform && !raiser) {
+                    throw new BusinessException(403, "仅异议提出方可撤销");
+                }
+                next = "DRAFT";
+            }
             case "APPROVE" -> {
                 if (!"SUBMITTED".equals(cur)) {
-                    throw new BusinessException(400, "仅已提交可审核通过");
+                    throw new BusinessException(400, "仅待审核可审核通过");
+                }
+                if (!platform && !receiver) {
+                    throw new BusinessException(403, "仅异议接收方可审核");
                 }
                 next = "APPROVED";
             }
             case "REJECT" -> {
                 if (!"SUBMITTED".equals(cur)) {
-                    throw new BusinessException(400, "仅已提交可驳回");
+                    throw new BusinessException(400, "仅待审核可驳回");
+                }
+                if (!platform && !receiver) {
+                    throw new BusinessException(403, "仅异议接收方可审核");
                 }
                 if (note.isBlank()) {
                     throw new BusinessException(400, "驳回请填写理由");
@@ -2168,13 +2607,19 @@ public class SupplyDemandService {
             }
             case "PROCESS", "PROCESSING" -> {
                 if (!"APPROVED".equals(cur)) {
-                    throw new BusinessException(400, "仅已通过待处理可转入处理完成");
+                    throw new BusinessException(400, "仅已审核待处理可转入处理完成");
+                }
+                if (!platform && !receiver) {
+                    throw new BusinessException(403, "仅异议接收方可处理");
                 }
                 next = "PROCESSED";
             }
             case "CLOSE", "CLOSED" -> {
                 if (!"PROCESSED".equals(cur)) {
-                    throw new BusinessException(400, "仅已处理状态可由需求方办结");
+                    throw new BusinessException(400, "仅已处理状态可由提出方办结");
+                }
+                if (!platform && !raiser) {
+                    throw new BusinessException(403, "仅异议提出方可办结");
                 }
                 next = "CLOSED";
             }
@@ -2188,6 +2633,69 @@ public class SupplyDemandService {
         objectionMapper.updateById(obj);
         auditService.log(operator.getUserId(), operator.getUsername(), operator.getOrgId(),
                 "OBJECTION_PROCESS", "biz_catalog_objection", String.valueOf(id), action + "→" + next);
+    }
+
+    @Transactional
+    public void updateObjection(UserPrincipal operator, Long id, Map<String, Object> body) {
+        if (operator != null && operator.isSystemAdmin()) {
+            throw new BusinessException(403, "超级管理员不可编辑异议");
+        }
+        BizCatalogObjection obj = objectionMapper.selectById(id);
+        if (obj == null) {
+            throw new BusinessException(404, "异议不存在");
+        }
+        String cur = normalizeObjectionStatus(obj.getStatus());
+        if (!"DRAFT".equals(cur) && !"REJECTED".equals(cur)) {
+            throw new BusinessException(400, "仅草稿或驳回待提交可编辑");
+        }
+        String orgName = resolveOrgName(operator);
+        boolean platform = isListCenterPlatform(operator)
+                && (operator == null || !operator.isSystemAdmin());
+        if (!platform && (orgName.isBlank() || !orgName.equals(obj.getProviderOrg()))) {
+            throw new BusinessException(403, "仅异议提出方可编辑");
+        }
+        if (body.get("title") != null && !String.valueOf(body.get("title")).isBlank()) {
+            obj.setTitle(String.valueOf(body.get("title")).trim());
+        }
+        if (body.get("objectionType") != null && !String.valueOf(body.get("objectionType")).isBlank()) {
+            obj.setObjectionType(String.valueOf(body.get("objectionType")).trim());
+        }
+        if (body.get("content") != null) {
+            String content = String.valueOf(body.get("content")).trim();
+            if (content.isBlank()) {
+                throw new BusinessException(400, "异议内容不能为空");
+            }
+            obj.setContent(content);
+        }
+        objectionMapper.updateById(obj);
+        auditService.log(operator.getUserId(), operator.getUsername(), operator.getOrgId(),
+                "OBJECTION_UPDATE", "biz_catalog_objection", String.valueOf(id), cur);
+    }
+
+    @Transactional
+    public void deleteObjection(UserPrincipal operator, Long id) {
+        BizCatalogObjection obj = objectionMapper.selectById(id);
+        if (obj == null) {
+            throw new BusinessException(404, "异议不存在");
+        }
+        String cur = normalizeObjectionStatus(obj.getStatus());
+        boolean superAdmin = operator != null && operator.isSystemAdmin();
+        if (!superAdmin) {
+            if (!"DRAFT".equals(cur) && !"REJECTED".equals(cur)) {
+                throw new BusinessException(400, "仅草稿或驳回待提交可删除");
+            }
+            String orgName = resolveOrgName(operator);
+            boolean platform = isListCenterPlatform(operator);
+            if (!platform && (orgName.isBlank() || !orgName.equals(obj.getProviderOrg()))) {
+                throw new BusinessException(403, "仅异议提出方可删除");
+            }
+        }
+        objectionMapper.deleteById(id);
+        manifestMapper.delete(new LambdaQueryWrapper<BizSupplyManifest>()
+                .eq(BizSupplyManifest::getManifestType, "OBJECTION")
+                .eq(BizSupplyManifest::getRefId, id));
+        auditService.log(operator.getUserId(), operator.getUsername(), operator.getOrgId(),
+                "OBJECTION_DELETE", "biz_catalog_objection", String.valueOf(id), cur);
     }
 
     public List<BizSupplyManifest> listManifests(String manifestType) {
@@ -2555,6 +3063,20 @@ public class SupplyDemandService {
             return new com.fasterxml.jackson.databind.ObjectMapper().writeValueAsString(map);
         } catch (Exception e) {
             return String.valueOf(map);
+        }
+    }
+
+    /** 保证 formPayload 中 List（如 dataItems）完整序列化 */
+    private String toJsonObject(Object value) {
+        try {
+            return new com.fasterxml.jackson.databind.ObjectMapper().writeValueAsString(value);
+        } catch (Exception e) {
+            if (value instanceof Map<?, ?> m) {
+                @SuppressWarnings("unchecked")
+                Map<String, Object> cast = (Map<String, Object>) m;
+                return toJson(cast);
+            }
+            return String.valueOf(value);
         }
     }
 

@@ -126,6 +126,10 @@ function isRegisterModuleAllowed(moduleKey: string, allowed: typeof allowedRegis
 }
 
 function firstAllowedModule(sys: IngestionSystem): string {
+  // 部门管理员：采集汇聚默认进目录编目
+  if (sys === 'collect' && !permOpts.value.isSystemAdmin) {
+    return firstAllowedCatalogModule(permOpts.value)
+  }
   const list = sys === 'register' ? allowedRegister.value : allowedCollect.value
   const key = list[0]?.key || DEFAULT_MODULE[sys]
   if (sys === 'collect' && key === 'catalog') return firstAllowedCatalogModule(permOpts.value)
