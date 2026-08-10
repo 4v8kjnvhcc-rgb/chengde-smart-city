@@ -70,7 +70,11 @@ void probeDevPort()
 const APP_BASE = process.env.VITE_BASE || '/bigdata-web/'
 const APP_ENTRY = APP_BASE.replace(/\/$/, '') || '/bigdata-web'
 
-/** 本地开发：/ 与 /bigdata-web/ 规范到 /bigdata-web（无尾斜杠） */
+/**
+ * 本地开发入口规范为无尾斜杠 /bigdata-web：
+ * - /、/bigdata-web/ → 302 到 /bigdata-web
+ * - /bigdata-web → 内部改写为 /bigdata-web/ 交给 Vite（base 须带斜杠），地址栏保持无斜杠
+ */
 function redirectAppBasePlugin(): Plugin {
   return {
     name: 'redirect-app-base',
@@ -84,6 +88,9 @@ function redirectAppBasePlugin(): Plugin {
           res.setHeader('Location', APP_ENTRY + qs)
           res.end()
           return
+        }
+        if (pathOnly === APP_ENTRY) {
+          req.url = `${APP_ENTRY}/${qs}`
         }
         next()
       })
