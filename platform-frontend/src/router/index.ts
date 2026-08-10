@@ -4,8 +4,8 @@ import { useAuthStore } from '@/stores/auth'
 import { canAccessRoutePath } from '@/utils/menu'
 
 const router = createRouter({
-  // 与 vite base 一致：本地/生产均为 /bigdata-web/
-  history: createWebHistory(import.meta.env.BASE_URL),
+  // Vite BASE_URL 带尾斜杠（资源用）；路由 history 用无尾斜杠，入口为 /bigdata-web
+  history: createWebHistory((import.meta.env.BASE_URL || '/bigdata-web/').replace(/\/$/, '') || '/'),
   routes: [
     {
       path: '/login',

@@ -66,12 +66,12 @@ async function probeDevPort() {
 void probeDevPort()
 // #endregion
 
+// Vite 资源前缀须带尾斜杠；浏览器入口规范为无尾斜杠 /bigdata-web
 const APP_BASE = process.env.VITE_BASE || '/bigdata-web/'
+const APP_ENTRY = APP_BASE.replace(/\/$/, '') || '/bigdata-web'
 
-/** 允许访问 /bigdata-web（无尾斜杠）与 / ，自动跳到 /bigdata-web/ */
+/** 本地开发：/ 与 /bigdata-web/ 规范到 /bigdata-web（无尾斜杠） */
 function redirectAppBasePlugin(): Plugin {
-  const baseNoSlash = APP_BASE.replace(/\/$/, '') || '/bigdata-web'
-  const baseWithSlash = baseNoSlash + '/'
   return {
     name: 'redirect-app-base',
     configureServer(server) {
@@ -79,9 +79,9 @@ function redirectAppBasePlugin(): Plugin {
         const raw = req.url || '/'
         const pathOnly = raw.split('?')[0]
         const qs = raw.includes('?') ? raw.slice(raw.indexOf('?')) : ''
-        if (pathOnly === baseNoSlash || pathOnly === '/') {
+        if (pathOnly === '/' || pathOnly === `${APP_ENTRY}/`) {
           res.statusCode = 302
-          res.setHeader('Location', baseWithSlash + qs)
+          res.setHeader('Location', APP_ENTRY + qs)
           res.end()
           return
         }
@@ -100,7 +100,7 @@ export default defineConfig({
     },
   },
   server: {
-    // 本地入口：http://127.0.0.1:9087/bigdata-web （无斜杠会自动跳到 /bigdata-web/）
+    // 本地入口：http://127.0.0.1:9087/bigdata-web
     port: 9087,
     strictPort: true,
     proxy: {
