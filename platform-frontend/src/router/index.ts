@@ -4,7 +4,8 @@ import { useAuthStore } from '@/stores/auth'
 import { canAccessRoutePath } from '@/utils/menu'
 
 const router = createRouter({
-  history: createWebHistory(),
+  // 与 vite base 一致：本地/生产均为 /bigdata-web/
+  history: createWebHistory(import.meta.env.BASE_URL),
   routes: [
     {
       path: '/login',
@@ -16,7 +17,7 @@ const router = createRouter({
       path: '/',
       component: () => import('@/layouts/MainLayout.vue'),
       children: [
-        { path: '', redirect: '/dashboard' },
+        { path: '', redirect: '/login' },
         {
           path: 'dashboard',
           name: 'dashboard',

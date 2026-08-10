@@ -38,7 +38,8 @@ function clearSessionAndRedirect() {
   localStorage.removeItem('accessToken')
   localStorage.removeItem('refreshToken')
   if (!window.location.pathname.includes('/login')) {
-    window.location.href = '/login'
+    // BASE_URL 形如 /bigdata-web/
+    window.location.href = `${import.meta.env.BASE_URL}login`.replace(/\/{2,}/g, '/')
   }
 }
 

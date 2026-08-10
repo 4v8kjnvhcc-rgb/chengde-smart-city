@@ -1,4 +1,4 @@
-import { defineConfig } from 'vite'
+import { defineConfig, type Plugin } from 'vite'
 import vue from '@vitejs/plugin-vue'
 import { fileURLToPath, URL } from 'node:url'
 import fs from 'node:fs'
@@ -27,17 +27,17 @@ function agentLog(hypothesisId: string, message: string, data: Record<string, un
   }
 }
 async function probeDevPort() {
-  const port = 4000
+  const port = 9087
   const inUse = await new Promise<boolean>((resolve) => {
     const s = net.createServer()
     s.once('error', () => resolve(true))
     s.once('listening', () => s.close(() => resolve(false)))
     s.listen(port, '127.0.0.1')
   })
-  agentLog('A', 'port_4000_probe', { port, inUse, strictPort: true })
+  agentLog('A', 'port_9087_probe', { port, inUse, strictPort: true })
   let occupant: { pid?: string; cmd?: string } = {}
   try {
-    const out = execSync('netstat -ano | findstr ":4000" | findstr LISTENING', {
+    const out = execSync('netstat -ano | findstr ":9087" | findstr LISTENING', {
       encoding: 'utf8',
       shell: 'cmd.exe',
     })
@@ -66,18 +66,42 @@ async function probeDevPort() {
 void probeDevPort()
 // #endregion
 
+const APP_BASE = process.env.VITE_BASE || '/bigdata-web/'
+
+/** 允许访问 /bigdata-web（无尾斜杠）与 / ，自动跳到 /bigdata-web/ */
+function redirectAppBasePlugin(): Plugin {
+  const baseNoSlash = APP_BASE.replace(/\/$/, '') || '/bigdata-web'
+  const baseWithSlash = baseNoSlash + '/'
+  return {
+    name: 'redirect-app-base',
+    configureServer(server) {
+      server.middlewares.use((req, res, next) => {
+        const raw = req.url || '/'
+        const pathOnly = raw.split('?')[0]
+        const qs = raw.includes('?') ? raw.slice(raw.indexOf('?')) : ''
+        if (pathOnly === baseNoSlash || pathOnly === '/') {
+          res.statusCode = 302
+          res.setHeader('Location', baseWithSlash + qs)
+          res.end()
+          return
+        }
+        next()
+      })
+    },
+  }
+}
+
 export default defineConfig({
-  plugins: [vue()],
+  base: APP_BASE,
+  plugins: [vue(), redirectAppBasePlugin()],
   resolve: {
     alias: {
       '@': fileURLToPath(new URL('./src', import.meta.url)),
     },
   },
   server: {
-    // 固定 4000。若 EACCES：管理员执行 net stop winnat 后
-    // netsh int ipv4 add excludedportrange protocol=tcp startport=4000 numberofports=1 store=persistent
-    // 再 net start winnat（避免 Hyper-V 动态预留吞掉 4000）
-    port: 4000,
+    // 本地入口：http://127.0.0.1:9087/bigdata-web （无斜杠会自动跳到 /bigdata-web/）
+    port: 9087,
     strictPort: true,
     proxy: {
       '/api': {

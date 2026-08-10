@@ -89,4 +89,5 @@ services:
       backend:
         condition: service_healthy
     ports:
-      - "${WEB_PUBLISH_PORT:-80}:80"
+      # 门户：http://10.10.10.57:9087/bigdata-web
+      - "${WEB_PUBLISH_PORT:-9087}:80"
