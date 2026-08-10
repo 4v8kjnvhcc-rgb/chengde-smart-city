@@ -25,7 +25,7 @@ import org.springframework.util.StringUtils;
 @Service
 public class PortalNavService {
 
-    private static final Set<String> NODE_TYPES = Set.of("platform", "sub_platform", "system");
+    private static final Set<String> NODE_TYPES = Set.of("platform", "sub_platform", "system", "module");
     private static final Set<String> OPEN_MODES = Set.of("route", "new_tab");
     private static final Set<String> SSO_MODES = Set.of("none", "portal_ticket");
     private static final Set<String> THEME_KEYS = Set.of(
@@ -106,7 +106,7 @@ public class PortalNavService {
     private void apply(PortalNavNode node, PortalNavNodeRequest req, boolean creating) {
         String type = req.nodeType().trim().toLowerCase(Locale.ROOT);
         if (!NODE_TYPES.contains(type)) {
-            throw new BusinessException(400, "节点类型无效，须为 platform / sub_platform / system");
+            throw new BusinessException(400, "节点类型无效，须为 platform / sub_platform / system / module");
         }
         long parentId = req.parentId() == null ? 0L : req.parentId();
         validateHierarchy(type, parentId, creating ? null : node.getId());
@@ -162,7 +162,7 @@ public class PortalNavService {
             return;
         }
         if (parentId == 0L) {
-            throw new BusinessException(400, "子平台/系统必须指定上级节点");
+            throw new BusinessException(400, "子平台/系统/模块必须指定上级节点");
         }
         PortalNavNode parent = nodeMapper.selectById(parentId);
         if (parent == null) {
@@ -177,6 +177,9 @@ public class PortalNavService {
         }
         if ("system".equals(type) && !"sub_platform".equals(parentType)) {
             throw new BusinessException(400, "系统的上级必须是子平台");
+        }
+        if ("module".equals(type) && !"system".equals(parentType)) {
+            throw new BusinessException(400, "模块的上级必须是系统");
         }
     }
 

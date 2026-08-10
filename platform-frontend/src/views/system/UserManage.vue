@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref } from 'vue'
 import api from '@/api/http'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { useAuthStore } from '@/stores/auth'
@@ -35,6 +35,12 @@ const roleDialogVisible = ref(false)
 const orgs = ref<Org[]>([])
 const roles = ref<Role[]>([])
 const submitting = ref(false)
+
+const orgNameById = computed(() => {
+  const m = new Map<number, string>()
+  for (const o of orgs.value) m.set(o.id, o.orgName)
+  return m
+})
 
 const roleForm = reactive({
   id: 0,
@@ -165,6 +171,23 @@ async function disableUser(row: UserRow) {
   }
 }
 
+async function deleteUser(row: UserRow) {
+  try {
+    await ElMessageBox.confirm(
+      `确认删除用户「${row.username}」？删除后不可恢复。`,
+      '删除用户',
+      { type: 'warning', confirmButtonText: '删除', confirmButtonClass: 'el-button--danger' },
+    )
+    await api.delete(`/system/users/${row.id}/hard`)
+    ElMessage.success('用户已删除')
+    load()
+  } catch (e: unknown) {
+    if (e !== 'cancel' && e !== 'close') {
+      ElMessage.error(e instanceof Error ? e.message : '删除失败')
+    }
+  }
+}
+
 async function resetPassword(row: UserRow) {
   try {
     const { value } = await ElMessageBox.prompt(`为用户「${row.username}」设置新密码（至少 8 位，含字母和数字）`, '重置密码', {
@@ -210,7 +233,10 @@ async function submitRoleConfig() {
   }
 }
 
-onMounted(load)
+onMounted(async () => {
+  await loadMeta()
+  await load()
+})
 </script>
 
 <template>
@@ -230,13 +256,17 @@ onMounted(load)
       <el-table class="portal-table" :data="users" v-loading="loading" stripe>
         <el-table-column prop="username" label="用户名" min-width="120" />
         <el-table-column prop="displayName" label="姓名" min-width="120" />
-        <el-table-column prop="orgId" label="机构ID" width="100" />
+        <el-table-column label="机构" min-width="140">
+          <template #default="{ row }">
+            {{ orgNameById.get(row.orgId) || row.orgId || '—' }}
+          </template>
+        </el-table-column>
         <el-table-column label="状态" width="100">
           <template #default="{ row }">
             <el-tag :type="row.status === 1 ? 'success' : 'info'" size="small">{{ $statusLabel(row.status) }}</el-tag>
           </template>
         </el-table-column>
-        <el-table-column label="操作" width="300" fixed="right">
+        <el-table-column label="操作" width="360" fixed="right">
           <template #default="{ row }">
             <el-button
               link
@@ -266,6 +296,13 @@ onMounted(load)
               @click="disableUser(row)"
             >
               禁用
+            </el-button>
+            <el-button
+              link
+              type="danger"
+              @click="deleteUser(row)"
+            >
+              删除
             </el-button>
           </template>
         </el-table-column>

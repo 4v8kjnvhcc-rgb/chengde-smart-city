@@ -1,6 +1,8 @@
 package com.chengde.smartcity.system.entity;
 
+import com.baomidou.mybatisplus.annotation.FieldStrategy;
 import com.baomidou.mybatisplus.annotation.IdType;
+import com.baomidou.mybatisplus.annotation.TableField;
 import com.baomidou.mybatisplus.annotation.TableId;
 import com.baomidou.mybatisplus.annotation.TableName;
 import java.time.LocalDateTime;
@@ -14,11 +16,17 @@ public class PortalNavNode {
     private String name;
     private String nodeType;
     private Integer sortOrder;
+    /** 允许更新为 null（清空地址） */
+    @TableField(updateStrategy = FieldStrategy.ALWAYS)
     private String url;
+    /** 允许更新为 null（清空菜单路径） */
+    @TableField(updateStrategy = FieldStrategy.ALWAYS)
     private String menuPath;
     private String openMode;
     private String ssoMode;
+    @TableField(updateStrategy = FieldStrategy.ALWAYS)
     private String themeKey;
+    @TableField(updateStrategy = FieldStrategy.ALWAYS)
     private String remark;
     private Integer status;
     private LocalDateTime createdAt;

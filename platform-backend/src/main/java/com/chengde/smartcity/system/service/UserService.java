@@ -193,6 +193,23 @@ public class UserService {
                 "USER_DISABLE", "sys_user", String.valueOf(id), user.getUsername());
     }
 
+    /** 物理删除用户及其角色关联 */
+    @Transactional
+    public void delete(UserPrincipal operator, Long id) {
+        SysUser user = userMapper.selectById(id);
+        if (user == null) {
+            throw new BusinessException(404, "用户不存在");
+        }
+        assertOrgAccess(operator, user.getOrgId());
+        if (operator.getUserId().equals(id)) {
+            throw new BusinessException(400, "不能删除当前登录账号");
+        }
+        jdbcTemplate.update("DELETE FROM sys_user_role WHERE user_id = ?", id);
+        userMapper.deleteById(id);
+        auditService.log(operator.getUserId(), operator.getUsername(), operator.getOrgId(),
+                "USER_DELETE", "sys_user", String.valueOf(id), user.getUsername());
+    }
+
     public void assertOrgAccess(UserPrincipal operator, Long targetOrgId) {
         if (operator.isSystemAdmin()) {
             return;

@@ -1,0 +1,38 @@
+---
+description: 数据库 SQL 脚本统一放在 chengde-smart-city/sql，便于部署更新
+alwaysApply: true
+---
+
+# 数据库 SQL 脚本目录（硬约束）
+
+## 统一位置
+
+凡用于**数据库部署与更新**的 SQL 脚本，一律放在：
+
+`chengde-smart-city/sql/`
+
+包括但不限于：建库/初始化、表与字段的**增删改**、索引/约束变更、数据修补（DML）、回滚脚本、生产补丁。
+
+## 目录约定
+
+```
+chengde-smart-city/sql/
+  init/       # 建库、账号、分层库等一次性初始化
+  patch/      # 手工增量更新、生产补丁（按日期或版本号命名）
+  rollback/   # 对应回滚脚本（与 patch 成对时优先）
+```
+
+命名示例：`sql/patch/20260810_add_xxx_column.sql`、`sql/rollback/20260810_add_xxx_column.sql`。
+
+## 硬性要求
+
+1. **禁止**把部署用 SQL 散落在 `docs/`、模块临时目录、聊天导出路径或未归档的本地路径。
+2. 新增/修改/删除库表结构或需上线执行的数据变更时：**必须**在 `sql/` 落盘可执行脚本，再谈部署。
+3. 改完脚本后，在回复/文档中写清：脚本路径、目标库、执行顺序、是否可重复执行。
+4. Compose / 第三方中间件初始化 SQL（如 `compose/*.sql`）若需运维手工执行，应在 `sql/init/` 保留副本或明确索引说明；新增同类脚本优先写到 `sql/`。
+
+## Flyway 与本目录的关系
+
+- 应用启动自动迁移仍使用：`platform-backend/src/main/resources/db/migration/V*.sql`（classpath）。
+- **同一业务变更**：若既要 Flyway 自动跑、又要支持运维手工部署，须在 `sql/patch/` 提供对应可执行脚本（或写明「仅 Flyway、禁止手工重复执行」），避免只改一处导致部署清单缺失。
+- 禁止只改库不落脚本；禁止只口头说明 DDL/DML 而不提交到 `sql/` 或 Flyway。

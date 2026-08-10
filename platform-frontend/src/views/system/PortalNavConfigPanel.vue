@@ -22,6 +22,7 @@ const TYPE_LABEL: Record<string, string> = {
   platform: '平台',
   sub_platform: '子平台',
   system: '系统',
+  module: '模块',
 }
 
 const THEME_OPTIONS = [
@@ -34,6 +35,8 @@ const THEME_OPTIONS = [
 const loading = ref(false)
 const rows = ref<PortalNavNode[]>([])
 const selectedId = ref<number | null>(null)
+/** 当前弹窗正在编辑/查看的节点 id（与表格选中态解耦，避免保存时丢 id） */
+const editingId = ref<number | null>(null)
 const dialogVisible = ref(false)
 const dialogMode = ref<'view' | 'edit' | 'create'>('create')
 const submitting = ref(false)
@@ -78,12 +81,19 @@ const depthMap = computed(() => {
 
 const parentOptions = computed(() => {
   return rows.value
-    .filter((r) => r.nodeType === 'platform' || r.nodeType === 'sub_platform')
+    .filter((r) => r.nodeType === 'platform' || r.nodeType === 'sub_platform' || r.nodeType === 'system')
     .map((r) => ({
       value: r.id,
       label: `${'　'.repeat(depthMap.value.get(r.id) || 0)}${TYPE_LABEL[r.nodeType] || r.nodeType} · ${r.name}`,
     }))
 })
+
+function requiredParentType(nodeType: string): string | null {
+  if (nodeType === 'sub_platform') return 'platform'
+  if (nodeType === 'system') return 'sub_platform'
+  if (nodeType === 'module') return 'system'
+  return null
+}
 
 const selectedRow = computed(() => rows.value.find((r) => r.id === selectedId.value) || null)
 
@@ -130,6 +140,7 @@ function fillForm(row: PortalNavNode) {
 
 function openCreate() {
   dialogMode.value = 'create'
+  editingId.value = null
   resetForm()
   if (selectedRow.value) {
     if (selectedRow.value.nodeType === 'platform') {
@@ -138,6 +149,9 @@ function openCreate() {
     } else if (selectedRow.value.nodeType === 'sub_platform') {
       form.nodeType = 'system'
       form.parentId = selectedRow.value.id
+    } else if (selectedRow.value.nodeType === 'system') {
+      form.nodeType = 'module'
+      form.parentId = selectedRow.value.id
     }
   }
   dialogVisible.value = true
@@ -145,6 +159,7 @@ function openCreate() {
 
 function openView(row: PortalNavNode) {
   selectedId.value = row.id
+  editingId.value = row.id
   dialogMode.value = 'view'
   fillForm(row)
   dialogVisible.value = true
@@ -157,6 +172,7 @@ function openEdit(row?: PortalNavNode | null) {
     return
   }
   selectedId.value = target.id
+  editingId.value = target.id
   dialogMode.value = 'edit'
   fillForm(target)
   dialogVisible.value = true
@@ -182,20 +198,23 @@ async function submit() {
       name: form.name.trim(),
       nodeType: form.nodeType,
       sortOrder: form.sortOrder,
-      url: form.url || null,
-      menuPath: form.menuPath || null,
+      url: form.url?.trim() ? form.url.trim() : null,
+      menuPath: form.menuPath?.trim() ? form.menuPath.trim() : null,
       openMode: form.openMode || 'route',
       ssoMode: form.ssoMode || 'none',
-      themeKey: form.nodeType === 'platform' ? form.themeKey || null : null,
-      remark: form.remark || null,
+      themeKey: form.nodeType === 'platform' ? (form.themeKey || null) : null,
+      remark: form.remark?.trim() ? form.remark.trim() : null,
       status: form.status,
     }
     if (dialogMode.value === 'create') {
       await api.post('/system/portal-nav', payload)
       ElMessage.success('已新增')
-    } else if (selectedId.value != null) {
-      await api.put(`/system/portal-nav/${selectedId.value}`, payload)
+    } else if (editingId.value != null) {
+      await api.put(`/system/portal-nav/${editingId.value}`, payload)
       ElMessage.success('已保存')
+    } else {
+      ElMessage.warning('未找到要编辑的节点')
+      return
     }
     dialogVisible.value = false
     await load()
@@ -224,6 +243,10 @@ async function removeRow(row?: PortalNavNode | null) {
   }
 }
 
+function selectRow(row: PortalNavNode | null) {
+  selectedId.value = row?.id ?? null
+}
+
 function displayAddress(row: PortalNavNode) {
   return row.url || row.menuPath || '—'
 }
@@ -247,8 +270,8 @@ onMounted(load)
       size="small"
       highlight-current-row
       empty-text="暂无门户导航配置"
-      @current-change="(row: PortalNavNode | null) => (selectedId = row?.id ?? null)"
-      @row-click="(row: PortalNavNode) => (selectedId = row.id)"
+      @current-change="(row: PortalNavNode | null) => selectRow(row)"
+      @row-click="(row: PortalNavNode) => selectRow(row)"
     >
       <el-table-column label="名称" min-width="220">
         <template #default="{ row }">
@@ -293,16 +316,16 @@ onMounted(load)
             <el-option label="平台" value="platform" />
             <el-option label="子平台" value="sub_platform" />
             <el-option label="系统" value="system" />
+            <el-option label="模块" value="module" />
           </el-select>
         </el-form-item>
         <el-form-item v-if="form.nodeType !== 'platform'" label="上级节点" required>
           <el-select v-model="form.parentId" filterable style="width: 100%" placeholder="选择上级">
             <el-option
-              v-for="opt in parentOptions.filter((o) =>
-                form.nodeType === 'sub_platform'
-                  ? rows.find((r) => r.id === o.value)?.nodeType === 'platform'
-                  : rows.find((r) => r.id === o.value)?.nodeType === 'sub_platform',
-              )"
+              v-for="opt in parentOptions.filter((o) => {
+                const need = requiredParentType(form.nodeType)
+                return need ? rows.find((r) => r.id === o.value)?.nodeType === need : false
+              })"
               :key="opt.value"
               :label="opt.label"
               :value="opt.value"

@@ -164,6 +164,14 @@ public class SystemController {
         return ApiResponse.ok(null);
     }
 
+    @DeleteMapping("/users/{id}/hard")
+    @PreAuthorize("hasRole('SYSTEM_ADMIN') or hasAuthority('system:user:list')")
+    public ApiResponse<Void> deleteUser(@AuthenticationPrincipal UserPrincipal principal,
+                                        @PathVariable Long id) {
+        userService.delete(principal, id);
+        return ApiResponse.ok(null);
+    }
+
     @PutMapping("/users/{id}/password")
     @PreAuthorize("hasRole('SYSTEM_ADMIN') or hasAuthority('system:user:list')")
     public ApiResponse<Void> resetPassword(@AuthenticationPrincipal UserPrincipal principal,
