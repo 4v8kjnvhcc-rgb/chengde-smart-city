@@ -285,7 +285,7 @@ function pushInternalTarget(target: string) {
 
 async function enterMenuNode(node: MenuNode) {
   if (isAssessmentMenu(node)) {
-    const landing = assessmentExternalUrl() || 'http://127.0.0.1:18081/assessment/index#/dashboard'
+    const landing = assessmentExternalUrl() || 'http://127.0.0.1:18081/sxev/index'
     const r = await openAssessmentWithPortalSso(landing)
     if (r.ok) {
       ElMessage.success('已进入考核评估系统')

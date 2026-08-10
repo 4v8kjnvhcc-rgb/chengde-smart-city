@@ -35,7 +35,7 @@ const apps = [
 
 async function openApp(app: (typeof apps)[number]) {
   if (app.external) {
-    const landing = assessmentExternalUrl() || 'http://127.0.0.1:18081/assessment/index#/dashboard'
+    const landing = assessmentExternalUrl() || 'http://127.0.0.1:18081/sxev/index'
     const r = await openAssessmentWithPortalSso(landing)
     if (r.ok) ElMessage.success('已进入考核评估系统')
     else ElMessage.warning(r.message || '单点登录失败')

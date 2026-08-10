@@ -1,7 +1,10 @@
-# 应用机 10.10.10.55：仅 web + backend（连 10.10.10.51 上的库与中间件）
-# 用法（在 .55 上）:
-#   cp compose/prod-app.env.example compose/prod-app.env   # 指向 .51
-#   docker compose -f compose/prod-app.yml --env-file compose/prod-app.env up -d --build
+# 应用机 10.10.10.57：仅 web + backend（连 10.10.10.51 中间件 + 分层库机）
+# 用法（在 .57 上）:
+#   cp compose/prod-app.env.example compose/prod-app.env
+#   docker compose -f compose/prod-app.yml --env-file compose/prod-app.env up -d
+#
+# 门户入口：http://10.10.10.57:9087/bigdata-web
+# 本地开发：http://127.0.0.1:9087/bigdata-web
 
 name: smart-city-app
 
@@ -32,7 +35,7 @@ services:
       OM_USER: ${OM_USER:-admin@openmetadata.org}
       OM_PASSWORD: ${OM_PASSWORD:-admin}
       DE_URL: ${DE_URL:-http://10.10.10.51:8100}
-      DE_EMBED_BASE: ${DE_EMBED_BASE:-http://10.10.10.55}
+      DE_EMBED_BASE: ${DE_EMBED_BASE:-http://10.10.10.57:9087}
       DS_URL: ${DS_URL:-http://10.10.10.51:12345/dolphinscheduler}
       DS_USER: ${DS_USER:-admin}
       DS_PASSWORD: ${DS_PASSWORD:-dolphinscheduler123}

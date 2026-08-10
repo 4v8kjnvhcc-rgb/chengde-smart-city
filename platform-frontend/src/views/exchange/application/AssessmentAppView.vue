@@ -7,7 +7,7 @@ import { assessmentExternalUrl, openAssessmentWithPortalSso } from './applicatio
 
 const router = useRouter()
 const hint = ref('')
-const DEFAULT_LANDING = 'http://127.0.0.1:18081/assessment/index#/dashboard'
+const DEFAULT_LANDING = 'http://127.0.0.1:18081/sxev/index'
 
 async function openExt() {
   const landing = assessmentExternalUrl() || DEFAULT_LANDING
