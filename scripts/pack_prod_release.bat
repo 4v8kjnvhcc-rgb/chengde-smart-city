@@ -46,9 +46,10 @@ set ERR=%ERRORLEVEL%
 echo.
 if %ERR% neq 0 (
   echo [失败] 退出码 %ERR%
+  echo 若报「表达式中有意外的标记」：请确认 scripts\pack_prod_release.ps1 为 UTF-8 BOM（仓库已修复）。
 ) else (
   echo [完成] 已写入 release\ : 代码 *.tar.gz + prod-mid.env + prod-app.env
-  echo        拷到 .51 / .55 解压即可
+  echo        拷到 .51 / .55 解压即可；env 已是 Unix LF
 )
 pause
 exit /b %ERR%

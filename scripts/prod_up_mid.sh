@@ -23,6 +23,11 @@ if [[ ! -f "$ENV_FILE" ]]; then
   echo "已生成 compose/prod-mid.env，请填写密码后再执行。"
   exit 1
 fi
+# Windows 打包可能带 CRLF；去掉 \r，避免 docker compose 读坏密码
+if grep -q $'\r' "$ENV_FILE" 2>/dev/null; then
+  sed -i 's/\r$//' "$ENV_FILE"
+  echo "已规范化 compose/prod-mid.env 换行（去掉 CRLF）"
+fi
 PROFILES=()
 if [[ "${1:-}" == "--all" ]]; then
   PROFILES=(--profile storage --profile governance --profile bi --profile sched --profile etl --profile cdc)

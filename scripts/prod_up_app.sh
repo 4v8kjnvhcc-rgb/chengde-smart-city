@@ -21,6 +21,11 @@ if [[ ! -f "$ENV_FILE" ]]; then
   echo "已生成 compose/prod-app.env，请填写与 .51 一致的密码后再执行。"
   exit 1
 fi
+# Windows 打包可能带 CRLF；去掉 \r，避免 docker compose / 后续 grep 读坏端口与密码
+if grep -q $'\r' "$ENV_FILE" 2>/dev/null; then
+  sed -i 's/\r$//' "$ENV_FILE"
+  echo "已规范化 compose/prod-app.env 换行（去掉 CRLF）"
+fi
 # 现场只 load 预构建镜像，不带 --build（代码包不含 platform-* 源码）
 dc -f compose/prod-app.yml --env-file "$ENV_FILE" up -d
 echo "门户: http://10.10.10.55/"

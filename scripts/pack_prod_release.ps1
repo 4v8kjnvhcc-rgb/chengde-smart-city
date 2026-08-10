@@ -101,12 +101,20 @@ try {
     Pop-Location
   }
 
-  # 打入本机 env
-  Write-Host "==> 打入本机 compose/prod-*.env"
+  # 打入本机 env（强制 LF，避免现场 grep/mysqldump 读到 \r）
+  Write-Host "==> 打入本机 compose/prod-*.env（规范化为 LF）"
   $composeDir = Join-Path $stage "chengde-smart-city\compose"
   New-Item -ItemType Directory -Force -Path $composeDir | Out-Null
-  Copy-Item -Force $midEnv (Join-Path $composeDir "prod-mid.env")
-  Copy-Item -Force $appEnv (Join-Path $composeDir "prod-app.env")
+  $utf8NoBom = New-Object System.Text.UTF8Encoding $false
+  foreach ($pair in @(
+    @{ Src = $midEnv; Name = "prod-mid.env" },
+    @{ Src = $appEnv; Name = "prod-app.env" }
+  )) {
+    $dest = Join-Path $composeDir $pair.Name
+    $text = [System.IO.File]::ReadAllText($pair.Src) -replace "`r`n", "`n" -replace "`r", "`n"
+    if (-not $text.EndsWith("`n")) { $text = $text + "`n" }
+    [System.IO.File]::WriteAllText($dest, $text, $utf8NoBom)
+  }
 
   Push-Location $stage
   try {
@@ -138,11 +146,20 @@ try {
   if (Test-Path $stage) { Remove-Item -Recurse -Force $stage -ErrorAction SilentlyContinue }
 }
 
-Copy-Item -Force $midEnv (Join-Path $OutDir "prod-mid.env")
-Copy-Item -Force $appEnv (Join-Path $OutDir "prod-app.env")
+$utf8NoBomOut = New-Object System.Text.UTF8Encoding $false
+foreach ($pair in @(
+  @{ Src = $midEnv; Name = "prod-mid.env" },
+  @{ Src = $appEnv; Name = "prod-app.env" }
+)) {
+  $text = [System.IO.File]::ReadAllText($pair.Src) -replace "`r`n", "`n" -replace "`r", "`n"
+  if (-not $text.EndsWith("`n")) { $text = $text + "`n" }
+  [System.IO.File]::WriteAllText((Join-Path $OutDir $pair.Name), $text, $utf8NoBomOut)
+}
 $sheet = Join-Path $Root "compose\prod-secrets.local.txt"
 if (Test-Path $sheet) {
-  Copy-Item -Force $sheet (Join-Path $OutDir "prod-secrets.local.txt")
+  $sheetText = [System.IO.File]::ReadAllText($sheet) -replace "`r`n", "`n" -replace "`r", "`n"
+  if (-not $sheetText.EndsWith("`n")) { $sheetText = $sheetText + "`n" }
+  [System.IO.File]::WriteAllText((Join-Path $OutDir "prod-secrets.local.txt"), $sheetText, $utf8NoBomOut)
 }
 
 $sizeMb = [math]::Round((Get-Item $outFile).Length / 1MB, 2)

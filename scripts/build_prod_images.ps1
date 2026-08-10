@@ -1,4 +1,4 @@
-# 按远程分支构建生产前后端镜像并 docker save
+﻿# 按远程分支构建生产前后端镜像并 docker save
 # 用法: .\scripts\build_prod_images.ps1 -Branch feature_yxj
 # 默认 git fetch 后按 origin/<分支> 构建（不以本机工作区为准）
 # 默认输出到仓库根目录 release/
@@ -136,10 +136,20 @@ try {
   if (-not (Test-Path $midEnv) -or -not (Test-Path $appEnv)) {
     throw "缺少 compose/prod-mid.env 或 prod-app.env，请先运行 scripts/gen_prod_env.ps1"
   }
-  Copy-Item -Force $midEnv (Join-Path $OutDir "prod-mid.env")
-  Copy-Item -Force $appEnv (Join-Path $OutDir "prod-app.env")
+  # 输出到 release/ 的 env 也统一 LF，避免拷到 Linux 后 B0 备份脚本踩 \r
+  $utf8NoBom = New-Object System.Text.UTF8Encoding $false
+  foreach ($pair in @(
+    @{ Src = $midEnv; Name = "prod-mid.env" },
+    @{ Src = $appEnv; Name = "prod-app.env" }
+  )) {
+    $text = [System.IO.File]::ReadAllText($pair.Src) -replace "`r`n", "`n" -replace "`r", "`n"
+    if (-not $text.EndsWith("`n")) { $text = $text + "`n" }
+    [System.IO.File]::WriteAllText((Join-Path $OutDir $pair.Name), $text, $utf8NoBom)
+  }
   if (Test-Path $sheet) {
-    Copy-Item -Force $sheet (Join-Path $OutDir "prod-secrets.local.txt")
+    $sheetText = [System.IO.File]::ReadAllText($sheet) -replace "`r`n", "`n" -replace "`r", "`n"
+    if (-not $sheetText.EndsWith("`n")) { $sheetText = $sheetText + "`n" }
+    [System.IO.File]::WriteAllText((Join-Path $OutDir "prod-secrets.local.txt"), $sheetText, $utf8NoBom)
   }
 
   Write-Host ""
