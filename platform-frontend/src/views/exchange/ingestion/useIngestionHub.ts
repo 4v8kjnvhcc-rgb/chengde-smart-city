@@ -134,7 +134,15 @@ export interface LineageGraphNode {
   toSourceName?: string
 }
 export interface ColumnLineage { id: number; tableNode: string; columnCode: string; columnName: string; upstreamTable?: string; upstreamColumn?: string; downstreamTable?: string; downstreamColumn?: string }
-export interface UploadTemplate { id: number; templateCode: string; templateName: string; columnMappingJson: string; status: string }
+export interface UploadTemplate {
+  id: number
+  templateCode: string
+  templateName: string
+  columnMappingJson: string
+  status: string
+  orgId?: number
+  orgName?: string
+}
 export interface Upload {
   id: number
   templateCode: string
@@ -144,6 +152,9 @@ export interface Upload {
   rowCount: number
   status: string
   previewJson?: string
+  orgId?: number
+  orgName?: string
+  createdAt?: string
 }
 export interface Channel {
   id: number
@@ -168,12 +179,54 @@ export interface IngestTask {
   writeMode?: string
   watermarkValue?: string
   enabled?: number
+  lifecycleStatus?: string
+  versionNo?: number
+  publishedBy?: string
+  publishedAt?: string
   collectedRows?: number
+  linesInput?: number
+  linesOutput?: number
+  linesRejected?: number
+  durationMs?: number
+  dsProjectCode?: number
+  dsDefinitionCode?: number
+  dsScheduleId?: number
   scheduleCron: string
   status: string
   lastRunAt?: string
   lastRunMessage?: string
   errorDetail?: string
+}
+
+export interface IngestTaskVersion {
+  id: number
+  taskId: number
+  versionNo: number
+  snapshotJson: string
+  changeSummary?: string
+  publishedBy?: string
+  publishedAt?: string
+}
+
+export interface IngestTaskRun {
+  id: number
+  taskId: number
+  triggerType?: string
+  runStatus: string
+  scheduleResult?: string
+  collectedRows?: number
+  insertRows?: number
+  updateRows?: number
+  tableCount?: number
+  startedAt?: string
+  finishedAt?: string
+  durationMs?: number
+  scheduleTime?: string
+  dsInstanceId?: number
+  message?: string
+  errorDetail?: string
+  logText?: string
+  detailJson?: string
 }
 export interface PipelineJob { id: number; jobCode: string; jobName: string; jobType: string; status: string; billAmount?: number; resultJson?: string }
 export interface ProbeReport { id: number; reportCode: string; sourceName: string; nullRate: number; domainCheck: string; entityType: string; status: string }
@@ -458,7 +511,13 @@ export const ingestionApi = {
     api.post<number>('/exchange/ingestion/register/tag-bindings', body),
   unbindTag: (body: { tagId: number; assetType: string; assetId: number }) =>
     api.delete<void>('/exchange/ingestion/register/tag-bindings', { data: body }),
-  templates: () => api.get<UploadTemplate[]>('/exchange/ingestion/collect/templates'),
+  templates: (params?: { keyword?: string; orgId?: number }) =>
+    api.get<UploadTemplate[]>('/exchange/ingestion/collect/templates', { params }),
+  suggestUploadTable: (templateName: string) =>
+    api.get<{ templateName: string; suggestedTable: string }>(
+      '/exchange/ingestion/collect/templates/suggest-table',
+      { params: { templateName } },
+    ),
   createTemplate: (body: Record<string, unknown>) => api.post<number>('/exchange/ingestion/collect/templates', body),
   deleteTemplate: (id: number) => api.delete<void>(`/exchange/ingestion/collect/templates/${id}`),
   updateTemplateStatus: (id: number, status: 'ACTIVE' | 'INACTIVE') =>
@@ -473,7 +532,8 @@ export const ingestionApi = {
       tableName?: string
       tableCode?: string
     }>>(`/exchange/ingestion/collect/templates/${encodeURIComponent(templateCode)}/bindings`),
-  uploads: () => api.get<Upload[]>('/exchange/ingestion/uploads'),
+  uploads: (params?: { templateCode?: string; keyword?: string; orgId?: number }) =>
+    api.get<Upload[]>('/exchange/ingestion/uploads', { params }),
   upload: (body: Record<string, unknown>) => api.post<number>('/exchange/ingestion/uploads', body),
   uploadFile: (form: FormData) => api.post<number>('/exchange/ingestion/collect/uploads/file', form),
   inspectUpload: (form: FormData) =>
@@ -532,6 +592,21 @@ export const ingestionApi = {
   deleteJob: (id: number) => api.delete<void>(`/exchange/ingestion/collect/jobs/${id}`),
   runJob: (id: number) => api.post<Record<string, unknown>>(`/exchange/ingestion/collect/jobs/${id}/run`),
   resetJob: (id: number) => api.post<void>(`/exchange/ingestion/collect/jobs/${id}/reset`),
+  publishJob: (id: number) => api.post<IngestTask>(`/exchange/ingestion/collect/jobs/${id}/publish`),
+  offlineJob: (id: number) => api.post<IngestTask>(`/exchange/ingestion/collect/jobs/${id}/offline`),
+  startJob: (id: number) => api.post<Record<string, unknown>>(`/exchange/ingestion/collect/jobs/${id}/start`),
+  stopJob: (id: number) => api.post<Record<string, unknown>>(`/exchange/ingestion/collect/jobs/${id}/stop`),
+  batchJobs: (action: 'run' | 'start' | 'stop', ids: number[]) =>
+    api.post<{ success: number; failed: number; errors: string[] }>(
+      `/exchange/ingestion/collect/jobs/batch/${action}`,
+      { ids },
+    ),
+  jobVersions: (id: number) => api.get<IngestTaskVersion[]>(`/exchange/ingestion/collect/jobs/${id}/versions`),
+  jobVersion: (id: number, versionNo: number) =>
+    api.get<IngestTaskVersion>(`/exchange/ingestion/collect/jobs/${id}/versions/${versionNo}`),
+  jobRuns: (id: number, params?: { runStatus?: string; from?: string; to?: string }) =>
+    api.get<IngestTaskRun[]>(`/exchange/ingestion/collect/jobs/${id}/runs`, { params }),
+  jobRunDetail: (runId: number) => api.get<Record<string, unknown>>(`/exchange/ingestion/collect/jobs/runs/${runId}`),
   previewJob: (body: Record<string, unknown>) => api.post<Record<string, unknown>>('/exchange/ingestion/collect/jobs/preview', body),
   mappingSuggest: (tableId: number, mode?: string) =>
     api.get<Array<{ source: string; target: string; dataType?: string; length?: number; columnName?: string }>>(

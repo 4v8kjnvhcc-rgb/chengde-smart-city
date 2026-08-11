@@ -48,10 +48,16 @@ public class KettleKtrCompiler {
      */
     public String compileCopy(String transName, SourceConn src, String selectSql,
                               String targetDatabase, String targetTable, boolean truncate) {
-        String[] srcHostPort = translate(src.host, src.port);
         String tgtDb = targetDatabase == null || targetDatabase.isBlank()
                 ? props.getKettle().getTargetDatabase() : targetDatabase;
         LayerJdbcSupport.ResolvedEndpoint tgt = layerJdbc.resolve(tgtDb);
+        return compileCopy(transName, src, selectSql, tgt, targetTable, truncate);
+    }
+
+    /** 目标端点已解析（支持 meta:/自定义主机，不限于分层配置）。 */
+    public String compileCopy(String transName, SourceConn src, String selectSql,
+                              LayerJdbcSupport.ResolvedEndpoint tgt, String targetTable, boolean truncate) {
+        String[] srcHostPort = translate(src.host, src.port);
         String[] tgtHostPort = translate(tgt.host(), tgt.port());
         String srcConn = connectionXml("SRC", srcHostPort[0], srcHostPort[1], src.database, src.username, src.password);
         String tgtConn = connectionXml("TGT", tgtHostPort[0], tgtHostPort[1], tgt.database(),
@@ -78,6 +84,7 @@ public class KettleKtrCompiler {
                 + "      <step-log-table><connection/><schema/><table/></step-log-table>\n"
                 + "    </log>\n"
                 + "    <maxdate><connection/><table/><field/><offset>0.0</offset><maxdiff>0.0</maxdiff></maxdate>\n"
+
                 + "    <size_rowset>10000</size_rowset>\n"
                 + "    <sleep_time_empty>50</sleep_time_empty>\n"
                 + "    <sleep_time_full>50</sleep_time_full>\n"

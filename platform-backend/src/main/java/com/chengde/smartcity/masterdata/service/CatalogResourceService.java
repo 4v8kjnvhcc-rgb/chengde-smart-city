@@ -333,6 +333,7 @@ public class CatalogResourceService {
             row.put("sourceKind", "META");
             row.put("platformLayer", false);
             row.put("dataLayer", layer);
+            row.put("ingSourceId", src.get("ingSourceId"));
             row.put("catalogable", !DataLayerSupport.isProcessLayer(layer));
             out.add(row);
         }

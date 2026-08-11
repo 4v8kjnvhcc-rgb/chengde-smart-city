@@ -1,9 +1,11 @@
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import PageCard from '@/components/common/PageCard.vue'
 import { statusLabel } from '@/utils/status-label'
+import { useAuthStore } from '@/stores/auth'
+import api from '@/api/http'
 import { ingestionRegisterCache } from '../ingestion-register-cache'
 import {
   ingestionApi,
@@ -23,20 +25,32 @@ type TplBinding = {
   tableCode?: string
 }
 
+type OrgOption = { id: number; orgName: string }
+
 const router = useRouter()
-const listTab = ref<'templates' | 'uploads'>('templates')
+const auth = useAuthStore()
+const canPickOrg = computed(() => !!auth.isSystemAdmin || !!auth.isPlatformAdmin)
+
 const templates = ref<UploadTemplate[]>([])
-const uploads = ref<Upload[]>([])
 const projects = ref<Project[]>([])
 const fileSources = ref<DataSource[]>([])
+const orgs = ref<OrgOption[]>([])
+const queryKeyword = ref('')
+const queryOrgId = ref<number | undefined>()
+const tplOrgId = ref<number | undefined>()
 const tplProjectId = ref<number | undefined>()
 const tplSourceId = ref<number | undefined>()
+const tplTargetTouched = ref(false)
 
 const tplDialog = ref(false)
 const uploadDialog = ref(false)
 const tplDetailVisible = ref(false)
 const tplDetailTitle = ref('')
 const tplDetailRows = ref<TplBinding[]>([])
+const recordsDrawer = ref(false)
+const recordsTitle = ref('')
+const recordsLoading = ref(false)
+const templateRecords = ref<Upload[]>([])
 
 const tplForm = reactive({ templateCode: '', templateName: '' })
 const tplFileInput = ref<HTMLInputElement>()
@@ -90,12 +104,6 @@ function statusTagType(status: unknown): 'success' | 'warning' | 'info' | 'dange
   return 'info'
 }
 
-function suggestOdsFromFile(suggested?: string): string {
-  const raw = String(suggested || '').trim()
-  if (!raw) return ''
-  return raw.toLowerCase().startsWith('ods_') ? raw : `ods_${raw.replace(/[^A-Za-z0-9_]/g, '')}`
-}
-
 function parseTplBindingsLocal(json?: string): TplBinding[] {
   if (!json) return []
   try {
@@ -120,14 +128,57 @@ function templateTarget(row: UploadTemplate): string {
   return bindings[0]?.targetTable || '—'
 }
 
+const selectableProjects = computed(() => {
+  if (!tplOrgId.value) return projects.value
+  return projects.value.filter((p) => !p.boundOrgId || p.boundOrgId === tplOrgId.value)
+})
+
 const selectableFileSources = computed(() => {
-  if (!tplProjectId.value) return fileSources.value
-  return fileSources.value.filter((s) => s.projectId === tplProjectId.value)
+  const list = !tplProjectId.value
+    ? fileSources.value
+    : fileSources.value.filter((s) => s.projectId === tplProjectId.value)
+  return list
 })
 
 function sourceOptionLabel(s: DataSource) {
   const sys = s.systemName || s.sourceName || '未命名系统'
   return `${sys}（${s.sourceName}）`
+}
+
+async function loadOrgs() {
+  try {
+    orgs.value = ((await api.get('/system/orgs')).data || []) as OrgOption[]
+  } catch {
+    orgs.value = []
+  }
+}
+
+async function syncSuggestedTargetTable() {
+  const name = (tplForm.templateName || '').trim()
+  if (!name || tplTargetTouched.value) return
+  try {
+    const res = await ingestionApi.suggestUploadTable(name)
+    tplTargetTable.value = res.data?.suggestedTable || ''
+  } catch {
+    /* ignore */
+  }
+}
+
+watch(() => tplForm.templateName, () => {
+  void syncSuggestedTargetTable()
+})
+
+watch(tplOrgId, () => {
+  const candidates = selectableProjects.value
+  if (!candidates.some((p) => p.id === tplProjectId.value)) {
+    const other = candidates.find((x) => isOtherProject(x.projectCode))
+    tplProjectId.value = other?.id || candidates[0]?.id
+  }
+  syncDefaultSource()
+})
+
+function onTargetTableInput() {
+  tplTargetTouched.value = true
 }
 
 async function loadAssetTargets() {
@@ -140,9 +191,13 @@ async function loadAssetTargets() {
     const t = String(s.sourceType || '').toUpperCase()
     return t === 'FILE' || t === 'CSV' || t === 'EXCEL' || t === 'JSON'
   })
-  const other = projects.value.find((x) => isOtherProject(x.projectCode))
-  if (!tplProjectId.value) {
-    tplProjectId.value = other?.id || projects.value[0]?.id
+  if (!tplOrgId.value) {
+    tplOrgId.value = auth.user?.orgId || orgs.value[0]?.id
+  }
+  const candidates = selectableProjects.value
+  const other = candidates.find((x) => isOtherProject(x.projectCode))
+  if (!tplProjectId.value || !candidates.some((p) => p.id === tplProjectId.value)) {
+    tplProjectId.value = other?.id || candidates[0]?.id
   }
   syncDefaultSource()
 }
@@ -216,14 +271,17 @@ async function submitAddSystem() {
 }
 
 async function loadLists() {
-  const [tpl, up] = await Promise.all([ingestionApi.templates(), ingestionApi.uploads()])
+  const params: { keyword?: string; orgId?: number } = {}
+  if (queryKeyword.value.trim()) params.keyword = queryKeyword.value.trim()
+  if (canPickOrg.value && queryOrgId.value) params.orgId = queryOrgId.value
+  const tpl = await ingestionApi.templates(params)
   templates.value = tpl.data || []
-  uploads.value = up.data || []
 }
 
 async function openCreateTemplate() {
   resetTplWizard()
   tplDialog.value = true
+  await loadOrgs()
   await loadAssetTargets()
 }
 
@@ -244,6 +302,8 @@ function resetTplWizard() {
   tplColumns.value = []
   tplSelectedCols.value = []
   tplTargetTable.value = ''
+  tplTargetTouched.value = false
+  tplOrgId.value = auth.user?.orgId
 }
 
 async function onTplFileChange(e: Event) {
@@ -261,9 +321,10 @@ async function onTplFileChange(e: Event) {
     tplHeaderRow.value = 1
     tplColumns.value = []
     tplSelectedCols.value = []
-    if (!tplTargetTable.value) {
-      tplTargetTable.value = suggestOdsFromFile(res.data.suggestedTable)
+    if (!tplForm.templateName.trim()) {
+      tplForm.templateName = defaultTplName(tplSheet.value)
     }
+    await syncSuggestedTargetTable()
     ElMessage.success(`已识别 ${tplSheets.value.length} 个工作表`)
   } catch {
     ElMessage.error('解析样例文件失败')
@@ -274,8 +335,14 @@ async function onTplFileChange(e: Event) {
 }
 
 function defaultTplName(sheet: string) {
-  const base = (tplFileName.value || '数据').replace(/\.[^.]+$/, '')
-  return sheet ? `${base}_${sheet}` : base
+  const base = (tplFileName.value || '数据').replace(/\.[^.]+$/, '').trim()
+  const sheetName = (sheet || '').trim()
+  if (!sheetName || !base) return base || sheetName || '数据'
+  // 文件名与工作表名相同时只保留一遍，避免「xxx_xxx」重复
+  if (base === sheetName || base.endsWith('_' + sheetName) || sheetName.endsWith('_' + base)) {
+    return base.length >= sheetName.length ? base : sheetName
+  }
+  return `${base}_${sheetName}`
 }
 
 async function loadTplHeader() {
@@ -292,11 +359,9 @@ async function loadTplHeader() {
     })
     tplColumns.value = res.data.columns || []
     tplSelectedCols.value = [...tplColumns.value]
-    if (!tplTargetTable.value && res.data.suggestedTable) {
-      tplTargetTable.value = suggestOdsFromFile(res.data.suggestedTable)
-    }
     tplForm.templateName = tplForm.templateName.trim() || defaultTplName(tplSheet.value)
     tplForm.templateCode = ''
+    await syncSuggestedTargetTable()
     ElMessage.success(`已读取第 ${res.data.headerRow} 行表头，共 ${tplColumns.value.length} 列`)
   } catch {
     ElMessage.error('读取表头失败')
@@ -306,6 +371,10 @@ async function loadTplHeader() {
 }
 
 async function saveSheetAsTemplate() {
+  if (!tplOrgId.value) {
+    ElMessage.warning('请选择归属机构')
+    return
+  }
   if (!tplSourceId.value) {
     ElMessage.warning('请选择归属项目下的 FILE 系统（数据源）；可先在「项目/系统信息登记」新建项目或新增系统')
     return
@@ -319,7 +388,7 @@ async function saveSheetAsTemplate() {
     return
   }
   if (!tplTargetTable.value.trim()) {
-    ElMessage.warning('请填写目标 ODS 表名')
+    ElMessage.warning('请填写目标表名')
     return
   }
   const name = (tplForm.templateName || '').trim() || defaultTplName(tplSheet.value)
@@ -329,6 +398,7 @@ async function saveSheetAsTemplate() {
     await ingestionApi.createTemplate({
       templateCode: code,
       templateName: name,
+      orgId: tplOrgId.value,
       bindings: [{
         sheetName: tplSheet.value,
         headerRow: tplHeaderRow.value,
@@ -358,6 +428,21 @@ async function showTemplateDetail(row: UploadTemplate) {
     tplDetailRows.value = parseTplBindingsLocal(row.columnMappingJson)
   }
   tplDetailVisible.value = true
+}
+
+async function openTemplateRecords(row: UploadTemplate) {
+  recordsTitle.value = `上传记录 · ${row.templateName || row.templateCode}`
+  recordsDrawer.value = true
+  recordsLoading.value = true
+  try {
+    const res = await ingestionApi.uploads({ templateCode: row.templateCode })
+    templateRecords.value = res.data || []
+  } catch {
+    templateRecords.value = []
+    ElMessage.error('加载上传记录失败')
+  } finally {
+    recordsLoading.value = false
+  }
 }
 
 async function toggleTemplateStatus(row: UploadTemplate) {
@@ -618,8 +703,9 @@ async function onUploadDialogClosed() {
   await finishAndClose()
 }
 
-onMounted(() => {
-  loadLists()
+onMounted(async () => {
+  await loadOrgs()
+  await loadLists()
 })
 </script>
 
@@ -641,24 +727,42 @@ onMounted(() => {
         </div>
       </template>
 
-      <el-radio-group v-model="listTab" size="small" style="margin-bottom: 12px">
-        <el-radio-button value="templates">上传模板</el-radio-button>
-        <el-radio-button value="uploads">上传记录</el-radio-button>
-      </el-radio-group>
+      <div class="list-toolbar">
+        <el-input
+          v-model="queryKeyword"
+          clearable
+          placeholder="按模板名称查询"
+          style="width: 220px"
+          @keyup.enter="loadLists"
+        />
+        <el-select
+          v-if="canPickOrg"
+          v-model="queryOrgId"
+          clearable
+          filterable
+          placeholder="归属机构"
+          style="width: 200px"
+        >
+          <el-option v-for="o in orgs" :key="o.id" :label="o.orgName" :value="o.id" />
+        </el-select>
+        <el-button type="primary" @click="loadLists">查询</el-button>
+        <el-button @click="queryKeyword = ''; queryOrgId = undefined; loadLists()">重置</el-button>
+      </div>
 
       <el-table
-        v-if="listTab === 'templates'"
         :data="listedTemplates"
         stripe
         size="small"
         empty-text="暂无模板，请点击右上角新建"
       >
         <el-table-column prop="templateName" label="模板" min-width="140" align="center" header-align="center" />
-        <el-table-column prop="templateCode" label="编码" width="150" align="center" header-align="center" show-overflow-tooltip />
+        <el-table-column prop="orgName" label="归属机构" min-width="120" align="center" header-align="center" show-overflow-tooltip>
+          <template #default="{ row }">{{ row.orgName || '—' }}</template>
+        </el-table-column>
         <el-table-column label="同步资产" min-width="140" align="center" header-align="center" show-overflow-tooltip>
           <template #default="{ row }">{{ templateAssetLabel(row) }}</template>
         </el-table-column>
-        <el-table-column label="ODS表" min-width="140" align="center" header-align="center" show-overflow-tooltip>
+        <el-table-column label="目标表" min-width="140" align="center" header-align="center" show-overflow-tooltip>
           <template #default="{ row }">{{ templateTarget(row) }}</template>
         </el-table-column>
         <el-table-column label="状态" width="90" align="center" header-align="center">
@@ -666,32 +770,14 @@ onMounted(() => {
             <el-tag :type="statusTagType(row.status)" size="small">{{ statusLabel(row.status) }}</el-tag>
           </template>
         </el-table-column>
-        <el-table-column label="操作" width="200" fixed="right" align="center" header-align="center">
+        <el-table-column label="操作" width="260" fixed="right" align="center" header-align="center">
           <template #default="{ row }">
             <el-button link type="primary" @click="showTemplateDetail(row)">详情</el-button>
+            <el-button link type="primary" @click="openTemplateRecords(row)">上传记录</el-button>
             <el-button link :type="row.status === 'INACTIVE' ? 'success' : 'warning'" @click="toggleTemplateStatus(row)">
               {{ row.status === 'INACTIVE' ? '启用' : '停用' }}
             </el-button>
             <el-button link type="danger" @click="removeTemplate(row)">删除</el-button>
-          </template>
-        </el-table-column>
-      </el-table>
-
-      <el-table
-        v-else
-        :data="uploads"
-        stripe
-        size="small"
-        empty-text="暂无上传记录"
-      >
-        <el-table-column prop="fileName" label="文件" min-width="140" align="center" header-align="center" show-overflow-tooltip />
-        <el-table-column prop="sheetName" label="Sheet" width="100" align="center" header-align="center" />
-        <el-table-column prop="targetTable" label="ODS表" min-width="140" align="center" header-align="center" show-overflow-tooltip />
-        <el-table-column prop="templateCode" label="模板" width="120" align="center" header-align="center" show-overflow-tooltip />
-        <el-table-column prop="rowCount" label="行数" width="80" align="center" header-align="center" />
-        <el-table-column label="状态" width="100" align="center" header-align="center">
-          <template #default="{ row }">
-            <el-tag :type="statusTagType(row.status)" size="small">{{ statusLabel(row.status) }}</el-tag>
           </template>
         </el-table-column>
       </el-table>
@@ -700,9 +786,19 @@ onMounted(() => {
     <!-- 新建模板弹窗 -->
     <el-dialog v-model="tplDialog" title="新建上传模板" width="820px" destroy-on-close append-to-body>
       <p class="hint">
-        选择归属项目与系统后保存模板，将自动创建数据资产。可点「+」当场新建系统名称，并同步到资产登记。
+        选择归属机构、项目与系统后保存模板，将自动创建数据资产。可点「+」当场新建系统名称，并同步到资产登记。
       </p>
       <el-form label-width="110px" class="portal-inline-form portal-inline-form--block">
+        <el-form-item label="归属机构" class="portal-field-xl" required>
+          <el-select
+            v-model="tplOrgId"
+            filterable
+            placeholder="选择机构"
+            :disabled="!canPickOrg"
+          >
+            <el-option v-for="o in orgs" :key="o.id" :label="o.orgName" :value="o.id" />
+          </el-select>
+        </el-form-item>
         <el-form-item label="归属项目" class="portal-field-xl" required>
           <el-select
             v-model="tplProjectId"
@@ -711,7 +807,7 @@ onMounted(() => {
             @change="onTplProjectChange"
           >
             <el-option
-              v-for="p in projects"
+              v-for="p in selectableProjects"
               :key="p.id"
               :label="isOtherProject(p.projectCode) ? `${p.projectName}（系统默认）` : p.projectName"
               :value="p.id"
@@ -763,8 +859,12 @@ onMounted(() => {
           <el-form-item label="模板名称" class="portal-field-lg">
             <el-input v-model="tplForm.templateName" placeholder="同时作为资产名称" />
           </el-form-item>
-          <el-form-item label="目标 ODS" class="portal-field-xl">
-            <el-input v-model="tplTargetTable" placeholder="ods_xxx" />
+          <el-form-item label="目标表" class="portal-field-xl">
+            <el-input
+              v-model="tplTargetTable"
+              placeholder="ods_up_拼音首字母，可手改"
+              @input="onTargetTableInput"
+            />
           </el-form-item>
           <el-form-item class="portal-form-actions">
             <el-button :loading="tplBusy" @click="loadTplHeader">读取表头</el-button>
@@ -918,6 +1018,21 @@ onMounted(() => {
         </el-table-column>
       </el-table>
     </el-dialog>
+
+    <el-drawer v-model="recordsDrawer" :title="recordsTitle" size="640px" destroy-on-close append-to-body>
+      <el-table v-loading="recordsLoading" :data="templateRecords" stripe size="small" empty-text="暂无上传记录">
+        <el-table-column prop="fileName" label="文件" min-width="140" show-overflow-tooltip />
+        <el-table-column prop="sheetName" label="Sheet" width="100" />
+        <el-table-column prop="targetTable" label="目标表" min-width="140" show-overflow-tooltip />
+        <el-table-column prop="rowCount" label="行数" width="70" />
+        <el-table-column label="状态" width="90">
+          <template #default="{ row }">
+            <el-tag :type="statusTagType(row.status)" size="small">{{ statusLabel(row.status) }}</el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column prop="createdAt" label="时间" width="160" show-overflow-tooltip />
+      </el-table>
+    </el-drawer>
   </div>
 </template>
 
@@ -942,6 +1057,13 @@ onMounted(() => {
   display: flex;
   gap: 8px;
   flex-shrink: 0;
+}
+.list-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  margin-bottom: 12px;
 }
 .hint {
   margin: 0 0 12px;

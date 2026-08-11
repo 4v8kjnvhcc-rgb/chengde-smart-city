@@ -15,6 +15,16 @@ export const QUALITY_SUB_LABELS: Record<QualitySubKey, string> = {
   'quality.assess': '数据质量评估',
 }
 
+/** 数据汇聚接入侧栏叶子（原顶栏 TAB） */
+export const INGEST_SUB_KEYS = ['ingest.structured', 'ingest.file', 'ingest.other'] as const
+export type IngestSubKey = (typeof INGEST_SUB_KEYS)[number]
+
+export const INGEST_SUB_LABELS: Record<IngestSubKey, string> = {
+  'ingest.structured': '结构化数据接入',
+  'ingest.file': '文件上传',
+  'ingest.other': '其他数据接入',
+}
+
 /** 指标与目录体系构建侧栏叶子 */
 export const CATALOG_SUB_KEYS = [
   'catalog.resources',
@@ -130,8 +140,12 @@ export const LEGACY_TAB_MAP: Record<string, { system: IngestionSystem; module: s
   m037: { system: 'register', module: 'm039' },
   m038: { system: 'register', module: 'm039' },
   register: { system: 'register', module: 'm039' },
-  upload: { system: 'collect', module: 'ingest' },
-  channel: { system: 'collect', module: 'ingest' },
+  upload: { system: 'collect', module: 'ingest.structured' },
+  channel: { system: 'collect', module: 'ingest.structured' },
+  ingest: { system: 'collect', module: 'ingest.structured' },
+  'ingest.structured': { system: 'collect', module: 'ingest.structured' },
+  'ingest.file': { system: 'collect', module: 'ingest.file' },
+  'ingest.other': { system: 'collect', module: 'ingest.other' },
   pipeline: { system: 'collect', module: 'pipeline' },
   resource: { system: 'collect', module: 'catalog.resources' },
   govern: { system: 'collect', module: 'catalog.approvals' },
@@ -170,12 +184,23 @@ for (let i = 39; i <= 50; i++) LEGACY_TAB_MAP[`m0${i}`] = { system: 'register', 
 for (let i = 51; i <= 77; i++) {
   if (i >= 65 && i <= 68) continue
   const ck = MCODE_TO_COLLECT[i]
-  if (ck) LEGACY_TAB_MAP[`m${i}`] = { system: 'collect', module: ck }
+  if (!ck) continue
+  if (ck === 'ingest') {
+    LEGACY_TAB_MAP[`m${i}`] = { system: 'collect', module: ingestSubKeyFromMCode(i) }
+  } else {
+    LEGACY_TAB_MAP[`m${i}`] = { system: 'collect', module: ck }
+  }
 }
 LEGACY_TAB_MAP.m065 = { system: 'collect', module: 'catalog.resources' }
 LEGACY_TAB_MAP.m066 = { system: 'collect', module: 'catalog.classify' }
 LEGACY_TAB_MAP.m067 = { system: 'collect', module: 'catalog.publish' }
 LEGACY_TAB_MAP.m068 = { system: 'collect', module: 'catalog.approvals' }
+
+function ingestSubKeyFromMCode(num: number): IngestSubKey {
+  if (num >= 55 && num <= 56) return 'ingest.file'
+  if (num >= 57 && num <= 60) return 'ingest.other'
+  return 'ingest.structured'
+}
 
 export function registerNavItems(): HubNavItem[] {
   return REGISTER_MODULES.map(toNavItem)
@@ -312,30 +337,8 @@ export function moduleKeyFromRegisterPath(path?: string): string | null {
   }
 }
 
-/** 归集侧部门管理员红框：编目 / 分类 / 注册发布 */
-const DEPT_INGEST_CATALOG_KEYS: CatalogSubKey[] = [
-  'catalog.resources',
-  'catalog.classify',
-  'catalog.publish',
-]
-
 export function filterCollectNavItems(opts: { isSystemAdmin: boolean; permissions: string[] }): HubNavItem[] {
-  // 部门管理员：采集汇聚侧仅保留「指标与目录体系构建」红框三菜单
-  if (!opts.isSystemAdmin) {
-    const catalogMeta = COLLECT_MODULES.find((m) => m.key === 'catalog')
-    if (!catalogMeta) return []
-    return [
-      {
-        key: 'catalog',
-        label: catalogMeta.label,
-        subLabel: catalogMeta.subLabel,
-        children: DEPT_INGEST_CATALOG_KEYS.map((k) => ({
-          key: k,
-          label: CATALOG_SUB_LABELS[k],
-        })),
-      },
-    ]
-  }
+  // 按角色菜单权限过滤；部门管理员勾选「数据汇聚接入」等即可展示（不再硬编码仅目录三菜单）
   return filterIngestionModules(COLLECT_MODULES, opts)
     .map((m) => toCollectNavItem(m, opts))
     .filter((item) => {
@@ -344,18 +347,16 @@ export function filterCollectNavItems(opts: { isSystemAdmin: boolean; permission
     })
 }
 
-/** 侧栏选中的 key 是否在已授权采集模块内（含质量/资产/目录子页） */
+/** 侧栏选中的 key 是否在已授权采集模块内（含汇聚接入/质量/资产/目录子页） */
 export function isCollectModuleAllowed(
   moduleKey: string,
   allowed: IngestionModuleMeta[],
   opts?: { isSystemAdmin: boolean; permissions: string[] },
 ): boolean {
-  // 部门管理员：仅红框三菜单
-  if (opts && !opts.isSystemAdmin) {
-    if (moduleKey === 'catalog') return true
-    return (DEPT_INGEST_CATALOG_KEYS as readonly string[]).includes(moduleKey)
-  }
   if (allowed.some((m) => m.key === moduleKey)) return true
+  if (isIngestSubKey(moduleKey) || moduleKey === 'ingest') {
+    return allowed.some((m) => m.key === 'ingest')
+  }
   if (isQualitySubKey(moduleKey) || moduleKey === 'quality') {
     return allowed.some((m) => m.key === 'quality')
   }
@@ -374,8 +375,8 @@ export function isCollectModuleAllowed(
 
 /** 目录模块：落到当前账号有权访问的第一个子页 */
 export function firstAllowedCatalogModule(opts: { isSystemAdmin: boolean; permissions: string[] }): CatalogSubKey {
-  if (!opts.isSystemAdmin) return 'catalog.resources'
   for (const k of CATALOG_SUB_KEYS) {
+    if (k === 'catalog.approvals' && !opts.isSystemAdmin) continue
     if (opts.isSystemAdmin) return k
     const p = CATALOG_SUB_PERMISSIONS[k]
     if (opts.permissions.includes(p) || opts.permissions.includes('hub:ingestion:collect:catalog')) {
@@ -383,6 +384,10 @@ export function firstAllowedCatalogModule(opts: { isSystemAdmin: boolean; permis
     }
   }
   return 'catalog.resources'
+}
+
+export function isIngestSubKey(key: string): key is IngestSubKey {
+  return (INGEST_SUB_KEYS as readonly string[]).includes(key)
 }
 
 export function isQualitySubKey(key: string): key is QualitySubKey {
@@ -402,6 +407,7 @@ export function normalizeCollectModuleKey(
   key: string,
   opts?: { isSystemAdmin: boolean; permissions: string[] },
 ): string {
+  if (key === 'ingest') return 'ingest.structured'
   if (key === 'quality') return 'quality.rule-config'
   if (key === 'asset') return 'asset.classify'
   if (key === 'catalog') return opts ? firstAllowedCatalogModule(opts) : 'catalog.resources'
@@ -416,6 +422,14 @@ function toCollectNavItem(
   m: IngestionModuleMeta,
   opts?: { isSystemAdmin: boolean; permissions: string[] },
 ): HubNavItem {
+  if (m.key === 'ingest') {
+    return {
+      key: m.key,
+      label: m.label,
+      subLabel: m.subLabel,
+      children: INGEST_SUB_KEYS.map((k) => ({ key: k, label: INGEST_SUB_LABELS[k] })),
+    }
+  }
   if (m.key === 'quality') {
     return {
       key: m.key,
@@ -453,6 +467,8 @@ function toCollectNavItem(
 }
 
 function resolveCollectModule(mod: string): string | undefined {
+  if (isIngestSubKey(mod)) return mod
+  if (mod === 'ingest') return 'ingest.structured'
   if (isQualitySubKey(mod)) return mod
   if (mod === 'quality') return 'quality.rule-config'
   if (isAssetSubKey(mod)) return mod
@@ -477,6 +493,7 @@ function resolveCollectModule(mod: string): string | undefined {
     if (num === 76) return 'asset.global'
     const ck = MCODE_TO_COLLECT[num]
     if (ck === 'catalog') return 'catalog.resources'
+    if (ck === 'ingest') return ingestSubKeyFromMCode(num)
     if (ck) return ck
   }
   return undefined
@@ -501,6 +518,9 @@ export function resolveIngestionNav(query: Record<string, unknown>): { system: I
 
 export function moduleTitle(moduleKey: string): string {
   if (moduleKey.startsWith('custom-')) return '自定义菜单'
+  if (isIngestSubKey(moduleKey)) {
+    return `${COLLECT_BY_KEY.ingest?.label || '数据汇聚接入'} · ${INGEST_SUB_LABELS[moduleKey]}`
+  }
   if (isQualitySubKey(moduleKey)) {
     return `${COLLECT_BY_KEY.quality?.label || '汇聚数据质量管控'} · ${QUALITY_SUB_LABELS[moduleKey]}`
   }
@@ -520,6 +540,12 @@ export function systemTitle(system: IngestionSystem): string {
 
 export type IngestMainTab = 'structured' | 'file' | 'other'
 
+const INGEST_SUB_TO_MAIN: Record<IngestSubKey, IngestMainTab> = {
+  'ingest.structured': 'structured',
+  'ingest.file': 'file',
+  'ingest.other': 'other',
+}
+
 const LEGACY_SECTION_TO_MAIN: Record<string, IngestMainTab> = {
   m051: 'structured', m052: 'structured', m053: 'structured', m054: 'structured',
   structured: 'structured', 'structured-table': 'structured', 'structured-upload': 'structured',
@@ -529,9 +555,11 @@ const LEGACY_SECTION_TO_MAIN: Record<string, IngestMainTab> = {
 }
 
 export function collectIngestMainTab(query: Record<string, unknown>): IngestMainTab {
+  const mod = String(query.module || '').toLowerCase()
+  if (isIngestSubKey(mod)) return INGEST_SUB_TO_MAIN[mod]
+  if (mod === 'ingest') return 'structured'
   const section = String(query.section || '').toLowerCase()
   if (LEGACY_SECTION_TO_MAIN[section]) return LEGACY_SECTION_TO_MAIN[section]
-  const mod = String(query.module || '').toLowerCase()
   const m = /^m0?(\d+)$/i.exec(mod)
   if (m && LEGACY_SECTION_TO_MAIN[`m${Number(m[1])}`]) return LEGACY_SECTION_TO_MAIN[`m${Number(m[1])}`]
   return 'structured'

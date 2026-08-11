@@ -27,6 +27,7 @@ import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.regex.Pattern;
 import java.util.regex.PatternSyntaxException;
@@ -475,6 +476,97 @@ public class StandardItemService {
         out.put("pattern", patternText);
         out.put("message", message);
         return out;
+    }
+
+    /** 按任务命名规范生成任务名称（优先读取 gov_naming_standard 中 TASK 类型配置） */
+    public Map<String, Object> generateTaskName(Map<String, Object> body) {
+        String category = str(body.get("taskCategory"), "GJ").trim().toUpperCase(Locale.ROOT);
+        String targetTable = sanitizeIdent(str(body.get("targetTable"), ""));
+        String dataSourceName = sanitizeIdent(str(body.get("dataSourceName"), ""));
+        int sequenceNo = toInt(body.get("sequenceNo"), 1);
+        if (sequenceNo < 1) {
+            sequenceNo = 1;
+        }
+        String seq = String.format(Locale.ROOT, "%03d", sequenceNo);
+
+        String template = resolveTaskNamingTemplate(category);
+        String taskName = applyTaskNamingTemplate(template, targetTable, dataSourceName, seq);
+        if (taskName == null || taskName.isBlank()) {
+            throw new BusinessException(400, "无法生成任务名称，请提供目标表或数据源名称");
+        }
+        if (taskName.length() > 80) {
+            taskName = taskName.substring(0, 80);
+        }
+
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("taskName", taskName);
+        out.put("taskCategory", category);
+        out.put("template", template);
+        return out;
+    }
+
+    private String resolveTaskNamingTemplate(String category) {
+        List<GovNamingStandard> rules = listNaming("TASK", "ACTIVE");
+        for (GovNamingStandard rule : rules) {
+            if (rule == null || rule.getStandardContent() == null || rule.getStandardContent().isBlank()) {
+                continue;
+            }
+            String name = rule.getNamingName() == null ? "" : rule.getNamingName();
+            String content = rule.getStandardContent().trim();
+            if (matchesTaskCategory(name, content, category)) {
+                return content;
+            }
+        }
+        return defaultTaskNamingTemplate(category);
+    }
+
+    private static boolean matchesTaskCategory(String namingName, String standardContent, String category) {
+        String upperName = namingName.toUpperCase(Locale.ROOT);
+        String upperContent = standardContent.toUpperCase(Locale.ROOT);
+        return switch (category) {
+            case "GJ" -> upperName.contains("归集") || upperContent.startsWith("T_GJ_");
+            case "ZL" -> upperName.contains("治理") || upperContent.startsWith("T_ZL_");
+            case "RH" -> upperName.contains("融合") || upperContent.startsWith("T_RH_");
+            case "META" -> upperName.contains("元数据") || upperContent.startsWith("T_META_");
+            case "Q" -> upperName.contains("质量") || upperContent.startsWith("T_Q_");
+            default -> false;
+        };
+    }
+
+    private static String defaultTaskNamingTemplate(String category) {
+        return switch (category) {
+            case "GJ" -> "t_gj_{targetTable}";
+            case "ZL" -> "t_zl_{targetTable}";
+            case "RH" -> "t_rh_{targetTable}";
+            case "META" -> "t_meta_{dataSourceName}{seq}";
+            case "Q" -> "t_q_{dataSourceName}{seq}";
+            default -> "t_gj_{targetTable}";
+        };
+    }
+
+    private static String applyTaskNamingTemplate(String template, String targetTable,
+                                                  String dataSourceName, String seq) {
+        String result = template
+                .replace("{targetTable}", targetTable == null ? "" : targetTable)
+                .replace("{dataSourceName}", dataSourceName == null ? "" : dataSourceName)
+                .replace("{seq}", seq == null ? "001" : seq)
+                .replaceAll("_+", "_")
+                .replaceAll("^_|_$", "");
+        if (result.isBlank()) {
+            return null;
+        }
+        return result.toLowerCase(Locale.ROOT);
+    }
+
+    private static String sanitizeIdent(String raw) {
+        if (raw == null || raw.isBlank()) {
+            return "";
+        }
+        return raw.trim()
+                .replaceAll("[^A-Za-z0-9_]", "_")
+                .replaceAll("_+", "_")
+                .replaceAll("^_|_$", "")
+                .toLowerCase(Locale.ROOT);
     }
 
     // ---------- A10 mapping ----------

@@ -8,6 +8,9 @@ import PortalPagination from '@/components/common/PortalPagination.vue'
 import { useClientPager } from '@/composables/useClientPager'
 import { statusLabel, statusTagType } from '@/utils/status-label'
 import ExecCycleSelect from '@/views/system/ExecCycleSelect.vue'
+import MetaDataSourcePickerDialog from '@/components/common/MetaDataSourcePickerDialog.vue'
+import type { MetaBindSource } from '@/utils/meta-datasource-conn'
+import { connectionKeyOf, displayNameOfConnection } from '@/utils/meta-datasource-conn'
 
 export type ListMode = 'mgmt' | 'run' | 'schedule'
 
@@ -31,13 +34,15 @@ interface TaskRow {
   timeUnit?: string
   intervalValue?: number
   nextRunAt?: string
+  dsScheduleId?: number | null
+  dsProjectCode?: number | null
 }
 
 interface DsOption {
   value: string
   label: string
   sourceId?: number
-  kind: 'platform' | 'external'
+  kind: 'platform' | 'external' | 'meta'
 }
 
 interface TableOption {
@@ -136,10 +141,12 @@ const form = reactive({
   taskName: '',
   description: '',
   sourceConnection: '',
+  sourceConnectionLabel: '',
   sourceTable: '',
   sourceTable2: '',
   joinKey: 'id',
   targetConnection: 'smart_city_dwd',
+  targetConnectionLabel: '平台 DWD（过程层产出）',
   targetTable: '',
   rules: [] as string[],
   scheduleEnabled: false,
@@ -149,6 +156,50 @@ const form = reactive({
   timeUnit: 'DAY',
   intervalValue: 1,
 })
+
+const dsPickerVisible = ref(false)
+const dsPickerRole = ref<'source' | 'target'>('source')
+const connLabelMap = ref<Record<string, string>>({})
+
+function openDsPicker(role: 'source' | 'target') {
+  if (isFusion.value && role === 'source') {
+    // 融合默认 DWD，仍允许改选
+  }
+  dsPickerRole.value = role
+  dsPickerVisible.value = true
+}
+
+function onDsPicked(row: MetaBindSource) {
+  const key = connectionKeyOf(row)
+  const label = `${row.sourceName}${row.databaseName ? `（${row.databaseName}）` : ''}`
+  connLabelMap.value = { ...connLabelMap.value, [key]: label }
+  const metaOpt: DsOption = { value: key, label, kind: key.startsWith('meta:') ? 'meta' : 'platform' }
+  if (!sourceOptions.value.some(s => s.value === key)) {
+    sourceOptions.value = [...sourceOptions.value, metaOpt]
+  }
+  if (dsPickerRole.value === 'source') {
+    form.sourceConnection = key
+    form.sourceConnectionLabel = label
+    form.sourceTable = ''
+    form.sourceTable2 = ''
+    void loadPlatformTables(key)
+  } else {
+    form.targetConnection = key
+    form.targetConnectionLabel = label
+  }
+}
+
+function sourceDisplay() {
+  return form.sourceConnectionLabel
+    || displayNameOfConnection(form.sourceConnection, connLabelMap.value)
+    || form.sourceConnection
+}
+
+function targetDisplay() {
+  return form.targetConnectionLabel
+    || displayNameOfConnection(form.targetConnection, connLabelMap.value)
+    || form.targetConnection
+}
 
 const renameForm = reactive({
   taskName: '',
@@ -223,7 +274,11 @@ const platformTableOptions = computed(() => {
 })
 
 const sourceTableSelectOptions = computed(() => {
-  if (selectedSource.value?.kind === 'platform') {
+  const conn = form.sourceConnection
+  if (conn.startsWith('meta:') || selectedSource.value?.kind === 'meta') {
+    return platformTables.value.map(name => ({ value: name, label: name }))
+  }
+  if (selectedSource.value?.kind === 'platform' || PLATFORM_LAYER_IDS[conn] != null) {
     return platformTableOptions.value.map(name => ({ value: name, label: name }))
   }
   return externalTableOptions.value.map(t => ({
@@ -236,10 +291,24 @@ const sourceTableSelectOptions = computed(() => {
 
 async function loadPlatformTables(connection: string) {
   platformTables.value = []
-  const layerId = PLATFORM_LAYER_IDS[connection]
-  if (layerId == null) return
+  if (!connection) return
   platformTablesLoading.value = true
   try {
+    if (connection.startsWith('meta:')) {
+      const metaId = Number(connection.slice(5))
+      if (!Number.isFinite(metaId) || metaId <= 0) {
+        platformTables.value = []
+        return
+      }
+      const rows = (await api.get(`/governance/platform/metadata/collect/meta-data-sources/${metaId}/tables`)).data || []
+      platformTables.value = (rows as Array<{ sourceTable?: string; tableName?: string }>)
+        .map(r => String(r.sourceTable || r.tableName || '').trim())
+        .filter(Boolean)
+        .sort((a, b) => a.localeCompare(b))
+      return
+    }
+    const layerId = PLATFORM_LAYER_IDS[connection]
+    if (layerId == null) return
     const rows = (await api.get(`/governance/platform/metadata/collect/data-sources/${layerId}/tables`)).data || []
     platformTables.value = (rows as Array<{ sourceTable?: string }>)
       .map(r => String(r.sourceTable || '').trim())
@@ -254,7 +323,7 @@ async function loadPlatformTables(connection: string) {
 watch(() => form.sourceConnection, (conn) => {
   form.sourceTable = ''
   platformTables.value = []
-  if (conn && PLATFORM_LAYER_IDS[conn] != null) {
+  if (conn && (PLATFORM_LAYER_IDS[conn] != null || conn.startsWith('meta:'))) {
     void loadPlatformTables(conn)
   }
 })
@@ -290,45 +359,21 @@ async function load() {
 }
 
 async function loadCreateOptions() {
-  try {
-    if (isFusion.value) {
-      sourceOptions.value = [...PLATFORM_SOURCES_FUSION]
-      allTables.value = []
-      return
-    }
-    const [dsRes, tbRes] = await Promise.all([
-      api.get('/exchange/ingestion/data-sources'),
-      api.get('/exchange/ingestion/register/tables'),
-    ])
-    const external = ((dsRes.data || []) as Array<{ id: number; sourceName: string; sourceType?: string }>).map(s => ({
-      value: `ds:${s.id}`,
-      label: `${s.sourceName}${s.sourceType ? `（${statusLabel(s.sourceType)}）` : ''}`,
-      sourceId: s.id,
-      kind: 'external' as const,
-    }))
-    sourceOptions.value = [...PLATFORM_SOURCES_GOV, ...external]
-    allTables.value = ((tbRes.data || []) as TableOption[]).map(t => ({
-      id: t.id,
-      sourceId: t.sourceId,
-      tableName: t.tableName,
-      tableCode: t.tableCode,
-      physicalTableName: t.physicalTableName,
-      sourceSchema: t.sourceSchema,
-    }))
-  } catch {
-    sourceOptions.value = [...(isFusion.value ? PLATFORM_SOURCES_FUSION : PLATFORM_SOURCES_GOV)]
-    allTables.value = []
-  }
+  // 来源/目标均通过「选择数据源」弹窗对接元数据数据源管理；此处仅保留平台分层快捷项
+  sourceOptions.value = [...(isFusion.value ? PLATFORM_SOURCES_FUSION : PLATFORM_SOURCES_GOV)]
+  allTables.value = []
 }
 
 function openCreate() {
   form.taskName = ''
   form.description = ''
   form.sourceConnection = isFusion.value ? 'smart_city_dwd' : ''
+  form.sourceConnectionLabel = isFusion.value ? '平台 DWD（过程层，融合输入）' : ''
   form.sourceTable = ''
   form.sourceTable2 = ''
   form.joinKey = 'id'
   form.targetConnection = isFusion.value ? 'smart_city_dws' : 'smart_city_dwd'
+  form.targetConnectionLabel = isFusion.value ? '平台 DWS（主题/基础库）' : '平台 DWD（过程层产出）'
   form.targetTable = ''
   form.rules = []
   form.scheduleEnabled = false
@@ -531,7 +576,9 @@ async function submitSchedule() {
     intervalValue: scheduleForm.intervalValue,
   })
   scheduleForm.nextRunAt = res.data?.nextRunAt || ''
-  ElMessage.success('定时配置已保存')
+  ElMessage.success(scheduleForm.scheduleEnabled
+    ? '定时已保存并发布到 DolphinScheduler'
+    : '定时已停止（已下线 DolphinScheduler 调度）')
   scheduleVisible.value = false
   await load()
 }
@@ -663,9 +710,10 @@ defineExpose({ reload: load })
       </el-table-column>
       <el-table-column v-if="mode === 'run'" prop="lastRunAt" label="最近运行时间" width="160" />
 
-      <el-table-column v-if="mode === 'schedule'" label="定时状态" width="100">
+      <el-table-column v-if="mode === 'schedule'" label="定时状态" width="140">
         <template #default="{ row }">
-          <el-tag v-if="row.scheduleEnabled" type="success" size="small">已启用</el-tag>
+          <el-tag v-if="row.scheduleEnabled && row.dsScheduleId" type="success" size="small">DS 已上线</el-tag>
+          <el-tag v-else-if="row.scheduleEnabled" type="warning" size="small">已启用</el-tag>
           <el-tag v-else type="info" size="small">未启用</el-tag>
         </template>
       </el-table-column>
@@ -715,27 +763,15 @@ defineExpose({ reload: load })
         <el-form-item label="描述">
           <el-input v-model="form.description" type="textarea" :rows="2" />
         </el-form-item>
-        <el-form-item :label="isFusion ? '源库(DWD)' : '来源库'" :required="isFusion">
-          <el-select
-            v-model="form.sourceConnection"
-            :clearable="!isFusion"
-            filterable
-            :disabled="isFusion"
-            :placeholder="isFusion ? '过程层 DWD' : '已登记数据源或平台库'"
-            style="width:100%"
-          >
-            <el-option-group :label="isFusion ? '融合输入层' : '平台分层库'">
-              <el-option v-for="s in PLATFORM_SOURCES" :key="s.value" :label="s.label" :value="s.value" />
-            </el-option-group>
-            <el-option-group v-if="!isFusion && sourceOptions.some(s => s.kind === 'external')" label="已登记外部源">
-              <el-option
-                v-for="s in sourceOptions.filter(s => s.kind === 'external')"
-                :key="s.value"
-                :label="s.label"
-                :value="s.value"
-              />
-            </el-option-group>
-          </el-select>
+        <el-form-item :label="isFusion ? '源库' : '来源库'" :required="isFusion">
+          <div class="conn-pick">
+            <el-input
+              :model-value="sourceDisplay()"
+              readonly
+              :placeholder="isFusion ? '点击选择来源库（默认过程层）' : '点击选择来源库'"
+            />
+            <el-button type="primary" @click="openDsPicker('source')">选择</el-button>
+          </div>
         </el-form-item>
         <el-form-item :label="isFusion ? '源表1' : '来源表'" :required="isFusion">
           <el-select
@@ -778,11 +814,16 @@ defineExpose({ reload: load })
           <el-input v-model="form.joinKey" placeholder="如 id" />
         </el-form-item>
         <el-form-item label="目标库">
-          <el-select v-model="form.targetConnection" filterable style="width:100%">
-            <el-option v-for="s in TARGET_SOURCES" :key="s.value" :label="s.label" :value="s.value" />
-          </el-select>
+          <div class="conn-pick">
+            <el-input
+              :model-value="targetDisplay()"
+              readonly
+              placeholder="点击选择目标库"
+            />
+            <el-button type="primary" @click="openDsPicker('target')">选择</el-button>
+          </div>
           <div style="font-size:12px;color:var(--el-text-color-secondary);margin-top:4px">
-            {{ isFusion ? '融合产出：DWS 主题库 / ADS 专题库' : '治理产出：过程层 DWD（主题请用融合任务）' }}
+            {{ isFusion ? '融合产出建议主题/专题库；可从数据源管理任选' : '治理产出建议过程层；可从数据源管理任选' }}
           </div>
         </el-form-item>
         <el-form-item label="目标表">
@@ -849,6 +890,13 @@ defineExpose({ reload: load })
     </el-dialog>
 
     <el-dialog v-model="scheduleVisible" title="添加定时计划" width="520px">
+      <el-alert
+        type="info"
+        :closable="false"
+        show-icon
+        style="margin-bottom:12px"
+        title="启用后将发布到 DolphinScheduler；到期由 DS 回调平台再调 Kettle Carte。手动「运行」仍直调 Carte。"
+      />
       <el-form label-width="100px">
         <el-form-item label="启用定时">
           <el-switch v-model="scheduleForm.scheduleEnabled" />
@@ -977,11 +1025,21 @@ defineExpose({ reload: load })
         <el-empty v-else-if="!previewLoading" description="暂无治理后数据，请先成功运行任务写入 DWD/DWS/ADS" />
       </div>
     </el-drawer>
+
+    <MetaDataSourcePickerDialog v-model="dsPickerVisible" @confirm="onDsPicked" />
   </PageCard>
 </template>
 
 <style scoped>
 .output-preview__msg {
   margin-bottom: 12px;
+}
+.conn-pick {
+  display: flex;
+  gap: 8px;
+  width: 100%;
+}
+.conn-pick .el-input {
+  flex: 1;
 }
 </style>

@@ -12,7 +12,10 @@ import '@vue-flow/minimap/dist/style.css'
 import api from '@/api/http'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import PageCard from '@/components/common/PageCard.vue'
+import MetaDataSourcePickerDialog from '@/components/common/MetaDataSourcePickerDialog.vue'
 import { statusLabel } from '@/utils/status-label'
+import type { MetaBindSource } from '@/utils/meta-datasource-conn'
+import { connectionKeyOf, displayNameOfConnection } from '@/utils/meta-datasource-conn'
 import { useAuthStore } from '@/stores/auth'
 import {
   GOVERNANCE_COMPONENTS,
@@ -98,7 +101,7 @@ const paletteGroups = computed(() => {
 const connectionOptions = computed(() => [
   ...PLATFORM_CONNECTIONS,
   ...dataSources.value.map((ds) => ({
-    value: `ds:${ds.id}`,
+    value: `meta:${ds.id}`,
     label: `${ds.name}（${ds.code}）`,
   })),
 ])
@@ -135,7 +138,10 @@ const runLogs = ref<Array<{ nodeId: string; nodeType: string; nodeName?: string;
 function onConnect(params: Connection) {
   if (isLockedByOther.value) return
   if (!params.source || !params.target) return
-  if (params.source === params.target) return
+  if (params.source === params.target) {
+    ElMessage.warning('不能连到自身。过滤「否」可留空丢弃，或连到其它节点，勿连回过滤')
+    return
+  }
   const edgeRole = roleFromHandles(params.sourceHandle, params.targetHandle)
   const data: Record<string, unknown> = { edgeRole }
   if (edgeRole === 'CASE' && params.sourceHandle) {
@@ -168,6 +174,11 @@ function onEdgeClick(ev: { edge: Edge }) {
 
 function onEdgeUpdate(args: { edge: Edge; connection: Connection }) {
   if (isLockedByOther.value) return
+  if (args.connection.source && args.connection.target
+      && args.connection.source === args.connection.target) {
+    ElMessage.warning('不能连到自身')
+    return
+  }
   // @ts-expect-error vue-flow Edge type instantiation is excessively deep
   edges.value = updateEdge(args.edge, args.connection, edges.value)
 }
@@ -234,6 +245,23 @@ async function loadInputTables(connection?: string) {
   }
   loadingInputTables.value = true
   try {
+    if (conn.startsWith('meta:')) {
+      const metaId = Number(conn.slice(5))
+      if (!Number.isFinite(metaId) || metaId <= 0) {
+        inputTableMeta.value = []
+        probedConnection.value = conn
+        return
+      }
+      const rows = (await api.get(`/governance/platform/metadata/collect/meta-data-sources/${metaId}/tables`)).data || []
+      inputTableMeta.value = (rows as Array<Record<string, unknown>>)
+        .map((r) => ({
+          sourceTable: String(r.sourceTable || r.tableName || r.name || '').trim(),
+          columns: extractColumnNames(r.columns),
+        }))
+        .filter((t) => !!t.sourceTable)
+      probedConnection.value = conn
+      return
+    }
     let sourceId: number | null = PLATFORM_LAYER_IDS[conn] ?? null
     if (sourceId == null && conn.startsWith('ds:')) {
       const n = Number(conn.slice(3))
@@ -319,6 +347,23 @@ async function resolveUpstreamFields() {
       if (again?.columns?.length) {
         upstreamFields.value = [...again.columns]
         return
+      }
+    }
+    if (connection.startsWith('meta:') && resolvedTable) {
+      const metaId = Number(connection.slice(5))
+      if (Number.isFinite(metaId) && metaId > 0) {
+        try {
+          const cols = await api.get(`/governance/platform/metadata/models/meta-data-sources/${metaId}/table-columns`, {
+            params: { tableName: resolvedTable },
+          })
+          const fields = (cols.data?.fields || []) as Array<{ code?: string; nameEn?: string }>
+          upstreamFields.value = fields
+            .map((f) => String(f.code || f.nameEn || '').trim())
+            .filter(Boolean)
+          if (upstreamFields.value.length) return
+        } catch {
+          /* fall through */
+        }
       }
     }
     if (!registeredTables.value.length) {
@@ -410,42 +455,65 @@ watch(upstreamSourceTableName, (tbl) => {
   suggestOutputTable(tbl)
 })
 
+function defaultOutputConnection() {
+  return isFusionTask.value ? 'smart_city_dws' : 'smart_city_dwd'
+}
+
+function defaultOutputConnectionLabel() {
+  return isFusionTask.value
+    ? '平台 DWS（smart_city_dws）— 默认融合产出'
+    : '平台 DWD（smart_city_dwd）— 默认治理产出'
+}
+
 function suggestOutputTable(sourceTable: string) {
   if (!sourceTable) return
   const base = sourceTable.replace(/^(ods_|dwd_|dws_|ads_)/i, '')
-  if (propForm.allowOdsWriteback && propForm.outputConnection === 'smart_city_ods') {
+  const conn = propForm.outputConnection || defaultOutputConnection()
+  if (propForm.allowOdsWriteback && conn === 'smart_city_ods') {
     propForm.outputTable = `ods_${base}_gov`
-  } else {
-    if (!propForm.outputConnection || propForm.outputConnection === 'smart_city_ods') {
-      propForm.outputConnection = 'smart_city_dwd'
-    }
-    const prefix = propForm.outputConnection.includes('dws')
-      ? 'dws_'
-      : propForm.outputConnection.includes('ads')
-        ? 'ads_'
-        : 'dwd_'
-    propForm.outputTable = `${prefix}${base}`
+    return
   }
+  if (!propForm.outputConnection) {
+    propForm.outputConnection = defaultOutputConnection()
+    propForm.outputConnectionLabel = defaultOutputConnectionLabel()
+  }
+  const prefix = conn.includes('dws') || conn === 'smart_city_dws'
+    ? 'dws_'
+    : conn.includes('ads') || conn === 'smart_city_ads'
+      ? 'ads_'
+      : conn === 'smart_city_ods'
+        ? 'ods_'
+        : 'dwd_'
+  propForm.outputTable = `${prefix}${base}`
 }
 
-const outputConnectionOptions = computed(() => {
-  if (isFusionTask.value) {
-    return [
-      { value: 'smart_city_dws', label: '平台 DWS（主题/基础库）— 融合默认' },
-      { value: 'smart_city_ads', label: '平台 ADS（专题/应用）' },
-    ]
+const outputDsPickerVisible = ref(false)
+
+function outputConnectionDisplay() {
+  return propForm.outputConnectionLabel
+    || displayNameOfConnection(propForm.outputConnection)
+    || propForm.outputConnection
+    || defaultOutputConnectionLabel()
+}
+
+async function onOutputDsPicked(row: MetaBindSource) {
+  const key = connectionKeyOf(row)
+  if (key === 'smart_city_ods' && !propForm.allowOdsWriteback) {
+    try {
+      await ElMessageBox.confirm(
+        '所选为目标原始库（ODS）。回写 ODS 仅用于贴源规范化，确认允许并选用？',
+        '允许回写 ODS',
+        { type: 'warning', confirmButtonText: '确认允许', cancelButtonText: '取消' },
+      )
+      propForm.allowOdsWriteback = true
+    } catch {
+      return
+    }
   }
-  const base = [
-    { value: 'smart_city_dwd', label: '平台 DWD（smart_city_dwd）— 默认治理产出' },
-  ]
-  if (propForm.allowOdsWriteback) {
-    return [
-      { value: 'smart_city_ods', label: '平台 ODS（smart_city_ods）— 显式回写' },
-      ...base,
-    ]
-  }
-  return base
-})
+  propForm.outputConnection = key
+  propForm.outputConnectionLabel = row.sourceName || key
+  onOutputConnectionChange()
+}
 
 function validateGraphForRun(): string | null {
   const types = nodes.value.map((n) => String(n.data?.nodeType || ''))
@@ -577,6 +645,7 @@ const propForm = reactive({
   tableName: '',
   limit: 0,
   outputConnection: 'smart_city_dwd',
+  outputConnectionLabel: '平台 DWD（smart_city_dwd）— 默认治理产出',
   outputTable: '',
   outputMode: 'INSERT' as 'INSERT' | 'TRUNCATE_INSERT' | 'UPDATE',
   commitSize: 1000,
@@ -757,7 +826,8 @@ async function onOdsWritebackChange(val: boolean | string | number) {
       return
     }
   } else if (propForm.outputConnection === 'smart_city_ods') {
-    propForm.outputConnection = 'smart_city_dwd'
+    propForm.outputConnection = defaultOutputConnection()
+    propForm.outputConnectionLabel = defaultOutputConnectionLabel()
   }
   if (!propForm.outputTable || propForm.outputTable === 'output_table') {
     suggestOutputTable(upstreamSourceTableName.value)
@@ -809,13 +879,18 @@ function syncPropFromNode(n: Node | null) {
   propForm.sql = String(cfg.sql || 'SELECT * FROM table_name')
   propForm.tableName = String(cfg.tableName || '')
   propForm.limit = Number(cfg.limit || 0)
-  propForm.outputConnection = String(cfg.connection || cfg.outputConnection || 'smart_city_dwd')
+  propForm.outputConnection = String(cfg.connection || cfg.outputConnection || defaultOutputConnection())
+  propForm.outputConnectionLabel = String(cfg.connectionLabel || cfg.outputConnectionLabel || '')
+    || (propForm.outputConnection === defaultOutputConnection()
+      ? defaultOutputConnectionLabel()
+      : displayNameOfConnection(propForm.outputConnection) || propForm.outputConnection)
   propForm.outputTable = String(cfg.table || cfg.outputTable || '')
   propForm.outputMode = (cfg.outputMode as 'INSERT' | 'TRUNCATE_INSERT' | 'UPDATE') || 'INSERT'
   propForm.commitSize = Number(cfg.commit || cfg.commitSize || 1000)
   propForm.allowOdsWriteback = !!cfg.allowOdsWriteback
   if (propForm.outputConnection === 'smart_city_ods' && !propForm.allowOdsWriteback) {
-    propForm.outputConnection = 'smart_city_dwd'
+    propForm.outputConnection = defaultOutputConnection()
+    propForm.outputConnectionLabel = defaultOutputConnectionLabel()
   }
   propForm.sourceField = String(cfg.sourceField || '')
   propForm.delimiter = String(cfg.delimiter || ',')
@@ -974,6 +1049,8 @@ function applyProps(silent = false) {
   } else if (type === 'OUTPUT' || type === 'INSERT_UPDATE') {
     config.connection = propForm.outputConnection
     config.outputConnection = propForm.outputConnection
+    config.connectionLabel = propForm.outputConnectionLabel
+    config.outputConnectionLabel = propForm.outputConnectionLabel
     config.table = propForm.outputTable
     config.outputTable = propForm.outputTable
     config.outputMode = propForm.outputMode
@@ -1179,6 +1256,12 @@ function defaultNodeConfig(type: string): Record<string, unknown> {
       return {
         connection: isFusionTask.value ? 'smart_city_dws' : 'smart_city_dwd',
         outputConnection: isFusionTask.value ? 'smart_city_dws' : 'smart_city_dwd',
+        connectionLabel: isFusionTask.value
+          ? '平台 DWS（smart_city_dws）— 默认融合产出'
+          : '平台 DWD（smart_city_dwd）— 默认治理产出',
+        outputConnectionLabel: isFusionTask.value
+          ? '平台 DWS（smart_city_dws）— 默认融合产出'
+          : '平台 DWD（smart_city_dwd）— 默认治理产出',
         table: '',
         outputTable: '',
         outputMode: 'TRUNCATE_INSERT',
@@ -1515,8 +1598,17 @@ function backToList() {
 
 async function loadDataSources() {
   try {
-    const res = await api.get('/exchange/ingestion/data-sources')
-    dataSources.value = (res.data || []) as Array<{ id: number; name: string; code: string }>
+    // 画布连接下拉：元数据「数据源管理」ACTIVE 列表（不再依赖资产登记源）
+    const res = await api.get('/governance/platform/metadata/data-sources', {
+      params: { page: 1, size: 500 },
+    })
+    const raw = res.data
+    const list = Array.isArray(raw) ? raw : (raw?.records || raw?.list || [])
+    dataSources.value = (list as Array<{ id: number; sourceName?: string; sourceCode?: string; name?: string; code?: string }>).map((ds) => ({
+      id: ds.id,
+      name: ds.sourceName || ds.name || `数据源#${ds.id}`,
+      code: ds.sourceCode || ds.code || String(ds.id),
+    }))
   } catch {
     dataSources.value = []
   }
@@ -2212,7 +2304,9 @@ onMounted(async () => {
                 type="info"
                 :closable="false"
                 show-icon
-                title="标准治理默认写入 DWD；回写 ODS 仅贴源规范化且须显式勾选。"
+                :title="isFusionTask
+                  ? '默认写入平台 DWS 整库；也可选择其它已纳管库。回写 ODS 须显式勾选。'
+                  : '默认写入平台 DWD 整库；也可选择其它已纳管库。回写 ODS 仅贴源规范化且须显式勾选。'"
                 style="margin-bottom: 10px"
               />
               <el-form-item label="允许回写 ODS">
@@ -2221,20 +2315,14 @@ onMounted(async () => {
                 </el-checkbox>
               </el-form-item>
               <el-form-item label="目标库">
-                <el-select
-                  v-model="propForm.outputConnection"
-                  placeholder="选择目标分层库"
-                  filterable
-                  style="width:100%"
-                  @change="onOutputConnectionChange"
-                >
-                  <el-option
-                    v-for="opt in outputConnectionOptions"
-                    :key="opt.value"
-                    :label="opt.label"
-                    :value="opt.value"
+                <div class="conn-pick">
+                  <el-input
+                    :model-value="outputConnectionDisplay()"
+                    readonly
+                    :placeholder="isFusionTask ? '默认平台 DWS，可改选其它库' : '默认平台 DWD，可改选其它库'"
                   />
-                </el-select>
+                  <el-button type="primary" @click="outputDsPickerVisible = true">选择</el-button>
+                </div>
               </el-form-item>
               <el-form-item label="目标表名">
                 <div class="output-table-row">
@@ -2284,6 +2372,12 @@ onMounted(async () => {
         <el-table-column prop="outputRows" label="输出行" width="90" />
       </el-table>
     </el-dialog>
+
+    <MetaDataSourcePickerDialog
+      v-model="outputDsPickerVisible"
+      title="选择目标库"
+      @confirm="onOutputDsPicked"
+    />
 
     <el-dialog v-model="varDialogVisible" title="添加变量" width="480px">
       <el-form label-width="100px">
@@ -2374,6 +2468,15 @@ onMounted(async () => {
   align-items: center;
 }
 .output-table-row .el-input {
+  flex: 1;
+}
+.conn-pick {
+  display: flex;
+  gap: 8px;
+  width: 100%;
+  align-items: center;
+}
+.conn-pick .el-input {
   flex: 1;
 }
 .palette-btn {

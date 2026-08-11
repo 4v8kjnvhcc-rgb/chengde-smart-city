@@ -1463,7 +1463,9 @@ public class MetadataSubsystemService {
             Map<String, Object> f = new LinkedHashMap<>();
             f.put("code", colName);
             f.put("name", remarks == null || remarks.isBlank() ? colName : remarks);
-            f.put("type", normalizeJdbcDataType(String.valueOf(col.get("dataType"))));
+            String normalizedType = normalizeJdbcDataType(String.valueOf(col.get("dataType")));
+            f.put("type", normalizedType);
+            f.put("dataType", normalizedType);
             Object size = col.get("columnSize");
             if (size instanceof Number n) {
                 f.put("length", n.intValue());

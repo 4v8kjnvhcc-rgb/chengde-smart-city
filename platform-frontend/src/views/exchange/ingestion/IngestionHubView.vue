@@ -54,6 +54,8 @@ const boot = bootFromRoute()
 const system = ref<IngestionSystem>(boot.system)
 const module = ref(boot.module)
 
+const CollectIngestView = defineAsyncComponent(() => import('./collect/CollectIngestView.vue'))
+
 const moduleComponents: Record<string, ReturnType<typeof defineAsyncComponent>> = {
   m039: defineAsyncComponent(() => import('./register/GuideView.vue')),
   m040: defineAsyncComponent(() => import('./register/ProjectSystemView.vue')),
@@ -70,8 +72,11 @@ const moduleComponents: Record<string, ReturnType<typeof defineAsyncComponent>> 
   m050: defineAsyncComponent(() => import('./register/DictRegisterView.vue')),
   'asset-catalog-reg': defineAsyncComponent(() => import('./register/AssetCatalogRegView.vue')),
   'asset-catalog-mgmt': defineAsyncComponent(() => import('./register/AssetCatalogMgmtView.vue')),
-  upload: defineAsyncComponent(() => import('./collect/CollectIngestView.vue')),
-  ingest: defineAsyncComponent(() => import('./collect/CollectIngestView.vue')),
+  upload: CollectIngestView,
+  ingest: CollectIngestView,
+  'ingest.structured': CollectIngestView,
+  'ingest.file': CollectIngestView,
+  'ingest.other': CollectIngestView,
   pipeline: defineAsyncComponent(() => import('./collect/CollectPipelineView.vue')),
   catalog: defineAsyncComponent(() => import('./collect/catalog/CatalogResourcesView.vue')),
   'catalog.resources': defineAsyncComponent(() => import('./collect/catalog/CatalogResourcesView.vue')),
@@ -126,13 +131,10 @@ function isRegisterModuleAllowed(moduleKey: string, allowed: typeof allowedRegis
 }
 
 function firstAllowedModule(sys: IngestionSystem): string {
-  // 部门管理员：采集汇聚默认进目录编目
-  if (sys === 'collect' && !permOpts.value.isSystemAdmin) {
-    return firstAllowedCatalogModule(permOpts.value)
-  }
   const list = sys === 'register' ? allowedRegister.value : allowedCollect.value
   const key = list[0]?.key || DEFAULT_MODULE[sys]
   if (sys === 'collect' && key === 'catalog') return firstAllowedCatalogModule(permOpts.value)
+  if (sys === 'collect' && key === 'ingest') return 'ingest.structured'
   return sys === 'collect' ? normalizeCollectModuleKey(key, permOpts.value) : key
 }
 

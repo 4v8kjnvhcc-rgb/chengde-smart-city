@@ -18,6 +18,7 @@ import java.util.Map;
 import java.util.concurrent.ThreadLocalRandom;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.context.annotation.Lazy;
 import org.springframework.scheduling.support.CronExpression;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -34,19 +35,22 @@ public class GovernanceTaskService {
     private final KettleExecuteService kettleExecuteService;
     private final TaskVariableService variableService;
     private final GovernanceLayerTableService layerTableService;
+    private final GovernanceDsScheduleService dsScheduleService;
 
     public GovernanceTaskService(GovGovernanceTaskMapper taskMapper,
                                  GovGovernanceTaskRunMapper runMapper,
                                  GovGovernanceNodeLogMapper nodeLogMapper,
                                  KettleExecuteService kettleExecuteService,
                                  TaskVariableService variableService,
-                                 GovernanceLayerTableService layerTableService) {
+                                 GovernanceLayerTableService layerTableService,
+                                 @Lazy GovernanceDsScheduleService dsScheduleService) {
         this.taskMapper = taskMapper;
         this.runMapper = runMapper;
         this.nodeLogMapper = nodeLogMapper;
         this.kettleExecuteService = kettleExecuteService;
         this.variableService = variableService;
         this.layerTableService = layerTableService;
+        this.dsScheduleService = dsScheduleService;
     }
 
     public static final String DOMAIN_GOVERNANCE = "GOVERNANCE";
@@ -99,23 +103,24 @@ public class GovernanceTaskService {
             if (sourceConn == null || sourceConn.isBlank()) {
                 sourceConn = "smart_city_dwd";
             }
-            if (!"smart_city_dwd".equals(sourceConn)) {
-                throw new BusinessException(400, "融合任务源库须为平台 DWD（过程层→主题/专题）");
-            }
             if (targetConn == null || targetConn.isBlank()) {
                 targetConn = "smart_city_dws";
             }
-            if (!isFusionTarget(targetConn)) {
-                throw new BusinessException(400, "融合任务目标库须为 DWS（主题/基础库）或 ADS（专题库）");
+            // 平台分层库仍引导 DWD→DWS/ADS；meta:/ds: 由选源弹窗任选
+            if (isPlatformConn(sourceConn) && !"smart_city_dwd".equals(sourceConn)) {
+                throw new BusinessException(400, "融合任务平台源库建议为 DWD；也可从数据源管理选择其它库");
+            }
+            if (isPlatformConn(targetConn) && !isFusionTarget(targetConn)) {
+                throw new BusinessException(400, "融合任务平台目标库建议为 DWS/ADS；也可从数据源管理选择其它库");
             }
             if (sourceTable == null || sourceTable.isBlank()) {
-                throw new BusinessException(400, "融合任务请至少选择一张 DWD 源表");
+                throw new BusinessException(400, "融合任务请至少选择一张源表");
             }
         } else {
             if (targetConn == null || targetConn.isBlank()) {
                 targetConn = "smart_city_dwd";
             }
-            if (isFusionTarget(targetConn)) {
+            if (isPlatformConn(targetConn) && isFusionTarget(targetConn)) {
                 throw new BusinessException(400, "治理任务目标为过程层 DWD；主题/专题请在数据融合中新建融合任务");
             }
         }
@@ -156,9 +161,14 @@ public class GovernanceTaskService {
         taskMapper.insert(task);
 
         if (boolVal(body.get("scheduleEnabled"), false)) {
-            applySchedule(task, body);
+            // 先落 Cron 配置（暂不置 enabled），再走 DS 上线
+            Map<String, Object> schedBody = new LinkedHashMap<>(body);
+            schedBody.put("scheduleEnabled", true);
+            applySchedule(task, schedBody);
+            task.setScheduleEnabled(0);
             task.setUpdatedAt(LocalDateTime.now());
             taskMapper.updateById(task);
+            dsScheduleService.startSchedule(operator, task);
         }
 
         log.info("task created id={} code={} domain={} status={}",
@@ -193,6 +203,7 @@ public class GovernanceTaskService {
         if ("LOCKED".equals(task.getStatus()) || "RUNNING".equals(task.getStatus())) {
             throw new BusinessException(400, "锁定或运行中的任务不可删除");
         }
+        dsScheduleService.offlineScheduleQuiet(task);
         nodeLogMapper.delete(new LambdaQueryWrapper<GovGovernanceNodeLog>()
                 .eq(GovGovernanceNodeLog::getTaskId, id));
         runMapper.delete(new LambdaQueryWrapper<GovGovernanceTaskRun>()
@@ -343,6 +354,7 @@ public class GovernanceTaskService {
             if ("LOCKED".equals(task.getStatus()) || "RUNNING".equals(task.getStatus())) {
                 throw new BusinessException(400, "锁定或运行中的任务不可删除: " + task.getTaskName());
             }
+            dsScheduleService.offlineScheduleQuiet(task);
             nodeLogMapper.delete(new LambdaQueryWrapper<GovGovernanceNodeLog>()
                     .eq(GovGovernanceNodeLog::getTaskId, id));
             runMapper.delete(new LambdaQueryWrapper<GovGovernanceTaskRun>()
@@ -359,10 +371,42 @@ public class GovernanceTaskService {
         if ("RUNNING".equals(task.getStatus())) {
             throw new BusinessException(400, "运行中不可修改定时");
         }
-        applySchedule(task, body);
-        task.setUpdatedAt(LocalDateTime.now());
-        taskMapper.updateById(task);
-        return toTaskMap(task, false);
+        boolean wantEnabled = boolVal(body.get("scheduleEnabled"), false);
+        // 先写入 Cron/模式；真正上线由 DS start，禁用由 DS stop
+        Map<String, Object> cfg = new LinkedHashMap<>(body);
+        cfg.put("scheduleEnabled", wantEnabled);
+        applySchedule(task, cfg);
+        if (wantEnabled) {
+            task.setScheduleEnabled(0);
+            task.setUpdatedAt(LocalDateTime.now());
+            taskMapper.updateById(task);
+            dsScheduleService.startSchedule(operator, task);
+        } else {
+            dsScheduleService.stopSchedule(operator, task);
+            task = requireTask(id);
+            applySchedule(task, cfg);
+            task.setUpdatedAt(LocalDateTime.now());
+            taskMapper.updateById(task);
+        }
+        return toTaskMap(requireTask(id), false);
+    }
+
+    @Transactional
+    public Map<String, Object> startDsSchedule(UserPrincipal operator, Long id) {
+        GovGovernanceTask task = requireTask(id);
+        if ("RUNNING".equals(task.getStatus())) {
+            throw new BusinessException(400, "运行中不可启动定时");
+        }
+        if ((task.getScheduleCron() == null || task.getScheduleCron().isBlank())
+                && !"SIMPLE".equalsIgnoreCase(task.getScheduleMode())) {
+            throw new BusinessException(400, "请先配置执行周期后再启动定时");
+        }
+        return dsScheduleService.startSchedule(operator, task);
+    }
+
+    @Transactional
+    public Map<String, Object> stopDsSchedule(UserPrincipal operator, Long id) {
+        return dsScheduleService.stopSchedule(operator, requireTask(id));
     }
 
     private void applySchedule(GovGovernanceTask task, Map<String, Object> body) {
@@ -516,6 +560,10 @@ public class GovernanceTaskService {
         m.put("timeUnit", t.getTimeUnit());
         m.put("intervalValue", t.getIntervalValue());
         m.put("nextRunAt", t.getNextRunAt());
+        m.put("dsProjectCode", t.getDsProjectCode());
+        m.put("dsDefinitionCode", t.getDsDefinitionCode());
+        m.put("dsScheduleId", t.getDsScheduleId());
+        m.put("dsInstanceId", t.getDsInstanceId());
         m.put("engineType", t.getEngineType() != null ? t.getEngineType() : "KETTLE");
         m.put("taskDomain", normalizeDomain(t.getTaskDomain()));
         m.put("createdBy", t.getCreatedBy());
@@ -552,7 +600,17 @@ public class GovernanceTaskService {
         return "smart_city_dws".equals(conn) || "smart_city_ads".equals(conn);
     }
 
-    /** 融合任务输出节点不得落 DWD；治理任务输出不得落 DWS/ADS */
+    private static boolean isPlatformConn(String conn) {
+        if (conn == null || conn.isBlank()) {
+            return false;
+        }
+        if (conn.startsWith("meta:") || conn.startsWith("ds:")) {
+            return false;
+        }
+        return conn.startsWith("smart_city_");
+    }
+
+    /** 融合任务输出节点不得落 DWD；治理任务输出不得落 DWS/ADS（meta:/ds: 自定义源放行） */
     private static void assertGraphLayerForDomain(String domain, String graphJson) {
         if (graphJson == null || graphJson.isBlank()) {
             return;
@@ -572,9 +630,12 @@ public class GovernanceTaskService {
                 }
                 com.fasterxml.jackson.databind.JsonNode cfg = n.path("data").path("config");
                 String conn = cfg.path("outputConnection").asText(cfg.path("connection").asText(""));
+                if (conn.startsWith("meta:") || conn.startsWith("ds:")) {
+                    continue;
+                }
                 if (fusion) {
-                    if (!isFusionTarget(conn)) {
-                        throw new BusinessException(400, "融合任务输出须落 DWS/ADS，当前为: "
+                    if (isPlatformConn(conn) && !isFusionTarget(conn)) {
+                        throw new BusinessException(400, "融合任务平台输出建议落 DWS/ADS，当前为: "
                                 + (conn.isBlank() ? "未设置" : conn));
                     }
                 } else if (isFusionTarget(conn)) {

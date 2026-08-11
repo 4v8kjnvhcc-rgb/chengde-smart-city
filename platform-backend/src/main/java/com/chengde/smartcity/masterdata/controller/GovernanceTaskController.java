@@ -3,6 +3,7 @@ package com.chengde.smartcity.masterdata.controller;
 import com.chengde.smartcity.common.api.ApiResponse;
 import com.chengde.smartcity.masterdata.entity.GovGovernanceNodeLog;
 import com.chengde.smartcity.masterdata.entity.GovGovernanceTaskRun;
+import com.chengde.smartcity.masterdata.service.GovernanceDsScheduleService;
 import com.chengde.smartcity.masterdata.service.GovernanceTaskService;
 import com.chengde.smartcity.security.UserPrincipal;
 import java.util.List;
@@ -15,6 +16,7 @@ import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
@@ -27,9 +29,12 @@ import org.springframework.web.bind.annotation.RestController;
 public class GovernanceTaskController {
 
     private final GovernanceTaskService service;
+    private final GovernanceDsScheduleService dsScheduleService;
 
-    public GovernanceTaskController(GovernanceTaskService service) {
+    public GovernanceTaskController(GovernanceTaskService service,
+                                    GovernanceDsScheduleService dsScheduleService) {
         this.service = service;
+        this.dsScheduleService = dsScheduleService;
     }
 
     @GetMapping
@@ -178,5 +183,31 @@ public class GovernanceTaskController {
                                                      @PathVariable Long id,
                                                      @RequestBody Map<String, Object> body) {
         return ApiResponse.ok(service.updateSchedule(principal, id, body));
+    }
+
+    @PostMapping("/{id}/schedule/start")
+    @PreAuthorize("isAuthenticated()")
+    public ApiResponse<Map<String, Object>> startSchedule(@AuthenticationPrincipal UserPrincipal principal,
+                                                          @PathVariable Long id) {
+        return ApiResponse.ok(service.startDsSchedule(principal, id));
+    }
+
+    @PostMapping("/{id}/schedule/stop")
+    @PreAuthorize("isAuthenticated()")
+    public ApiResponse<Map<String, Object>> stopSchedule(@AuthenticationPrincipal UserPrincipal principal,
+                                                         @PathVariable Long id) {
+        return ApiResponse.ok(service.stopDsSchedule(principal, id));
+    }
+
+    /** DolphinScheduler Worker 回调：执行定时治理/融合任务。 */
+    @PostMapping("/{id}/ds-trigger")
+    public ApiResponse<Map<String, Object>> dsTrigger(@PathVariable Long id,
+                                                      @RequestHeader(value = "X-Ds-Callback-Token", required = false) String token,
+                                                      @RequestBody(required = false) Map<String, Object> body) {
+        Long dsInstanceId = null;
+        if (body != null && body.get("dsInstanceId") != null) {
+            dsInstanceId = Long.valueOf(String.valueOf(body.get("dsInstanceId")));
+        }
+        return ApiResponse.ok(dsScheduleService.runFromDsCallback(id, token, dsInstanceId));
     }
 }

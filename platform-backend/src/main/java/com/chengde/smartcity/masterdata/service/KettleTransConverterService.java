@@ -4,6 +4,7 @@ import com.chengde.smartcity.integration.config.IntegrationProperties;
 import com.chengde.smartcity.integration.kettle.KettleConnectionService;
 import com.chengde.smartcity.masterdata.support.DataLayerSupport;
 import com.chengde.smartcity.masterdata.support.LayerJdbcSupport;
+import com.chengde.smartcity.masterdata.support.TaskConnectionResolver;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
@@ -14,10 +15,12 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 import javax.xml.parsers.DocumentBuilderFactory;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -39,13 +42,16 @@ public class KettleTransConverterService {
     private final IntegrationProperties integrationProperties;
     private final KettleConnectionService connectionService;
     private final LayerJdbcSupport layerJdbc;
+    private final TaskConnectionResolver connectionResolver;
 
     public KettleTransConverterService(IntegrationProperties integrationProperties,
                                        KettleConnectionService connectionService,
-                                       LayerJdbcSupport layerJdbc) {
+                                       LayerJdbcSupport layerJdbc,
+                                       TaskConnectionResolver connectionResolver) {
         this.integrationProperties = integrationProperties;
         this.connectionService = connectionService;
         this.layerJdbc = layerJdbc;
+        this.connectionResolver = connectionResolver;
     }
 
     private static final Map<String, String> NODE_TO_KETTLE = Map.ofEntries(
@@ -120,6 +126,7 @@ public class KettleTransConverterService {
 
     /**
      * 校验画布输出落层：须有输出节点；表输出须配置目标表；写 ODS 须显式 allowOdsWriteback。
+     * 另校验自环边（过滤「否」连回自身等会导致 Carte「failed to initialize at least one step」）。
      * @return 错误信息，通过则 null
      */
     public String validateGraphOutputRules(String graphJson) {
@@ -131,6 +138,23 @@ public class KettleTransConverterService {
             JsonNode nodes = root.get("nodes");
             if (nodes == null || !nodes.isArray() || nodes.isEmpty()) {
                 return "画布无节点";
+            }
+            JsonNode edges = root.get("edges");
+            if (edges != null && edges.isArray()) {
+                for (JsonNode e : edges) {
+                    String src = e.path("source").asText("");
+                    String tgt = e.path("target").asText("");
+                    if (!src.isBlank() && src.equals(tgt)) {
+                        String role = e.path("data").path("edgeRole").asText(
+                                e.path("sourceHandle").asText(""));
+                        String hint = ("FALSE".equalsIgnoreCase(role)
+                                || "out_false".equals(role) || "false".equals(role))
+                                ? "（常见于过滤节点「否」连回自身）"
+                                : "";
+                        return "存在自环连线，节点不能连到自己" + hint
+                                + "。请删除该连线：过滤「否」分支可留空（丢弃否行），或连到其它输出/废料节点";
+                    }
+                }
             }
             boolean hasOut = false;
             for (JsonNode n : nodes) {
@@ -147,6 +171,19 @@ public class KettleTransConverterService {
                 String type = data.path("nodeType").asText("");
                 String label = data.path("label").asText(n.path("id").asText("node"));
                 JsonNode cfg = data.path("config");
+                if ("FILTER".equals(type) && !isPassThroughFilter(cfg)) {
+                    // 有条件时校验条件字段非空即可；缺字段名会在 Carte 初始化失败
+                    JsonNode conditions = cfg.get("conditions");
+                    if (conditions != null && conditions.isArray() && conditions.size() > 0) {
+                        for (JsonNode c : conditions) {
+                            if (textOr(c, "field", "").isBlank()) {
+                                return "过滤节点「" + label + "」存在未填写字段名的条件";
+                            }
+                        }
+                    } else if (cfg.has("field") && textOr(cfg, "field", "").isBlank()) {
+                        return "过滤节点「" + label + "」未配置过滤字段";
+                    }
+                }
                 if ("INPUT".equals(type)) {
                     String mode = textOr(cfg, "inputMode", "TABLE");
                     if ("TABLE".equalsIgnoreCase(mode)) {
@@ -240,14 +277,19 @@ public class KettleTransConverterService {
             xml.append("  </info>\n");
             xml.append("  <notepads></notepads>\n");
 
-            // 嵌入平台目标库连接（Carte 可达），节点可引用 PLATFORM / default / smart_city_*
-            xml.append(buildPlatformConnectionsXml());
+            // 嵌入平台分层库 + 画布引用的 meta:/ds: 连接
+            xml.append(buildPlatformConnectionsXml(graph));
 
             xml.append("  <order>\n");
             for (EdgeDef edge : graph.edges) {
                 NodeDef from = graph.nodes.get(edge.source);
                 NodeDef to = graph.nodes.get(edge.target);
                 if (from == null || to == null) continue;
+                // 跳过自环：否则 FilterRows/Dummy 初始化易失败
+                if (edge.source != null && edge.source.equals(edge.target)) {
+                    log.warn("skip self-loop hop {} -> {}", edge.source, edge.target);
+                    continue;
+                }
                 String fromName = stepNameOf(from);
                 String toName = stepNameOf(to);
                 xml.append("    <hop>\n");
@@ -368,33 +410,6 @@ public class KettleTransConverterService {
         } catch (Exception e) {
             log.warn("archive ktr skipped: {}", e.getMessage());
         }
-    }
-
-    private String buildPlatformConnectionsXml() {
-        var k = integrationProperties.getKettle();
-        if (k == null) {
-            return "";
-        }
-        StringBuilder sb = new StringBuilder();
-        LayerJdbcSupport.ResolvedEndpoint ods = layerJdbc.resolve(DataLayerSupport.ODS);
-        sb.append(connectionService.toConnectionXml("default", ods.host(), ods.port(),
-                ods.database(), ods.username(), ods.password()));
-        sb.append(connectionService.toConnectionXml("PLATFORM", ods.host(), ods.port(),
-                ods.database(), ods.username(), ods.password()));
-        // 控制面：沿用 kettle 默认目标凭据 + 主库名（与分层可分机）
-        String controlHost = k.getTargetHost() != null ? k.getTargetHost() : ods.host();
-        int controlPort = k.getTargetPort() > 0 ? k.getTargetPort() : ods.port();
-        String controlUser = k.getTargetUser() != null ? k.getTargetUser() : ods.username();
-        String controlPass = k.getTargetPassword() != null ? k.getTargetPassword() : ods.password();
-        sb.append(connectionService.toConnectionXml(DataLayerSupport.CONTROL, controlHost, controlPort,
-                DataLayerSupport.CONTROL, controlUser, controlPass));
-        for (String db : List.of(DataLayerSupport.ODS, DataLayerSupport.DWD,
-                DataLayerSupport.DWS, DataLayerSupport.ADS)) {
-            LayerJdbcSupport.ResolvedEndpoint ep = layerJdbc.resolve(db);
-            sb.append(connectionService.toConnectionXml(db, ep.host(), ep.port(),
-                    ep.database(), ep.username(), ep.password()));
-        }
-        return sb.toString();
     }
 
     /**
@@ -582,10 +597,98 @@ public class KettleTransConverterService {
         if (c == null || c.isBlank() || "default".equalsIgnoreCase(c)) {
             return "PLATFORM";
         }
-        if (c.startsWith("ds:")) {
-            return "PLATFORM";
+        // meta:{id} / ds:{id} 保留原名，由 buildPlatformConnectionsXml 注入对应 connection
+        if (c.startsWith("meta:") || c.startsWith("ds:")) {
+            return c;
         }
         return c;
+    }
+
+    private String buildPlatformConnectionsXml(GraphModel graph) {
+        var k = integrationProperties.getKettle();
+        if (k == null) {
+            return "";
+        }
+        StringBuilder sb = new StringBuilder();
+        LayerJdbcSupport.ResolvedEndpoint ods = layerJdbc.resolve(DataLayerSupport.ODS);
+        appendCarteConnection(sb, "default", ods);
+        appendCarteConnection(sb, "PLATFORM", ods);
+        String controlHost = k.getTargetHost() != null ? k.getTargetHost() : ods.host();
+        int controlPort = k.getTargetPort() > 0 ? k.getTargetPort() : ods.port();
+        String controlUser = k.getTargetUser() != null ? k.getTargetUser() : ods.username();
+        String controlPass = k.getTargetPassword() != null ? k.getTargetPassword() : ods.password();
+        // target-host 已是 Carte 视角，不再二次 host-map
+        sb.append(connectionService.toConnectionXml(DataLayerSupport.CONTROL, controlHost, controlPort,
+                DataLayerSupport.CONTROL, controlUser, controlPass));
+        for (String db : List.of(DataLayerSupport.ODS, DataLayerSupport.DWD,
+                DataLayerSupport.DWS, DataLayerSupport.ADS)) {
+            appendCarteConnection(sb, db, layerJdbc.resolve(db));
+        }
+        Set<String> extras = new HashSet<>();
+        if (graph != null && graph.nodes != null) {
+            for (NodeDef node : graph.nodes.values()) {
+                if (node == null || node.data == null || node.data.config == null) continue;
+                JsonNode cfg = node.data.config;
+                collectConnKey(extras, cfg.path("connection").asText(""));
+                collectConnKey(extras, cfg.path("outputConnection").asText(""));
+                collectConnKey(extras, cfg.path("lookupConnection").asText(""));
+            }
+        }
+        for (String key : extras) {
+            try {
+                appendCarteConnection(sb, key, connectionResolver.resolve(key));
+            } catch (Exception e) {
+                log.warn("skip connection xml for {}: {}", key, e.getMessage());
+            }
+        }
+        return sb.toString();
+    }
+
+    /** 写入 KTR 的连接须为 Carte 容器可达地址（localhost→host.docker.internal）。 */
+    private void appendCarteConnection(StringBuilder sb, String name, LayerJdbcSupport.ResolvedEndpoint ep) {
+        String[] hp = translateHostForCarte(ep.host(), ep.port());
+        sb.append(connectionService.toConnectionXml(name, hp[0], Integer.parseInt(hp[1]),
+                ep.database(), ep.username(), ep.password()));
+    }
+
+    /**
+     * 与 {@link com.chengde.smartcity.integration.kettle.KettleKtrCompiler} 汇聚 KTR 一致：
+     * 把后端视角 host:port 译为 Carte 容器内可达地址。
+     */
+    private String[] translateHostForCarte(String host, int port) {
+        if (host == null || host.isBlank()) {
+            return new String[]{"host.docker.internal", String.valueOf(port <= 0 ? 3306 : port)};
+        }
+        var k = integrationProperties.getKettle();
+        Map<String, String> hostMap = k != null && k.getHostMap() != null ? k.getHostMap() : Map.of();
+        String key = host + ":" + port;
+        String mapped = hostMap.get(key);
+        boolean loopback = "localhost".equalsIgnoreCase(host) || "127.0.0.1".equals(host);
+        if (mapped == null && port == 3308 && loopback) {
+            mapped = "source-mysql:3306";
+        }
+        if (mapped == null && port == 3306 && loopback) {
+            mapped = "host.docker.internal:3306";
+        }
+        if (mapped == null && loopback) {
+            mapped = "host.docker.internal:" + port;
+        }
+        if (mapped == null) {
+            return new String[]{host, String.valueOf(port)};
+        }
+        int idx = mapped.lastIndexOf(':');
+        if (idx <= 0) {
+            return new String[]{mapped, String.valueOf(port)};
+        }
+        return new String[]{mapped.substring(0, idx), mapped.substring(idx + 1)};
+    }
+
+    private static void collectConnKey(Set<String> out, String raw) {
+        if (raw == null || raw.isBlank()) return;
+        String c = raw.trim();
+        if (c.startsWith("meta:") || c.startsWith("ds:")) {
+            out.add(c);
+        }
     }
 
     private String cfgInput(JsonNode cfg, List<String> orderByKeys) {
@@ -882,10 +985,14 @@ public class KettleTransConverterService {
                 String sh = edge.sourceHandle == null ? "" : edge.sourceHandle;
                 if ("FILTER".equals(type)) {
                     if ("TRUE".equals(role) || "out_true".equals(sh) || "true".equals(sh)) {
-                        cfg.put("trueTarget", targetStep);
+                        if (!node.id.equals(edge.target)) {
+                            cfg.put("trueTarget", targetStep);
+                        }
                     } else if ("FALSE".equals(role) || "out_false".equals(sh) || "false".equals(sh)) {
-                        cfg.put("falseTarget", targetStep);
-                    } else {
+                        if (!node.id.equals(edge.target)) {
+                            cfg.put("falseTarget", targetStep);
+                        }
+                    } else if (!node.id.equals(edge.target)) {
                         untypedTargets.add(targetStep);
                     }
                 } else if ("SWITCH_CASE".equals(type)) {

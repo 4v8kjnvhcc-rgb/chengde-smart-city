@@ -60,6 +60,7 @@ const form = reactive({
 
 const editForm = reactive({
   id: 0,
+  username: '',
   displayName: '',
   status: 1,
   orgId: undefined as number | undefined,
@@ -100,6 +101,7 @@ async function openCreate() {
 async function openEdit(row: UserRow) {
   await loadMeta()
   editForm.id = row.id
+  editForm.username = row.username
   editForm.displayName = row.displayName
   editForm.status = row.status
   editForm.orgId = row.orgId
@@ -349,6 +351,9 @@ onMounted(async () => {
 
     <el-dialog v-model="editVisible" title="编辑用户" width="480px" destroy-on-close>
       <el-form label-position="top">
+        <el-form-item label="用户名">
+          <el-input v-model="editForm.username" disabled />
+        </el-form-item>
         <el-form-item label="姓名" required>
           <el-input v-model="editForm.displayName" />
         </el-form-item>

@@ -865,6 +865,7 @@ public class IngestionPlatformService {
         r.setStatus("PARSED");
         r.setPreviewJson("[{\"col1\":\"demo\",\"col2\":\"value\"}]");
         r.setCreatedBy(operator.getUsername());
+        r.setOrgId(operator.getOrgId());
         uploadMapper.insert(r);
         auditService.log(operator.getUserId(), operator.getUsername(), operator.getOrgId(),
                 "ING_UPLOAD", "ing_upload_record", String.valueOf(r.getId()), r.getFileName());

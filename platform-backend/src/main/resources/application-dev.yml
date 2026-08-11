@@ -42,7 +42,8 @@ app:
       url: ${KETTLE_URL:http\://localhost\:18081}
       user: ${KETTLE_USER:cluster}
       password: ${KETTLE_PASSWORD:cluster}
-      # Carte 容器写入平台 ODS 分层库时的可达地址；宿主机数据库经 host-gateway 访问
+      # Carte 容器写入 ODS 时的默认提示地址；后端 JVM 连分层库走 spring.datasource，
+      # KTR 内目标机会再经 host-map 把 localhost 译为 host.docker.internal
       target-host: ${KETTLE_TARGET_HOST:host.docker.internal}
       target-port: ${KETTLE_TARGET_PORT:3306}
       target-database: ${KETTLE_TARGET_DB:smart_city_ods}

@@ -19,12 +19,15 @@ import com.chengde.smartcity.integration.kettle.KettleKtrCompiler;
 import com.chengde.smartcity.masterdata.service.MetadataSubsystemService;
 import com.chengde.smartcity.masterdata.support.DataLayerSupport;
 import com.chengde.smartcity.masterdata.support.LayerJdbcSupport;
+import com.chengde.smartcity.masterdata.support.TaskConnectionResolver;
 import com.chengde.smartcity.masterdata.service.DsOrchestrationService;
 import com.chengde.smartcity.security.UserPrincipal;
 import java.sql.Connection;
+import java.sql.DriverManager;
 import java.sql.ResultSet;
 import java.sql.Statement;
 import java.time.LocalDateTime;
+import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -33,8 +36,8 @@ import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
 /**
- * 真实汇聚：由 Kettle Carte 把已登记源表抽取到平台 ODS 物理表。
- * 平台侧先按登记字段建 ODS DDL，Carte 完成 Table Input -> Table Output 后回读真实行数并回写台账。
+ * 真实汇聚：由 Kettle Carte 把已登记源表抽取到所选目标库物理表（默认引导原始库/ODS，可改选）。
+ * 平台侧先按登记字段建目标表 DDL，Carte 完成 Table Input -> Table Output 后回读真实行数并回写台账。
  * 任何 Carte 失败/行数不符都置 FAILED 且抛出真实原因，绝不伪造成功。
  */
 @Service
@@ -53,6 +56,7 @@ public class KettleCollectService {
     private final KettleKtrCompiler ktrCompiler;
     private final KettleClient kettleClient;
     private final LayerJdbcSupport layerJdbc;
+    private final TaskConnectionResolver connectionResolver;
     private final AuditService auditService;
     private final DsOrchestrationService dsOrchestrationService;
     private final MetadataSubsystemService metadataSubsystemService;
@@ -61,7 +65,8 @@ public class KettleCollectService {
                                 IngDataColumnMapper dataColumnMapper, IngIngestTaskMapper ingestTaskMapper,
                                 IngIngestChannelMapper channelMapper, JdbcProbeService jdbcProbeService,
                                 KettleKtrCompiler ktrCompiler, KettleClient kettleClient,
-                                LayerJdbcSupport layerJdbc, AuditService auditService,
+                                LayerJdbcSupport layerJdbc, TaskConnectionResolver connectionResolver,
+                                AuditService auditService,
                                 DsOrchestrationService dsOrchestrationService,
                                 MetadataSubsystemService metadataSubsystemService) {
         this.dataSourceMapper = dataSourceMapper;
@@ -73,6 +78,7 @@ public class KettleCollectService {
         this.ktrCompiler = ktrCompiler;
         this.kettleClient = kettleClient;
         this.layerJdbc = layerJdbc;
+        this.connectionResolver = connectionResolver;
         this.auditService = auditService;
         this.dsOrchestrationService = dsOrchestrationService;
         this.metadataSubsystemService = metadataSubsystemService;
@@ -115,10 +121,41 @@ public class KettleCollectService {
 
     /**
      * 通用抽数：自定义 SELECT / 字段映射 / 全量重建或追加写入。
+     * 来源优先 {@code sourceConnection}（meta:{id}/ds:{id}/分层库），兼容旧 {@code sourceId} 登记源。
      */
     public Map<String, Object> executeCopy(UserPrincipal operator, CollectCopyRequest req) {
-        if (req.getSourceId() == null) {
-            throw new BusinessException(400, "sourceId required");
+        String sourceConnKey = req.getSourceConnection() == null ? "" : req.getSourceConnection().trim();
+        IngDataSource ds = null;
+        KettleKtrCompiler.SourceConn src;
+        if (!sourceConnKey.isBlank()) {
+            LayerJdbcSupport.ResolvedEndpoint srcEp = connectionResolver.resolve(sourceConnKey);
+            src = new KettleKtrCompiler.SourceConn();
+            src.host = srcEp.host();
+            src.port = srcEp.port();
+            src.database = srcEp.database();
+            src.username = srcEp.username();
+            src.password = srcEp.password();
+            if (req.getSourceId() != null) {
+                ds = dataSourceMapper.selectById(req.getSourceId());
+            }
+        } else {
+            if (req.getSourceId() == null) {
+                throw new BusinessException(400, "请指定来源数据源（sourceConnection 或 sourceId）");
+            }
+            ds = dataSourceMapper.selectById(req.getSourceId());
+            if (ds == null) {
+                throw new BusinessException(404, "数据源不存在");
+            }
+            if (!"OK".equals(ds.getConnStatus())) {
+                throw new BusinessException(400, "数据源连接未通过测试，请先测试连接");
+            }
+            JdbcProbeService.ConnConfig conn = jdbcProbeService.parse(ds.getSourceType(), ds.getConnConfigJson());
+            src = new KettleKtrCompiler.SourceConn();
+            src.host = conn.host;
+            src.port = conn.port;
+            src.database = conn.database;
+            src.username = conn.username;
+            src.password = conn.password;
         }
         if (req.getOdsTable() == null || req.getOdsTable().isBlank()) {
             throw new BusinessException(400, "odsTable required");
@@ -126,14 +163,10 @@ public class KettleCollectService {
         if (req.getFields() == null || req.getFields().isEmpty()) {
             throw new BusinessException(400, "字段映射为空，无法生成 ODS");
         }
-        IngDataSource ds = dataSourceMapper.selectById(req.getSourceId());
-        if (ds == null) {
-            throw new BusinessException(404, "数据源不存在");
-        }
-        if (!"OK".equals(ds.getConnStatus())) {
-            throw new BusinessException(400, "数据源连接未通过测试，请先测试连接");
-        }
         String odsTable = sanitizeOdsName(req.getOdsTable());
+        String targetConnKey = req.getTargetConnection() == null || req.getTargetConnection().isBlank()
+                ? DataLayerSupport.ODS : req.getTargetConnection().trim();
+        LayerJdbcSupport.ResolvedEndpoint targetEp = connectionResolver.resolve(targetConnKey);
         String selectSql = req.getSelectSql();
         if (selectSql == null || selectSql.isBlank()) {
             if (req.getPhysicalSourceTable() == null || req.getPhysicalSourceTable().isBlank()) {
@@ -141,6 +174,7 @@ public class KettleCollectService {
             }
             selectSql = buildMappedSelectSql(req.getPhysicalSourceTable(), req.getFields(), null);
         }
+        selectSql = stripTrailingSqlSemicolons(selectSql);
         validateSelectSql(selectSql);
 
         IngIngestTask task = resolveLedgerTask(req, odsTable);
@@ -149,29 +183,21 @@ public class KettleCollectService {
         IngDataTable table = req.getTableId() != null ? dataTableMapper.selectById(req.getTableId()) : null;
 
         try {
-            ensureOdsDdl(odsTable, req.getFields(), req.isTruncate());
+            ensureTargetDdl(targetEp, odsTable, req.getFields(), req.isTruncate());
         } catch (Exception e) {
-            return failTask(task, table, "创建/准备 ODS 表失败: " + rootMsg(e));
+            return failTask(task, table, "创建/准备目标表失败: " + rootMsg(e));
         }
 
         if (!kettleClient.isHealthy()) {
             return failTask(task, table, "Kettle Carte 不可用（请确认 etl profile 已启动且鉴权正确）");
         }
 
-        JdbcProbeService.ConnConfig conn = jdbcProbeService.parse(ds.getSourceType(), ds.getConnConfigJson());
-        KettleKtrCompiler.SourceConn src = new KettleKtrCompiler.SourceConn();
-        src.host = conn.host;
-        src.port = conn.port;
-        src.database = conn.database;
-        src.username = conn.username;
-        src.password = conn.password;
-
         String transName = "COLLECT_" + (req.getTableId() != null ? req.getTableId() : "SQL")
                 + "_" + System.currentTimeMillis();
         task.setKettleTransName(transName);
         ingestTaskMapper.updateById(task);
 
-        String ktr = ktrCompiler.compileCopy(transName, src, selectSql, odsTable, req.isTruncate());
+        String ktr = ktrCompiler.compileCopy(transName, src, selectSql, targetEp, odsTable, req.isTruncate());
         Map<String, Object> add = kettleClient.addTrans(transName, ktr);
         if (!"SUCCESS".equals(add.get("status"))) {
             return failTask(task, table, "注册转换失败: " + add.get("message"));
@@ -210,13 +236,15 @@ public class KettleCollectService {
 
         long odsRows;
         try {
-            odsRows = countPlatformRows(odsTable);
+            odsRows = countTargetRows(targetEp, odsTable);
         } catch (Exception e) {
-            return failTask(task, table, "回读 ODS 行数失败: " + rootMsg(e));
+            return failTask(task, table, "回读目标表行数失败: " + rootMsg(e));
         }
 
         task.setStatus("SUCCESS");
-        task.setSourceId(ds.getId());
+        if (ds != null) {
+            task.setSourceId(ds.getId());
+        }
         if (req.getTableId() != null) {
             task.setTableId(req.getTableId());
         }
@@ -228,7 +256,8 @@ public class KettleCollectService {
         task.setKettleTransName(transName);
         task.setErrorDetail(null);
         task.setLastRunAt(LocalDateTime.now());
-        task.setLastRunMessage("Carte 汇聚成功 rows=" + odsRows + " (in=" + linesInput + ")");
+        task.setLastRunMessage("Carte 汇聚成功 " + targetEp.database() + "." + odsTable
+                + " rows=" + odsRows + " (in=" + linesInput + ")");
         if (req.getWatermarkAfterSuccess() != null && !req.getWatermarkAfterSuccess().isBlank()) {
             task.setWatermarkValue(req.getWatermarkAfterSuccess());
         }
@@ -268,6 +297,51 @@ public class KettleCollectService {
         return out;
     }
 
+    /** 按连接键探表字段，供元数据源（无登记表）生成映射。 */
+    public List<CollectCopyRequest.FieldPair> probeFieldsFromConnection(String sourceConnection, String tableName) {
+        if (sourceConnection == null || sourceConnection.isBlank()) {
+            throw new BusinessException(400, "缺少来源连接");
+        }
+        if (tableName == null || tableName.isBlank()) {
+            throw new BusinessException(400, "缺少源表名");
+        }
+        LayerJdbcSupport.ResolvedEndpoint ep = connectionResolver.resolve(sourceConnection.trim());
+        JdbcProbeService.ConnConfig cfg = new JdbcProbeService.ConnConfig();
+        cfg.host = ep.host();
+        cfg.port = ep.port();
+        cfg.database = ep.database();
+        cfg.username = ep.username();
+        cfg.password = ep.password() == null ? "" : ep.password();
+        cfg.sourceType = "MYSQL";
+        Map<String, Object> desc = jdbcProbeService.describeTable(cfg, tableName.trim());
+        List<CollectCopyRequest.FieldPair> pairs = new ArrayList<>();
+        Object colObj = desc.get("columns");
+        if (colObj instanceof List<?> list) {
+            for (Object item : list) {
+                if (!(item instanceof Map<?, ?> m)) {
+                    continue;
+                }
+                Object name = m.get("columnName");
+                if (name == null || String.valueOf(name).isBlank()) {
+                    continue;
+                }
+                String col = String.valueOf(name).trim();
+                Object type = m.get("dataType");
+                Object len = m.get("columnSize");
+                Integer length = null;
+                if (len instanceof Number n) {
+                    length = n.intValue();
+                }
+                pairs.add(new CollectCopyRequest.FieldPair(
+                        col, col, type == null ? "VARCHAR" : String.valueOf(type), length));
+            }
+        }
+        if (pairs.isEmpty()) {
+            throw new BusinessException(400, "源表无字段：" + tableName);
+        }
+        return pairs;
+    }
+
     public String buildMappedSelectSql(String sourceTable, List<CollectCopyRequest.FieldPair> fields, String whereClause) {
         StringBuilder sb = new StringBuilder("SELECT ");
         for (int i = 0; i < fields.size(); i++) {
@@ -294,7 +368,9 @@ public class KettleCollectService {
         if (sql == null || sql.isBlank()) {
             throw new BusinessException(400, "SQL 为空");
         }
-        String norm = sql.trim().replaceAll("\\s+", " ");
+        // 允许末尾分号（常见粘贴习惯）；去掉后再判是否真多语句
+        String trimmed = stripTrailingSqlSemicolons(sql);
+        String norm = trimmed.replaceAll("\\s+", " ");
         String upper = norm.toUpperCase();
         if (!upper.startsWith("SELECT") && !upper.startsWith("WITH")) {
             throw new BusinessException(400, "仅允许 SELECT / WITH 查询");
@@ -307,6 +383,13 @@ public class KettleCollectService {
                 throw new BusinessException(400, "SQL 含非法关键字");
             }
         }
+    }
+
+    public static String stripTrailingSqlSemicolons(String sql) {
+        if (sql == null) {
+            return "";
+        }
+        return sql.trim().replaceAll(";+\\s*$", "").trim();
     }
 
     public String sanitizeOdsName(String preferred) {
@@ -354,8 +437,13 @@ public class KettleCollectService {
     }
 
     private void ensureOdsDdl(String odsTable, List<CollectCopyRequest.FieldPair> fields, boolean recreate) throws Exception {
-        String odsDb = DataLayerSupport.ODS;
-        String qualified = DataLayerSupport.qualify(odsDb, odsTable);
+        ensureTargetDdl(layerJdbc.resolve(DataLayerSupport.ODS), odsTable, fields, recreate);
+    }
+
+    private void ensureTargetDdl(LayerJdbcSupport.ResolvedEndpoint ep, String tableName,
+                                 List<CollectCopyRequest.FieldPair> fields, boolean recreate) throws Exception {
+        String db = ep.database();
+        String qualified = "`" + db + "`.`" + sanitize(tableName) + "`";
         StringBuilder ddl = new StringBuilder("CREATE TABLE ").append(qualified).append(" (\n");
         for (int i = 0; i < fields.size(); i++) {
             CollectCopyRequest.FieldPair f = fields.get(i);
@@ -366,14 +454,19 @@ public class KettleCollectService {
             }
             ddl.append('\n');
         }
-        ddl.append(") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='真实汇聚 ODS 落地表'");
-        try (Connection conn = layerJdbc.open(odsDb); Statement st = conn.createStatement()) {
-            st.execute("CREATE DATABASE IF NOT EXISTS `" + odsDb + "`");
+        ddl.append(") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='真实汇聚落地表'");
+        try (Connection conn = DriverManager.getConnection(ep.jdbcUrl(), ep.username(), ep.password());
+             Statement st = conn.createStatement()) {
+            try {
+                conn.setCatalog(db);
+            } catch (Exception ignored) {
+                // ignore
+            }
+            st.execute("CREATE DATABASE IF NOT EXISTS `" + db + "`");
             if (recreate) {
                 st.execute("DROP TABLE IF EXISTS " + qualified);
                 st.execute(ddl.toString());
             } else {
-                // 追加模式：表不存在则建；已存在则保留
                 st.execute(ddl.toString().replace("CREATE TABLE ", "CREATE TABLE IF NOT EXISTS "));
             }
         }
@@ -502,8 +595,12 @@ public class KettleCollectService {
     }
 
     private long countPlatformRows(String table) throws Exception {
-        String qualified = DataLayerSupport.qualify(DataLayerSupport.ODS, sanitize(table));
-        try (Connection conn = layerJdbc.open(DataLayerSupport.ODS);
+        return countTargetRows(layerJdbc.resolve(DataLayerSupport.ODS), table);
+    }
+
+    private long countTargetRows(LayerJdbcSupport.ResolvedEndpoint ep, String table) throws Exception {
+        String qualified = "`" + ep.database() + "`.`" + sanitize(table) + "`";
+        try (Connection conn = DriverManager.getConnection(ep.jdbcUrl(), ep.username(), ep.password());
              Statement st = conn.createStatement();
              ResultSet rs = st.executeQuery("SELECT COUNT(*) FROM " + qualified)) {
             return rs.next() ? rs.getLong(1) : 0L;
@@ -511,12 +608,22 @@ public class KettleCollectService {
     }
 
     private String mapType(String dataType, Integer length) {
-        String t = dataType == null ? "" : dataType.toUpperCase();
+        String t = dataType == null ? "" : dataType.trim().toUpperCase();
+        // 已是完整 DDL 类型（含括号）则原样使用
+        if (t.contains("(") && t.contains(")")) {
+            return t;
+        }
         int len = length == null || length <= 0 ? 255 : Math.min(length, 4000);
-        if (t.contains("TEXT") || t.contains("BLOB") || t.contains("CLOB") || t.contains("JSON")) {
+        if (t.contains("TEXT") || t.contains("BLOB") || t.contains("CLOB")) {
             return "TEXT";
         }
-        if (t.contains("CHAR")) {
+        if (t.contains("JSON")) {
+            return "JSON";
+        }
+        if (t.contains("BOOL") || t.equals("BIT")) {
+            return "TINYINT(1)";
+        }
+        if (t.contains("CHAR") || t.equals("VARCHAR") || t.equals("STRING")) {
             return "VARCHAR(" + len + ")";
         }
         if (t.contains("BIGINT")) return "BIGINT";
@@ -524,7 +631,13 @@ public class KettleCollectService {
         if (t.contains("SMALLINT")) return "SMALLINT";
         if (t.contains("MEDIUMINT")) return "MEDIUMINT";
         if (t.contains("INT")) return "INT";
-        if (t.contains("DECIMAL") || t.contains("NUMERIC") || t.equals("DEC")) return "DECIMAL(18,2)";
+        if (t.contains("DECIMAL") || t.contains("NUMERIC") || t.equals("DEC")) {
+            if (length != null && length > 0) {
+                int p = Math.min(length, 65);
+                return "DECIMAL(" + p + ",2)";
+            }
+            return "DECIMAL(18,2)";
+        }
         if (t.contains("DOUBLE") || t.contains("FLOAT") || t.contains("REAL")) return "DOUBLE";
         if (t.contains("DATETIME") || t.contains("TIMESTAMP")) return "DATETIME";
         if (t.equals("DATE")) return "DATE";

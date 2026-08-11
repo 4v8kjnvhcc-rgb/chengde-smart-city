@@ -109,7 +109,10 @@ public class KettleExecuteService {
 
             Map<String, Object> startResult = kettleClient.startTrans(transName, params);
             if (!"SUCCESS".equals(startResult.get("status"))) {
-                return Map.of("status", "FAILED", "message", "启动转换失败: " + startResult.get("message"));
+                String raw = stringVal(startResult.get("message"));
+                String hint = hintForCarteInitFailure(raw);
+                return Map.of("status", "FAILED",
+                        "message", "启动转换失败: " + (raw == null ? "" : raw) + hint);
             }
 
             GovGovernanceTaskRun run = new GovGovernanceTaskRun();
@@ -646,6 +649,27 @@ public class KettleExecuteService {
     private static String trimMsg(String s, int max) {
         if (s == null) return null;
         return s.length() <= max ? s : s.substring(0, max);
+    }
+
+    private static String hintForCarteInitFailure(String message) {
+        if (message == null) {
+            return "";
+        }
+        String m = message.toLowerCase();
+        if (m.contains("initialize at least one step") || m.contains("failed to initialize")) {
+            return "。请检查：①输入/输出库地址：Carte 内不可用 localhost，须经 host-map 译为 host.docker.internal；"
+                    + "②过滤「否」勿连回自身；"
+                    + "③输入/输出已选真实数据源与表名；"
+                    + "④过滤字段、去重键为源表真实列名";
+        }
+        if (m.contains("communications link failure") || m.contains("error connecting to database")) {
+            return "。Carte 连不上目标库：确认宿主机 MySQL 在听 3306、KTR 连接为 host.docker.internal，"
+                    + "并已重启后端使治理 KTR 应用 host-map；必要时 docker compose --profile etl up -d 重建 Carte";
+        }
+        if (m.contains("couldn't find field") || m.contains("could not find field")) {
+            return "。过滤/去重引用的字段在数据流中不存在，请改用源表真实列名";
+        }
+        return "";
     }
 
     private static String extractCarteId(String message) {

@@ -234,6 +234,8 @@ services:
     environment:
       PENTAHO_USER: cluster
       PENTAHO_PASSWORD: cluster
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     volumes:
       - ./kettle-repository:/opt/pentaho/repository
       - ./libs/ds/mysql-connector-j-8.0.33.jar:/home/default/pentaho/data-integration/lib/mysql-connector-j-8.0.33.jar:ro

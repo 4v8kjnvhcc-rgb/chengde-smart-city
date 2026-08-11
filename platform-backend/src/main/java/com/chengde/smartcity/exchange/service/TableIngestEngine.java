@@ -10,6 +10,7 @@ import com.chengde.smartcity.exchange.mapper.IngDataColumnMapper;
 import com.chengde.smartcity.exchange.mapper.IngDataSourceMapper;
 import com.chengde.smartcity.exchange.mapper.IngDataTableMapper;
 import com.chengde.smartcity.exchange.mapper.IngIngestTaskMapper;
+import com.chengde.smartcity.masterdata.support.DataLayerSupport;
 import com.chengde.smartcity.security.UserPrincipal;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -41,22 +42,43 @@ public class TableIngestEngine {
     private final IngDataColumnMapper dataColumnMapper;
     private final IngDataSourceMapper dataSourceMapper;
     private final KettleCollectService kettleCollectService;
+    private final IngestJobLifecycleService lifecycleService;
     private final ObjectMapper objectMapper = new ObjectMapper();
 
     public TableIngestEngine(IngIngestTaskMapper taskMapper, IngDataTableMapper dataTableMapper,
                              IngDataColumnMapper dataColumnMapper, IngDataSourceMapper dataSourceMapper,
-                             KettleCollectService kettleCollectService) {
+                             KettleCollectService kettleCollectService,
+                             @org.springframework.context.annotation.Lazy IngestJobLifecycleService lifecycleService) {
         this.taskMapper = taskMapper;
         this.dataTableMapper = dataTableMapper;
         this.dataColumnMapper = dataColumnMapper;
         this.dataSourceMapper = dataSourceMapper;
         this.kettleCollectService = kettleCollectService;
+        this.lifecycleService = lifecycleService;
     }
 
     public Map<String, Object> runJob(UserPrincipal operator, Long taskId) {
+        return runJobInternal(operator, taskId, "MANUAL", null);
+    }
+
+    /** DS 定时回调入口 */
+    public Map<String, Object> runJobScheduled(Long taskId, Long dsInstanceId) {
+        return runJobInternal(null, taskId, "SCHEDULE", dsInstanceId);
+    }
+
+    public Map<String, Object> runJobBySystem(Long taskId) {
+        return runJobInternal(null, taskId, "SCHEDULE", null);
+    }
+
+    private Map<String, Object> runJobInternal(UserPrincipal operator, Long taskId, String triggerType, Long dsInstanceId) {
         IngIngestTask task = taskMapper.selectById(taskId);
         if (task == null) {
             throw new BusinessException(404, "接入任务不存在");
+        }
+        String life = task.getLifecycleStatus() == null ? "DRAFT" : task.getLifecycleStatus().toUpperCase();
+        if ("MANUAL".equalsIgnoreCase(triggerType)
+                && !"ONLINE".equals(life) && !"STARTED".equals(life) && !"STOPPED".equals(life)) {
+            throw new BusinessException(400, "仅已上线/已启动/已停止任务可执行，当前状态：" + life);
         }
         if ("RUNNING".equals(task.getStatus())) {
             LocalDateTime started = task.getLastRunAt();
@@ -70,26 +92,44 @@ public class TableIngestEngine {
             task.setLastRunAt(LocalDateTime.now());
             taskMapper.updateById(task);
         }
+        Long runId = lifecycleService.beginRun(taskId, triggerType, dsInstanceId);
         JsonNode cfg = readConfig(task.getConfigJson());
         String mode = str(task.getAccessMode(), text(cfg, "accessMode", "SINGLE")).toUpperCase(Locale.ROOT);
+        long startedMs = System.currentTimeMillis();
         try {
-            return switch (mode) {
+            Map<String, Object> result = switch (mode) {
                 case "MULTI" -> runMulti(operator, task, cfg);
                 case "SQL" -> runSql(operator, task, cfg);
                 default -> runSingle(operator, task, cfg);
             };
+            long durationMs = Math.max(0L, System.currentTimeMillis() - startedMs);
+            result.put("durationMs", durationMs);
+            persistDuration(taskId, durationMs);
+            IngIngestTask after = taskMapper.selectById(taskId);
+            Object statusObj = result.get("status");
+            String st = statusObj != null ? String.valueOf(statusObj)
+                    : (after != null && after.getStatus() != null ? after.getStatus() : "SUCCESS");
+            if (!"PARTIAL".equalsIgnoreCase(st) && !"FAILED".equalsIgnoreCase(st)) {
+                st = "SUCCESS";
+            }
+            lifecycleService.finishRun(runId, st.toUpperCase(), result, null);
+            return result;
         } catch (BusinessException e) {
-            // failTask 已写 FAILED；若仍卡在 RUNNING 则兜底
+            long durationMs = Math.max(0L, System.currentTimeMillis() - startedMs);
+            persistDuration(taskId, durationMs);
             IngIngestTask latest = taskMapper.selectById(taskId);
             if (latest != null && "RUNNING".equals(latest.getStatus())) {
                 latest.setStatus("FAILED");
                 latest.setLastRunMessage("汇聚失败");
                 latest.setErrorDetail(e.getMessage() == null ? "error" : e.getMessage().substring(0, Math.min(1000, e.getMessage().length())));
                 latest.setLastRunAt(LocalDateTime.now());
+                latest.setDurationMs(durationMs);
                 taskMapper.updateById(latest);
             }
+            lifecycleService.finishRun(runId, "FAILED", Map.of("durationMs", durationMs), e.getMessage());
             throw e;
         } catch (Exception e) {
+            long durationMs = Math.max(0L, System.currentTimeMillis() - startedMs);
             log.warn("runJob failed id={}: {}", taskId, e.getMessage());
             IngIngestTask latest = taskMapper.selectById(taskId);
             if (latest != null) {
@@ -97,14 +137,21 @@ public class TableIngestEngine {
                 latest.setLastRunAt(LocalDateTime.now());
                 latest.setLastRunMessage("汇聚失败");
                 latest.setErrorDetail(e.getMessage() == null ? "error" : e.getMessage().substring(0, Math.min(1000, e.getMessage().length())));
+                latest.setDurationMs(durationMs);
                 taskMapper.updateById(latest);
             }
-            throw new BusinessException(502, e.getMessage());
+            lifecycleService.finishRun(runId, "FAILED", Map.of("durationMs", durationMs), e.getMessage());
+            throw new BusinessException(502, e.getMessage() == null ? "汇聚失败" : e.getMessage());
         }
     }
 
-    public Map<String, Object> runJobBySystem(Long taskId) {
-        return runJob(null, taskId);
+    private void persistDuration(Long taskId, long durationMs) {
+        IngIngestTask latest = taskMapper.selectById(taskId);
+        if (latest == null) {
+            return;
+        }
+        latest.setDurationMs(durationMs);
+        taskMapper.updateById(latest);
     }
 
     public Map<String, Object> preview(Map<String, Object> body) {
@@ -115,12 +162,26 @@ public class TableIngestEngine {
         if ("SQL".equals(mode)) {
             JsonNode sql = cfg.path("sql");
             String resolved = resolveSqlParams(text(sql, "selectSql", ""), sql.path("paramBindings"));
+            resolved = KettleCollectService.stripTrailingSqlSemicolons(resolved);
             kettleCollectService.validateSelectSql(resolved);
             out.put("resolvedSql", resolved);
             out.put("targetTable", kettleCollectService.sanitizeOdsName(text(sql, "targetTable", "ods_sql_result")));
             return out;
         }
         if ("MULTI".equals(mode)) {
+            List<String> sourceTables = readStringList(cfg.path("multi").path("sourceTables"));
+            if (!sourceTables.isEmpty()) {
+                String rule = text(cfg.path("multi"), "targetTableRule", "ods_{sourceTable}");
+                List<Map<String, Object>> items = new ArrayList<>();
+                for (String name : sourceTables) {
+                    Map<String, Object> m = new LinkedHashMap<>();
+                    m.put("sourceTable", name);
+                    m.put("targetTable", suggestOdsName(name, rule));
+                    items.add(m);
+                }
+                out.put("tables", items);
+                return out;
+            }
             List<Long> ids = readLongList(cfg.path("multi").path("tableIds"));
             List<Map<String, Object>> items = new ArrayList<>();
             for (Long id : ids) {
@@ -137,6 +198,45 @@ public class TableIngestEngine {
         }
         JsonNode single = cfg.path("single");
         Long tableId = longNode(single, "tableId");
+        String sourceTableName = text(single, "sourceTable", "");
+        String sourceConnection = text(cfg, "sourceConnection", "");
+        Long metaId = longNode(cfg, "metaDataSourceId");
+        if (sourceConnection.isBlank() && metaId != null && metaId > 0) {
+            sourceConnection = "meta:" + metaId;
+        }
+        if (tableId == null && !sourceTableName.isBlank()) {
+            String physical = resolvePhysicalSourceName(sourceTableName, single);
+            String target = text(single, "targetTable", "");
+            if (target.isBlank()) {
+                target = suggestOdsName(physical, "");
+            } else {
+                target = kettleCollectService.sanitizeOdsName(target);
+            }
+            List<CollectCopyRequest.FieldPair> fields = readMappingPairs(cfg.path("mapping"));
+            if (fields.isEmpty() && !sourceConnection.isBlank()) {
+                fields = kettleCollectService.probeFieldsFromConnection(sourceConnection, physical);
+            }
+            if (fields.isEmpty()) {
+                throw new BusinessException(400, "请配置字段映射");
+            }
+            String writeMode = text(cfg, "writeMode", "FULL");
+            String where = null;
+            if ("INCREMENTAL".equalsIgnoreCase(writeMode)) {
+                String incCol = text(single, "incrementColumn", "");
+                if (incCol.isBlank()) {
+                    throw new BusinessException(400, "增量接入需配置增量列");
+                }
+                where = "`" + sanitizeIdent(incCol) + "` IS NOT NULL";
+            }
+            String selectSql = kettleCollectService.buildMappedSelectSql(physical, fields, where);
+            out.put("physicalSourceTable", physical);
+            out.put("targetTable", target);
+            out.put("selectSql", selectSql);
+            out.put("fieldCount", fields.size());
+            out.put("writeMode", writeMode);
+            out.put("sourceConnection", sourceConnection);
+            return out;
+        }
         if (tableId == null) {
             throw new BusinessException(400, "请选择源表");
         }
@@ -201,6 +301,55 @@ public class TableIngestEngine {
         if (tableId == null) {
             tableId = task.getTableId();
         }
+        String sourceConnection = resolveSourceConnection(cfg, task);
+        String sourceTableName = text(single, "sourceTable", "");
+
+        // 元数据源路径：按物理表名执行，不依赖资产登记表
+        if (tableId == null && !sourceTableName.isBlank() && !sourceConnection.isBlank()) {
+            String physical = resolvePhysicalSourceName(sourceTableName, single);
+            String target = text(single, "targetTable", task.getTargetTable() == null ? "" : task.getTargetTable());
+            if (target.isBlank()) {
+                target = suggestOdsName(physical, "");
+            }
+            List<CollectCopyRequest.FieldPair> fields = readMappingPairs(cfg.path("mapping"));
+            if (fields.isEmpty()) {
+                fields = kettleCollectService.probeFieldsFromConnection(sourceConnection, physical);
+            }
+            String writeMode = firstNonBlank(task.getWriteMode(), text(cfg, "writeMode", "FULL"));
+            boolean truncate = !"INCREMENTAL".equalsIgnoreCase(writeMode);
+            String where = null;
+            String watermarkNext = null;
+            if (!truncate) {
+                String incCol = text(single, "incrementColumn", "");
+                if (incCol.isBlank()) {
+                    throw new BusinessException(400, "增量接入需配置增量列");
+                }
+                String wm = firstNonBlank(task.getWatermarkValue(), text(cfg, "watermarkValue", ""));
+                if (wm.isBlank()) {
+                    where = "`" + sanitizeIdent(incCol) + "` IS NOT NULL";
+                } else {
+                    where = "`" + sanitizeIdent(incCol) + "` > '" + escapeLiteral(wm) + "'";
+                }
+                watermarkNext = LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss"));
+            }
+            String selectSql = kettleCollectService.buildMappedSelectSql(physical, fields, where);
+            CollectCopyRequest req = new CollectCopyRequest();
+            req.setSourceConnection(sourceConnection);
+            req.setSourceId(task.getSourceId());
+            req.setPhysicalSourceTable(physical);
+            req.setSelectSql(selectSql);
+            req.setOdsTable(target);
+            req.setTargetConnection(text(cfg, "targetConnection", DataLayerSupport.ODS));
+            req.setTruncate(truncate);
+            req.setWatermarkAfterSuccess(watermarkNext);
+            req.setLedger(new CollectCopyRequest.IngIngestTaskLedger(task.getId()));
+            req.getFields().addAll(fields);
+            Map<String, Object> result = kettleCollectService.executeCopy(operator, req);
+            result.put("accessMode", "SINGLE");
+            result.put("physicalSourceTable", physical);
+            return result;
+        }
+
         if (tableId == null) {
             throw new BusinessException(400, "请配置源表");
         }
@@ -233,11 +382,15 @@ public class TableIngestEngine {
         }
         String selectSql = kettleCollectService.buildMappedSelectSql(physical, fields, where);
         CollectCopyRequest req = new CollectCopyRequest();
+        if (!sourceConnection.isBlank()) {
+            req.setSourceConnection(sourceConnection);
+        }
         req.setSourceId(table.getSourceId());
         req.setTableId(tableId);
         req.setPhysicalSourceTable(physical);
         req.setSelectSql(selectSql);
         req.setOdsTable(target);
+        req.setTargetConnection(text(cfg, "targetConnection", DataLayerSupport.ODS));
         req.setTruncate(truncate);
         req.setWatermarkAfterSuccess(watermarkNext);
         req.setLedger(new CollectCopyRequest.IngIngestTaskLedger(task.getId()));
@@ -250,6 +403,59 @@ public class TableIngestEngine {
 
     private Map<String, Object> runMulti(UserPrincipal operator, IngIngestTask task, JsonNode cfg) {
         JsonNode multi = cfg.path("multi");
+        String sourceConnection = resolveSourceConnection(cfg, task);
+        List<String> sourceTables = readStringList(multi.path("sourceTables"));
+        if (!sourceTables.isEmpty() && !sourceConnection.isBlank()) {
+            List<Map<String, Object>> results = new ArrayList<>();
+            List<String> errors = new ArrayList<>();
+            long totalRows = 0;
+            String rule = text(multi, "targetTableRule", "ods_{sourceTable}");
+            for (String sourceTable : sourceTables) {
+                if (sourceTable == null || sourceTable.isBlank()) {
+                    continue;
+                }
+                String physical = sourceTable.trim();
+                String target = suggestOdsName(physical, rule);
+                try {
+                    List<CollectCopyRequest.FieldPair> fields =
+                            kettleCollectService.probeFieldsFromConnection(sourceConnection, physical);
+                    CollectCopyRequest req = new CollectCopyRequest();
+                    req.setSourceConnection(sourceConnection);
+                    req.setSourceId(task.getSourceId());
+                    req.setPhysicalSourceTable(physical);
+                    req.setOdsTable(target);
+                    req.setTargetConnection(text(cfg, "targetConnection", DataLayerSupport.ODS));
+                    req.setTruncate(true);
+                    req.setLedger(new CollectCopyRequest.IngIngestTaskLedger(task.getId()));
+                    req.getFields().addAll(fields);
+                    if (!"RUNNING".equals(task.getStatus())) {
+                        task.setStatus("RUNNING");
+                        task.setLastRunAt(LocalDateTime.now());
+                    }
+                    task.setLastRunMessage("多表汇聚中 " + (results.size() + 1) + "/" + sourceTables.size()
+                            + "：" + physical);
+                    taskMapper.updateById(task);
+                    Map<String, Object> one = kettleCollectService.executeCopy(operator, req);
+                    if ("ABORTED".equals(String.valueOf(one.get("status")))) {
+                        throw new BusinessException(409, "任务已重置，多表执行中止");
+                    }
+                    results.add(one);
+                    Object rows = one.get("collectedRows");
+                    if (rows instanceof Number n) {
+                        totalRows += n.longValue();
+                    }
+                } catch (BusinessException e) {
+                    if (e.getCode() == 409) {
+                        throw e;
+                    }
+                    String msg = physical + " → " + target + "：" + e.getMessage();
+                    errors.add(msg);
+                    log.warn("多表单表失败: {}", msg);
+                }
+            }
+            return finishMulti(task, results, errors, totalRows);
+        }
+
         List<Long> tableIds = readLongList(multi.path("tableIds"));
         List<Long> excludes = readLongList(multi.path("excludeTableIds"));
         tableIds.removeIf(excludes::contains);
@@ -277,10 +483,14 @@ public class TableIngestEngine {
             }
             String target = suggestOds(table, text(multi, "targetTableRule", ""));
             CollectCopyRequest req = new CollectCopyRequest();
+            if (!sourceConnection.isBlank()) {
+                req.setSourceConnection(sourceConnection);
+            }
             req.setSourceId(table.getSourceId());
             req.setTableId(tableId);
             req.setPhysicalSourceTable(table.getSourceTable());
             req.setOdsTable(target);
+            req.setTargetConnection(text(cfg, "targetConnection", DataLayerSupport.ODS));
             req.setTruncate(true);
             req.setLedger(new CollectCopyRequest.IngIngestTaskLedger(task.getId()));
             req.getFields().addAll(fields);
@@ -314,6 +524,11 @@ public class TableIngestEngine {
                 log.warn("多表单表失败: {}", msg);
             }
         }
+        return finishMulti(task, results, errors, totalRows);
+    }
+
+    private Map<String, Object> finishMulti(IngIngestTask task, List<Map<String, Object>> results,
+                                            List<String> errors, long totalRows) {
         Map<String, Object> out = new LinkedHashMap<>();
         out.put("accessMode", "MULTI");
         out.put("taskId", task.getId());
@@ -355,19 +570,25 @@ public class TableIngestEngine {
 
     private Map<String, Object> runSql(UserPrincipal operator, IngIngestTask task, JsonNode cfg) {
         JsonNode sql = cfg.path("sql");
+        String sourceConnection = resolveSourceConnection(cfg, task);
         Long sourceId = longNode(sql, "sourceId");
         if (sourceId == null) {
             sourceId = task.getSourceId();
         }
-        if (sourceId == null) {
+        if (sourceConnection.isBlank() && sourceId == null) {
             throw new BusinessException(400, "条件接入需指定数据源");
         }
-        IngDataSource ds = dataSourceMapper.selectById(sourceId);
-        if (ds == null) {
-            throw new BusinessException(404, "数据源不存在");
+        if (!sourceConnection.isBlank()) {
+            // meta / 连接键路径：不必查登记源
+        } else {
+            IngDataSource ds = dataSourceMapper.selectById(sourceId);
+            if (ds == null) {
+                throw new BusinessException(404, "数据源不存在");
+            }
         }
         String rawSql = text(sql, "selectSql", "");
         String resolved = resolveSqlParams(rawSql, sql.path("paramBindings"));
+        resolved = KettleCollectService.stripTrailingSqlSemicolons(resolved);
         kettleCollectService.validateSelectSql(resolved);
         String target = text(sql, "targetTable", task.getTargetTable() == null ? "" : task.getTargetTable());
         if (target.isBlank()) {
@@ -379,9 +600,13 @@ public class TableIngestEngine {
         }
         boolean truncate = !"INCREMENTAL".equalsIgnoreCase(firstNonBlank(task.getWriteMode(), text(cfg, "writeMode", "FULL")));
         CollectCopyRequest req = new CollectCopyRequest();
+        if (!sourceConnection.isBlank()) {
+            req.setSourceConnection(sourceConnection);
+        }
         req.setSourceId(sourceId);
         req.setSelectSql(resolved);
         req.setOdsTable(target);
+        req.setTargetConnection(text(cfg, "targetConnection", DataLayerSupport.ODS));
         req.setTruncate(truncate);
         req.setLedger(new CollectCopyRequest.IngIngestTaskLedger(task.getId()));
         req.getFields().addAll(fields);
@@ -389,6 +614,69 @@ public class TableIngestEngine {
         result.put("accessMode", "SQL");
         result.put("resolvedSql", resolved);
         return result;
+    }
+
+    private String resolveSourceConnection(JsonNode cfg, IngIngestTask task) {
+        String conn = text(cfg, "sourceConnection", "");
+        if (!conn.isBlank()) {
+            return conn.trim();
+        }
+        Long metaId = longNode(cfg, "metaDataSourceId");
+        if (metaId != null && metaId > 0) {
+            return "meta:" + metaId;
+        }
+        if (task.getSourceId() != null) {
+            return "ds:" + task.getSourceId();
+        }
+        return "";
+    }
+
+    private String resolvePhysicalSourceName(String baseTable, JsonNode single) {
+        String mode = text(single, "sourceTableMode", "FIXED");
+        if ("PREFIX_DATE".equalsIgnoreCase(mode)) {
+            String prefix = text(single, "tablePrefix", "");
+            String pattern = text(single, "datePattern", "yyyyMMdd");
+            int offset = single.path("dateOffsetDays").isMissingNode() ? -1 : single.path("dateOffsetDays").asInt(-1);
+            LocalDate day = LocalDate.now().plusDays(offset);
+            DateTimeFormatter fmt;
+            try {
+                fmt = DateTimeFormatter.ofPattern(pattern);
+            } catch (Exception e) {
+                throw new BusinessException(400, "日期格式无效: " + pattern);
+            }
+            String name = prefix + day.format(fmt);
+            if (sanitizeIdent(name).isBlank()) {
+                throw new BusinessException(400, "分表物理名无效");
+            }
+            return name;
+        }
+        return baseTable;
+    }
+
+    private String suggestOdsName(String sourceTable, String rule) {
+        String source = sourceTable == null ? "t" : sourceTable;
+        if (rule != null && rule.contains("{sourceTable}")) {
+            return kettleCollectService.sanitizeOdsName(rule.replace("{sourceTable}", source));
+        }
+        String sanitized = source.replaceAll("[^A-Za-z0-9_]", "");
+        if (sanitized.isBlank()) {
+            sanitized = "t";
+        }
+        String lower = sanitized.toLowerCase(Locale.ROOT);
+        return kettleCollectService.sanitizeOdsName(lower.startsWith("ods_") ? lower : "ods_" + lower);
+    }
+
+    private List<String> readStringList(JsonNode node) {
+        List<String> out = new ArrayList<>();
+        if (node == null || !node.isArray()) {
+            return out;
+        }
+        for (JsonNode n : node) {
+            if (n == null || n.isNull()) continue;
+            String v = n.asText("").trim();
+            if (!v.isBlank()) out.add(v);
+        }
+        return out;
     }
 
     private String resolvePhysicalSource(IngDataTable table, JsonNode single) {

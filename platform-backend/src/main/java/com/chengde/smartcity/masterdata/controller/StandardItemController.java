@@ -79,6 +79,12 @@ public class StandardItemController {
         return ApiResponse.ok(service.validateNaming(body));
     }
 
+    @PostMapping("/naming/generate-task-name")
+    @PreAuthorize("isAuthenticated()")
+    public ApiResponse<Map<String, Object>> generateTaskName(@RequestBody Map<String, Object> body) {
+        return ApiResponse.ok(service.generateTaskName(body));
+    }
+
     // ---- A10 mapping ----
 
     @GetMapping("/mappings")

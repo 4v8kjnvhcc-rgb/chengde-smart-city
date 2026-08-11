@@ -15,8 +15,14 @@ import com.chengde.smartcity.exchange.mapper.IngUploadRecordMapper;
 import com.chengde.smartcity.exchange.mapper.IngUploadTemplateMapper;
 import com.chengde.smartcity.integration.storage.StorageIntegrationClient;
 import com.chengde.smartcity.security.UserPrincipal;
+import com.chengde.smartcity.system.entity.SysOrg;
+import com.chengde.smartcity.system.mapper.SysOrgMapper;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Objects;
+import java.util.Set;
+import java.util.stream.Collectors;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.multipart.MultipartFile;
@@ -29,24 +35,85 @@ public class CollectUploadService {
     private final IngIngestTaskMapper taskMapper;
     private final IngIngestChannelMapper channelMapper;
     private final IngDataTableMapper dataTableMapper;
+    private final SysOrgMapper orgMapper;
     private final AuditService auditService;
     private final StorageIntegrationClient storageClient;
 
     public CollectUploadService(IngUploadTemplateMapper templateMapper, IngUploadRecordMapper uploadMapper,
                                 IngIngestTaskMapper taskMapper, IngIngestChannelMapper channelMapper,
-                                IngDataTableMapper dataTableMapper,
+                                IngDataTableMapper dataTableMapper, SysOrgMapper orgMapper,
                                 AuditService auditService, StorageIntegrationClient storageClient) {
         this.templateMapper = templateMapper;
         this.uploadMapper = uploadMapper;
         this.taskMapper = taskMapper;
         this.channelMapper = channelMapper;
         this.dataTableMapper = dataTableMapper;
+        this.orgMapper = orgMapper;
         this.auditService = auditService;
         this.storageClient = storageClient;
     }
 
-    public List<IngUploadTemplate> listTemplates() {
-        return templateMapper.selectList(new LambdaQueryWrapper<IngUploadTemplate>().orderByAsc(IngUploadTemplate::getId));
+    public List<IngUploadTemplate> listTemplates(UserPrincipal operator, String keyword, Long orgId) {
+        LambdaQueryWrapper<IngUploadTemplate> q = new LambdaQueryWrapper<IngUploadTemplate>()
+                .orderByDesc(IngUploadTemplate::getId);
+        applyOrgScope(q, operator, orgId);
+        if (keyword != null && !keyword.isBlank()) {
+            String kw = keyword.trim();
+            q.and(w -> w.like(IngUploadTemplate::getTemplateName, kw)
+                    .or().like(IngUploadTemplate::getTemplateCode, kw));
+        }
+        List<IngUploadTemplate> list = templateMapper.selectList(q);
+        fillTemplateOrgNames(list);
+        return list;
+    }
+
+    public List<IngUploadRecord> listUploadRecords(UserPrincipal operator, String templateCode,
+                                                   String keyword, Long orgId) {
+        LambdaQueryWrapper<IngUploadRecord> q = new LambdaQueryWrapper<IngUploadRecord>()
+                .orderByDesc(IngUploadRecord::getId);
+        applyOrgScopeRecord(q, operator, orgId);
+        if (templateCode != null && !templateCode.isBlank()) {
+            q.eq(IngUploadRecord::getTemplateCode, templateCode.trim());
+        }
+        if (keyword != null && !keyword.isBlank()) {
+            String kw = keyword.trim();
+            q.and(w -> w.like(IngUploadRecord::getFileName, kw)
+                    .or().like(IngUploadRecord::getTargetTable, kw)
+                    .or().like(IngUploadRecord::getTemplateCode, kw));
+        }
+        List<IngUploadRecord> list = uploadMapper.selectList(q);
+        fillRecordOrgNames(list);
+        return list;
+    }
+
+    public void assertTemplateAccessible(UserPrincipal operator, IngUploadTemplate t) {
+        if (t == null) {
+            throw new BusinessException(404, "模板不存在");
+        }
+        if (canSeeAllOrgs(operator)) {
+            return;
+        }
+        Long orgId = operator == null ? null : operator.getOrgId();
+        if (orgId == null || t.getOrgId() == null || !orgId.equals(t.getOrgId())) {
+            throw new BusinessException(403, "无权操作其他机构的上传模板");
+        }
+    }
+
+    public Long resolveTemplateOrgId(UserPrincipal operator, Object requestedOrgId) {
+        Long req = longVal(requestedOrgId);
+        if (canSeeAllOrgs(operator)) {
+            if (req != null) {
+                return req;
+            }
+            return operator != null ? operator.getOrgId() : null;
+        }
+        if (operator == null || operator.getOrgId() == null) {
+            throw new BusinessException(400, "当前账号未绑定机构");
+        }
+        if (req != null && !req.equals(operator.getOrgId())) {
+            throw new BusinessException(403, "部门管理员不可选择其他归属机构");
+        }
+        return operator.getOrgId();
     }
 
     @Transactional
@@ -57,6 +124,7 @@ public class CollectUploadService {
         t.setColumnMappingJson(str(body.get("columnMappingJson"), "[]"));
         t.setValidateRulesJson(str(body.get("validateRulesJson"), null));
         t.setStatus("ACTIVE");
+        t.setOrgId(resolveTemplateOrgId(operator, body == null ? null : body.get("orgId")));
         templateMapper.insert(t);
         return t.getId();
     }
@@ -67,6 +135,7 @@ public class CollectUploadService {
         if (t == null) {
             return;
         }
+        assertTemplateAccessible(operator, t);
         templateMapper.deleteById(id);
         auditService.log(operator.getUserId(), operator.getUsername(), operator.getOrgId(),
                 "ING_UPLOAD_TPL_DEL", "ing_upload_template", String.valueOf(id), t.getTemplateName());
@@ -78,9 +147,7 @@ public class CollectUploadService {
             throw new BusinessException(400, "status 仅支持 ACTIVE / INACTIVE");
         }
         IngUploadTemplate t = templateMapper.selectById(id);
-        if (t == null) {
-            throw new BusinessException(404, "模板不存在");
-        }
+        assertTemplateAccessible(operator, t);
         t.setStatus(status);
         templateMapper.updateById(t);
         auditService.log(operator.getUserId(), operator.getUsername(), operator.getOrgId(),
@@ -99,6 +166,7 @@ public class CollectUploadService {
         String storageNote = storageClient.isSeaweedHealthy() ? "SEAWEED_STORED" : "LOCAL_STORED";
         r.setPreviewJson("[{\"fileSize\":" + file.getSize() + ",\"storage\":\"" + storageNote + "\"}]");
         r.setCreatedBy(operator.getUsername());
+        r.setOrgId(operator.getOrgId());
         uploadMapper.insert(r);
         auditService.log(operator.getUserId(), operator.getUsername(), operator.getOrgId(),
                 "ING_UPLOAD_FILE", "ing_upload_record", String.valueOf(r.getId()), r.getFileName());
@@ -152,6 +220,10 @@ public class CollectUploadService {
         task.setTaskName(required(body.get("taskName"), "taskName").toString());
         task.setChannelId(channelId);
         applyJobFields(task, body);
+        task.setLifecycleStatus(str(body.get("lifecycleStatus"), "DRAFT"));
+        if (task.getVersionNo() == null) {
+            task.setVersionNo(0);
+        }
         String status = str(body.get("status"), "IDLE");
         task.setStatus(status);
         if (task.getLastRunMessage() == null) {
@@ -171,6 +243,10 @@ public class CollectUploadService {
     @Transactional
     public void updateJob(UserPrincipal operator, Long id, Map<String, Object> body) {
         IngIngestTask task = getJob(id);
+        String life = task.getLifecycleStatus() == null ? "DRAFT" : task.getLifecycleStatus().toUpperCase();
+        if (!"DRAFT".equals(life) && !"OFFLINE".equals(life)) {
+            throw new BusinessException(400, "仅草稿或已下线任务可编辑，当前状态：" + life);
+        }
         if (body.containsKey("taskName") && body.get("taskName") != null) {
             task.setTaskName(String.valueOf(body.get("taskName")));
         }
@@ -197,6 +273,10 @@ public class CollectUploadService {
         IngIngestTask task = getJob(id);
         if ("RUNNING".equalsIgnoreCase(task.getStatus())) {
             throw new BusinessException(400, "任务运行中，请先重置后再删除");
+        }
+        String life = task.getLifecycleStatus() == null ? "DRAFT" : task.getLifecycleStatus().toUpperCase();
+        if (!"DRAFT".equals(life) && !"OFFLINE".equals(life)) {
+            throw new BusinessException(400, "仅草稿或已下线任务可删除，当前状态：" + life);
         }
         String name = task.getTaskName();
         taskMapper.deleteById(id);
@@ -319,6 +399,70 @@ public class CollectUploadService {
         table.setCollectStatus("SUCCESS");
         table.setLastCollectAt(java.time.LocalDateTime.now());
         dataTableMapper.updateById(table);
+    }
+
+    private void applyOrgScope(LambdaQueryWrapper<IngUploadTemplate> q, UserPrincipal operator, Long filterOrgId) {
+        if (canSeeAllOrgs(operator)) {
+            if (filterOrgId != null) {
+                q.eq(IngUploadTemplate::getOrgId, filterOrgId);
+            }
+            return;
+        }
+        Long orgId = operator == null ? null : operator.getOrgId();
+        if (orgId == null) {
+            q.eq(IngUploadTemplate::getId, -1L);
+            return;
+        }
+        q.eq(IngUploadTemplate::getOrgId, orgId);
+    }
+
+    private void applyOrgScopeRecord(LambdaQueryWrapper<IngUploadRecord> q, UserPrincipal operator, Long filterOrgId) {
+        if (canSeeAllOrgs(operator)) {
+            if (filterOrgId != null) {
+                q.eq(IngUploadRecord::getOrgId, filterOrgId);
+            }
+            return;
+        }
+        Long orgId = operator == null ? null : operator.getOrgId();
+        if (orgId == null) {
+            q.eq(IngUploadRecord::getId, -1L);
+            return;
+        }
+        q.eq(IngUploadRecord::getOrgId, orgId);
+    }
+
+    private boolean canSeeAllOrgs(UserPrincipal operator) {
+        return operator != null && (operator.isSystemAdmin() || operator.isPlatformAdmin());
+    }
+
+    private void fillTemplateOrgNames(List<IngUploadTemplate> list) {
+        Map<Long, String> names = loadOrgNames(list.stream().map(IngUploadTemplate::getOrgId).filter(Objects::nonNull).collect(Collectors.toSet()));
+        for (IngUploadTemplate t : list) {
+            if (t.getOrgId() != null) {
+                t.setOrgName(names.getOrDefault(t.getOrgId(), "机构#" + t.getOrgId()));
+            }
+        }
+    }
+
+    private void fillRecordOrgNames(List<IngUploadRecord> list) {
+        Map<Long, String> names = loadOrgNames(list.stream().map(IngUploadRecord::getOrgId).filter(Objects::nonNull).collect(Collectors.toSet()));
+        for (IngUploadRecord r : list) {
+            if (r.getOrgId() != null) {
+                r.setOrgName(names.getOrDefault(r.getOrgId(), "机构#" + r.getOrgId()));
+            }
+        }
+    }
+
+    private Map<Long, String> loadOrgNames(Set<Long> ids) {
+        Map<Long, String> map = new HashMap<>();
+        if (ids == null || ids.isEmpty()) {
+            return map;
+        }
+        List<SysOrg> orgs = orgMapper.selectBatchIds(ids);
+        for (SysOrg o : orgs) {
+            map.put(o.getId(), o.getOrgName());
+        }
+        return map;
     }
 
     private static Long longVal(Object v) {

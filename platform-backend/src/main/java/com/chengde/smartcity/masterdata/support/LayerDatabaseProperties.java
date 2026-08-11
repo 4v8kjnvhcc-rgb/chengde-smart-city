@@ -5,8 +5,8 @@ import org.springframework.boot.context.properties.ConfigurationProperties;
 /**
  * 平台分层库连接（ODS/DWD/DWS/ADS）。
  * <p>
- * 本地方案 A：各层 host 留空，自动回落到 {@code app.integration.kettle.target-*} /
- * {@code spring.datasource}（同机多库）。
+ * 本地方案 A：各层 host 留空，自动回落到 {@code spring.datasource}
+ * （同机多库；Carte 侧再由 host-map 翻译）。
  * 生产方案 B：为 S6（ods/dwd）与 S7（dws/ads）分别配置 host。
  */
 @ConfigurationProperties(prefix = "app.data-layer")
@@ -63,7 +63,7 @@ public class LayerDatabaseProperties {
     }
 
     public static class Endpoint {
-        /** 空则回落 kettle.target-host / MYSQL_HOST */
+        /** 空则回落 spring.datasource / kettle.target-host */
         private String host = "";
         /** ≤0 则回落 kettle.target-port / MYSQL_PORT */
         private int port = 0;

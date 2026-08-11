@@ -46,12 +46,6 @@ interface DataSourceRow {
   status: string
 }
 
-interface TagOption {
-  id: number
-  label: string
-  categoryName: string
-}
-
 interface OrgRow {
   id: number
   orgName: string
@@ -78,6 +72,8 @@ const adapters: AdapterItem[] = [
 
 const wizardSteps = ['选择适配器', '基本信息', '连接配置']
 
+const ROOT_CATEGORY: CategoryNode = { id: 0, label: '数据源分类' }
+
 const treeKeyword = ref('')
 const tableKeyword = ref('')
 const treeLoading = ref(false)
@@ -93,8 +89,6 @@ const saving = ref(false)
 const testing = ref(false)
 const editingId = ref<number | null>(null)
 
-const tagOptions = ref<TagOption[]>([])
-const tagLoaded = ref(false)
 const orgTree = ref<Array<{ id: number; label: string; children?: any[] }>>([])
 const orgPickerVisible = ref(false)
 const orgKeyword = ref('')
@@ -151,13 +145,12 @@ interface CollectProject {
 const form = reactive({
   adapterType: 'MYSQL',
   sourceName: '',
-  sortOrder: 0,
+  sortOrder: 1,
   deptName: '',
   orgId: null as number | null,
   orgName: '',
   categoryId: null as number | null,
   categoryName: '',
-  tagCategoryId: null as number | null,
   belongSystem: '',
   remarks: '',
   realtimeFlag: false,
@@ -178,7 +171,12 @@ const {
   resetPage,
 } = useClientPager(rows)
 
-const selectedLabel = computed(() => selectedNode.value?.label || '—')
+const selectedLabel = computed(() => {
+  if (!selectedNode.value || selectedNode.value.id === 0) return '全部'
+  return selectedNode.value.label
+})
+
+const isRootCategory = computed(() => selectedNode.value?.id === 0)
 
 const isSourceCategory = computed(() => {
   const n = selectedNode.value
@@ -191,11 +189,6 @@ const isSourceCategory = computed(() => {
 const categorySelectOptions = computed(() => flattenCategories(treeData.value))
 
 const selectedAdapter = computed(() => adapters.find((a) => a.code === form.adapterType))
-
-const selectedTagLabel = computed(() => {
-  const hit = tagOptions.value.find((t) => t.id === form.tagCategoryId)
-  return hit?.label || '—'
-})
 
 function pickStr(obj: Record<string, unknown>, ...keys: string[]) {
   for (const k of keys) {
@@ -241,7 +234,6 @@ const collectFilteredRows = computed(() => {
     r.sourceName,
     r.dbHost,
     r.dbName,
-    r.username,
   ].some((v) => String(v || '').toLowerCase().includes(kw)))
 })
 
@@ -272,7 +264,7 @@ const collectStats = computed(() => {
 
 const treeWithRoot = computed(() => [{
   id: 0,
-  label: '数据源管理',
+  label: '数据源分类',
   children: treeData.value,
 }])
 
@@ -306,16 +298,14 @@ async function loadTree() {
     })
     treeData.value = res.data || []
     await nextTick()
-    if (!selectedNode.value && treeData.value.length) {
-      selectNode(treeData.value[0])
-    } else if (selectedNode.value) {
+    if (!selectedNode.value) {
+      selectRootNode()
+    } else if (selectedNode.value.id === 0) {
+      selectRootNode()
+    } else {
       const still = findNode(treeData.value, selectedNode.value.id)
       if (still) selectNode(still)
-      else if (treeData.value.length) selectNode(treeData.value[0])
-      else {
-        selectedNode.value = null
-        rows.value = []
-      }
+      else selectRootNode()
     }
   } catch {
     ElMessage.error('加载分类树失败')
@@ -338,9 +328,10 @@ function findNode(nodes: CategoryNode[], id: number): CategoryNode | null {
 async function loadRows() {
   tableLoading.value = true
   try {
+    const categoryId = selectedNode.value?.id
     const res = await api.get('/governance/platform/metadata/data-sources', {
       params: {
-        categoryId: selectedNode.value?.id,
+        categoryId: categoryId && categoryId > 0 ? categoryId : undefined,
         keyword: tableKeyword.value.trim() || undefined,
       },
     })
@@ -350,21 +341,6 @@ async function loadRows() {
     ElMessage.error('加载数据源失败')
   } finally {
     tableLoading.value = false
-  }
-}
-
-async function loadTagOptions() {
-  if (tagLoaded.value) return
-  try {
-    const res = await api.get('/governance/platform/metadata/source-categories/tag-options')
-    tagOptions.value = (res.data || []).map((r: { id: number; label: string; categoryName: string }) => ({
-      id: r.id,
-      label: r.label || r.categoryName,
-      categoryName: r.categoryName,
-    }))
-    tagLoaded.value = true
-  } catch {
-    tagOptions.value = []
   }
 }
 
@@ -395,6 +371,12 @@ async function loadOrgs() {
   }
 }
 
+function selectRootNode() {
+  selectedNode.value = { ...ROOT_CATEGORY }
+  treeRef.value?.setCurrentKey(0)
+  loadRows()
+}
+
 function selectNode(node: CategoryNode) {
   selectedNode.value = node
   treeRef.value?.setCurrentKey(node.id)
@@ -402,7 +384,10 @@ function selectNode(node: CategoryNode) {
 }
 
 function onTreeClick(node: CategoryNode) {
-  if (node.id === 0) return
+  if (node.id === 0) {
+    selectRootNode()
+    return
+  }
   selectNode(node)
 }
 
@@ -411,13 +396,12 @@ function resetForm() {
   wizardStep.value = 0
   form.adapterType = 'MYSQL'
   form.sourceName = ''
-  form.sortOrder = 0
+  form.sortOrder = 1
   form.deptName = ''
   form.orgId = null
   form.orgName = ''
   form.categoryId = selectedNode.value?.id ?? null
   form.categoryName = selectedNode.value?.label ?? ''
-  form.tagCategoryId = null
   form.belongSystem = ''
   form.remarks = ''
   form.realtimeFlag = false
@@ -430,13 +414,35 @@ function resetForm() {
   form.password = ''
 }
 
-function openCreate() {
-  if (!selectedNode.value) {
-    ElMessage.warning('请先在左侧选择分类')
-    return
-  }
+function openCreateWizard() {
   resetForm()
   wizardVisible.value = true
+}
+
+async function openCreate() {
+  if (!selectedNode.value || isRootCategory.value) {
+    ElMessage.warning('请先在左侧选择具体分类')
+    return
+  }
+  if (isSourceCategory.value) {
+    try {
+      await ElMessageBox.confirm(
+        '是否同步数据资产登记管理系统的数据源？',
+        '新增数据源',
+        {
+          confirmButtonText: '是',
+          cancelButtonText: '否',
+          distinguishCancelAndClose: true,
+          type: 'info',
+        },
+      )
+      await openCollect()
+    } catch (action) {
+      if (action === 'cancel') openCreateWizard()
+    }
+    return
+  }
+  openCreateWizard()
 }
 
 async function openEdit(row: DataSourceRow) {
@@ -447,13 +453,12 @@ async function openEdit(row: DataSourceRow) {
     wizardStep.value = 1
     form.adapterType = d.adapterType || 'MYSQL'
     form.sourceName = d.sourceName || ''
-    form.sortOrder = d.sortOrder ?? 0
+    form.sortOrder = d.sortOrder != null && d.sortOrder >= 1 ? d.sortOrder : 1
     form.deptName = d.deptName || ''
     form.orgId = d.orgId ?? null
     form.orgName = d.orgName || ''
     form.categoryId = d.categoryId
     form.categoryName = d.categoryName || ''
-    form.tagCategoryId = d.tagCategoryId ?? null
     form.belongSystem = d.belongSystem || ''
     form.remarks = d.remarks || ''
     form.realtimeFlag = d.realtimeFlag === 1
@@ -465,7 +470,6 @@ async function openEdit(row: DataSourceRow) {
     form.username = d.username || ''
     form.password = ''
     wizardVisible.value = true
-    void loadTagOptions()
   } catch {
     ElMessage.error('加载详情失败')
   }
@@ -489,7 +493,6 @@ function nextStep() {
       return
     }
     wizardStep.value = 1
-    void loadTagOptions()
     return
   }
   if (wizardStep.value === 1) {
@@ -497,16 +500,12 @@ function nextStep() {
       ElMessage.warning('请填写名称')
       return
     }
-    if (!form.deptName.trim()) {
-      ElMessage.warning('请填写部门名称或选择组织')
+    if (!form.orgId) {
+      ElMessage.warning('请选择部门组织')
       return
     }
     if (!form.categoryId) {
       ElMessage.warning('请选择所属分类')
-      return
-    }
-    if (!form.tagCategoryId) {
-      ElMessage.warning('请选择数据源标签')
       return
     }
     wizardStep.value = 2
@@ -540,7 +539,6 @@ function buildPayload(includePassword = true) {
     orgId: form.orgId,
     orgName: form.orgName || undefined,
     categoryId: form.categoryId,
-    tagCategoryId: form.tagCategoryId,
     belongSystem: form.belongSystem.trim() || undefined,
     remarks: form.remarks.trim() || undefined,
     realtimeFlag: form.realtimeFlag ? 1 : 0,
@@ -625,12 +623,14 @@ async function removeRow(row: DataSourceRow) {
 
 function openMove(row: DataSourceRow) {
   movingRow.value = row
-  moveTargetId.value = selectedNode.value?.id ?? null
+  // 虚拟根节点 id=0 不在可选分类中，不能作为默认目标（否则下拉会显示原始值「0」）
+  const id = selectedNode.value?.id
+  moveTargetId.value = id && id > 0 ? id : null
   moveVisible.value = true
 }
 
 async function confirmMove() {
-  if (!movingRow.value || !moveTargetId.value) {
+  if (!movingRow.value || moveTargetId.value == null || moveTargetId.value <= 0) {
     ElMessage.warning('请选择目标分类')
     return
   }
@@ -770,8 +770,7 @@ onMounted(async () => {
           <el-form-item class="portal-form-actions">
             <el-button type="primary" @click="loadRows">查询</el-button>
             <el-button @click="tableKeyword = ''; loadRows()">重置</el-button>
-            <el-button v-if="isSourceCategory" type="success" @click="openCollect">采集</el-button>
-            <el-button type="primary" :disabled="!selectedNode" @click="openCreate">+ 新增</el-button>
+            <el-button type="primary" :disabled="!selectedNode || isRootCategory" @click="openCreate">+ 新增</el-button>
           </el-form-item>
         </el-form>
 
@@ -846,7 +845,7 @@ onMounted(async () => {
             <el-row :gutter="20">
               <el-col :span="12">
                 <el-form-item label="排序">
-                  <el-input-number v-model="form.sortOrder" :min="0" controls-position="right" class="mds-full-width" />
+                  <el-input-number v-model="form.sortOrder" :min="1" controls-position="right" class="mds-full-width" />
                 </el-form-item>
               </el-col>
               <el-col :span="12">
@@ -857,7 +856,13 @@ onMounted(async () => {
               <el-col :span="12">
                 <el-form-item label="部门名称" required>
                   <div class="mds-org-field">
-                    <el-input v-model="form.deptName" maxlength="128" placeholder="可手填或选择组织" />
+                    <el-input
+                      v-model="form.deptName"
+                      readonly
+                      maxlength="128"
+                      placeholder="请选择组织"
+                      class="mds-readonly-input"
+                    />
                     <el-button plain type="primary" @click="openOrgPicker">选择组织</el-button>
                   </div>
                 </el-form-item>
@@ -896,20 +901,6 @@ onMounted(async () => {
                 </el-form-item>
               </el-col>
               <el-col :span="12">
-                <el-form-item label="数据源标签" required>
-                  <el-select
-                    v-model="form.tagCategoryId"
-                    filterable
-                    clearable
-                    placeholder="请选择分类标签"
-                    class="mds-full-width"
-                    @visible-change="(v: boolean) => v && loadTagOptions()"
-                  >
-                    <el-option v-for="opt in tagOptions" :key="opt.id" :label="opt.label" :value="opt.id" />
-                  </el-select>
-                </el-form-item>
-              </el-col>
-              <el-col :span="12">
                 <el-form-item label="属性">
                   <div class="mds-flag-box">
                     <el-checkbox v-model="form.realtimeFlag">检测是否支持实时</el-checkbox>
@@ -931,7 +922,6 @@ onMounted(async () => {
         <div class="mds-form-panel">
           <div class="mds-summary-bar">
             <span>分类：{{ form.categoryName || '—' }}</span>
-            <span>标签：{{ selectedTagLabel }}</span>
             <span>{{ form.readOnlyFlag ? '只读' : '可写' }}</span>
           </div>
           <el-form label-width="168px">
@@ -977,10 +967,10 @@ onMounted(async () => {
     </el-dialog>
 
     <!-- 来源分类：从归集登记采集 -->
-    <el-dialog v-model="collectVisible" title="采集数据源" width="860px" destroy-on-close class="mds-collect-dialog">
+    <el-dialog v-model="collectVisible" title="同步数据源" width="860px" destroy-on-close class="mds-collect-dialog">
       <div class="mds-collect-hero">
         <div class="mds-collect-hero__title">选择要纳入「来源」的数据源</div>
-        <div class="mds-collect-hero__desc">展示部门、数据源名称与连接账号信息，勾选后采集到「来源」分类</div>
+        <div class="mds-collect-hero__desc">按部门展示数据资产登记管理系统的数据源，勾选后添加到「来源」分类</div>
       </div>
 
       <div class="mds-collect-stats">
@@ -1030,12 +1020,6 @@ onMounted(async () => {
           <el-table-column label="库名" min-width="120" show-overflow-tooltip>
             <template #default="{ row }">{{ formatCell(row.dbName) }}</template>
           </el-table-column>
-          <el-table-column label="账号" min-width="100" show-overflow-tooltip>
-            <template #default="{ row }">{{ formatCell(row.username) }}</template>
-          </el-table-column>
-          <el-table-column label="密码" min-width="100" show-overflow-tooltip>
-            <template #default="{ row }">{{ formatCell(row.password) }}</template>
-          </el-table-column>
         </el-table>
       </div>
 
@@ -1046,7 +1030,7 @@ onMounted(async () => {
           <div class="mds-collect-footer__actions">
             <el-button @click="collectVisible = false">取消</el-button>
             <el-button type="primary" :loading="collectSaving" :disabled="!collectSelectedIds.length" @click="confirmCollect">
-              确认采集
+              确认添加
             </el-button>
           </div>
         </div>

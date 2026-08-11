@@ -26,6 +26,10 @@ public class GovGovernanceTask {
     private String timeUnit;
     private Integer intervalValue;
     private LocalDateTime nextRunAt;
+    private Long dsProjectCode;
+    private Long dsDefinitionCode;
+    private Integer dsScheduleId;
+    private Long dsInstanceId;
     private String variablesJson;
     private String engineType;
     /** GOVERNANCE=ODS→DWD；FUSION=DWD→DWS/ADS */
@@ -70,6 +74,14 @@ public class GovGovernanceTask {
     public void setIntervalValue(Integer intervalValue) { this.intervalValue = intervalValue; }
     public LocalDateTime getNextRunAt() { return nextRunAt; }
     public void setNextRunAt(LocalDateTime nextRunAt) { this.nextRunAt = nextRunAt; }
+    public Long getDsProjectCode() { return dsProjectCode; }
+    public void setDsProjectCode(Long dsProjectCode) { this.dsProjectCode = dsProjectCode; }
+    public Long getDsDefinitionCode() { return dsDefinitionCode; }
+    public void setDsDefinitionCode(Long dsDefinitionCode) { this.dsDefinitionCode = dsDefinitionCode; }
+    public Integer getDsScheduleId() { return dsScheduleId; }
+    public void setDsScheduleId(Integer dsScheduleId) { this.dsScheduleId = dsScheduleId; }
+    public Long getDsInstanceId() { return dsInstanceId; }
+    public void setDsInstanceId(Long dsInstanceId) { this.dsInstanceId = dsInstanceId; }
     public String getVariablesJson() { return variablesJson; }
     public void setVariablesJson(String variablesJson) { this.variablesJson = variablesJson; }
     public String getEngineType() { return engineType; }

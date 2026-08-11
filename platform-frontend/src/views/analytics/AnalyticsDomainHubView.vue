@@ -68,6 +68,16 @@ interface AnalysisModel {
   indicators?: Indicator[]
 }
 
+interface ModelSample {
+  id?: number
+  modelId?: number
+  rowNo: number
+  dim1?: string
+  dim2?: string
+  metric1?: number | string
+  metric2?: number | string
+}
+
 const ASSET_TYPE_ZH: Record<string, string> = {
   METADATA: '元数据表', MANAGED: '纳管表', CATALOG: '目录资源', OTHER: '其他',
 }
@@ -123,6 +133,8 @@ const router = useRouter()
 const meta = computed(() => domainMeta[route.path] || domainMeta['/analytics/population'])
 const zones = computed(() => ZONE_DEFS[meta.value.domain] || [])
 const hasZones = computed(() => zones.value.length > 0)
+/** 人口域：自研样例表展示，不用 DataEase/BI */
+const isPopulation = computed(() => meta.value.domain === 'population')
 
 const dataEaseHealthy = ref(false)
 const activeNav = ref('')
@@ -133,6 +145,8 @@ const bindings = ref<Binding[]>([])
 const candidates = ref<Candidate[]>([])
 const indicators = ref<Indicator[]>([])
 const models = ref<AnalysisModel[]>([])
+const modelSamples = ref<ModelSample[]>([])
+const samplesLoading = ref(false)
 
 const bindDialog = ref(false)
 const selectedCandidate = ref<Candidate | null>(null)
@@ -238,6 +252,10 @@ function syncQuery() {
 }
 
 async function loadOverviewLite() {
+  if (isPopulation.value) {
+    dataEaseHealthy.value = false
+    return
+  }
   const res = await api.get(`/analytics/domain/${meta.value.domain}/overview`)
   dataEaseHealthy.value = !!res.data.dataEaseHealthy
 }
@@ -325,6 +343,19 @@ function openPortalPreview() {
   if (embedUrl.value) window.open(embedUrl.value, '_blank')
 }
 
+async function loadModelSamples(modelId: number) {
+  samplesLoading.value = true
+  modelSamples.value = []
+  try {
+    const res = await api.get(`/analytics/domain/models/${modelId}/samples`)
+    modelSamples.value = (res.data as ModelSample[]) || []
+  } catch (e: unknown) {
+    ElMessage.error(e instanceof Error ? e.message : '加载样例失败')
+  } finally {
+    samplesLoading.value = false
+  }
+}
+
 function openModelDesign(row: AnalysisModel) {
   editingModel.value = row
   modelForm.value = {
@@ -338,18 +369,25 @@ function openModelDesign(row: AnalysisModel) {
   embedMode.value = ''
   embedMessage.value = ''
   embedUrl.value = ''
+  modelSamples.value = []
   modelDrawer.value = true
+  if (isPopulation.value) {
+    void loadModelSamples(row.id)
+  }
 }
 
 async function saveModelDesign() {
   if (!editingModel.value) return
-  await api.put(`/analytics/domain/models/${editingModel.value.id}`, {
+  const body: Record<string, unknown> = {
     modelName: modelForm.value.modelName,
-    deDashboardId: modelForm.value.deDashboardId,
     dimensionJson: modelForm.value.dimensionJson,
     description: modelForm.value.description,
     indicatorIds: modelForm.value.indicatorIds,
-  })
+  }
+  if (!isPopulation.value) {
+    body.deDashboardId = modelForm.value.deDashboardId
+  }
+  await api.put(`/analytics/domain/models/${editingModel.value.id}`, body)
   ElMessage.success('模型设计已保存')
   await loadDesigner(true)
   const fresh = models.value.find((m) => m.id === editingModel.value?.id)
@@ -357,7 +395,7 @@ async function saveModelDesign() {
 }
 
 async function issueModelEmbed() {
-  if (!editingModel.value) return
+  if (!editingModel.value || isPopulation.value) return
   try {
     const res = await api.post(`/analytics/domain/models/${editingModel.value.id}/embed-token`, {})
     embedUrl.value = (res.data.embedUrl as string) || ''
@@ -468,6 +506,14 @@ onMounted(async () => {
       <!-- 共享服务区：挂载 + 指标 + 模型 -->
       <PageCard v-else-if="activeZone && isShare" :title="pageTitle">
         <el-alert
+          v-if="isPopulation"
+          type="info"
+          :closable="false"
+          style="margin-bottom:12px"
+          title="共享服务区：目录/接口深链 + 指标库 + 分析模型；人口域模型以自研样例/结果表展示，不使用 DataEase/BI。"
+        />
+        <el-alert
+          v-else
           :type="dataEaseHealthy ? 'success' : 'warning'"
           :closable="false"
           style="margin-bottom:12px"
@@ -510,7 +556,11 @@ onMounted(async () => {
             />
           </el-tab-pane>
           <el-tab-pane label="分析模型" name="models">
-            <p class="hint">分析模型 = 场景包（多指标 + 维度 + 看板）。指标 ≠ 模型。</p>
+            <p class="hint">
+              {{ isPopulation
+                ? '分析模型 = 场景包（多指标 + 维度 + 自研结果表）。指标 ≠ 模型。'
+                : '分析模型 = 场景包（多指标 + 维度 + 看板）。指标 ≠ 模型。' }}
+            </p>
             <el-table
               :data="models"
               stripe
@@ -595,7 +645,7 @@ onMounted(async () => {
       </template>
     </el-dialog>
 
-    <el-drawer v-model="modelDrawer" size="560px" :title="editingModel ? `设计：${editingModel.modelName}` : '分析模型'" destroy-on-close>
+    <el-drawer v-model="modelDrawer" size="640px" :title="editingModel ? `设计：${editingModel.modelName}` : '分析模型'" destroy-on-close>
       <el-form v-if="editingModel" label-width="100px">
         <el-form-item label="模型名称">
           <el-input v-model="modelForm.modelName" />
@@ -608,7 +658,7 @@ onMounted(async () => {
         <el-form-item label="维度 JSON">
           <el-input v-model="modelForm.dimensionJson" type="textarea" :rows="3" placeholder='例如 ["区县","年龄段"]' />
         </el-form-item>
-        <el-form-item label="看板标识">
+        <el-form-item v-if="!isPopulation" label="看板标识">
           <el-input
             v-model="modelForm.deDashboardId"
             placeholder="填预览地址中的 dvId，如 1280620734217064448（勿填公共分享码）"
@@ -619,24 +669,46 @@ onMounted(async () => {
         </el-form-item>
         <el-form-item>
           <el-button type="primary" @click="saveModelDesign">保存设计</el-button>
-          <el-button @click="issueModelEmbed">签发嵌入</el-button>
-          <el-button v-if="embedUrl" @click="openPortalPreview">门户预览</el-button>
+          <template v-if="!isPopulation">
+            <el-button @click="issueModelEmbed">签发嵌入</el-button>
+            <el-button v-if="embedUrl" @click="openPortalPreview">门户预览</el-button>
+          </template>
+          <el-button v-else :loading="samplesLoading" @click="editingModel && loadModelSamples(editingModel.id)">刷新样例</el-button>
         </el-form-item>
       </el-form>
-      <el-alert
-        v-if="embedMode"
-        :type="embedMode === 'LIVE' ? 'success' : 'warning'"
-        :closable="false"
-        style="margin-bottom:8px"
-        :title="embedMode === 'LIVE' ? '实时嵌入' : '台账预览'"
-        :description="embedMessage"
-      />
-      <div class="iframe-shell">
-        <iframe v-if="iframeSrc" class="de-iframe" :src="iframeSrc" title="DataEase" />
-        <div v-else class="iframe-placeholder">
-          {{ dataEaseHealthy ? '签发令牌后加载嵌入画布' : '启动 DataEase 后可加载实时嵌入' }}
+
+      <template v-if="isPopulation">
+        <el-alert
+          type="info"
+          :closable="false"
+          style="margin-bottom:8px"
+          title="自研结果预览"
+          description="人口域不嵌入 DataEase；下表为模型样例/结果行（可验收 ≥100 行）。"
+        />
+        <el-table v-loading="samplesLoading" :data="modelSamples" stripe size="small" max-height="360" empty-text="暂无样例">
+          <el-table-column prop="rowNo" label="#" width="60" />
+          <el-table-column prop="dim1" label="维度1" min-width="100" />
+          <el-table-column prop="dim2" label="维度2" min-width="100" />
+          <el-table-column prop="metric1" label="指标1" width="100" />
+          <el-table-column prop="metric2" label="指标2" width="100" />
+        </el-table>
+      </template>
+      <template v-else>
+        <el-alert
+          v-if="embedMode"
+          :type="embedMode === 'LIVE' ? 'success' : 'warning'"
+          :closable="false"
+          style="margin-bottom:8px"
+          :title="embedMode === 'LIVE' ? '实时嵌入' : '台账预览'"
+          :description="embedMessage"
+        />
+        <div class="iframe-shell">
+          <iframe v-if="iframeSrc" class="de-iframe" :src="iframeSrc" title="DataEase" />
+          <div v-else class="iframe-placeholder">
+            {{ dataEaseHealthy ? '签发令牌后加载嵌入画布' : '启动 DataEase 后可加载实时嵌入' }}
+          </div>
         </div>
-      </div>
+      </template>
     </el-drawer>
   </div>
 </template>

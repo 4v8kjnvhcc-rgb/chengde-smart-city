@@ -6,17 +6,23 @@ import java.util.List;
 /** Kettle 一次抽数请求（支持映射别名、WHERE、自定义 SQL、全量/追加）。 */
 public class CollectCopyRequest {
     private Long sourceId;
+    /** 来源连接键：meta:{id} / ds:{id} / smart_city_*；优先于 sourceId */
+    private String sourceConnection;
     private Long tableId;
     private IngIngestTaskLedger ledger;
     private String physicalSourceTable;
     private String selectSql;
     private String odsTable;
+    /** 目标库连接键：smart_city_* / meta:{id}；空则默认 ODS */
+    private String targetConnection;
     private boolean truncate = true;
     private String watermarkAfterSuccess;
     private final List<FieldPair> fields = new ArrayList<>();
 
     public Long getSourceId() { return sourceId; }
     public void setSourceId(Long sourceId) { this.sourceId = sourceId; }
+    public String getSourceConnection() { return sourceConnection; }
+    public void setSourceConnection(String sourceConnection) { this.sourceConnection = sourceConnection; }
     public Long getTableId() { return tableId; }
     public void setTableId(Long tableId) { this.tableId = tableId; }
     public IngIngestTaskLedger getLedger() { return ledger; }
@@ -27,6 +33,8 @@ public class CollectCopyRequest {
     public void setSelectSql(String selectSql) { this.selectSql = selectSql; }
     public String getOdsTable() { return odsTable; }
     public void setOdsTable(String odsTable) { this.odsTable = odsTable; }
+    public String getTargetConnection() { return targetConnection; }
+    public void setTargetConnection(String targetConnection) { this.targetConnection = targetConnection; }
     public boolean isTruncate() { return truncate; }
     public void setTruncate(boolean truncate) { this.truncate = truncate; }
     public String getWatermarkAfterSuccess() { return watermarkAfterSuccess; }

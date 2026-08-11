@@ -3,6 +3,7 @@ package com.chengde.smartcity.exchange.service;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.chengde.smartcity.audit.AuditService;
 import com.chengde.smartcity.common.exception.BusinessException;
+import com.chengde.smartcity.common.util.PinyinInitials;
 import com.chengde.smartcity.exchange.entity.IngBizSystem;
 import com.chengde.smartcity.exchange.entity.IngDataColumn;
 import com.chengde.smartcity.exchange.entity.IngDataSource;
@@ -80,6 +81,7 @@ public class ExcelManualUploadService {
     private final AuditService auditService;
     private final MetadataSubsystemService metadataSubsystemService;
     private final LayerJdbcSupport layerJdbc;
+    private final CollectUploadService collectUploadService;
     private final ConcurrentHashMap<String, PendingFile> pending = new ConcurrentHashMap<>();
 
     public ExcelManualUploadService(IngUploadRecordMapper uploadMapper,
@@ -91,7 +93,8 @@ public class ExcelManualUploadService {
                                     IngProjectMapper projectMapper,
                                     AuditService auditService,
                                     MetadataSubsystemService metadataSubsystemService,
-                                    LayerJdbcSupport layerJdbc) {
+                                    LayerJdbcSupport layerJdbc,
+                                    CollectUploadService collectUploadService) {
         this.uploadMapper = uploadMapper;
         this.templateMapper = templateMapper;
         this.dataTableMapper = dataTableMapper;
@@ -102,6 +105,16 @@ public class ExcelManualUploadService {
         this.auditService = auditService;
         this.metadataSubsystemService = metadataSubsystemService;
         this.layerJdbc = layerJdbc;
+        this.collectUploadService = collectUploadService;
+    }
+
+    /** 目标表建议：ods_up_ + 模板中文名拼音首字母 */
+    public Map<String, Object> suggestTargetTable(String templateName) {
+        String name = templateName == null ? "" : templateName.trim();
+        Map<String, Object> m = new LinkedHashMap<>();
+        m.put("templateName", name);
+        m.put("suggestedTable", PinyinInitials.suggestOdsUpTable(name.isEmpty() ? "upload" : name));
+        return m;
     }
 
     public Map<String, Object> inspect(UserPrincipal operator, MultipartFile file) {
@@ -166,7 +179,7 @@ public class ExcelManualUploadService {
         String token = requiredStr(body.get("uploadToken"), "uploadToken");
         String sheetName = requiredStr(body.get("sheetName"), "sheetName");
         String templateCode = requiredStr(body.get("templateCode"), "templateCode");
-        TemplateBinding binding = requireBinding(templateCode, sheetName);
+        TemplateBinding binding = requireBinding(operator, templateCode, sheetName);
         PendingFile pf = requirePending(token, operator);
         int limit = body.get("limit") instanceof Number n ? Math.min(n.intValue(), PREVIEW_LIMIT) : PREVIEW_LIMIT;
         try {
@@ -202,7 +215,7 @@ public class ExcelManualUploadService {
         if (!"APPEND".equals(writeMode) && !"REPLACE".equals(writeMode)) {
             throw new BusinessException(400, "writeMode 仅支持 APPEND（增量）或 REPLACE（全量覆盖）");
         }
-        TemplateBinding binding = requireBinding(templateCode, sheetName);
+        TemplateBinding binding = requireBinding(operator, templateCode, sheetName);
         PendingFile pf = requirePending(token, operator);
         try {
             SheetData raw = readSheet(pf.path(), pf.lowerName(), sheetName, MAX_COMMIT_ROWS + 1, binding.headerRow());
@@ -212,7 +225,10 @@ public class ExcelManualUploadService {
                 throw new BusinessException(400, "行数超过上限 " + MAX_COMMIT_ROWS);
             }
             String targetTable = binding.targetTable();
-            writeToOds(targetTable, data, writeMode);
+            IngUploadTemplate tpl = findTemplate(templateCode);
+            String tableComment = tpl.getTemplateName() == null || tpl.getTemplateName().isBlank()
+                    ? targetTable : tpl.getTemplateName().trim();
+            writeToOds(targetTable, data, writeMode, tableComment);
             Long assetTableId = binding.tableId();
             if (assetTableId != null) {
                 markAssetCollected(assetTableId, targetTable, data.rows().size());
@@ -241,6 +257,7 @@ public class ExcelManualUploadService {
             }
             r.setPreviewJson(OM.writeValueAsString(previewPayload));
             r.setCreatedBy(operator.getUsername());
+            r.setOrgId(tpl.getOrgId() != null ? tpl.getOrgId() : operator.getOrgId());
             uploadMapper.insert(r);
             pf.committedSheets().add(sheetName);
             String modeLabel = "APPEND".equals(writeMode) ? "增量写入" : "全量覆盖";
@@ -304,6 +321,7 @@ public class ExcelManualUploadService {
             throw new BusinessException(400, "请至少绑定一个 sheet 的字段作为模板");
         }
         try {
+            Long templateOrgId = collectUploadService.resolveTemplateOrgId(operator, body.get("orgId"));
             ArrayNode arr = OM.createArrayNode();
             for (Object o : list) {
                 @SuppressWarnings("unchecked")
@@ -324,9 +342,14 @@ public class ExcelManualUploadService {
                 if (columns.isEmpty()) {
                     throw new BusinessException(400, "sheet「" + sheetName + "」字段为空");
                 }
-                String targetTable = sanitizeIdent(str(b.get("targetTable"), suggestTableName(code, sheetName)));
-                if (!targetTable.toLowerCase(Locale.ROOT).startsWith("ods_")) {
-                    targetTable = "ods_" + targetTable;
+                String targetTable = str(b.get("targetTable"), "");
+                if (targetTable.isBlank()) {
+                    targetTable = PinyinInitials.suggestOdsUpTable(name);
+                } else {
+                    targetTable = sanitizeIdent(targetTable);
+                    if (!targetTable.toLowerCase(Locale.ROOT).startsWith("ods_")) {
+                        targetTable = "ods_" + targetTable;
+                    }
                 }
                 // 优先沿用传入 tableId；否则自动登记为新数据资产并同步字段
                 Long tableId = longVal(b.get("tableId"));
@@ -339,7 +362,7 @@ public class ExcelManualUploadService {
                 } else {
                     String assetName = str(b.get("assetName"), name);
                     Long sourceId = longVal(b.get("sourceId"));
-                    asset = createUploadAsset(operator, assetName, targetTable, sheetName, columns, sourceId);
+                    asset = createUploadAsset(operator, assetName, targetTable, sheetName, columns, sourceId, templateOrgId);
                     tableId = asset.getId();
                 }
                 asset.setPhysicalTableName(targetTable);
@@ -366,6 +389,7 @@ public class ExcelManualUploadService {
             t.setColumnMappingJson(OM.writeValueAsString(root));
             t.setValidateRulesJson("{\"schemaPolicy\":\"STRICT\",\"writeMode\":\"REPLACE\"}");
             t.setStatus("ACTIVE");
+            t.setOrgId(templateOrgId);
             templateMapper.insert(t);
             auditService.log(operator.getUserId(), operator.getUsername(), operator.getOrgId(),
                     "ING_UPLOAD_TPL", "ing_upload_template", String.valueOf(t.getId()), name);
@@ -377,8 +401,9 @@ public class ExcelManualUploadService {
         }
     }
 
-    public List<Map<String, Object>> describeTemplate(String templateCode) {
+    public List<Map<String, Object>> describeTemplate(UserPrincipal operator, String templateCode) {
         IngUploadTemplate t = findTemplate(templateCode);
+        collectUploadService.assertTemplateAccessible(operator, t);
         List<TemplateBinding> bindings = parseBindings(t.getColumnMappingJson());
         List<Map<String, Object>> list = new ArrayList<>();
         for (TemplateBinding b : bindings) {
@@ -400,8 +425,9 @@ public class ExcelManualUploadService {
         return list;
     }
 
-    private TemplateBinding requireBinding(String templateCode, String sheetName) {
+    private TemplateBinding requireBinding(UserPrincipal operator, String templateCode, String sheetName) {
         IngUploadTemplate t = findTemplate(templateCode);
+        collectUploadService.assertTemplateAccessible(operator, t);
         if (t.getStatus() != null && !"ACTIVE".equalsIgnoreCase(t.getStatus())) {
             throw new BusinessException(400, "模板已停用，无法用于数据上传");
         }
@@ -671,8 +697,13 @@ public class ExcelManualUploadService {
      * APPEND：字段一致时增量插入新行（不清空表）；REPLACE：清空后全量写入。
      * 字段不一致已在上层 assertSchemaMatch 拦截。
      */
-    private void writeToOds(String table, SheetData data, String writeMode) throws Exception {
-        List<String> colIdents = data.columns().stream().map(this::sanitizeIdent).toList();
+    private void writeToOds(String table, SheetData data, String writeMode, String tableComment) throws Exception {
+        List<String> headerCols = data.columns();
+        List<String> colIdents = new ArrayList<>();
+        for (String header : headerCols) {
+            colIdents.add(uniqueColumn(colIdents, PinyinInitials.toPhysicalColumn(header)));
+        }
+        String tblComment = escapeSqlComment(tableComment == null || tableComment.isBlank() ? table : tableComment.trim());
         try (Connection conn = layerJdbc.open(DataLayerSupport.ODS)) {
             conn.setAutoCommit(false);
             try (Statement st = conn.createStatement()) {
@@ -681,13 +712,15 @@ public class ExcelManualUploadService {
             StringBuilder ddl = new StringBuilder();
             ddl.append("CREATE TABLE IF NOT EXISTS `").append(table).append("` (");
             ddl.append("`id` BIGINT NOT NULL AUTO_INCREMENT,");
-            for (String col : colIdents) {
-                // TEXT 不计入 InnoDB 行内上限，避免多列 VARCHAR(1024) 触发 Row size too large
-                ddl.append("`").append(col).append("` TEXT NULL,");
+            for (int i = 0; i < colIdents.size(); i++) {
+                String col = colIdents.get(i);
+                String colComment = escapeSqlComment(headerCols.get(i));
+                // TEXT 不计入 InnoDB 行内上限；注释保留表头中文
+                ddl.append("`").append(col).append("` TEXT NULL COMMENT '").append(colComment).append("',");
             }
             ddl.append("`_uploaded_at` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,");
             ddl.append("PRIMARY KEY (`id`)");
-            ddl.append(") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+            ddl.append(") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='").append(tblComment).append("'");
             try (Statement st = conn.createStatement()) {
                 st.execute(ddl.toString());
                 if ("REPLACE".equals(writeMode)) {
@@ -703,8 +736,8 @@ public class ExcelManualUploadService {
             try (PreparedStatement ps = conn.prepareStatement(insert.toString())) {
                 int batch = 0;
                 for (Map<String, String> row : data.rows()) {
-                    for (int i = 0; i < data.columns().size(); i++) {
-                        String key = data.columns().get(i);
+                    for (int i = 0; i < headerCols.size(); i++) {
+                        String key = headerCols.get(i);
                         String val = row.get(key);
                         // TEXT 上限约 64KB；过长截断避免写入失败
                         if (val != null && val.length() > 60000) {
@@ -721,6 +754,13 @@ public class ExcelManualUploadService {
             }
             conn.commit();
         }
+    }
+
+    private static String escapeSqlComment(String raw) {
+        if (raw == null) {
+            return "";
+        }
+        return raw.replace("'", "''").replace("\\", "\\\\");
     }
 
     private static String cellText(Cell cell, DataFormatter fmt) {
@@ -866,7 +906,7 @@ public class ExcelManualUploadService {
         int sort = existing.stream().mapToInt(c -> c.getSortOrder() == null ? 0 : c.getSortOrder()).max().orElse(0);
         int added = 0;
         for (String col : columns) {
-            String code = sanitizeIdent(col);
+            String code = PinyinInitials.toPhysicalColumn(col);
             if (code == null || code.isBlank()) {
                 continue;
             }
@@ -876,6 +916,7 @@ public class ExcelManualUploadService {
             IngDataColumn c = new IngDataColumn();
             c.setTableId(tableId);
             c.setColumnCode(code);
+            // 字段名/注释保留表头中文
             c.setColumnName(col.trim());
             c.setDataType("TEXT");
             c.setNullableFlag(1);
@@ -909,14 +950,13 @@ public class ExcelManualUploadService {
         return "ods_" + sanitized;
     }
 
-    /** 手动上传专用 FILE 数据源：挂在本部门「其他」项目/系统下（不存在则创建）。 */
-    private IngDataSource ensureManualUploadSource(UserPrincipal operator) {
-        if (operator == null || operator.getOrgId() == null) {
-            throw new BusinessException(400, "当前账号未绑定部门，无法使用手动上传默认项目");
+    /** 手动上传专用 FILE 数据源：挂在指定机构「其他」项目/系统下（不存在则创建）。 */
+    private IngDataSource ensureManualUploadSource(UserPrincipal operator, Long orgId) {
+        if (orgId == null) {
+            throw new BusinessException(400, "归属机构不能为空");
         }
-        Long orgId = operator.getOrgId();
-        IngProject other = ensureOtherProject(operator);
-        IngBizSystem system = ensureOtherSystem(operator, other);
+        IngProject other = ensureOtherProject(operator, orgId);
+        IngBizSystem system = ensureOtherSystem(operator, other, orgId);
         String sourceCode = "DS_MANUAL_UPLOAD_" + orgId;
         IngDataSource existing = dataSourceMapper.selectOne(new LambdaQueryWrapper<IngDataSource>()
                 .eq(IngDataSource::getSourceCode, sourceCode)
@@ -961,8 +1001,7 @@ public class ExcelManualUploadService {
         return ds;
     }
 
-    private IngBizSystem ensureOtherSystem(UserPrincipal operator, IngProject project) {
-        Long orgId = operator.getOrgId();
+    private IngBizSystem ensureOtherSystem(UserPrincipal operator, IngProject project, Long orgId) {
         String systemCode = "SYS_OTHER_" + orgId;
         IngBizSystem system = bizSystemMapper.selectOne(new LambdaQueryWrapper<IngBizSystem>()
                 .eq(IngBizSystem::getSystemCode, systemCode)
@@ -985,16 +1024,15 @@ public class ExcelManualUploadService {
         system.setSystemCode(systemCode);
         system.setSystemName("其他");
         system.setStatus("ACTIVE");
-        system.setCreatedBy(operator.getUsername() != null ? operator.getUsername() : "system");
+        system.setCreatedBy(operator != null && operator.getUsername() != null ? operator.getUsername() : "system");
         bizSystemMapper.insert(system);
         return system;
     }
 
-    private IngProject ensureOtherProject(UserPrincipal operator) {
-        if (operator == null || operator.getOrgId() == null) {
-            throw new BusinessException(400, "当前账号未绑定部门，无法初始化「其他」项目");
+    private IngProject ensureOtherProject(UserPrincipal operator, Long orgId) {
+        if (orgId == null) {
+            throw new BusinessException(400, "归属机构不能为空");
         }
-        Long orgId = operator.getOrgId();
         String projectCode = "PRJ_OTHER_" + orgId;
         IngProject project = projectMapper.selectOne(new LambdaQueryWrapper<IngProject>()
                 .eq(IngProject::getProjectCode, projectCode)
@@ -1011,6 +1049,10 @@ public class ExcelManualUploadService {
             }
         }
         if (project != null) {
+            if (project.getBoundOrgId() == null) {
+                project.setBoundOrgId(orgId);
+                projectMapper.updateById(project);
+            }
             return project;
         }
         project = new IngProject();
@@ -1019,14 +1061,14 @@ public class ExcelManualUploadService {
         project.setSystemName("其他");
         project.setBoundOrgId(orgId);
         project.setStatus("ACTIVE");
-        project.setCreatedBy(operator.getUsername() != null ? operator.getUsername() : "system");
+        project.setCreatedBy(operator != null && operator.getUsername() != null ? operator.getUsername() : "system");
         projectMapper.insert(project);
         return project;
     }
 
-    /** 按模板新建数据资产；sourceId 指定 FILE 数据源，缺省挂到本部门默认「手动上传」。 */
+    /** 按模板新建数据资产；sourceId 指定 FILE 数据源，缺省挂到模板归属机构默认「手动上传」。 */
     private IngDataTable createUploadAsset(UserPrincipal operator, String assetName, String targetTable, String sheetName,
-                                           List<String> columns, Long sourceId) {
+                                           List<String> columns, Long sourceId, Long templateOrgId) {
         IngDataSource ds;
         if (sourceId != null) {
             ds = dataSourceMapper.selectById(sourceId);
@@ -1036,8 +1078,14 @@ public class ExcelManualUploadService {
             if (!isFileLikeSourceType(ds.getSourceType())) {
                 throw new BusinessException(400, "手动上传资产只能挂到文件型数据源（FILE/CSV/Excel/JSON）下");
             }
+            if (templateOrgId != null && ds.getProjectId() != null) {
+                IngProject p = projectMapper.selectById(ds.getProjectId());
+                if (p != null && p.getBoundOrgId() != null && !templateOrgId.equals(p.getBoundOrgId())) {
+                    throw new BusinessException(400, "所选系统与模板归属机构不一致，请重新选择归属项目/系统");
+                }
+            }
         } else {
-            ds = ensureManualUploadSource(operator);
+            ds = ensureManualUploadSource(operator, templateOrgId != null ? templateOrgId : operator.getOrgId());
         }
         IngDataTable t = new IngDataTable();
         t.setSourceId(ds.getId());

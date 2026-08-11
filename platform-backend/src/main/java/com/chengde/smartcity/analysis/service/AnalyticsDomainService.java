@@ -158,6 +158,7 @@ public class AnalyticsDomainService {
         if (!"ANALYSIS".equals(mod.getModuleType())) {
             throw new BusinessException(400, "不是分析模型模块");
         }
+        rejectPopulationBiEmbed(mod.getDomainCode());
         String targetId = mod.getDeDashboardId() != null ? mod.getDeDashboardId() : "demo";
         Map<String, Object> token = new HashMap<>(analysisDemoService.issueEmbedToken(operator, "model", targetId));
         token.put("module", mod);
@@ -167,11 +168,25 @@ public class AnalyticsDomainService {
     public Map<String, Object> issueModelEmbedById(UserPrincipal operator, Long modelId) {
         AnaAnalysisModel model = modelMapper.selectById(modelId);
         if (model == null) throw new BusinessException(404, "分析模型不存在");
+        rejectPopulationBiEmbed(model.getDomainCode());
         String targetId = model.getDeDashboardId() != null ? model.getDeDashboardId() : "demo";
         Map<String, Object> token = new HashMap<>(analysisDemoService.issueEmbedToken(operator, "model", targetId));
         token.put("model", model);
         token.put("indicators", listIndicatorsForModel(modelId));
         return token;
+    }
+
+    /** 人口域取消 DataEase/BI：模型结果走自研样例表，禁止签发嵌入令牌。 */
+    private static void rejectPopulationBiEmbed(String domainCode) {
+        if (domainCode != null && "population".equalsIgnoreCase(domainCode.trim())) {
+            throw new BusinessException(400, "人口域已取消 DataEase/BI 展示，请使用模型样例/结果表预览");
+        }
+    }
+
+    public List<AnaModelSample> listModelSamples(Long modelId) {
+        AnaAnalysisModel model = modelMapper.selectById(modelId);
+        if (model == null) throw new BusinessException(404, "分析模型不存在");
+        return analysisDemoService.samples(modelId);
     }
 
     // ---------- zone bindings ----------
@@ -673,7 +688,11 @@ public class AnalyticsDomainService {
     public void updateModelDesign(UserPrincipal operator, Long modelId, Map<String, Object> body) {
         AnaAnalysisModel model = modelMapper.selectById(modelId);
         if (model == null) throw new BusinessException(404, "分析模型不存在");
-        if (body.containsKey("deDashboardId")) model.setDeDashboardId(str(body.get("deDashboardId"), null));
+        boolean population = model.getDomainCode() != null
+                && "population".equalsIgnoreCase(model.getDomainCode().trim());
+        if (!population && body.containsKey("deDashboardId")) {
+            model.setDeDashboardId(str(body.get("deDashboardId"), null));
+        }
         if (body.containsKey("dimensionJson")) model.setDimensionJson(str(body.get("dimensionJson"), null));
         if (body.containsKey("description")) model.setDescription(str(body.get("description"), null));
         if (body.containsKey("modelName")) model.setModelName(String.valueOf(body.get("modelName")));

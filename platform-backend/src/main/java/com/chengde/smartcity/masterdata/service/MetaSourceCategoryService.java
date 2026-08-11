@@ -122,8 +122,9 @@ public class MetaSourceCategoryService {
         if (body.containsKey("sortOrder")) {
             row.setSortOrder(parseInt(body.get("sortOrder"), row.getSortOrder()));
         }
-        if (body.containsKey("layerCode") && (row.getSystemFlag() == null || row.getSystemFlag() == 0)) {
-            row.setLayerCode(str(body.get("layerCode"), null));
+        if (body.containsKey("layerCode")) {
+            String layer = str(body.get("layerCode"), null);
+            row.setLayerCode(layer == null || layer.isBlank() ? null : layer.trim().toUpperCase(Locale.ROOT));
         }
         categoryMapper.updateById(row);
         audit(operator, "META_SOURCE_CATEGORY_UPDATE", row);

@@ -18,7 +18,8 @@ import org.springframework.stereotype.Component;
 
 /**
  * 按分层库名解析真实 JDBC 端点并开连接。
- * 方案 A（同机）：各层 host 未配时全部回落到 Kettle/主库地址。
+ * 方案 A（同机）：各层 host 未配时回落到 {@code spring.datasource}（后端 JVM 视角）。
+ * Carte 容器侧地址由 {@code KettleKtrCompiler} 的 host-map 再翻译（如 localhost→host.docker.internal）。
  * 方案 B（分机）：生产通过 {@code app.data-layer.*.host} 指向 S6/S7。
  */
 @Component
@@ -171,21 +172,24 @@ public class LayerJdbcSupport {
     }
 
     private Fallback fallback() {
+        // 优先 spring.datasource：后端在宿主机跑时必须用 localhost，不能用 Carte 视角的 host.docker.internal
+        // （Windows 上 host.docker.internal 常解析到不可达网卡，导致「创建/准备目标表」Connect timed out）
         IntegrationProperties.Kettle k = integrationProperties.getKettle();
-        String host = k != null ? k.getTargetHost() : null;
-        int port = k != null && k.getTargetPort() > 0 ? k.getTargetPort() : 3306;
-        String user = k != null ? k.getTargetUser() : null;
-        String pass = k != null ? k.getTargetPassword() : null;
-
+        String host = null;
+        int port = 3306;
         Matcher m = JDBC_MYSQL.matcher(springJdbcUrl == null ? "" : springJdbcUrl);
-        if (m.find()) {
-            if (host == null || host.isBlank()) {
-                host = m.group(1);
-            }
-            if (k == null || k.getTargetPort() <= 0) {
-                port = m.group(2) != null ? Integer.parseInt(m.group(2)) : 3306;
+        boolean fromSpring = m.find();
+        if (fromSpring) {
+            host = m.group(1);
+            port = m.group(2) != null ? Integer.parseInt(m.group(2)) : 3306;
+        } else if (k != null) {
+            host = k.getTargetHost();
+            if (k.getTargetPort() > 0) {
+                port = k.getTargetPort();
             }
         }
+        String user = k != null ? k.getTargetUser() : null;
+        String pass = k != null ? k.getTargetPassword() : null;
         if (user == null || user.isBlank()) {
             user = springUser;
         }

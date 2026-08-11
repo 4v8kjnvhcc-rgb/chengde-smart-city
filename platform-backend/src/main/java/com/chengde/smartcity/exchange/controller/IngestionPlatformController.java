@@ -37,10 +37,16 @@ import com.chengde.smartcity.exchange.service.PipelineDesignService;
 import com.chengde.smartcity.exchange.service.RegisterService;
 import com.chengde.smartcity.exchange.service.RegisterWorkflowService;
 import com.chengde.smartcity.exchange.service.DictColumnLinkService;
+import com.chengde.smartcity.exchange.service.IngestDsScheduleService;
+import com.chengde.smartcity.exchange.service.IngestJobLifecycleService;
 import com.chengde.smartcity.exchange.service.TableIngestEngine;
 import com.chengde.smartcity.exchange.entity.IngDictColumnLink;
+import com.chengde.smartcity.exchange.entity.IngIngestTaskRun;
+import com.chengde.smartcity.exchange.entity.IngIngestTaskVersion;
 import com.chengde.smartcity.exchange.entity.IngRegisterAuditLog;
 import com.chengde.smartcity.security.UserPrincipal;
+import java.time.LocalDateTime;
+import java.time.format.DateTimeFormatter;
 import java.util.List;
 import java.util.Map;
 import org.springframework.security.access.prepost.PreAuthorize;
@@ -51,6 +57,7 @@ import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
@@ -74,6 +81,8 @@ public class IngestionPlatformController {
     private final TableIngestEngine tableIngestEngine;
     private final RegisterWorkflowService registerWorkflowService;
     private final DictColumnLinkService dictColumnLinkService;
+    private final IngestJobLifecycleService ingestJobLifecycleService;
+    private final IngestDsScheduleService ingestDsScheduleService;
 
     public IngestionPlatformController(IngestionPlatformService service, RegisterService registerService,
                                        AssetReportService assetReportService,
@@ -87,7 +96,9 @@ public class IngestionPlatformController {
                                        KettleCollectService kettleCollectService,
                                        TableIngestEngine tableIngestEngine,
                                        RegisterWorkflowService registerWorkflowService,
-                                       DictColumnLinkService dictColumnLinkService) {
+                                       DictColumnLinkService dictColumnLinkService,
+                                       IngestJobLifecycleService ingestJobLifecycleService,
+                                       IngestDsScheduleService ingestDsScheduleService) {
         this.service = service;
         this.registerService = registerService;
         this.assetReportService = assetReportService;
@@ -102,6 +113,8 @@ public class IngestionPlatformController {
         this.tableIngestEngine = tableIngestEngine;
         this.registerWorkflowService = registerWorkflowService;
         this.dictColumnLinkService = dictColumnLinkService;
+        this.ingestJobLifecycleService = ingestJobLifecycleService;
+        this.ingestDsScheduleService = ingestDsScheduleService;
     }
 
     @GetMapping("/stats/base")
@@ -259,8 +272,11 @@ public class IngestionPlatformController {
     }
 
     @GetMapping("/uploads")
-    public ApiResponse<List<IngUploadRecord>> uploads() {
-        return ApiResponse.ok(service.listUploads());
+    public ApiResponse<List<IngUploadRecord>> uploads(@AuthenticationPrincipal UserPrincipal principal,
+                                                      @RequestParam(required = false) String templateCode,
+                                                      @RequestParam(required = false) String keyword,
+                                                      @RequestParam(required = false) Long orgId) {
+        return ApiResponse.ok(collectUploadService.listUploadRecords(principal, templateCode, keyword, orgId));
     }
 
     @PostMapping("/uploads")
@@ -831,8 +847,16 @@ public class IngestionPlatformController {
     }
 
     @GetMapping("/collect/templates")
-    public ApiResponse<List<IngUploadTemplate>> templates() {
-        return ApiResponse.ok(collectUploadService.listTemplates());
+    public ApiResponse<List<IngUploadTemplate>> templates(@AuthenticationPrincipal UserPrincipal principal,
+                                                          @RequestParam(required = false) String keyword,
+                                                          @RequestParam(required = false) Long orgId) {
+        return ApiResponse.ok(collectUploadService.listTemplates(principal, keyword, orgId));
+    }
+
+    @GetMapping("/collect/templates/suggest-table")
+    @PreAuthorize("isAuthenticated()")
+    public ApiResponse<Map<String, Object>> suggestUploadTable(@RequestParam String templateName) {
+        return ApiResponse.ok(excelManualUploadService.suggestTargetTable(templateName));
     }
 
     @PostMapping("/collect/templates")
@@ -847,8 +871,9 @@ public class IngestionPlatformController {
 
     @GetMapping("/collect/templates/{templateCode}/bindings")
     @PreAuthorize("isAuthenticated()")
-    public ApiResponse<List<Map<String, Object>>> templateBindings(@PathVariable String templateCode) {
-        return ApiResponse.ok(excelManualUploadService.describeTemplate(templateCode));
+    public ApiResponse<List<Map<String, Object>>> templateBindings(@AuthenticationPrincipal UserPrincipal principal,
+                                                                   @PathVariable String templateCode) {
+        return ApiResponse.ok(excelManualUploadService.describeTemplate(principal, templateCode));
     }
 
     @DeleteMapping("/collect/templates/{id}")
@@ -977,6 +1002,88 @@ public class IngestionPlatformController {
                                       @PathVariable Long id) {
         collectUploadService.resetStuckJob(principal, id);
         return ApiResponse.ok(null);
+    }
+
+    @PostMapping("/collect/jobs/{id}/publish")
+    @PreAuthorize("isAuthenticated()")
+    public ApiResponse<IngIngestTask> publishJob(@AuthenticationPrincipal UserPrincipal principal,
+                                                 @PathVariable Long id) {
+        return ApiResponse.ok(ingestJobLifecycleService.publish(principal, id));
+    }
+
+    @PostMapping("/collect/jobs/{id}/offline")
+    @PreAuthorize("isAuthenticated()")
+    public ApiResponse<IngIngestTask> offlineJob(@AuthenticationPrincipal UserPrincipal principal,
+                                                 @PathVariable Long id) {
+        return ApiResponse.ok(ingestJobLifecycleService.offline(principal, id));
+    }
+
+    @PostMapping("/collect/jobs/{id}/start")
+    @PreAuthorize("isAuthenticated()")
+    public ApiResponse<Map<String, Object>> startJob(@AuthenticationPrincipal UserPrincipal principal,
+                                                     @PathVariable Long id) {
+        return ApiResponse.ok(ingestJobLifecycleService.start(principal, id));
+    }
+
+    @PostMapping("/collect/jobs/{id}/stop")
+    @PreAuthorize("isAuthenticated()")
+    public ApiResponse<Map<String, Object>> stopJob(@AuthenticationPrincipal UserPrincipal principal,
+                                                    @PathVariable Long id) {
+        return ApiResponse.ok(ingestJobLifecycleService.stop(principal, id));
+    }
+
+    @PostMapping("/collect/jobs/batch/{action}")
+    @PreAuthorize("isAuthenticated()")
+    public ApiResponse<Map<String, Object>> batchJobs(@AuthenticationPrincipal UserPrincipal principal,
+                                                      @PathVariable String action,
+                                                      @RequestBody Map<String, Object> body) {
+        @SuppressWarnings("unchecked")
+        List<Object> raw = body == null ? List.of() : (List<Object>) body.get("ids");
+        List<Long> ids = raw == null ? List.of() : raw.stream()
+                .map(v -> Long.valueOf(String.valueOf(v)))
+                .toList();
+        return ApiResponse.ok(ingestJobLifecycleService.batch(principal, action, ids));
+    }
+
+    @GetMapping("/collect/jobs/{id}/versions")
+    @PreAuthorize("isAuthenticated()")
+    public ApiResponse<List<IngIngestTaskVersion>> jobVersions(@PathVariable Long id) {
+        return ApiResponse.ok(ingestJobLifecycleService.listVersions(id));
+    }
+
+    @GetMapping("/collect/jobs/{id}/versions/{versionNo}")
+    @PreAuthorize("isAuthenticated()")
+    public ApiResponse<IngIngestTaskVersion> jobVersion(@PathVariable Long id, @PathVariable Integer versionNo) {
+        return ApiResponse.ok(ingestJobLifecycleService.getVersion(id, versionNo));
+    }
+
+    @GetMapping("/collect/jobs/{id}/runs")
+    @PreAuthorize("isAuthenticated()")
+    public ApiResponse<List<IngIngestTaskRun>> jobRuns(@PathVariable Long id,
+                                                       @RequestParam(required = false) String runStatus,
+                                                       @RequestParam(required = false) String from,
+                                                       @RequestParam(required = false) String to) {
+        DateTimeFormatter fmt = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
+        LocalDateTime fromDt = from == null || from.isBlank() ? null : LocalDateTime.parse(from.trim(), fmt);
+        LocalDateTime toDt = to == null || to.isBlank() ? null : LocalDateTime.parse(to.trim(), fmt);
+        return ApiResponse.ok(ingestJobLifecycleService.listRuns(id, runStatus, fromDt, toDt));
+    }
+
+    @GetMapping("/collect/jobs/runs/{runId}")
+    @PreAuthorize("isAuthenticated()")
+    public ApiResponse<Map<String, Object>> jobRunDetail(@PathVariable Long runId) {
+        return ApiResponse.ok(ingestJobLifecycleService.getRunDetail(runId));
+    }
+
+    @PostMapping("/collect/jobs/{id}/ds-trigger")
+    public ApiResponse<Map<String, Object>> dsTriggerJob(@PathVariable Long id,
+                                                         @RequestHeader(value = "X-Ds-Callback-Token", required = false) String token,
+                                                         @RequestBody(required = false) Map<String, Object> body) {
+        Long dsInstanceId = null;
+        if (body != null && body.get("dsInstanceId") != null) {
+            dsInstanceId = Long.valueOf(String.valueOf(body.get("dsInstanceId")));
+        }
+        return ApiResponse.ok(ingestDsScheduleService.runFromDsCallback(id, token, dsInstanceId));
     }
 
     @PostMapping("/collect/jobs/preview")

@@ -20,14 +20,21 @@ public class IngIngestTask {
     private String writeMode;
     private String watermarkValue;
     private Integer enabled;
+    /** 生命周期：DRAFT / ONLINE / STARTED / STOPPED / OFFLINE */
+    private String lifecycleStatus;
+    private Integer versionNo;
+    private String publishedBy;
+    private LocalDateTime publishedAt;
     private Long collectedRows;
     private String kettleTransName;
     private Long dsProjectCode;
     private Long dsDefinitionCode;
+    private Integer dsScheduleId;
     private Long dsInstanceId;
     private Long linesInput;
     private Long linesOutput;
     private Long linesRejected;
+    private Long durationMs;
     private String errorDetail;
     private String scheduleCron;
     private String status;
@@ -59,6 +66,14 @@ public class IngIngestTask {
     public void setWatermarkValue(String watermarkValue) { this.watermarkValue = watermarkValue; }
     public Integer getEnabled() { return enabled; }
     public void setEnabled(Integer enabled) { this.enabled = enabled; }
+    public String getLifecycleStatus() { return lifecycleStatus; }
+    public void setLifecycleStatus(String lifecycleStatus) { this.lifecycleStatus = lifecycleStatus; }
+    public Integer getVersionNo() { return versionNo; }
+    public void setVersionNo(Integer versionNo) { this.versionNo = versionNo; }
+    public String getPublishedBy() { return publishedBy; }
+    public void setPublishedBy(String publishedBy) { this.publishedBy = publishedBy; }
+    public LocalDateTime getPublishedAt() { return publishedAt; }
+    public void setPublishedAt(LocalDateTime publishedAt) { this.publishedAt = publishedAt; }
     public Long getCollectedRows() { return collectedRows; }
     public void setCollectedRows(Long collectedRows) { this.collectedRows = collectedRows; }
     public String getKettleTransName() { return kettleTransName; }
@@ -67,6 +82,8 @@ public class IngIngestTask {
     public void setDsProjectCode(Long dsProjectCode) { this.dsProjectCode = dsProjectCode; }
     public Long getDsDefinitionCode() { return dsDefinitionCode; }
     public void setDsDefinitionCode(Long dsDefinitionCode) { this.dsDefinitionCode = dsDefinitionCode; }
+    public Integer getDsScheduleId() { return dsScheduleId; }
+    public void setDsScheduleId(Integer dsScheduleId) { this.dsScheduleId = dsScheduleId; }
     public Long getDsInstanceId() { return dsInstanceId; }
     public void setDsInstanceId(Long dsInstanceId) { this.dsInstanceId = dsInstanceId; }
     public Long getLinesInput() { return linesInput; }
@@ -75,6 +92,8 @@ public class IngIngestTask {
     public void setLinesOutput(Long linesOutput) { this.linesOutput = linesOutput; }
     public Long getLinesRejected() { return linesRejected; }
     public void setLinesRejected(Long linesRejected) { this.linesRejected = linesRejected; }
+    public Long getDurationMs() { return durationMs; }
+    public void setDurationMs(Long durationMs) { this.durationMs = durationMs; }
     public String getErrorDetail() { return errorDetail; }
     public void setErrorDetail(String errorDetail) { this.errorDetail = errorDetail; }
     public String getScheduleCron() { return scheduleCron; }

@@ -8,6 +8,7 @@ import com.chengde.smartcity.integration.jdbc.JdbcProbeService;
 import com.chengde.smartcity.exchange.entity.IngBizSystem;
 import com.chengde.smartcity.exchange.entity.IngDataSource;
 import com.chengde.smartcity.exchange.entity.IngProject;
+import com.chengde.smartcity.exchange.mapper.IngBizSystemMapper;
 import com.chengde.smartcity.exchange.mapper.IngDataSourceMapper;
 import com.chengde.smartcity.exchange.mapper.IngProjectMapper;
 import com.chengde.smartcity.exchange.service.IngestionPlatformService;
@@ -19,9 +20,13 @@ import com.chengde.smartcity.masterdata.mapper.GovMetaDataSourceMapper;
 import com.chengde.smartcity.masterdata.mapper.GovMetaSourceCategoryMapper;
 import com.chengde.smartcity.masterdata.mapper.GovOmConnectorMapper;
 import com.chengde.smartcity.security.UserPrincipal;
+import com.chengde.smartcity.system.entity.SysOrg;
+import com.chengde.smartcity.system.mapper.SysOrgMapper;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.HashSet;
+import java.util.Set;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
@@ -49,6 +54,8 @@ public class MetaDataSourceService {
     private final IngestionPlatformService ingestionPlatformService;
     private final IngDataSourceMapper ingDataSourceMapper;
     private final IngProjectMapper ingProjectMapper;
+    private final IngBizSystemMapper ingBizSystemMapper;
+    private final SysOrgMapper orgMapper;
 
     public MetaDataSourceService(GovMetaDataSourceMapper dataSourceMapper,
                                  GovMetaSourceCategoryMapper categoryMapper,
@@ -59,7 +66,9 @@ public class MetaDataSourceService {
                                  AuditService auditService,
                                  IngestionPlatformService ingestionPlatformService,
                                  IngDataSourceMapper ingDataSourceMapper,
-                                 IngProjectMapper ingProjectMapper) {
+                                 IngProjectMapper ingProjectMapper,
+                                 IngBizSystemMapper ingBizSystemMapper,
+                                 SysOrgMapper orgMapper) {
         this.dataSourceMapper = dataSourceMapper;
         this.categoryMapper = categoryMapper;
         this.connectorMapper = connectorMapper;
@@ -70,6 +79,8 @@ public class MetaDataSourceService {
         this.ingestionPlatformService = ingestionPlatformService;
         this.ingDataSourceMapper = ingDataSourceMapper;
         this.ingProjectMapper = ingProjectMapper;
+        this.ingBizSystemMapper = ingBizSystemMapper;
+        this.orgMapper = orgMapper;
     }
 
     public List<Map<String, Object>> list(Long categoryId, String keyword) {
@@ -91,9 +102,11 @@ public class MetaDataSourceService {
                         .eq(GovMetaSourceCategory::getStatus, "ACTIVE"))
                 .stream()
                 .collect(Collectors.toMap(GovMetaSourceCategory::getId, GovMetaSourceCategory::getCategoryName, (a, b) -> a));
+        Map<Long, String> orgNames = loadOrgNames(rows);
+        Map<Long, String> ingDeptNames = loadDeptNamesFromIngSources(rows);
         List<Map<String, Object>> out = new ArrayList<>();
         for (GovMetaDataSource row : rows) {
-            out.add(toView(row, categoryNames));
+            out.add(toView(row, categoryNames, orgNames, ingDeptNames));
         }
         return out;
     }
@@ -104,7 +117,9 @@ public class MetaDataSourceService {
                         .eq(GovMetaSourceCategory::getStatus, "ACTIVE"))
                 .stream()
                 .collect(Collectors.toMap(GovMetaSourceCategory::getId, GovMetaSourceCategory::getCategoryName, (a, b) -> a));
-        Map<String, Object> view = toView(row, categoryNames);
+        Map<Long, String> orgNames = loadOrgNames(List.of(row));
+        Map<Long, String> ingDeptNames = loadDeptNamesFromIngSources(List.of(row));
+        Map<String, Object> view = toView(row, categoryNames, orgNames, ingDeptNames);
         view.put("password", "");
         return view;
     }
@@ -258,12 +273,12 @@ public class MetaDataSourceService {
         if (ing == null) {
             throw new BusinessException(404, "归集数据源不存在: " + ingSourceId);
         }
-        IngProject project = ing.getProjectId() == null ? null : ingProjectMapper.selectById(ing.getProjectId());
+        IngProject project = resolveIngProject(ing);
         GovMetaDataSource row = new GovMetaDataSource();
         row.setIngSourceId(ing.getId());
         row.setSourceCode("ING_" + (ing.getSourceCode() == null ? String.valueOf(ing.getId()) : ing.getSourceCode()));
         row.setSourceName(ing.getSourceName());
-        row.setSortOrder(0);
+        row.setSortOrder(1);
         row.setCategoryId(categoryId);
         row.setBelongSystem(ing.getSystemName());
         row.setRemarks("采集自归集登记");
@@ -273,9 +288,10 @@ public class MetaDataSourceService {
         row.setStatus("ACTIVE");
         row.setCreatedBy(operator == null ? "system" : operator.getUsername());
         if (project != null) {
-            row.setDeptName(project.getBoundOrgName());
             row.setOrgId(project.getBoundOrgId());
-            row.setOrgName(project.getBoundOrgName());
+            String orgName = resolveOrgName(project.getBoundOrgId(), project.getBoundOrgName());
+            row.setDeptName(orgName);
+            row.setOrgName(orgName);
         }
         if (ing.getConnConfigJson() != null && !ing.getConnConfigJson().isBlank()) {
             try {
@@ -297,6 +313,23 @@ public class MetaDataSourceService {
         syncConnector(row);
         audit(operator, "META_DATA_SOURCE_COLLECT", row);
         return true;
+    }
+
+    private IngProject resolveIngProject(IngDataSource ing) {
+        if (ing.getProjectId() != null) {
+            IngProject project = ingProjectMapper.selectById(ing.getProjectId());
+            if (project != null) {
+                return project;
+            }
+        }
+        if (ing.getSystemId() == null) {
+            return null;
+        }
+        IngBizSystem system = ingBizSystemMapper.selectById(ing.getSystemId());
+        if (system == null || system.getProjectId() == null) {
+            return null;
+        }
+        return ingProjectMapper.selectById(system.getProjectId());
     }
 
     private void fillCollectConnView(Map<String, Object> dm, IngDataSource raw) {
@@ -324,16 +357,37 @@ public class MetaDataSourceService {
             if (conn.database != null && !conn.database.isBlank()) {
                 dm.put("dbName", conn.database);
             }
-            if (conn.username != null) {
-                dm.put("username", conn.username);
-            }
-            if (conn.password != null && !conn.password.isBlank()) {
-                dm.put("password", conn.password);
-            }
         } catch (Exception e) {
             log.warn("Collect JDBC conn parse failed for ing source {}, fallback json: {}", raw.getId(), e.getMessage());
-            dm.putAll(summarizeConn(raw.getConnConfigJson()));
+            dm.putAll(summarizeConnBrief(raw.getConnConfigJson()));
         }
+    }
+
+    private Map<String, Object> summarizeConnBrief(String connConfigJson) {
+        Map<String, Object> m = new HashMap<>();
+        if (connConfigJson == null || connConfigJson.isBlank()) {
+            return m;
+        }
+        try {
+            Map<?, ?> cfg = OM.readValue(connConfigJson, Map.class);
+            putIfPresent(m, "dbHost", cfg.get("host"));
+            putIfPresent(m, "dbPort", cfg.get("port"));
+            putIfPresent(m, "dbName", cfg.get("database"));
+        } catch (Exception e) {
+            log.warn("Failed to summarize ing conn config");
+        }
+        return m;
+    }
+
+    private String resolveOrgName(Long orgId, String boundOrgName) {
+        if (boundOrgName != null && !boundOrgName.isBlank()) {
+            return boundOrgName.trim();
+        }
+        if (orgId == null) {
+            return null;
+        }
+        SysOrg org = orgMapper.selectById(orgId);
+        return org == null || org.getOrgName() == null || org.getOrgName().isBlank() ? null : org.getOrgName().trim();
     }
 
     private Map<String, Object> summarizeConn(String connConfigJson) {
@@ -535,13 +589,71 @@ public class MetaDataSourceService {
         return cfg;
     }
 
-    private Map<String, Object> toView(GovMetaDataSource row, Map<Long, String> categoryNames) {
+    private Map<Long, String> loadOrgNames(List<GovMetaDataSource> rows) {
+        Set<Long> orgIds = new HashSet<>();
+        for (GovMetaDataSource row : rows) {
+            if (row.getOrgId() != null) {
+                orgIds.add(row.getOrgId());
+            }
+        }
+        if (orgIds.isEmpty()) {
+            return Map.of();
+        }
+        Map<Long, String> names = new HashMap<>();
+        for (SysOrg org : orgMapper.selectBatchIds(orgIds)) {
+            if (org != null && org.getId() != null && org.getOrgName() != null && !org.getOrgName().isBlank()) {
+                names.put(org.getId(), org.getOrgName().trim());
+            }
+        }
+        return names;
+    }
+
+    private Map<Long, String> loadDeptNamesFromIngSources(List<GovMetaDataSource> rows) {
+        Map<Long, String> out = new HashMap<>();
+        for (GovMetaDataSource row : rows) {
+            if (row.getIngSourceId() == null || row.getIngSourceId() <= 0) {
+                continue;
+            }
+            if (row.getDeptName() != null && !row.getDeptName().isBlank()) {
+                continue;
+            }
+            if (row.getOrgId() != null) {
+                continue;
+            }
+            IngDataSource ing = ingDataSourceMapper.selectById(row.getIngSourceId());
+            if (ing == null) {
+                continue;
+            }
+            IngProject project = resolveIngProject(ing);
+            if (project == null) {
+                continue;
+            }
+            String deptName = resolveOrgName(project.getBoundOrgId(), project.getBoundOrgName());
+            if (deptName != null && !deptName.isBlank()) {
+                out.put(row.getId(), deptName);
+            }
+        }
+        return out;
+    }
+
+    private Map<String, Object> toView(GovMetaDataSource row, Map<Long, String> categoryNames,
+                                       Map<Long, String> orgNames, Map<Long, String> ingDeptNames) {
         Map<String, Object> m = new HashMap<>();
         m.put("id", row.getId());
         m.put("sourceCode", row.getSourceCode());
         m.put("sourceName", row.getSourceName());
         m.put("sortOrder", row.getSortOrder());
-        m.put("deptName", row.getDeptName());
+        String deptName = row.getDeptName();
+        if (deptName == null || deptName.isBlank()) {
+            deptName = row.getOrgName();
+        }
+        if ((deptName == null || deptName.isBlank()) && row.getOrgId() != null) {
+            deptName = orgNames.get(row.getOrgId());
+        }
+        if (deptName == null || deptName.isBlank()) {
+            deptName = ingDeptNames.get(row.getId());
+        }
+        m.put("deptName", deptName);
         m.put("orgId", row.getOrgId());
         m.put("orgName", row.getOrgName());
         m.put("categoryId", row.getCategoryId());

@@ -1,6 +1,7 @@
 package com.chengde.smartcity.analysis.controller;
 
 import com.chengde.smartcity.analysis.entity.AnaIndicator;
+import com.chengde.smartcity.analysis.entity.AnaModelSample;
 import com.chengde.smartcity.analysis.entity.AnaZoneBinding;
 import com.chengde.smartcity.analysis.service.AnalyticsDomainService;
 import com.chengde.smartcity.common.api.ApiResponse;
@@ -151,6 +152,12 @@ public class AnalyticsDomainController {
                                          @RequestBody Map<String, Object> body) {
         service.updateModelDesign(principal, id, body);
         return ApiResponse.ok(null);
+    }
+
+    @GetMapping("/models/{id}/samples")
+    @PreAuthorize("isAuthenticated()")
+    public ApiResponse<List<AnaModelSample>> modelSamples(@PathVariable Long id) {
+        return ApiResponse.ok(service.listModelSamples(id));
     }
 
     @PostMapping("/models/{id}/embed-token")

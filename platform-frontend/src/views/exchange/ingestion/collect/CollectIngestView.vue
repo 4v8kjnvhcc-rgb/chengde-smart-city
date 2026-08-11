@@ -41,18 +41,6 @@ const { loading, loadError, withLoad } = useIngestionLoading()
 
 
 
-const MAIN_TABS: { key: IngestMainTab; label: string }[] = [
-
-  { key: 'structured', label: '结构化数据接入' },
-
-  { key: 'file', label: '文件上传' },
-
-  { key: 'other', label: '其他数据接入' },
-
-]
-
-
-
 const FILE_MODES = [
 
   { key: 'file-remote', type: 'FTP', label: '远程文件接入' },
@@ -541,18 +529,6 @@ async function ensureScopeLoaded(scope = currentScope(), force = false) {
   if (!force && loadedScopes.has(scope) && activeScope === scope) return
 
   await loadScopeData(scope)
-
-}
-
-
-
-function onMainTabChange(key: string | number) {
-
-  mainTab.value = key as IngestMainTab
-
-  syncSectionQuery()
-
-  ensureScopeLoaded()
 
 }
 
@@ -1093,6 +1069,16 @@ watch(() => route.query.section, () => {
 
 })
 
+watch(() => route.query.module, () => {
+
+  applySectionFromRoute()
+
+  syncSectionQuery()
+
+  ensureScopeLoaded()
+
+})
+
 onMounted(() => {
 
   applySectionFromRoute()
@@ -1111,15 +1097,7 @@ onMounted(() => {
 
     <el-alert v-if="loadError" type="error" :title="loadError" show-icon :closable="false" style="margin-bottom:12px" />
 
-    <el-tabs :model-value="mainTab" @tab-change="onMainTabChange">
-
-      <el-tab-pane v-for="t in MAIN_TABS" :key="t.key" :label="t.label" :name="t.key" />
-
-    </el-tabs>
-
-
-
-    <!-- 结构化：库表接入 + 手动上传 -->
+    <!-- 结构化：库表接入 + 手动上传（一级「结构化/文件/其他」已在 Hub 左侧菜单） -->
 
     <template v-if="mainTab === 'structured'">
 
