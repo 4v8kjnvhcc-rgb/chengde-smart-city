@@ -5,12 +5,14 @@ import com.chengde.smartcity.common.exception.BusinessException;
 import com.chengde.smartcity.exchange.entity.IngDataSource;
 import com.chengde.smartcity.exchange.mapper.IngDataSourceMapper;
 import com.chengde.smartcity.integration.jdbc.CredentialCipher;
+import com.chengde.smartcity.masterdata.entity.GovMetaDataSource;
 import com.chengde.smartcity.masterdata.entity.GovMetadataRegistry;
 import com.chengde.smartcity.masterdata.entity.GovQualityIssue;
 import com.chengde.smartcity.masterdata.entity.GovQualityRuleConfig;
 import com.chengde.smartcity.masterdata.entity.GovQualityTask;
 import com.chengde.smartcity.masterdata.entity.GovQualityTaskDetail;
 import com.chengde.smartcity.masterdata.entity.GovQualityTaskRun;
+import com.chengde.smartcity.masterdata.mapper.GovMetaDataSourceMapper;
 import com.chengde.smartcity.masterdata.mapper.GovMetadataRegistryMapper;
 import com.chengde.smartcity.masterdata.mapper.GovQualityIssueMapper;
 import com.chengde.smartcity.masterdata.mapper.GovQualityRuleConfigMapper;
@@ -62,6 +64,7 @@ public class QualityExecuteService {
     private final GovQualityIssueMapper issueMapper;
     private final GovQualityRuleConfigMapper configMapper;
     private final IngDataSourceMapper dataSourceMapper;
+    private final GovMetaDataSourceMapper metaDataSourceMapper;
     private final GovMetadataRegistryMapper metadataRegistryMapper;
     private final LayerJdbcSupport layerJdbc;
     private final CredentialCipher credentialCipher;
@@ -73,6 +76,7 @@ public class QualityExecuteService {
                                  GovQualityIssueMapper issueMapper,
                                  GovQualityRuleConfigMapper configMapper,
                                  IngDataSourceMapper dataSourceMapper,
+                                 GovMetaDataSourceMapper metaDataSourceMapper,
                                  GovMetadataRegistryMapper metadataRegistryMapper,
                                  LayerJdbcSupport layerJdbc,
                                  CredentialCipher credentialCipher,
@@ -83,6 +87,7 @@ public class QualityExecuteService {
         this.issueMapper = issueMapper;
         this.configMapper = configMapper;
         this.dataSourceMapper = dataSourceMapper;
+        this.metaDataSourceMapper = metaDataSourceMapper;
         this.metadataRegistryMapper = metadataRegistryMapper;
         this.layerJdbc = layerJdbc;
         this.credentialCipher = credentialCipher;
@@ -492,6 +497,12 @@ public class QualityExecuteService {
             return layerJdbc.open(platformLayerDatabase(dsId));
         }
         if (dsId != null) {
+            // 质量模型选自「元数据数据源/bind-sources」，须优先按 gov_meta_data_source 解析，
+            // 避免与归集 ing_data_source 同号 ID 串库（如 meta#8=本地库 smart_city，ing#8=test_spj02/test）
+            Connection metaConn = openMetaDataSource(dsId);
+            if (metaConn != null) {
+                return metaConn;
+            }
             IngDataSource ds = dataSourceMapper.selectById(dsId);
             if (ds == null) {
                 throw new BusinessException(400, "数据源不存在: " + dsId);
@@ -529,6 +540,32 @@ public class QualityExecuteService {
             return conn;
         }
         throw new BusinessException(500, "无可用 JDBC 数据源，请为任务选择平台分层库或登记数据源");
+    }
+
+    /** 打开元数据侧数据源；不存在或已删除时返回 null，由调用方回落到归集数据源。 */
+    private Connection openMetaDataSource(Long dsId) throws Exception {
+        GovMetaDataSource meta = metaDataSourceMapper.selectById(dsId);
+        if (meta == null || "DELETED".equalsIgnoreCase(meta.getStatus())) {
+            return null;
+        }
+        if (meta.getDbHost() == null || meta.getDbHost().isBlank()) {
+            return null;
+        }
+        String database = firstNonBlank(meta.getDbName(), meta.getDbSchema());
+        if (database == null || database.isBlank()) {
+            throw new BusinessException(400, "元数据数据源缺少库名: " + meta.getSourceName());
+        }
+        String password = "";
+        if (meta.getPasswordCipher() != null && !meta.getPasswordCipher().isBlank()) {
+            password = credentialCipher.decrypt(meta.getPasswordCipher());
+        }
+        int port = meta.getDbPort() == null ? 3306 : meta.getDbPort();
+        String url = "jdbc:mysql://" + meta.getDbHost().trim() + ":" + port + "/" + database
+                + "?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai";
+        String username = meta.getUsername() == null ? "" : meta.getUsername();
+        log.info("quality execute use gov_meta_data_source id={} name={} db={}",
+                meta.getId(), meta.getSourceName(), database);
+        return DriverManager.getConnection(url, username, password == null ? "" : password);
     }
 
     private GovMetadataRegistry resolveEntry(String entryCode) {
