@@ -153,7 +153,7 @@ const form = reactive({
   tableName: '',
   issueLevel: '一般',
   weight: 1,
-  fieldName: '',
+  fieldNames: [] as string[],
   fieldType: '',
   filterEmptyString: false,
   expression: '',
@@ -292,7 +292,7 @@ function resetForm() {
   form.tableName = selected.value.tableName
   form.issueLevel = '一般'
   form.weight = 1
-  form.fieldName = ''
+  form.fieldNames = []
   form.fieldType = ''
   form.filterEmptyString = false
   form.expression = ''
@@ -335,7 +335,7 @@ async function openEdit(row: ModelRuleRow) {
   resetForm()
   form.ruleName = row.ruleName
   form.tableName = row.tableName
-  form.fieldName = (row.fieldNames || '').split(',')[0]?.trim() || ''
+  form.fieldNames = (row.fieldNames || '').split(',').map((s) => s.trim()).filter(Boolean)
   form.errorDesc = row.remark || ''
   const cfg = parseConfig(row.configJson)
   form.issueLevel = String(cfg.issueLevel || '一般')
@@ -347,8 +347,8 @@ async function openEdit(row: ModelRuleRow) {
   form.threshold = cfg.threshold != null ? Number(cfg.threshold) : undefined
   wizardVisible.value = true
   await loadColumns()
-  if (form.fieldName && !form.fieldType) {
-    form.fieldType = columns.value.find((c) => c.name === form.fieldName)?.dataType || ''
+  if (form.fieldNames.length && !form.fieldType) {
+    syncFieldTypes(form.fieldNames)
   }
 }
 
@@ -392,7 +392,7 @@ async function goNext() {
   form.ruleName = `${ds}_${selected.value.tableName}_${kind.name}_${seq}`
   form.tableName = selected.value.tableName
   form.errorDesc = ''
-  form.fieldName = ''
+  form.fieldNames = []
   form.fieldType = ''
   form.expression = ''
   form.script = ''
@@ -404,9 +404,16 @@ async function goNext() {
   await loadColumns()
 }
 
-function onFieldChange(name: string) {
-  fieldError.value = !name
-  form.fieldType = columns.value.find((c) => c.name === name)?.dataType || ''
+function syncFieldTypes(names: string[]) {
+  const types = names
+    .map((n) => columns.value.find((c) => c.name === n)?.dataType)
+    .filter((t): t is string => !!t)
+  form.fieldType = [...new Set(types)].join(',')
+}
+
+function onFieldChange(names: string[]) {
+  fieldError.value = !names?.length
+  syncFieldTypes(names || [])
 }
 
 function openRegexPicker() {
@@ -448,7 +455,7 @@ async function submitWizard() {
     ElMessage.warning('请填写名称')
     return
   }
-  if (needsField.value && !form.fieldName) {
+  if (needsField.value && !form.fieldNames.length) {
     fieldError.value = true
     ElMessage.warning('请选择字段')
     return
@@ -478,7 +485,7 @@ async function submitWizard() {
       ruleTypeName: selectedKind.value.name,
       checkType: selectedKind.value.checkType,
       ruleName: form.ruleName.trim(),
-      fieldNames: form.fieldName || null,
+      fieldNames: form.fieldNames.length ? form.fieldNames : null,
       remark: form.errorDesc.trim(),
       threshold: form.threshold,
       configJson: buildConfigJson(),
@@ -638,11 +645,14 @@ defineExpose({ reload: () => loadTree(selected.value.modelTableId) })
           <el-form-item label="字段名" required :error="fieldError ? '请选择字段' : ''">
             <div class="field-row">
               <el-select
-                v-model="form.fieldName"
+                v-model="form.fieldNames"
+                multiple
                 filterable
                 clearable
+                collapse-tags
+                collapse-tags-tooltip
                 :loading="columnsLoading"
-                placeholder="请选择"
+                placeholder="请选择字段（可多选）"
                 style="flex: 1"
                 @change="onFieldChange"
               >
@@ -658,11 +668,14 @@ defineExpose({ reload: () => loadTree(selected.value.modelTableId) })
           <el-form-item label="字段名" required :error="fieldError ? '请选择字段' : ''">
             <div class="field-row">
               <el-select
-                v-model="form.fieldName"
+                v-model="form.fieldNames"
+                multiple
                 filterable
                 clearable
+                collapse-tags
+                collapse-tags-tooltip
                 :loading="columnsLoading"
-                placeholder="请选择"
+                placeholder="请选择字段（可多选）"
                 style="flex: 1"
                 @change="onFieldChange"
               >
@@ -683,11 +696,14 @@ defineExpose({ reload: () => loadTree(selected.value.modelTableId) })
         <template v-else-if="currentForm === 'regex'">
           <el-form-item label="字段名" required :error="fieldError ? '请选择字段' : ''">
             <el-select
-              v-model="form.fieldName"
+              v-model="form.fieldNames"
+              multiple
               filterable
               clearable
+              collapse-tags
+              collapse-tags-tooltip
               :loading="columnsLoading"
-              placeholder="请选择"
+              placeholder="请选择字段（可多选）"
               style="width: 100%"
               @change="onFieldChange"
             >
@@ -713,12 +729,16 @@ defineExpose({ reload: () => loadTree(selected.value.modelTableId) })
         <template v-else-if="currentForm === 'count' || currentForm === 'fluctuation'">
           <el-form-item v-if="currentForm === 'fluctuation'" label="字段名">
             <el-select
-              v-model="form.fieldName"
+              v-model="form.fieldNames"
+              multiple
               filterable
               clearable
+              collapse-tags
+              collapse-tags-tooltip
               :loading="columnsLoading"
-              placeholder="可选"
+              placeholder="可选，可多选"
               style="width: 100%"
+              @change="onFieldChange"
             >
               <el-option v-for="c in columns" :key="c.name" :label="c.name" :value="c.name" />
             </el-select>
@@ -732,11 +752,14 @@ defineExpose({ reload: () => loadTree(selected.value.modelTableId) })
         <template v-else>
           <el-form-item label="字段名" required :error="fieldError ? '请选择字段' : ''">
             <el-select
-              v-model="form.fieldName"
+              v-model="form.fieldNames"
+              multiple
               filterable
               clearable
+              collapse-tags
+              collapse-tags-tooltip
               :loading="columnsLoading"
-              placeholder="请选择"
+              placeholder="请选择字段（可多选）"
               style="width: 100%"
               @change="onFieldChange"
             >

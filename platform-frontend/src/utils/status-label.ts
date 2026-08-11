@@ -56,6 +56,8 @@ const STATUS_ZH: Record<string, string> = {
   DATA_OPS: '区设计',
   ANALYSIS: '分析模型',
   LEDGER: '台账处理',
+  EMAIL: '邮件',
+  SMS: '短信',
   ERROR: '错误',
   COMPLETED: '已办结',
   FINISHED: '已完成',
@@ -64,6 +66,8 @@ const STATUS_ZH: Record<string, string> = {
   OPEN: '开放',
   WAITING: '等待中',
   SKIPPED: '已跳过',
+  NOT_RUN: '未运行',
+  NONE: '未生成',
   // 供需
   SUBMITTED: '待数据主管部门审核',
   ANALYZING: '预审中',

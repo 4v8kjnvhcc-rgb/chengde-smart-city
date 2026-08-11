@@ -40,7 +40,8 @@ public class SecurityConfig {
                         .requestMatchers("/swagger-ui/**", "/api/v1/openapi/**", "/v3/api-docs/**").permitAll()
                         .requestMatchers(HttpMethod.GET, "/actuator/health").permitAll()
                         .requestMatchers(HttpMethod.POST,
-                                "/api/v1/governance/platform/metadata/collect/tasks/*/run-callback").permitAll()
+                                "/api/v1/governance/platform/metadata/collect/tasks/*/run-callback",
+                                "/api/v1/governance/quality/schemes/*/run-callback").permitAll()
                         .anyRequest().authenticated())
                 .exceptionHandling(ex -> ex
                         .authenticationEntryPoint((request, response, authException) -> {

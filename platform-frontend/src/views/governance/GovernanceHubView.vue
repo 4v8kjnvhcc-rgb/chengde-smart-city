@@ -9,12 +9,9 @@ import GovernanceEtlPanel from './etl/GovernanceEtlPanel.vue'
 const auth = useAuthStore()
 
 const MetadataSubsystemView = defineAsyncComponent(() => import('./metadata/MetadataSubsystemView.vue'))
-const StandardsView = defineAsyncComponent(() => import('./quality/StandardsView.vue'))
 const QualityRuleConfigView = defineAsyncComponent(() => import('./quality/QualityRuleConfigView.vue'))
-const QualityTaskView = defineAsyncComponent(() => import('./quality/QualityTaskView.vue'))
 const QualityMonitorView = defineAsyncComponent(() => import('./quality/QualityMonitorView.vue'))
 const QualityAssessView = defineAsyncComponent(() => import('./quality/QualityAssessView.vue'))
-const QualityReportView = defineAsyncComponent(() => import('./quality/QualityReportView.vue'))
 const CatalogResourceView = defineAsyncComponent(() => import('./catalog/CatalogResourceView.vue'))
 const CatalogRegisterPublishView = defineAsyncComponent(() => import('./catalog/CatalogRegisterPublishView.vue'))
 const CatalogApprovalView = defineAsyncComponent(() => import('./catalog/CatalogApprovalView.vue'))
@@ -48,12 +45,9 @@ const NAV_BASE: HubNavItem[] = [
     key: 'quality',
     label: '数据质量管理系统',
     children: [
-      { key: 'quality.standards', label: '数据标准体系' },
       { key: 'quality.rule-config', label: '质量规则配置' },
-      { key: 'quality.task-mgmt', label: '数据质量任务' },
       { key: 'quality.monitor', label: '数据质量监控' },
       { key: 'quality.assess', label: '数据质量评估' },
-      { key: 'quality.reports', label: '数据质量分析报告' },
     ],
   },
   {
@@ -132,7 +126,22 @@ const tab = computed(() => {
   return tabMap[mod] || mod || 'metadata'
 })
 
-const qualitySub = computed(() => (activeNav.value.startsWith('quality.') ? activeNav.value.slice('quality.'.length) : 'standards'))
+const QUALITY_SUBS = ['rule-config', 'monitor', 'assess'] as const
+
+function normalizeQualitySub(raw: string): string {
+  const s = String(raw || 'rule-config')
+  // 旧入口兼容：标准体系/任务/报告已从侧栏移除
+  if (s === 'standards' || s === 'tasks' || s === 'task-mgmt') return 'rule-config'
+  if (s === 'reports') return 'assess'
+  if ((QUALITY_SUBS as readonly string[]).includes(s)) return s
+  return 'rule-config'
+}
+
+const qualitySub = computed(() =>
+  activeNav.value.startsWith('quality.')
+    ? normalizeQualitySub(activeNav.value.slice('quality.'.length))
+    : 'rule-config',
+)
 const metaSection = computed(() => {
   if (!activeNav.value.startsWith('metadata.')) return 'model'
   return resolveMetaSection(activeNav.value.slice('metadata.'.length))
@@ -163,7 +172,7 @@ const etlSub = computed(() => (activeNav.value.startsWith('etl.') ? activeNav.va
 const ETL_LIST_SUBS = ['task-mgmt', 'task-run', 'task-schedule', 'components']
 
 function defaultNavForTab(t: string): string {
-  if (t === 'quality') return 'quality.standards'
+  if (t === 'quality') return 'quality.rule-config'
   if (t === 'metadata') return 'metadata.model'
   if (t === 'etl') return 'etl.task-mgmt'
   if (t === 'model') return 'model.warehouse'
@@ -195,10 +204,7 @@ function resolveFromRoute() {
     const sec = resolveMetaSection(route.query.section)
     activeNav.value = `metadata.${sec}`
   } else if (mapped === 'quality') {
-    // 旧 mock 入口 quality.tasks → 正式任务配置
-    let sub = String(route.query.qSub || 'standards')
-    if (sub === 'tasks') sub = 'task-mgmt'
-    activeNav.value = `quality.${sub}`
+    activeNav.value = `quality.${normalizeQualitySub(String(route.query.qSub || 'rule-config'))}`
   } else if (mapped === 'model') {
     let raw = String(route.query.mSub || 'warehouse')
     // 旧 procTab 兼容：processing + procTab=script|clean|...
@@ -354,12 +360,9 @@ onMounted(() => { resolveFromRoute() })
           @monitor="openEtlMonitor"
         />
 
-        <StandardsView v-else-if="tab === 'quality' && qualitySub === 'standards'" />
         <QualityRuleConfigView v-else-if="tab === 'quality' && qualitySub === 'rule-config'" />
-        <QualityTaskView v-else-if="tab === 'quality' && qualitySub === 'task-mgmt'" />
         <QualityMonitorView v-else-if="tab === 'quality' && qualitySub === 'monitor'" />
         <QualityAssessView v-else-if="tab === 'quality' && qualitySub === 'assess'" />
-        <QualityReportView v-else-if="tab === 'quality' && qualitySub === 'reports'" />
 
         <FusionModelView v-else-if="tab === 'model' && modelSub === 'warehouse'" />
         <FusionCapabilityHost
