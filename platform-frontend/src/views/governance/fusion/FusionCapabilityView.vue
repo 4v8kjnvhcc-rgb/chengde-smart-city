@@ -35,8 +35,12 @@ const META: Record<string, { title: string; mapsTo: string }> = {
     mapsTo: '数据融合组件（过滤/脱敏等）+ 下方任务管理画布编排 → Kettle 执行',
   },
   schedule: {
+    title: '工作流定时',
+    mapsTo: '融合加工任务定时台账（DolphinScheduler 启停）',
+  },
+  workflow: {
     title: '工作流调度',
-    mapsTo: '数据治理「任务定时」同一套台账与调度（DolphinScheduler / 平台 cron）',
+    mapsTo: '跨模块流水线：归集/治理/质量/融合步骤可增删调序，发布 DS 串行执行',
   },
   execute: {
     title: '任务执行',

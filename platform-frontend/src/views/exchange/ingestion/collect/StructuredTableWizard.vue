@@ -1260,7 +1260,7 @@ onMounted(() => {
           </template>
           <template v-else>
             <el-form-item label="执行周期" class="portal-field-cron">
-              <ExecCycleSelect v-model="form.scheduleCron" />
+              <ExecCycleSelect v-model="form.scheduleCron" :allow-custom="false" />
             </el-form-item>
             <p class="hint">保存为草稿后先「上线」，再点「启动」将周期发布到调度；实时任务仅支持手动执行。</p>
           </template>

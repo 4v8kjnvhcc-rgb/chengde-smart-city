@@ -72,7 +72,7 @@ onMounted(reload)
         </el-form-item>
         <el-form-item label="任务名" class="portal-field-md"><el-input v-model="taskForm.taskName" /></el-form-item>
         <el-form-item label="执行周期" class="portal-field-cron">
-          <ExecCycleSelect v-model="taskForm.scheduleCron" style="min-width:280px" />
+          <ExecCycleSelect v-model="taskForm.scheduleCron" :allow-custom="false" style="min-width:280px" />
         </el-form-item>
         <el-form-item class="portal-form-actions">
           <el-button type="primary" @click="createTask">登记任务</el-button>

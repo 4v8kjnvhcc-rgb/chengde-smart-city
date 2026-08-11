@@ -358,7 +358,7 @@ onMounted(loadTasks)
           </el-select>
         </el-form-item>
         <el-form-item v-if="form.scheduleType === 'CRON'" label="执行周期">
-          <ExecCycleSelect v-model="form.cronExpr" />
+          <ExecCycleSelect v-model="form.cronExpr" :allow-custom="false" />
         </el-form-item>
         <el-form-item>
           <el-button type="primary" @click="saveTask">保存任务</el-button>

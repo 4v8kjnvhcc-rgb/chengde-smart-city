@@ -188,6 +188,43 @@ public class KettleExecuteService {
         }
     }
 
+    /**
+     * 轮询运行记录至终态（SUCCESS/FAILED/STOPPED）。供 DS 串行流水线回调使用。
+     * 超时按 STALE_RUNNING_MINUTES 判定失败。
+     */
+    public Map<String, Object> waitForRunTerminal(Long runId) {
+        if (runId == null) {
+            return Map.of("status", "FAILED", "message", "runId 为空");
+        }
+        long deadline = System.currentTimeMillis() + STALE_RUNNING_MINUTES * 60_000L;
+        Map<String, Object> last = Map.of("status", "FAILED", "message", "等待执行结果超时");
+        while (System.currentTimeMillis() < deadline) {
+            last = updateExecutionStatus(runId);
+            String st = stringVal(last.get("runStatus"));
+            if (st == null || st.isBlank()) {
+                st = stringVal(last.get("status"));
+            }
+            if (isTerminalStatus(st) || "FINISHED".equals(st)) {
+                if ("FINISHED".equals(st) || "SUCCESS".equals(st)) {
+                    last = new LinkedHashMap<>(last);
+                    last.put("status", "SUCCESS");
+                    last.put("runStatus", "SUCCESS");
+                } else if (!"FAILED".equals(st) && !"STOPPED".equals(st)) {
+                    last = new LinkedHashMap<>(last);
+                    last.put("status", st);
+                }
+                return last;
+            }
+            try {
+                Thread.sleep(2000L);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                return Map.of("status", "FAILED", "message", "等待执行被中断");
+            }
+        }
+        return last;
+    }
+
     public boolean isCarteAvailable() {
         try {
             return kettleClient.isHealthy();

@@ -22,7 +22,7 @@ const FusionCapabilityHost = defineAsyncComponent(() => import('./fusion/FusionC
 const GovernanceComponentsView = defineAsyncComponent(() => import('./etl/GovernanceComponentsView.vue'))
 
 /** V3.0：数据融合处理下挂五子能力，侧栏三级可见 */
-const FUSION_CAPS = ['script', 'clean', 'schedule', 'execute', 'version'] as const
+const FUSION_CAPS = ['script', 'clean', 'schedule', 'workflow', 'execute', 'version'] as const
 
 const NAV_BASE: HubNavItem[] = [
   {
@@ -61,7 +61,8 @@ const NAV_BASE: HubNavItem[] = [
         children: [
           { key: 'model.script', label: '脚本开发' },
           { key: 'model.clean', label: '数据清洗', subLabel: '多表融合加工→DWS/ADS' },
-          { key: 'model.schedule', label: '工作流调度' },
+          { key: 'model.schedule', label: '工作流定时' },
+          { key: 'model.workflow', label: '工作流调度' },
           { key: 'model.execute', label: '任务执行', subLabel: '加工/直通共享' },
           { key: 'model.version', label: '版本管理' },
         ],

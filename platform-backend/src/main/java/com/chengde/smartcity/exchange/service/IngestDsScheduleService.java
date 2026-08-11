@@ -150,6 +150,13 @@ public class IngestDsScheduleService {
             taskMapper.updateById(task);
         }
         Map<String, Object> result = tableIngestEngine.runJobScheduled(taskId, dsInstanceId);
+        Object statusObj = result.get("status");
+        String st = statusObj == null ? "" : String.valueOf(statusObj);
+        if ("FAILED".equalsIgnoreCase(st) || "PARTIAL".equalsIgnoreCase(st)) {
+            throw new BusinessException(500,
+                    String.valueOf(result.getOrDefault("message",
+                            result.getOrDefault("lastRunMessage", "归集执行失败"))));
+        }
         auditService.log(null, "dolphinscheduler", null,
                 "ING_JOB_DS_CALLBACK", "ing_ingest_task", String.valueOf(taskId),
                 "instance=" + dsInstanceId);

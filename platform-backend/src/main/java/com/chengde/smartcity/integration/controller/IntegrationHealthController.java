@@ -9,6 +9,7 @@ import com.chengde.smartcity.integration.openmetadata.OpenMetadataClient;
 import com.chengde.smartcity.integration.storage.StorageIntegrationClient;
 import java.util.LinkedHashMap;
 import java.util.Map;
+import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
@@ -36,6 +37,7 @@ public class IntegrationHealthController {
     }
 
     @GetMapping("/health")
+    @PreAuthorize("isAuthenticated()")
     public ApiResponse<Map<String, Object>> health() {
         Map<String, Object> out = new LinkedHashMap<>();
         out.put("enabled", props.isEnabled());
@@ -50,7 +52,28 @@ public class IntegrationHealthController {
         return ApiResponse.ok(out);
     }
 
+    /** DolphinScheduler 控制台深链（不含账号密码）。 */
+    @GetMapping("/ds/console")
+    @PreAuthorize("isAuthenticated()")
+    public ApiResponse<Map<String, Object>> dsConsole() {
+        Map<String, Object> out = new LinkedHashMap<>();
+        String url = props.getDs() == null ? null : props.getDs().getUrl();
+        if (url != null) {
+            url = url.trim();
+            if (url.endsWith("/")) {
+                url = url.substring(0, url.length() - 1);
+            }
+        }
+        boolean enabled = props.isEnabled();
+        boolean healthy = enabled && ds.isHealthy();
+        out.put("enabled", enabled);
+        out.put("healthy", healthy);
+        out.put("consoleUrl", url == null || url.isBlank() ? null : url);
+        return ApiResponse.ok(out);
+    }
+
     @GetMapping("/canal/status")
+    @PreAuthorize("isAuthenticated()")
     public ApiResponse<Map<String, Object>> canal() {
         return ApiResponse.ok(storage.canalStatus());
     }
