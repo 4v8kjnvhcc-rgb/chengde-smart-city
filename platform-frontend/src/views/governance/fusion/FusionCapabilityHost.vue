@@ -3,7 +3,7 @@
  * V3.0「数据融合处理」子能力宿主。
  * 数据清洗 / 调度 / 执行：仅融合任务（DWD→DWS/ADS），与数据治理任务隔离；不含组件勾选页。
  */
-import { defineAsyncComponent, ref, watch } from 'vue'
+import { computed, defineAsyncComponent, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import GovernanceEtlPanel from '../etl/GovernanceEtlPanel.vue'
 

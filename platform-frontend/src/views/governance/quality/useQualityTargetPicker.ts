@@ -50,6 +50,7 @@ export interface QualitySourceOption {
 
 export interface QualityTableMeta {
   sourceTable: string
+  tableComment?: string
   columns: string[]
   entryCode?: string
 }
@@ -138,6 +139,7 @@ export async function loadQualityTables(sourceId: number): Promise<QualityTableM
   return (rows as Array<Record<string, unknown>>)
     .map((r) => ({
       sourceTable: String(r.sourceTable || r.tableName || r.name || '').trim(),
+      tableComment: String(r.tableComment || r.comment || r.remarks || r.tableRemark || '').trim() || undefined,
       columns: extractColumnNames(r.columns),
       entryCode: r.entryCode ? String(r.entryCode) : undefined,
     }))

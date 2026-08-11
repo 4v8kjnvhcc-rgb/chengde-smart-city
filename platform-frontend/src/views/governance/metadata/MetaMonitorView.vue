@@ -37,13 +37,24 @@ interface LastRun {
 }
 
 interface MonitorRow {
-  task: { id: number; taskName: string; status: string; lastMessage?: string; taskCode?: string }
+  task: {
+    id: number
+    taskName: string
+    status: string
+    lastMessage?: string
+    taskCode?: string
+    scheduleType?: string
+    publishStatus?: string
+  }
   connectorName?: string
   sourceType?: string
   sourceId?: number
   lastRun?: LastRun | null
   execStatus?: string
+  scheduleType?: string
+  publishStatus?: string
   canStop?: boolean
+  canStart?: boolean
 }
 
 interface RegistryEntry {
@@ -86,6 +97,7 @@ const dsHealthy = ref(false)
 const refreshedAt = ref('')
 const loading = ref(false)
 const stoppingTaskId = ref<number | null>(null)
+const startingTaskId = ref<number | null>(null)
 const stoppingRunId = ref<number | null>(null)
 const autoRefresh = ref(true)
 let timer: ReturnType<typeof setInterval> | null = null
@@ -126,7 +138,7 @@ const pagedMeta = computed(() => {
   return filteredMeta.value.slice(start, start + metaPageSize.value)
 })
 
-const hasRunning = computed(() => kpi.running > 0 || items.value.some((i) => i.canStop))
+const hasRunning = computed(() => kpi.running > 0 || items.value.some((i) => isTaskRunning(i)))
 
 function diffCount(list: string[] | undefined, count: number | undefined) {
   if (typeof count === 'number') return count
@@ -172,12 +184,37 @@ function formatSummary(summary?: string, diff?: DiffInfo | null) {
 function isTaskRunning(row: MonitorRow) {
   return row.execStatus === 'RUNNING'
     || row.task?.status === 'RUNNING'
-    || !!row.canStop
     || row.lastRun?.status === 'RUNNING'
 }
 
+function isScheduled(row: MonitorRow) {
+  return String(row.scheduleType || row.task?.scheduleType || '').toUpperCase() === 'SCHEDULED'
+}
+
+function isPublished(row: MonitorRow) {
+  return String(row.publishStatus || row.task?.publishStatus || '').toUpperCase() === 'PUBLISHED'
+}
+
+function canStopTask(row: MonitorRow) {
+  if (row.canStop != null) return !!row.canStop
+  return isTaskRunning(row) || (isScheduled(row) && isPublished(row))
+}
+
+function canStartTask(row: MonitorRow) {
+  if (row.canStart != null) return !!row.canStart
+  return isScheduled(row) && !isPublished(row)
+}
+
 function stopDisabledTip(row: MonitorRow) {
-  return isTaskRunning(row) ? '' : '仅运行中任务可停止'
+  if (canStopTask(row)) return ''
+  if (isScheduled(row)) return '仅已发布的定时任务或运行中任务可停止'
+  return '仅运行中任务可停止'
+}
+
+function startDisabledTip(row: MonitorRow) {
+  if (!isScheduled(row)) return '仅定时任务可启动调度'
+  if (isPublished(row)) return '定时调度已在运行中'
+  return ''
 }
 
 function execPulse(status?: string) {
@@ -250,33 +287,55 @@ function resetFilter() {
 }
 
 async function stopTask(row: MonitorRow) {
-  if (!isTaskRunning(row)) return
-  const runId = row.lastRun?.id
+  if (!canStopTask(row)) return
   const name = row.task.taskName
+  const tip = isScheduled(row) && isPublished(row)
+    ? `确认停止任务「${name}」？将终止本次采集（如有），并下线定时调度，之后不再自动运行。`
+    : `确认停止任务「${name}」？停止后将终止本次元数据采集。`
   try {
-    await ElMessageBox.confirm(
-      `确认停止任务「${name}」？停止后将终止本次元数据采集。`,
-      '停止采集',
-      { type: 'warning', confirmButtonText: '停止', cancelButtonText: '取消' },
-    )
+    await ElMessageBox.confirm(tip, '停止', {
+      type: 'warning',
+      confirmButtonText: '停止',
+      cancelButtonText: '取消',
+    })
   } catch {
     return
   }
   stoppingTaskId.value = row.task.id
   try {
-    const useRunStop = runId && (row.execStatus === 'RUNNING' || row.lastRun?.status === 'RUNNING')
-    const res = await api.post(
-      useRunStop
-        ? `/governance/platform/metadata/collect/runs/${runId}/stop`
-        : `/governance/platform/metadata/collect/tasks/${row.task.id}/stop`,
-    )
-    ElMessage.success(`已停止：${statusLabel(res.data.status)}`)
+    // 统一走任务级停止：运行中终止采集；已发布定时则下线 DS 调度
+    const res = await api.post(`/governance/platform/metadata/collect/tasks/${row.task.id}/stop`)
+    ElMessage.success(res.data?.message || `已停止：${statusLabel(res.data?.status || 'STOPPED')}`)
     await onSearch()
   } catch (e: unknown) {
     const err = e as Error & { message?: string }
     ElMessage.error(err.message || '停止失败')
   } finally {
     stoppingTaskId.value = null
+  }
+}
+
+async function startTask(row: MonitorRow) {
+  if (!canStartTask(row)) return
+  try {
+    await ElMessageBox.confirm(
+      `确认启动定时任务「${row.task.taskName}」？将恢复 DolphinScheduler 周期调度。`,
+      '启动定时调度',
+      { type: 'info', confirmButtonText: '启动', cancelButtonText: '取消' },
+    )
+  } catch {
+    return
+  }
+  startingTaskId.value = row.task.id
+  try {
+    const res = await api.post(`/governance/platform/metadata/collect/tasks/${row.task.id}/start`)
+    ElMessage.success(res.data?.message || '定时调度已启动')
+    await onSearch()
+  } catch (e: unknown) {
+    const err = e as Error & { message?: string }
+    ElMessage.error(err.message || '启动失败')
+  } finally {
+    startingTaskId.value = null
   }
 }
 
@@ -395,7 +454,7 @@ onUnmounted(() => {
 
     <PageCard title="元数据采集监控">
       <p class="mm-runlog-tip">
-        本页仅支持查看与停止；任务执行请在「元数据采集」页发起。运行中可点击「停止」终止本次采集，已结束或未执行任务停止按钮置灰。
+        已发布的定时任务或正在运行的任务可「停止」（终止本次采集并下线定时调度）；已停止的定时任务可「启动」恢复调度。手动任务仍请在「元数据采集」页发起执行。
       </p>
       <div class="mm-toolbar">
         <el-form inline class="portal-inline-form portal-inline-form--block">
@@ -481,7 +540,17 @@ onUnmounted(() => {
             <span v-else>{{ formatDuration(row.lastRun?.durationSeconds) }}</span>
           </template>
         </el-table-column>
-        <el-table-column label="操作" width="200" fixed="right">
+        <el-table-column label="调度" width="100">
+          <template #default="{ row }">
+            <template v-if="isScheduled(row)">
+              <el-tag :type="isPublished(row) ? 'success' : 'info'" size="small">
+                {{ isPublished(row) ? '已发布' : '已停止' }}
+              </el-tag>
+            </template>
+            <span v-else>—</span>
+          </template>
+        </el-table-column>
+        <el-table-column label="操作" width="260" fixed="right">
           <template #default="{ row }">
             <el-button
               v-if="row.lastRun"
@@ -496,10 +565,19 @@ onUnmounted(() => {
               @click="openMetadata(row.lastRun, row.task.taskName)"
             >元数据</el-button>
             <el-button
+              v-if="isScheduled(row)"
+              link
+              type="success"
+              :title="startDisabledTip(row)"
+              :disabled="!canStartTask(row) || (startingTaskId != null && startingTaskId !== row.task.id)"
+              :loading="startingTaskId === row.task.id"
+              @click="startTask(row)"
+            >启动</el-button>
+            <el-button
               link
               type="danger"
               :title="stopDisabledTip(row)"
-              :disabled="!isTaskRunning(row) || (stoppingTaskId != null && stoppingTaskId !== row.task.id)"
+              :disabled="!canStopTask(row) || (stoppingTaskId != null && stoppingTaskId !== row.task.id)"
               :loading="stoppingTaskId === row.task.id"
               @click="stopTask(row)"
             >停止</el-button>

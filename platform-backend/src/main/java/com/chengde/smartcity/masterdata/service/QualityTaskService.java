@@ -217,14 +217,49 @@ public class QualityTaskService {
         return out;
     }
 
-    public List<GovQualityIssue> listIssues(Long runId) {
+    public List<Map<String, Object>> listIssues(Long runId) {
         GovQualityTaskRun run = runMapper.selectById(runId);
         if (run == null) {
             throw new BusinessException(404, "运行记录不存在: " + runId);
         }
-        return issueMapper.selectList(new LambdaQueryWrapper<GovQualityIssue>()
+        String dbLabel = resolveDbLabel(run.getTaskId());
+        List<GovQualityIssue> issues = issueMapper.selectList(new LambdaQueryWrapper<GovQualityIssue>()
                 .eq(GovQualityIssue::getRunId, runId)
                 .orderByDesc(GovQualityIssue::getId));
+        List<Map<String, Object>> out = new ArrayList<>();
+        for (GovQualityIssue iss : issues) {
+            Map<String, Object> row = new LinkedHashMap<>();
+            row.put("id", iss.getId());
+            row.put("runId", iss.getRunId());
+            row.put("taskId", iss.getTaskId());
+            row.put("ruleId", iss.getRuleId());
+            row.put("detailId", iss.getDetailId());
+            row.put("checkType", iss.getCheckType());
+            row.put("databaseName", dbLabel);
+            row.put("targetTable", iss.getTargetTable());
+            row.put("targetColumn", iss.getTargetColumn());
+            row.put("issueType", iss.getIssueType());
+            row.put("issueValue", iss.getIssueValue());
+            row.put("issueCount", iss.getIssueCount());
+            row.put("sampleData", iss.getSampleData());
+            row.put("severity", iss.getSeverity());
+            row.put("status", iss.getStatus());
+            row.put("createdAt", iss.getCreatedAt());
+            out.add(row);
+        }
+        return out;
+    }
+
+    private String resolveDbLabel(Long taskId) {
+        if (taskId == null) return "—";
+        GovQualityTask task = taskMapper.selectById(taskId);
+        if (task == null || task.getDatasourceId() == null) return "—";
+        Long dsId = task.getDatasourceId();
+        if (dsId == -1L) return "源层ODS";
+        if (dsId == -2L) return "过程层DWD";
+        if (dsId == -3L) return "主题层DWS";
+        if (dsId == -4L) return "专题层ADS";
+        return "数据源#" + dsId;
     }
 
     public Map<String, Object> rerun(UserPrincipal operator, Long runId) {

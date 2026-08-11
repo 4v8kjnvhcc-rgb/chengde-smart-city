@@ -4,6 +4,7 @@ import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.chengde.smartcity.common.exception.BusinessException;
 import com.chengde.smartcity.exchange.entity.IngDataSource;
 import com.chengde.smartcity.exchange.mapper.IngDataSourceMapper;
+import com.chengde.smartcity.integration.jdbc.CredentialCipher;
 import com.chengde.smartcity.masterdata.entity.GovMetadataRegistry;
 import com.chengde.smartcity.masterdata.entity.GovQualityIssue;
 import com.chengde.smartcity.masterdata.entity.GovQualityRuleConfig;
@@ -63,6 +64,7 @@ public class QualityExecuteService {
     private final IngDataSourceMapper dataSourceMapper;
     private final GovMetadataRegistryMapper metadataRegistryMapper;
     private final LayerJdbcSupport layerJdbc;
+    private final CredentialCipher credentialCipher;
     private final DataSource platformDataSource;
 
     public QualityExecuteService(GovQualityTaskMapper taskMapper,
@@ -73,6 +75,7 @@ public class QualityExecuteService {
                                  IngDataSourceMapper dataSourceMapper,
                                  GovMetadataRegistryMapper metadataRegistryMapper,
                                  LayerJdbcSupport layerJdbc,
+                                 CredentialCipher credentialCipher,
                                  @Autowired(required = false) DataSource platformDataSource) {
         this.taskMapper = taskMapper;
         this.detailMapper = detailMapper;
@@ -82,6 +85,7 @@ public class QualityExecuteService {
         this.dataSourceMapper = dataSourceMapper;
         this.metadataRegistryMapper = metadataRegistryMapper;
         this.layerJdbc = layerJdbc;
+        this.credentialCipher = credentialCipher;
         this.platformDataSource = platformDataSource;
     }
 
@@ -502,6 +506,13 @@ public class QualityExecuteService {
             String database = text(n, "database");
             String username = text(n, "username");
             String password = text(n, "password");
+            // 兼容：连接配置优先存 passwordCipher（密文），执行时也要解密后再连库
+            if (password == null || password.isBlank()) {
+                String cipher = text(n, "passwordCipher");
+                if (cipher != null && !cipher.isBlank()) {
+                    password = credentialCipher.decrypt(cipher);
+                }
+            }
             if (host == null || database == null) {
                 throw new BusinessException(400, "数据源缺少 host/database");
             }

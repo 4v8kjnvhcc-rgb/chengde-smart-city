@@ -1,7 +1,6 @@
 package com.chengde.smartcity.masterdata.controller;
 
 import com.chengde.smartcity.common.api.ApiResponse;
-import com.chengde.smartcity.masterdata.entity.GovQualityIssue;
 import com.chengde.smartcity.masterdata.entity.GovQualityTaskDetail;
 import com.chengde.smartcity.masterdata.service.QualityTaskService;
 import com.chengde.smartcity.security.UserPrincipal;
@@ -53,7 +52,7 @@ public class QualityTaskController {
 
     @GetMapping("/runs/{runId}/issues")
     @PreAuthorize("isAuthenticated()")
-    public ApiResponse<List<GovQualityIssue>> issues(@PathVariable Long runId) {
+    public ApiResponse<List<Map<String, Object>>> issues(@PathVariable Long runId) {
         return ApiResponse.ok(service.listIssues(runId));
     }
 

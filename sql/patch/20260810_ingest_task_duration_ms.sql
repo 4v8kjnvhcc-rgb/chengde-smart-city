@@ -1,5 +1,5 @@
 -- 汇聚接入任务：记录最近一次执行耗时（毫秒）
--- 对应 Flyway: V180__ingest_task_duration_ms.sql
+-- 对应 Flyway: V186__ingest_task_duration_ms.sql
 -- 目标库: smart_city
 -- 说明：优先重启后端让 Flyway 执行；仅在无法启动时手工执行本脚本
 SET @col_exists := (

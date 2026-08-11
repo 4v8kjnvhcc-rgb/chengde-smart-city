@@ -146,7 +146,7 @@ async function changePassword() {
       oldPassword: pwdForm.oldPassword,
       newPassword: pwdForm.newPassword,
     })
-    ElMessage.success('密码已修改')
+    ElMessage.success('密码已修改，请使用新密码重新登录')
     pwdForm.oldPassword = ''
     pwdForm.newPassword = ''
     pwdForm.confirm = ''
@@ -332,9 +332,10 @@ function onFilePick(kind: string, ev: Event) {
             <el-button type="primary" :loading="saving" @click="saveSecurity">保存安全配置</el-button>
           </el-form-item>
           <el-divider content-position="left">本人修改密码</el-divider>
-          <el-form-item label="旧密码"><el-input v-model="pwdForm.oldPassword" type="password" show-password /></el-form-item>
-          <el-form-item label="新密码"><el-input v-model="pwdForm.newPassword" type="password" show-password /></el-form-item>
-          <el-form-item label="确认新密码"><el-input v-model="pwdForm.confirm" type="password" show-password /></el-form-item>
+          <p class="hint">须点下方「修改密码」才会改库；「保存安全配置」只保存锁定天数等，不会改密码。新密码至少 8 位且含字母和数字。</p>
+          <el-form-item label="旧密码"><el-input v-model="pwdForm.oldPassword" type="password" show-password autocomplete="current-password" /></el-form-item>
+          <el-form-item label="新密码"><el-input v-model="pwdForm.newPassword" type="password" show-password autocomplete="new-password" /></el-form-item>
+          <el-form-item label="确认新密码"><el-input v-model="pwdForm.confirm" type="password" show-password autocomplete="new-password" /></el-form-item>
           <el-form-item>
             <el-button type="primary" @click="changePassword">修改密码</el-button>
           </el-form-item>

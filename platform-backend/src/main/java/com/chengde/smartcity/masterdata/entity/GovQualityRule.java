@@ -12,6 +12,8 @@ public class GovQualityRule {
     private String ruleCode;
     private String ruleName;
     private String ruleType;
+    private Integer sortNo;
+    private String description;
     private Long orgId;
     private String status;
     private String createdBy;
@@ -26,6 +28,10 @@ public class GovQualityRule {
     public void setRuleName(String ruleName) { this.ruleName = ruleName; }
     public String getRuleType() { return ruleType; }
     public void setRuleType(String ruleType) { this.ruleType = ruleType; }
+    public Integer getSortNo() { return sortNo; }
+    public void setSortNo(Integer sortNo) { this.sortNo = sortNo; }
+    public String getDescription() { return description; }
+    public void setDescription(String description) { this.description = description; }
     public Long getOrgId() { return orgId; }
     public void setOrgId(Long orgId) { this.orgId = orgId; }
     public String getStatus() { return status; }

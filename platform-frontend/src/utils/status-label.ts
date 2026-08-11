@@ -59,6 +59,8 @@ const STATUS_ZH: Record<string, string> = {
   DATA_OPS: '区设计',
   ANALYSIS: '分析模型',
   LEDGER: '台账处理',
+  EMAIL: '邮件',
+  SMS: '短信',
   ERROR: '错误',
   COMPLETED: '已办结',
   FINISHED: '已完成',
@@ -67,6 +69,8 @@ const STATUS_ZH: Record<string, string> = {
   OPEN: '开放',
   WAITING: '等待中',
   SKIPPED: '已跳过',
+  NOT_RUN: '未运行',
+  NONE: '未生成',
   // 供需
   SUBMITTED: '待数据主管部门审核',
   ANALYZING: '预审中',
@@ -249,6 +253,7 @@ const STATUS_ZH: Record<string, string> = {
   AUTHORIZE_EXISTING: '授权现有',
   // 通道类型
   FTP: 'FTP',
+  S3: '对象存储(S3)',
   LOCAL: '本地文件',
   NAS: 'NAS存储',
   GZIP: 'GZIP压缩',
@@ -270,6 +275,8 @@ const STATUS_ZH: Record<string, string> = {
   // 异议类型
   QUALITY: '质量',
   COMPLETENESS: '完整性',
+  VALIDITY: '有效性',
+  CONSISTENCY: '一致性',
   AUTH: '授权',
   // 严重级别
   HIGH: '高',
@@ -279,6 +286,7 @@ const STATUS_ZH: Record<string, string> = {
   DATABASE: '数据库',
   OTHER: '其他',
   REALTIME: '实时',
+  HOURLY: '每小时',
   DAILY: '每日',
   WEEKLY: '每周',
   MONTHLY: '每月',

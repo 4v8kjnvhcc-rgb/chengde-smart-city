@@ -44,7 +44,7 @@
 ### Task 3: 治理表 DS 字段 + GovernanceDsScheduleService
 
 **Files:**
-- Create: `db/migration/V183__gov_task_ds_schedule.sql`
+- Create: `db/migration/V189__gov_task_ds_schedule.sql`
 - Modify: `GovGovernanceTask.java`
 - Create: `GovernanceDsScheduleService.java`
 - Modify: `GovernanceTaskController.java`、`GovernanceTaskService.java`

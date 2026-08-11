@@ -158,20 +158,30 @@ export function assessmentExternalUrl(): string {
 
 /**
  * 根据落地地址拼考核验票入口。
- * landing 例：http://127.0.0.1:18081/assessment/index#/dashboard
- * → http://127.0.0.1:18081/assessment/sso/portal?ticket=...&redirect=...
+ * landing 例：http://127.0.0.1:18081/sxev/index
+ * → http://127.0.0.1:18081/sxev/sso/portal?ticket=...&redirect=...
+ * 兼容旧路径 /assessment。
  */
 export function buildAssessmentPortalSsoUrl(landingUrl: string, ticket: string): string | null {
   const raw = String(landingUrl || '').trim()
   if (!raw.startsWith('http://') && !raw.startsWith('https://')) return null
   const hashIdx = raw.indexOf('#')
   const withoutHash = hashIdx >= 0 ? raw.slice(0, hashIdx) : raw
-  const marker = '/assessment'
-  const i = withoutHash.toLowerCase().indexOf(marker)
+  const lower = withoutHash.toLowerCase()
+  const markers = ['/sxev', '/assessment'] as const
+  let marker = ''
+  let i = -1
+  for (const m of markers) {
+    const idx = lower.indexOf(m)
+    if (idx >= 0) {
+      marker = withoutHash.slice(idx, idx + m.length)
+      i = idx
+      break
+    }
+  }
   if (i < 0) return null
   const base = withoutHash.slice(0, i + marker.length)
-  const redirectTarget =
-    hashIdx >= 0 ? raw : `${base}/index#/dashboard`
+  const redirectTarget = hashIdx >= 0 ? raw : withoutHash
   return `${base}/sso/portal?ticket=${encodeURIComponent(ticket)}&redirect=${encodeURIComponent(redirectTarget)}`
 }
 
@@ -198,7 +208,7 @@ export async function openAssessmentWithPortalSso(landingUrl: string): Promise<{
     }
     const openUrl = buildAssessmentPortalSsoUrl(landing, ticket)
     if (!openUrl) {
-      return { ok: false, message: '考核地址须包含 /assessment 路径' }
+      return { ok: false, message: '考核地址须包含 /sxev 或 /assessment 路径' }
     }
     window.open(openUrl, '_blank', 'noopener,noreferrer')
     return { ok: true }

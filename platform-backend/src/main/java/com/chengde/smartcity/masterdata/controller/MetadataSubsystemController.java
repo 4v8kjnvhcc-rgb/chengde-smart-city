@@ -269,6 +269,13 @@ public class MetadataSubsystemController {
         return ApiResponse.ok(service.stopTaskRunning(principal, id));
     }
 
+    @PostMapping("/collect/tasks/{id}/start")
+    @PreAuthorize("isAuthenticated()")
+    public ApiResponse<Map<String, Object>> startCollectTask(@AuthenticationPrincipal UserPrincipal principal,
+                                                             @PathVariable Long id) {
+        return ApiResponse.ok(service.startTaskSchedule(principal, id));
+    }
+
     @GetMapping("/collect/runs")
     @PreAuthorize("isAuthenticated()")
     public ApiResponse<List<Map<String, Object>>> collectRuns(@RequestParam(required = false) Long taskId,

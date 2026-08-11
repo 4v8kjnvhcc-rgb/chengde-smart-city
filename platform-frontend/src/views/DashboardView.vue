@@ -285,7 +285,7 @@ function pushInternalTarget(target: string) {
 
 async function enterMenuNode(node: MenuNode) {
   if (isAssessmentMenu(node)) {
-    const landing = assessmentExternalUrl() || 'http://127.0.0.1:18081/assessment/index#/dashboard'
+    const landing = assessmentExternalUrl() || 'http://127.0.0.1:18081/sxev/index'
     const r = await openAssessmentWithPortalSso(landing)
     if (r.ok) {
       ElMessage.success('已进入考核评估系统')
@@ -330,18 +330,20 @@ async function enterNavNode(node: PortalNavNode) {
   pushInternalTarget(target)
 }
 
+/** 取消中间选卡页：总览点击只展开飞出，由子入口直达（勿再进落地页） */
+const SKIP_LANDING_TITLES = new Set([
+  '大数据归集平台',
+  '应用平台',
+  '应用分析门户',
+  '通用支撑平台',
+  '业务支撑平台',
+])
+
 function onCardItemClick(item: CardItem) {
   if (itemHasChildren(item)) {
-    // 有子入口且自身可导航（如「大数据归集平台」）→ 进选择页；悬停飞出仍可直达子系统
-    // 通用/业务支撑：对齐归集落地选卡（即使门户库未刷新 url 也按名称兜底）
-    if (item.title === '通用支撑平台') {
-      hoverGroupKey.value = null
-      router.push('/analytics/general-support')
-      return
-    }
-    if (item.title === '业务支撑平台') {
-      hoverGroupKey.value = null
-      router.push('/analytics/business-support')
+    // 有子入口的平台：不再跳中间选卡页，只展开飞出
+    if (SKIP_LANDING_TITLES.has(item.title)) {
+      hoverGroupKey.value = hoverGroupKey.value === item.key ? null : item.key
       return
     }
     if (item.kind === 'nav' && navigableTarget(item.node)) {

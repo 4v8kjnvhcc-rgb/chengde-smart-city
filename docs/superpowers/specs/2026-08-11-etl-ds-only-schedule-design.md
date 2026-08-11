@@ -60,7 +60,7 @@ Kettle Carte（抽数/KTR）
 
 ### 数据
 
-Flyway（建议 `V183__gov_task_ds_schedule.sql`）：
+Flyway（建议 `V189__gov_task_ds_schedule.sql`）：
 
 - `ds_project_code BIGINT NULL`
 - `ds_definition_code BIGINT NULL`

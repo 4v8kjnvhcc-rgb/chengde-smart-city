@@ -154,10 +154,61 @@ public class MetaCollectDsService {
             }
         }
         task.setPublishStatus("DRAFT");
+        task.setLastMessage("定时调度已停止");
         taskMapper.updateById(task);
         auditService.log(operator.getUserId(), operator.getUsername(), operator.getOrgId(),
                 "META_COLLECT_DS_UNPUBLISH", "gov_meta_collect_task", String.valueOf(taskId), "offline");
         return Map.of("taskId", taskId, "publishStatus", "DRAFT");
+    }
+
+    /**
+     * 监控页「启动」：恢复已停止的定时调度。
+     * 若仍有 DS 调度 ID 则直接上线；否则重新发布创建调度。
+     */
+    @Transactional
+    public Map<String, Object> startScheduledTask(UserPrincipal operator, Long taskId) {
+        GovMetaCollectTask task = requireTask(taskId);
+        if (!"SCHEDULED".equalsIgnoreCase(task.getScheduleType())) {
+            throw new BusinessException(400, "仅定时任务可启动调度");
+        }
+        if ("PUBLISHED".equals(task.getPublishStatus())) {
+            throw new BusinessException(400, "定时任务已在调度中，无需重复启动");
+        }
+        if (task.getCronExpr() == null || task.getCronExpr().isBlank()) {
+            throw new BusinessException(400, "定时任务须配置执行周期");
+        }
+        if (!isDsAvailable()) {
+            throw new BusinessException(502, "DolphinScheduler 不可用，无法启动定时采集任务");
+        }
+
+        if (task.getDsProjectCode() != null && task.getDsScheduleId() != null) {
+            try {
+                dsClient.onlineSchedule(task.getDsProjectCode(), task.getDsScheduleId());
+            } catch (Exception e) {
+                log.warn("online existing schedule failed taskId={}, will republish: {}", taskId, e.getMessage());
+                // 旧调度不可用时走完整发布
+                task.setDsScheduleId(null);
+                task.setDsDefinitionCode(null);
+                taskMapper.updateById(task);
+                return publishScheduledTask(operator, taskId);
+            }
+            task.setPublishStatus("PUBLISHED");
+            task.setStatus("READY");
+            task.setLastMessage("定时调度已启动");
+            taskMapper.updateById(task);
+            auditService.log(operator.getUserId(), operator.getUsername(), operator.getOrgId(),
+                    "META_COLLECT_DS_START", "gov_meta_collect_task", String.valueOf(taskId),
+                    "schedule=" + task.getDsScheduleId());
+            Map<String, Object> out = new LinkedHashMap<>();
+            out.put("taskId", taskId);
+            out.put("projectCode", task.getDsProjectCode());
+            out.put("definitionCode", task.getDsDefinitionCode());
+            out.put("scheduleId", task.getDsScheduleId());
+            out.put("publishStatus", "PUBLISHED");
+            out.put("message", "定时调度已启动");
+            return out;
+        }
+        return publishScheduledTask(operator, taskId);
     }
 
     @Transactional
