@@ -1234,16 +1234,44 @@ public class MetadataSubsystemService {
                 .eq(GovMetaCollectRun::getStatus, "RUNNING")
                 .orderByDesc(GovMetaCollectRun::getId)
                 .last("limit 1"));
-        if (run == null) {
-            if ("RUNNING".equals(task.getStatus())) {
-                task.setStatus("READY");
-                task.setLastMessage("采集已停止");
-                taskMapper.updateById(task);
-                return Map.of("taskId", taskId, "status", "STOPPED", "runId", 0L);
-            }
-            throw new BusinessException(400, "当前没有正在执行的采集任务");
+        boolean running = run != null || "RUNNING".equals(task.getStatus());
+        boolean publishedScheduled = "SCHEDULED".equalsIgnoreCase(task.getScheduleType())
+                && "PUBLISHED".equals(task.getPublishStatus());
+        if (!running && !publishedScheduled) {
+            throw new BusinessException(400, "仅已发布的定时任务或正在运行的任务可停止");
         }
-        return stopRun(operator, run.getId());
+
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("taskId", taskId);
+        if (run != null) {
+            out.putAll(stopRun(operator, run.getId()));
+        } else if ("RUNNING".equals(task.getStatus())) {
+            task.setStatus("READY");
+            task.setLastMessage("采集已停止");
+            taskMapper.updateById(task);
+            out.put("status", "STOPPED");
+            out.put("runId", 0L);
+        }
+
+        // 已发布的定时任务：下线 DS 调度，之后不再按周期运行
+        GovMetaCollectTask latest = requireTask(taskId);
+        if ("SCHEDULED".equalsIgnoreCase(latest.getScheduleType())
+                && "PUBLISHED".equals(latest.getPublishStatus())) {
+            Map<String, Object> dsOut = metaCollectDsService.unpublishScheduledTask(operator, taskId);
+            out.put("publishStatus", dsOut.get("publishStatus"));
+            out.put("scheduleStopped", true);
+            out.put("message", "已停止运行并下线定时调度");
+        } else if (!out.containsKey("status")) {
+            out.put("status", "STOPPED");
+            out.put("message", "已停止定时调度");
+        }
+        return out;
+    }
+
+    /** 监控页启动：恢复已停止的定时任务调度 */
+    @Transactional
+    public Map<String, Object> startTaskSchedule(UserPrincipal operator, Long taskId) {
+        return metaCollectDsService.startScheduledTask(operator, taskId);
     }
 
     public Map<String, Object> monitorOverview(String sourceKeyword, String taskKeyword, Long sourceId,
@@ -1291,8 +1319,16 @@ public class MetadataSubsystemService {
             row.put("sourceId", t.getIngDataSourceId());
             row.put("lastRun", last == null ? null : enrichRunRow(last, t, c));
             row.put("execStatus", "RUNNING".equals(t.getStatus()) ? "RUNNING" : lastStatus);
-            row.put("canStop", "RUNNING".equals(t.getStatus())
-                    || (last != null && "RUNNING".equals(last.getStatus())));
+            boolean isRunning = "RUNNING".equals(t.getStatus())
+                    || (last != null && "RUNNING".equals(last.getStatus()));
+            boolean scheduled = "SCHEDULED".equalsIgnoreCase(t.getScheduleType());
+            boolean published = "PUBLISHED".equals(t.getPublishStatus());
+            row.put("scheduleType", t.getScheduleType());
+            row.put("publishStatus", t.getPublishStatus());
+            // 已发布定时任务 或 正在运行 → 可停止（停止后下线调度 / 终止本次采集）
+            row.put("canStop", isRunning || (scheduled && published));
+            // 定时任务且未在调度中 → 可启动恢复
+            row.put("canStart", scheduled && !published);
             allRows.add(row);
 
             if (execStatus != null && !execStatus.isBlank()) {

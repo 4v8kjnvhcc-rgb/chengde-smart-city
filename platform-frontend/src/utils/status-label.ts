@@ -267,6 +267,8 @@ const STATUS_ZH: Record<string, string> = {
   // 异议类型
   QUALITY: '质量',
   COMPLETENESS: '完整性',
+  VALIDITY: '有效性',
+  CONSISTENCY: '一致性',
   AUTH: '授权',
   // 严重级别
   HIGH: '高',

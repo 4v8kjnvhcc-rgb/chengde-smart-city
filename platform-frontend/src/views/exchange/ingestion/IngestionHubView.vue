@@ -20,14 +20,13 @@ import {
   type IngestionSystem,
   type RegisterMenuMeta,
 } from './ingestion-nav'
-import IngestionLandingView from './IngestionLandingView.vue'
 import api from '@/api/http'
 
 const route = useRoute()
 const router = useRouter()
 const auth = useAuthStore()
 
-/** 无 system 参数 → 归集平台选择页；有 system → 单系统独占（页内不可切换） */
+/** 无 system 时不再展示中间选卡页，改为补齐默认系统后进入 Hub */
 const showLanding = computed(() => {
   const s = route.query.system
   return s === undefined || s === null || String(s).trim() === ''
@@ -154,12 +153,26 @@ function ensureAllowedModule() {
 function syncFromRoute() {
   const legacyTab = String(route.query.tab || '').toLowerCase()
   if (legacyTab === 'stats' || legacyTab === 'm037' || legacyTab === 'm038' || legacyTab === 'stats-base' || legacyTab === 'stats-domain') {
-    const sys = legacyTab === 'stats-domain' || legacyTab === 'm038' ? 'domain-stats' : 'base-stats'
-    router.replace({ path: '/exchange/application', query: { system: sys } })
+    const path =
+      legacyTab === 'stats-domain' || legacyTab === 'm038'
+        ? '/exchange/application/stats-domain'
+        : '/exchange/application/stats-base'
+    router.replace({ path })
     return
   }
-  // 无 system → 选择页，禁止默认写成 register
-  if (showLanding.value) return
+  // 无 system → 取消中间页，补齐默认登记系统后进入 Hub
+  if (showLanding.value) {
+    router.replace({
+      path: '/exchange/ingestion',
+      query: {
+        ...route.query,
+        system: 'register',
+        module: DEFAULT_MODULE.register,
+        tab: undefined,
+      },
+    })
+    return
+  }
 
   const resolved = resolveIngestionNav(route.query as Record<string, unknown>)
   system.value = resolved.system
@@ -219,8 +232,7 @@ onUnmounted(() => {
 </script>
 
 <template>
-  <IngestionLandingView v-if="showLanding" />
-  <div v-else class="ingestion-hub" :key="system">
+  <div class="ingestion-hub" :key="system">
     <PageHeader :title="pageTitle" :description="pageDesc">
       <button type="button" class="hub-back" @click="router.push('/dashboard')">
         返回总览

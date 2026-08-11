@@ -36,36 +36,32 @@ public class QualityRuleService {
 
     public List<Map<String, Object>> listWithConfig() {
         List<GovQualityRule> rules = ruleMapper.selectList(new LambdaQueryWrapper<GovQualityRule>()
-                .orderByDesc(GovQualityRule::getId));
+                .orderByAsc(GovQualityRule::getSortNo)
+                .orderByAsc(GovQualityRule::getId));
         List<Map<String, Object>> out = new ArrayList<>();
         for (GovQualityRule rule : rules) {
-            Map<String, Object> row = new LinkedHashMap<>();
-            row.put("id", rule.getId());
-            row.put("ruleCode", rule.getRuleCode());
-            row.put("ruleName", rule.getRuleName());
-            row.put("ruleType", rule.getRuleType());
-            row.put("orgId", rule.getOrgId());
-            row.put("status", rule.getStatus());
-            row.put("createdBy", rule.getCreatedBy());
-            row.put("createdAt", rule.getCreatedAt());
-            row.put("config", findConfig(rule.getId()));
-            out.add(row);
+            out.add(toRow(rule));
         }
         return out;
     }
 
     public Map<String, Object> get(Long id) {
-        GovQualityRule rule = requireRule(id);
+        return toRow(requireRule(id));
+    }
+
+    private Map<String, Object> toRow(GovQualityRule rule) {
         Map<String, Object> row = new LinkedHashMap<>();
         row.put("id", rule.getId());
         row.put("ruleCode", rule.getRuleCode());
         row.put("ruleName", rule.getRuleName());
         row.put("ruleType", rule.getRuleType());
+        row.put("sortNo", rule.getSortNo() != null ? rule.getSortNo() : 0);
+        row.put("description", rule.getDescription());
         row.put("orgId", rule.getOrgId());
         row.put("status", rule.getStatus());
         row.put("createdBy", rule.getCreatedBy());
         row.put("createdAt", rule.getCreatedAt());
-        row.put("config", findConfig(id));
+        row.put("config", findConfig(rule.getId()));
         return row;
     }
 
@@ -75,10 +71,14 @@ public class QualityRuleService {
         if (name == null) {
             throw new BusinessException(400, "规则名称不能为空");
         }
+        String code = str(body.get("ruleCode"), "QR_" + UUID.randomUUID().toString().substring(0, 8));
+        ensureCodeUnique(code, null);
         GovQualityRule rule = new GovQualityRule();
-        rule.setRuleCode(str(body.get("ruleCode"), "QR_" + UUID.randomUUID().toString().substring(0, 8)));
+        rule.setRuleCode(code);
         rule.setRuleName(name);
         rule.setRuleType(str(body.get("ruleType"), "COMPLETENESS"));
+        rule.setSortNo(toInt(body.get("sortNo"), nextSortNo()));
+        rule.setDescription(str(body.get("description"), null));
         if (operator != null) {
             rule.setOrgId(operator.getOrgId());
             rule.setCreatedBy(operator.getUsername());
@@ -89,6 +89,54 @@ public class QualityRuleService {
         ruleMapper.insert(rule);
         log.info("quality rule created id={} code={}", rule.getId(), rule.getRuleCode());
         return rule.getId();
+    }
+
+    /** 对照旧页：支持修改排序 / 名称 / 描述（编码创建后不可改） */
+    @Transactional
+    public void update(UserPrincipal operator, Long id, Map<String, Object> body) {
+        GovQualityRule rule = requireRule(id);
+        String name = str(body.get("ruleName"), null);
+        if (name == null) {
+            throw new BusinessException(400, "规则名称不能为空");
+        }
+        rule.setRuleName(name);
+        if (body.containsKey("ruleType")) {
+            rule.setRuleType(str(body.get("ruleType"), rule.getRuleType()));
+        }
+        if (body.containsKey("sortNo")) {
+            rule.setSortNo(toInt(body.get("sortNo"), rule.getSortNo() != null ? rule.getSortNo() : 0));
+        }
+        if (body.containsKey("description")) {
+            rule.setDescription(str(body.get("description"), null));
+        }
+        if (body.containsKey("status")) {
+            rule.setStatus(str(body.get("status"), rule.getStatus()));
+        }
+        rule.setUpdatedAt(LocalDateTime.now());
+        ruleMapper.updateById(rule);
+        log.info("quality rule updated id={} by={}", id, operator != null ? operator.getUsername() : null);
+    }
+
+    private int nextSortNo() {
+        List<GovQualityRule> all = ruleMapper.selectList(new LambdaQueryWrapper<GovQualityRule>()
+                .orderByDesc(GovQualityRule::getSortNo)
+                .last("LIMIT 1"));
+        if (all.isEmpty() || all.get(0).getSortNo() == null) {
+            return 1;
+        }
+        return all.get(0).getSortNo() + 1;
+    }
+
+    private void ensureCodeUnique(String code, Long excludeId) {
+        LambdaQueryWrapper<GovQualityRule> q = new LambdaQueryWrapper<GovQualityRule>()
+                .eq(GovQualityRule::getRuleCode, code);
+        if (excludeId != null) {
+            q.ne(GovQualityRule::getId, excludeId);
+        }
+        Long cnt = ruleMapper.selectCount(q);
+        if (cnt != null && cnt > 0) {
+            throw new BusinessException(400, "规则编码已存在: " + code);
+        }
     }
 
     public GovQualityRuleConfig getConfig(Long ruleId) {
@@ -184,6 +232,17 @@ public class QualityRuleService {
             return new BigDecimal(String.valueOf(v));
         } catch (Exception e) {
             throw new BusinessException(400, "threshold 格式无效");
+        }
+    }
+
+    private static int toInt(Object v, int defaultVal) {
+        if (v == null || String.valueOf(v).isBlank()) {
+            return defaultVal;
+        }
+        try {
+            return Integer.parseInt(String.valueOf(v).trim());
+        } catch (Exception e) {
+            throw new BusinessException(400, "排序须为整数");
         }
     }
 }
