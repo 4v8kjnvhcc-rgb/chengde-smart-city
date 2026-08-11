@@ -660,7 +660,9 @@ public class KettleExecuteService {
             return "。请检查：①输入/输出库地址：Carte 内不可用 localhost，须经 host-map 译为 host.docker.internal；"
                     + "②过滤「否」勿连回自身；"
                     + "③输入/输出已选真实数据源与表名；"
-                    + "④过滤字段、去重键为源表真实列名";
+                    + "④过滤字段、去重键为源表真实列名；"
+                    + "⑤合并须两路入边（生成 Append）；画布上未连线的横连接/聚合勿残留，"
+                    + "否则空 MergeJoin 会导致 initialize 失败";
         }
         if (m.contains("communications link failure") || m.contains("error connecting to database")) {
             return "。Carte 连不上目标库：确认宿主机 MySQL 在听 3306、KTR 连接为 host.docker.internal，"

@@ -51,6 +51,8 @@ public class IntegrationProperties {
 
     public static class DolphinScheduler {
         private String url = "http://localhost:12345/dolphinscheduler";
+        /** 浏览器可达的 DS 基址（外链打开 UI）；默认与 url 相同，Docker 内网场景请单独配 DS_UI_BASE */
+        private String uiBase = "";
         private String user = "admin";
         private String password = "dolphinscheduler123";
         private String token = "";
@@ -61,6 +63,8 @@ public class IntegrationProperties {
         private String callbackToken = "";
         public String getUrl() { return url; }
         public void setUrl(String url) { this.url = url; }
+        public String getUiBase() { return uiBase; }
+        public void setUiBase(String uiBase) { this.uiBase = uiBase; }
         public String getUser() { return user; }
         public void setUser(String user) { this.user = user; }
         public String getPassword() { return password; }
@@ -73,6 +77,17 @@ public class IntegrationProperties {
         public void setCallbackBaseUrl(String callbackBaseUrl) { this.callbackBaseUrl = callbackBaseUrl; }
         public String getCallbackToken() { return callbackToken; }
         public void setCallbackToken(String callbackToken) { this.callbackToken = callbackToken; }
+
+        /** 浏览器打开 DS UI 用的基址 */
+        public String resolveUiBase() {
+            if (uiBase != null && !uiBase.isBlank()) {
+                return uiBase.endsWith("/") ? uiBase.substring(0, uiBase.length() - 1) : uiBase;
+            }
+            if (url == null || url.isBlank()) {
+                return "http://localhost:12345/dolphinscheduler";
+            }
+            return url.endsWith("/") ? url.substring(0, url.length() - 1) : url;
+        }
     }
 
     public static class Kettle {

@@ -7,8 +7,12 @@ import java.sql.DriverManager;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
+import java.util.ArrayList;
+import java.util.HashSet;
+import java.util.List;
 import java.util.Locale;
 import java.util.Objects;
+import java.util.Set;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import org.slf4j.Logger;
@@ -148,6 +152,83 @@ public class LayerJdbcSupport {
             return false;
         }
     }
+
+    /**
+     * 目标表已存在但缺列时，按源表补齐（仅 ADD COLUMN，不改类型/不删列）。
+     * @return 新增列数量
+     */
+    public int syncMissingColumns(String sourceDb, String sourceTable, String targetDb, String targetTable)
+            throws SQLException {
+        String srcD = normalizeDatabase(sourceDb);
+        String tgtD = normalizeDatabase(targetDb);
+        String srcT = sanitizeIdent(sourceTable);
+        String tgtT = sanitizeIdent(targetTable);
+        List<ColDef> sourceCols = listColumnDefs(srcD, srcT);
+        if (sourceCols.isEmpty()) {
+            return 0;
+        }
+        Set<String> existing = new HashSet<>();
+        try (Connection tgt = open(tgtD);
+             ResultSet rs = tgt.getMetaData().getColumns(tgtD, null, tgtT, null)) {
+            while (rs.next()) {
+                existing.add(rs.getString("COLUMN_NAME").toLowerCase(Locale.ROOT));
+            }
+        }
+        int added = 0;
+        try (Connection tgt = open(tgtD); Statement st = tgt.createStatement()) {
+            String q = DataLayerSupport.qualify(tgtD, tgtT);
+            for (ColDef col : sourceCols) {
+                if (existing.contains(col.name().toLowerCase(Locale.ROOT))) {
+                    continue;
+                }
+                st.execute("ALTER TABLE " + q + " ADD COLUMN `" + col.name() + "` " + col.typeSql());
+                added++;
+            }
+        }
+        return added;
+    }
+
+    private List<ColDef> listColumnDefs(String database, String table) throws SQLException {
+        List<ColDef> cols = new ArrayList<>();
+        try (Connection conn = open(database);
+             Statement st = conn.createStatement();
+             ResultSet rs = st.executeQuery("SHOW COLUMNS FROM " + DataLayerSupport.qualify(database, table))) {
+            while (rs.next()) {
+                String name = rs.getString("Field");
+                String type = rs.getString("Type");
+                String nullable = rs.getString("Null");
+                String def = rs.getString("Default");
+                String extra = rs.getString("Extra");
+                if (name == null || type == null) continue;
+                // 跳过目标侧自带的 auto_increment，避免重复主键冲突；若目标已有同名列则上面会跳过
+                StringBuilder typeSql = new StringBuilder(type);
+                if ("NO".equalsIgnoreCase(nullable)) {
+                    typeSql.append(" NOT NULL");
+                } else {
+                    typeSql.append(" NULL");
+                }
+                if (def != null) {
+                    // 函数默认值（如 CURRENT_TIMESTAMP）不加引号
+                    if (def.equalsIgnoreCase("CURRENT_TIMESTAMP")
+                            || def.toUpperCase(Locale.ROOT).startsWith("CURRENT_TIMESTAMP")) {
+                        typeSql.append(" DEFAULT ").append(def);
+                    } else {
+                        typeSql.append(" DEFAULT '").append(def.replace("'", "''")).append("'");
+                    }
+                } else if ("YES".equalsIgnoreCase(nullable)) {
+                    // keep NULL
+                }
+                if (extra != null && !extra.isBlank()
+                        && !extra.toLowerCase(Locale.ROOT).contains("auto_increment")) {
+                    typeSql.append(' ').append(extra);
+                }
+                cols.add(new ColDef(name, typeSql.toString()));
+            }
+        }
+        return cols;
+    }
+
+    private record ColDef(String name, String typeSql) {}
 
     public static boolean tableExists(Connection conn, String db, String table) throws SQLException {
         try (ResultSet rs = conn.getMetaData().getTables(db, null, table, new String[]{"TABLE"})) {

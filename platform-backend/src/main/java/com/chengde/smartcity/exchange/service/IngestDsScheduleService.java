@@ -156,6 +156,15 @@ public class IngestDsScheduleService {
         return result;
     }
 
+    /** 门户编排页只读预览：将写入 DS SHELL 的回调脚本。 */
+    public String previewTriggerScript(Long taskId) {
+        return buildTriggerScript(taskId);
+    }
+
+    public String suggestedDefinitionName(IngIngestTask task) {
+        return "库表汇聚_" + safeName(task.getTaskName()) + "_" + task.getId();
+    }
+
     private String buildTriggerScript(Long taskId) {
         String base = integrationProperties.getDs().getCallbackBaseUrl();
         if (base == null || base.isBlank()) {

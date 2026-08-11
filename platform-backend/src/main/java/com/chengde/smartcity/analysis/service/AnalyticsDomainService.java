@@ -6,11 +6,17 @@ import com.chengde.smartcity.analysis.entity.AnaDomainModule;
 import com.chengde.smartcity.analysis.entity.AnaIndicator;
 import com.chengde.smartcity.analysis.entity.AnaModelIndicator;
 import com.chengde.smartcity.analysis.entity.AnaModelSample;
+import com.chengde.smartcity.analysis.entity.AnaPopBatchLedger;
+import com.chengde.smartcity.analysis.entity.AnaPopServiceContract;
+import com.chengde.smartcity.analysis.entity.AnaPopVerifyLedger;
 import com.chengde.smartcity.analysis.entity.AnaZoneBinding;
 import com.chengde.smartcity.analysis.mapper.AnaAnalysisModelMapper;
 import com.chengde.smartcity.analysis.mapper.AnaDomainModuleMapper;
 import com.chengde.smartcity.analysis.mapper.AnaIndicatorMapper;
 import com.chengde.smartcity.analysis.mapper.AnaModelIndicatorMapper;
+import com.chengde.smartcity.analysis.mapper.AnaPopBatchLedgerMapper;
+import com.chengde.smartcity.analysis.mapper.AnaPopServiceContractMapper;
+import com.chengde.smartcity.analysis.mapper.AnaPopVerifyLedgerMapper;
 import com.chengde.smartcity.analysis.mapper.AnaZoneBindingMapper;
 import com.chengde.smartcity.audit.AuditService;
 import com.chengde.smartcity.common.exception.BusinessException;
@@ -53,6 +59,9 @@ public class AnalyticsDomainService {
     private final AnaIndicatorMapper indicatorMapper;
     private final AnaIndicatorQueryMapper indicatorQueryMapper;
     private final AnaModelIndicatorMapper modelIndicatorMapper;
+    private final AnaPopVerifyLedgerMapper popVerifyLedgerMapper;
+    private final AnaPopServiceContractMapper popServiceContractMapper;
+    private final AnaPopBatchLedgerMapper popBatchLedgerMapper;
     private final GovMetadataRegistryMapper registryMapper;
     private final RcManagedTableMapper managedTableMapper;
     private final GovCatalogResourceMapper catalogResourceMapper;
@@ -68,6 +77,9 @@ public class AnalyticsDomainService {
                                   AnaIndicatorMapper indicatorMapper,
                                   AnaIndicatorQueryMapper indicatorQueryMapper,
                                   AnaModelIndicatorMapper modelIndicatorMapper,
+                                  AnaPopVerifyLedgerMapper popVerifyLedgerMapper,
+                                  AnaPopServiceContractMapper popServiceContractMapper,
+                                  AnaPopBatchLedgerMapper popBatchLedgerMapper,
                                   GovMetadataRegistryMapper registryMapper,
                                   RcManagedTableMapper managedTableMapper,
                                   GovCatalogResourceMapper catalogResourceMapper,
@@ -82,6 +94,9 @@ public class AnalyticsDomainService {
         this.indicatorMapper = indicatorMapper;
         this.indicatorQueryMapper = indicatorQueryMapper;
         this.modelIndicatorMapper = modelIndicatorMapper;
+        this.popVerifyLedgerMapper = popVerifyLedgerMapper;
+        this.popServiceContractMapper = popServiceContractMapper;
+        this.popBatchLedgerMapper = popBatchLedgerMapper;
         this.registryMapper = registryMapper;
         this.managedTableMapper = managedTableMapper;
         this.catalogResourceMapper = catalogResourceMapper;
@@ -721,6 +736,213 @@ public class AnalyticsDomainService {
         }
         auditService.log(operator.getUserId(), operator.getUsername(), operator.getOrgId(),
                 "ANA_MODEL_DESIGN", model.getDomainCode(), model.getModelCode(), model.getModelName());
+    }
+
+    // ---------- 人口校核台账 / 服务契约（LEDGER） ----------
+
+    public List<AnaPopVerifyLedger> listPopVerifyLedger(String domain, String mCode) {
+        String d = normalizeDomain(domain);
+        if (!"population".equals(d)) {
+            throw new BusinessException(400, "校核台账仅支持人口域");
+        }
+        LambdaQueryWrapper<AnaPopVerifyLedger> q = new LambdaQueryWrapper<AnaPopVerifyLedger>()
+                .eq(AnaPopVerifyLedger::getDomainCode, d)
+                .orderByDesc(AnaPopVerifyLedger::getId);
+        if (mCode != null && !mCode.isBlank()) {
+            q.eq(AnaPopVerifyLedger::getMCode, mCode.trim().toUpperCase(Locale.ROOT));
+        }
+        return popVerifyLedgerMapper.selectList(q);
+    }
+
+    @Transactional
+    public Long createPopVerifyLedger(UserPrincipal operator, String domain, Map<String, Object> body) {
+        String d = normalizeDomain(domain);
+        if (!"population".equals(d)) {
+            throw new BusinessException(400, "校核台账仅支持人口域");
+        }
+        String mCode = String.valueOf(required(body.get("mCode"), "mCode")).toUpperCase(Locale.ROOT);
+        if (!"M155".equals(mCode) && !"M156".equals(mCode)) {
+            throw new BusinessException(400, "mCode 须为 M155 或 M156");
+        }
+        AnaPopVerifyLedger row = new AnaPopVerifyLedger();
+        row.setDomainCode(d);
+        row.setMCode(mCode);
+        row.setSceneCode(String.valueOf(required(body.get("sceneCode"), "sceneCode")));
+        row.setSceneName(String.valueOf(required(body.get("sceneName"), "sceneName")));
+        row.setCheckType(str(body.get("checkType"), "MULTI_SOURCE"));
+        row.setSourceDept(str(body.get("sourceDept"), null));
+        row.setIssueSummary(str(body.get("issueSummary"), null));
+        row.setFeedbackStatus(str(body.get("feedbackStatus"), "OPEN"));
+        row.setRelatedPersonId(str(body.get("relatedPersonId"), null));
+        row.setStatus("LEDGER");
+        row.setCreatedBy(operator.getUsername());
+        row.setCreatedAt(LocalDateTime.now());
+        popVerifyLedgerMapper.insert(row);
+        auditService.log(operator.getUserId(), operator.getUsername(), operator.getOrgId(),
+                "ANA_POP_VERIFY_CREATE", d, row.getSceneCode(), row.getSceneName());
+        return row.getId();
+    }
+
+    @Transactional
+    public void updatePopVerifyFeedback(UserPrincipal operator, Long id, Map<String, Object> body) {
+        AnaPopVerifyLedger row = popVerifyLedgerMapper.selectById(id);
+        if (row == null) throw new BusinessException(404, "校核台账不存在");
+        String fs = str(body.get("feedbackStatus"), row.getFeedbackStatus());
+        if (!Set.of("OPEN", "FEEDBACK", "CLOSED").contains(fs)) {
+            throw new BusinessException(400, "feedbackStatus 须为 OPEN|FEEDBACK|CLOSED");
+        }
+        row.setFeedbackStatus(fs);
+        if (body.containsKey("issueSummary")) {
+            row.setIssueSummary(str(body.get("issueSummary"), null));
+        }
+        row.setUpdatedAt(LocalDateTime.now());
+        popVerifyLedgerMapper.updateById(row);
+        auditService.log(operator.getUserId(), operator.getUsername(), operator.getOrgId(),
+                "ANA_POP_VERIFY_FEEDBACK", row.getDomainCode(), String.valueOf(id), fs);
+    }
+
+    public List<AnaPopServiceContract> listPopServiceContracts(String domain) {
+        String d = normalizeDomain(domain);
+        if (!"population".equals(d)) {
+            throw new BusinessException(400, "服务契约仅支持人口域");
+        }
+        return popServiceContractMapper.selectList(new LambdaQueryWrapper<AnaPopServiceContract>()
+                .eq(AnaPopServiceContract::getDomainCode, d)
+                .orderByAsc(AnaPopServiceContract::getMCode)
+                .orderByAsc(AnaPopServiceContract::getId));
+    }
+
+    @Transactional
+    public Map<String, Object> invokePopService(UserPrincipal operator, String domain, String serviceCode,
+                                                Map<String, Object> body) {
+        String d = normalizeDomain(domain);
+        if (!"population".equals(d)) {
+            throw new BusinessException(400, "服务契约仅支持人口域");
+        }
+        AnaPopServiceContract c = popServiceContractMapper.selectOne(new LambdaQueryWrapper<AnaPopServiceContract>()
+                .eq(AnaPopServiceContract::getDomainCode, d)
+                .eq(AnaPopServiceContract::getServiceCode, serviceCode));
+        if (c == null) throw new BusinessException(404, "服务契约不存在");
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("serviceCode", c.getServiceCode());
+        out.put("serviceName", c.getServiceName());
+        out.put("mCode", c.getMCode());
+        out.put("mode", "LEDGER");
+        out.put("message", "LEDGER 试调：已返回契约样例响应，未连接真实 ESB/批量通道");
+        out.put("request", body == null ? Map.of() : body);
+        out.put("responseSample", c.getResponseSample());
+        if ("BATCH".equalsIgnoreCase(c.getMode())) {
+            String batchCode = "BATCH-POP-" + System.currentTimeMillis();
+            AnaPopBatchLedger batch = new AnaPopBatchLedger();
+            batch.setDomainCode(d);
+            batch.setBatchCode(batchCode);
+            batch.setServiceCode(c.getServiceCode());
+            batch.setChannel(c.getPathOrChannel());
+            batch.setTableName(str(body == null ? null : body.get("table"), "dws_population_base"));
+            Object lim = body == null ? null : body.get("rowLimit");
+            batch.setRowLimit(lim instanceof Number n ? n.intValue() : 1000);
+            batch.setBatchStatus("ACCEPTED");
+            batch.setMessage("LEDGER：批量试调已登记，未执行真实前置交换");
+            batch.setStatus("LEDGER");
+            batch.setCreatedBy(operator.getUsername());
+            batch.setCreatedAt(LocalDateTime.now());
+            popBatchLedgerMapper.insert(batch);
+            out.put("batchCode", batchCode);
+            out.put("batchId", batch.getId());
+            out.put("batchStatus", batch.getBatchStatus());
+        }
+        auditService.log(operator.getUserId(), operator.getUsername(), operator.getOrgId(),
+                "ANA_POP_SERVICE_INVOKE", d, serviceCode, c.getMode());
+        return out;
+    }
+
+    public List<AnaPopBatchLedger> listPopBatchLedger(String domain) {
+        String d = normalizeDomain(domain);
+        if (!"population".equals(d)) {
+            throw new BusinessException(400, "批量台账仅支持人口域");
+        }
+        return popBatchLedgerMapper.selectList(new LambdaQueryWrapper<AnaPopBatchLedger>()
+                .eq(AnaPopBatchLedger::getDomainCode, d)
+                .orderByDesc(AnaPopBatchLedger::getId));
+    }
+
+    @Transactional
+    public Long createPopBatchLedger(UserPrincipal operator, String domain, Map<String, Object> body) {
+        String d = normalizeDomain(domain);
+        if (!"population".equals(d)) {
+            throw new BusinessException(400, "批量台账仅支持人口域");
+        }
+        String batchCode = str(body.get("batchCode"), "BATCH-POP-" + System.currentTimeMillis());
+        AnaPopBatchLedger row = new AnaPopBatchLedger();
+        row.setDomainCode(d);
+        row.setBatchCode(batchCode);
+        row.setServiceCode(str(body.get("serviceCode"), "POP_BATCH_EXCHANGE"));
+        row.setChannel(str(body.get("channel"), "前置库 ↔ 交换系统 ↔ 共享结果库"));
+        row.setTableName(str(body.get("tableName"), "dws_population_base"));
+        Object lim = body.get("rowLimit");
+        row.setRowLimit(lim instanceof Number n ? n.intValue() : 1000);
+        row.setBatchStatus(str(body.get("batchStatus"), "OPEN"));
+        row.setMessage(str(body.get("message"), "LEDGER 登记"));
+        row.setStatus("LEDGER");
+        row.setCreatedBy(operator.getUsername());
+        row.setCreatedAt(LocalDateTime.now());
+        popBatchLedgerMapper.insert(row);
+        auditService.log(operator.getUserId(), operator.getUsername(), operator.getOrgId(),
+                "ANA_POP_BATCH_CREATE", d, batchCode, row.getBatchStatus());
+        return row.getId();
+    }
+
+    @Transactional
+    public void updatePopBatchStatus(UserPrincipal operator, Long id, Map<String, Object> body) {
+        AnaPopBatchLedger row = popBatchLedgerMapper.selectById(id);
+        if (row == null) throw new BusinessException(404, "批量台账不存在");
+        String st = str(body.get("batchStatus"), row.getBatchStatus());
+        if (!Set.of("OPEN", "ACCEPTED", "DONE", "FAILED").contains(st)) {
+            throw new BusinessException(400, "batchStatus 须为 OPEN|ACCEPTED|DONE|FAILED");
+        }
+        row.setBatchStatus(st);
+        if (body.containsKey("message")) {
+            row.setMessage(str(body.get("message"), null));
+        }
+        row.setUpdatedAt(LocalDateTime.now());
+        popBatchLedgerMapper.updateById(row);
+        auditService.log(operator.getUserId(), operator.getUsername(), operator.getOrgId(),
+                "ANA_POP_BATCH_STATUS", row.getDomainCode(), String.valueOf(id), st);
+    }
+
+    /** 人口核心区存储/分区设计摘要（只读 LEDGER，不执行 DDL） */
+    public Map<String, Object> populationStorageSummary(String domain) {
+        String d = normalizeDomain(domain);
+        if (!"population".equals(d)) {
+            throw new BusinessException(400, "存储摘要仅支持人口域");
+        }
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("mode", "LEDGER");
+        out.put("message", "预检/策略台账 ≠ 已物理分区；真正 ALTER 属运维窗口");
+        try {
+            List<Map<String, Object>> defs = jdbcTemplate.queryForList(
+                    "SELECT id, partition_code AS partitionCode, partition_name AS partitionName, partition_type AS partitionType, "
+                            + "table_name AS tableName, partition_column AS partitionColumn, pretest_status AS pretestStatus, "
+                            + "pretest_message AS pretestMessage FROM rc_partition_def "
+                            + "WHERE table_name IN ('dws_population_base','ads_pop_district_summary') OR partition_code LIKE 'PART_POP%' "
+                            + "ORDER BY id DESC");
+            out.put("partitions", defs);
+            List<Map<String, Object>> ops = jdbcTemplate.queryForList(
+                    "SELECT id, physical_table AS physicalTable, op_type AS opType, op_status AS opStatus, message, created_at AS createdAt "
+                            + "FROM rc_partition_op WHERE physical_table IN ('dws_population_base','ads_pop_district_summary') "
+                            + "ORDER BY id DESC LIMIT 20");
+            out.put("ops", ops);
+            List<Map<String, Object>> managed = jdbcTemplate.queryForList(
+                    "SELECT id, physical_table AS physicalTable, meta_entry_code AS metaEntryCode, record_count AS recordCount, status "
+                            + "FROM rc_managed_table WHERE physical_table IN ('dws_population_base','ads_pop_district_summary')");
+            out.put("managedTables", managed);
+        } catch (Exception e) {
+            out.put("partitions", List.of());
+            out.put("ops", List.of());
+            out.put("managedTables", List.of());
+            out.put("hint", "资源中心表尚未就绪或 V190 未执行：" + e.getMessage());
+        }
+        return out;
     }
 
     private List<AnaIndicator> listIndicatorsForModel(Long modelId) {

@@ -62,7 +62,8 @@ public class KettleTransConverterService {
             Map.entry("MASK", "ScriptValueMod"),
             Map.entry("OUTPUT", "TableOutput"),
             Map.entry("JOIN", "MergeJoin"),
-            Map.entry("UNION", "Union"),
+            // 合并：无序多路合流用 Dummy（多 hop 入边）；恰好两路时用 Append（见 generateStepXml）
+            Map.entry("UNION", "Dummy"),
             Map.entry("SORT", "SortRows"),
             Map.entry("AGGREGATE", "GroupBy"),
             Map.entry("PIVOT", "Denormaliser"),
@@ -106,6 +107,8 @@ public class KettleTransConverterService {
         m.put("ROWNORMALISER", "UNPIVOT");
         m.put("NORMALISER", "UNPIVOT");
         m.put("DUMMY", "FILTER");
+        m.put("APPEND", "UNION");
+        m.put("UNION", "UNION");
         m.put("TEXTFILEINPUT", "TEXT_INPUT");
         m.put("TEXTFILEOUTPUT", "TEXT_OUTPUT");
         m.put("SPLITFIELD", "SPLIT");
@@ -182,6 +185,27 @@ public class KettleTransConverterService {
                         }
                     } else if (cfg.has("field") && textOr(cfg, "field", "").isBlank()) {
                         return "过滤节点「" + label + "」未配置过滤字段";
+                    }
+                }
+                if ("JOIN".equals(type) || "UNION".equals(type)) {
+                    int inDegree = 0;
+                    if (edges != null && edges.isArray()) {
+                        String nid = n.path("id").asText("");
+                        for (JsonNode e : edges) {
+                            if (nid.equals(e.path("target").asText(""))) {
+                                inDegree++;
+                            }
+                        }
+                    }
+                    if (inDegree == 0) {
+                        // 画布上未连线的孤立节点不参与执行，不阻断
+                        continue;
+                    }
+                    if ("JOIN".equals(type) && inDegree < 2) {
+                        return "横连接「" + label + "」需要左右两路输入，当前入边数=" + inDegree;
+                    }
+                    if ("UNION".equals(type) && inDegree < 2) {
+                        return "合并「" + label + "」至少需要两路输入，当前入边数=" + inDegree;
                     }
                 }
                 if ("INPUT".equals(type)) {
@@ -316,7 +340,14 @@ public class KettleTransConverterService {
             // FILTER / SWITCH：把出口目标步写回步骤配置（基于边角色）
             enrichBranchTargets(graph);
 
+            // 仅输出有边相连的节点，避免孤立 MergeJoin/GroupBy 初始化失败
+            Set<String> connected = connectedNodeIds(graph);
             for (NodeDef node : graph.nodes.values()) {
+                if (!connected.contains(node.id)) {
+                    log.warn("skip orphan node {} ({}) when generating KTR", node.id,
+                            node.data != null ? node.data.nodeType : "?");
+                    continue;
+                }
                 xml.append(generateStepXml(node, graph));
             }
 
@@ -352,31 +383,53 @@ public class KettleTransConverterService {
         }
     }
 
-    /** 取拓扑中入度为 0 的首个节点作为 start（与汇聚 KTR 一致） */
+    /** 取拓扑中入度为 0 的首个已连线节点作为 start（与汇聚 KTR 一致） */
     private String firstStepLabel(GraphModel graph) {
         if (graph.nodes.isEmpty()) return null;
-        java.util.Set<String> targets = new java.util.HashSet<>();
+        Set<String> connected = connectedNodeIds(graph);
+        if (connected.isEmpty()) {
+            return stepNameOf(graph.nodes.values().iterator().next());
+        }
+        Set<String> targets = new HashSet<>();
         for (EdgeDef e : graph.edges) {
             if (e.target != null) targets.add(e.target);
         }
+        // 优先 INPUT
         for (NodeDef n : graph.nodes.values()) {
-            if (!targets.contains(n.id)) {
+            if (!connected.contains(n.id) || targets.contains(n.id)) continue;
+            if (n.data != null && "INPUT".equals(n.data.nodeType)) {
                 return stepNameOf(n);
             }
         }
-        return stepNameOf(graph.nodes.values().iterator().next());
+        for (NodeDef n : graph.nodes.values()) {
+            if (connected.contains(n.id) && !targets.contains(n.id)) {
+                return stepNameOf(n);
+            }
+        }
+        return stepNameOf(graph.nodes.get(connected.iterator().next()));
     }
 
-    /** 画布节点数（用于与 Carte step 数对账） */
+    /** 画布中实际会写入 KTR 的节点数（排除孤立节点，用于与 Carte step 数对账） */
     public int countGraphNodes(String graphJson) {
         if (graphJson == null || graphJson.isBlank()) {
             return 0;
         }
         try {
-            return parseGraph(graphJson).nodes.size();
+            GraphModel g = parseGraph(graphJson);
+            return connectedNodeIds(g).size();
         } catch (Exception e) {
             return 0;
         }
+    }
+
+    /** 至少有一条入边或出边的节点（孤立拖放组件不进 KTR） */
+    private static Set<String> connectedNodeIds(GraphModel graph) {
+        Set<String> ids = new HashSet<>();
+        for (EdgeDef e : graph.edges) {
+            if (e.source != null) ids.add(e.source);
+            if (e.target != null) ids.add(e.target);
+        }
+        return ids;
     }
 
     /** KTR 中 <step> 顶层数量（粗计） */
@@ -520,6 +573,12 @@ public class KettleTransConverterService {
         if ("FILTER".equals(nodeType) && isPassThroughFilter(node.data.config)) {
             kettleType = "Dummy";
         }
+        // 合并：恰好两路输入用 Append（head/tail）；多路用 Dummy 无序合流
+        List<String> unionPreds = null;
+        if ("UNION".equals(nodeType)) {
+            unionPreds = predecessorStepNames(graph, node.id);
+            kettleType = unionPreds.size() == 2 ? "Append" : "Dummy";
+        }
         String label = labelOf(node);
         StringBuilder sb = new StringBuilder();
         sb.append("  <step>\n");
@@ -533,6 +592,10 @@ public class KettleTransConverterService {
         sb.append("    <copies>1</copies>\n");
         if ("Dummy".equals(kettleType) && "FILTER".equals(nodeType)) {
             sb.append("    <!-- pass-through empty FILTER -->\n");
+        } else if ("Dummy".equals(kettleType) && "UNION".equals(nodeType)) {
+            sb.append("    <!-- multi-input union (unordered) -->\n");
+        } else if ("Append".equals(kettleType) && "UNION".equals(nodeType)) {
+            sb.append(cfgUnion(node.data.config, unionPreds != null ? unionPreds : List.of()));
         } else {
             sb.append(generateStepConfig(node, graph));
         }
@@ -560,14 +623,14 @@ public class KettleTransConverterService {
         String nodeType = node.data.nodeType == null ? "" : node.data.nodeType;
         JsonNode cfg = node.data.config;
         return switch (nodeType) {
-            case "INPUT" -> cfgInput(cfg, orderByKeysForInput(node, graph));
+            case "INPUT" -> cfgInput(cfg, orderByKeysForInput(node, graph), node, graph);
             case "OUTPUT", "INSERT_UPDATE" -> cfgOutput(cfg);
             case "FILTER" -> cfgFilter(cfg);
             case "FIELD_PROCESS", "SELECT_FIELDS", "TYPE_CONVERT" -> cfgFieldProcess(cfg);
             case "DEDUPLICATE" -> cfgDeduplicate(cfg);
             case "MASK" -> cfgMask(cfg);
             case "JOIN" -> cfgJoin(cfg, predecessorStepNames(graph, node.id));
-            case "UNION" -> cfgUnion(cfg);
+            case "UNION" -> cfgUnion(cfg, predecessorStepNames(graph, node.id));
             case "SORT" -> cfgSort(cfg);
             case "AGGREGATE" -> cfgAggregate(cfg);
             case "PIVOT" -> cfgPivot(cfg);
@@ -691,7 +754,7 @@ public class KettleTransConverterService {
         }
     }
 
-    private String cfgInput(JsonNode cfg, List<String> orderByKeys) {
+    private String cfgInput(JsonNode cfg, List<String> orderByKeys, NodeDef node, GraphModel graph) {
         String conn = resolveConn(cfg, "connection", "PLATFORM");
         String mode = cfgText(cfg, "inputMode", "TABLE");
         String table = cfgText(cfg, "tableName", "");
@@ -713,7 +776,12 @@ public class KettleTransConverterService {
             if (safeTable.isBlank()) {
                 safeTable = "table_name";
             }
-            sql = "SELECT * FROM `" + safeTable + "`";
+            // 流入「合并」时去掉自增主键，避免多路 UNION 写入目标表时主键冲突
+            if (feedsUnion(node, graph)) {
+                sql = buildSelectWithoutAutoIncrement(conn, safeTable);
+            } else {
+                sql = "SELECT * FROM `" + safeTable + "`";
+            }
             if (orderByKeys != null && !orderByKeys.isEmpty()) {
                 StringBuilder ob = new StringBuilder();
                 for (String k : orderByKeys) {
@@ -751,6 +819,69 @@ public class KettleTransConverterService {
                 + "    <limit>" + limit + "</limit>\n"
                 + "    <variables_active>Y</variables_active>\n"
                 + "    <!-- inputMode=" + escapeXml(mode) + " -->\n";
+    }
+
+    /** 当前输入是否会流入 UNION（直接或经中间节点） */
+    private boolean feedsUnion(NodeDef node, GraphModel graph) {
+        if (node == null || graph == null) {
+            return false;
+        }
+        Set<String> seen = new HashSet<>();
+        ArrayList<String> q = new ArrayList<>();
+        q.add(node.id);
+        while (!q.isEmpty()) {
+            String id = q.remove(0);
+            if (!seen.add(id)) {
+                continue;
+            }
+            for (EdgeDef e : graph.edges) {
+                if (!id.equals(e.source)) {
+                    continue;
+                }
+                NodeDef to = graph.nodes.get(e.target);
+                if (to == null || to.data == null) {
+                    continue;
+                }
+                if ("UNION".equals(to.data.nodeType)) {
+                    return true;
+                }
+                q.add(to.id);
+            }
+        }
+        return false;
+    }
+
+    /** SELECT 显式列并排除 AUTO_INCREMENT，供合并写入时由目标表自增生成主键 */
+    private String buildSelectWithoutAutoIncrement(String connKey, String table) {
+        try {
+            var ep = connectionResolver.resolve(connKey);
+            String db = ep.database();
+            List<String> cols = new ArrayList<>();
+            try (var c = layerJdbc.open(db);
+                 var st = c.createStatement();
+                 var rs = st.executeQuery("SHOW COLUMNS FROM " + DataLayerSupport.qualify(db, table))) {
+                while (rs.next()) {
+                    String name = rs.getString("Field");
+                    String extra = rs.getString("Extra");
+                    if (name == null || name.isBlank()) {
+                        continue;
+                    }
+                    if (extra != null && extra.toLowerCase(Locale.ROOT).contains("auto_increment")) {
+                        continue;
+                    }
+                    String safe = sanitizeIdent(name);
+                    if (!safe.isBlank()) {
+                        cols.add("`" + safe + "`");
+                    }
+                }
+            }
+            if (!cols.isEmpty()) {
+                return "SELECT " + String.join(", ", cols) + " FROM `" + table + "`";
+            }
+        } catch (Exception e) {
+            log.warn("buildSelectWithoutAutoIncrement {}.{} failed: {}", connKey, table, e.getMessage());
+        }
+        return "SELECT * FROM `" + table + "`";
     }
 
     private static boolean isPlaceholderSql(String sql) {
@@ -1452,10 +1583,16 @@ public class KettleTransConverterService {
         return field == null || field.isBlank();
     }
 
-    private String cfgUnion(JsonNode cfg) {
-        // UnionAll in PDI 常为「追加流」步骤；这里写占位元数据
-        return "    <pick_copy>0</pick_copy>\n"
-                + "    <comments>" + escapeXml(cfgText(cfg, "comment", "union all inputs")) + "</comments>\n";
+    /**
+     * Append（追加流）：必须配置 head_name / tail_name，对应两路前驱。
+     * 多路合并请走 Dummy（见 generateStepXml）。
+     */
+    private String cfgUnion(JsonNode cfg, List<String> predecessorSteps) {
+        String head = predecessorSteps.size() > 0 ? predecessorSteps.get(0) : "";
+        String tail = predecessorSteps.size() > 1 ? predecessorSteps.get(1) : "";
+        return "    <head_name>" + escapeXml(head) + "</head_name>\n"
+                + "    <tail_name>" + escapeXml(tail) + "</tail_name>\n"
+                + "    <!-- " + escapeXml(cfgText(cfg, "comment", "append streams")) + " -->\n";
     }
 
     private String cfgSort(JsonNode cfg) {

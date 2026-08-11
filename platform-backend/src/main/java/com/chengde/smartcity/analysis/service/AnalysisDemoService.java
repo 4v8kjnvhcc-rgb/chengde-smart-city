@@ -81,7 +81,18 @@ public class AnalysisDemoService {
         AnaAnalysisModel model = getModel(modelId);
         long count = sampleMapper.selectCount(new LambdaQueryWrapper<AnaModelSample>().eq(AnaModelSample::getModelId, modelId));
         int need = model.getSampleRowCount() == null ? 100 : model.getSampleRowCount();
-        if (count < need) {
+        boolean population = model.getDomainCode() != null
+                && "population".equalsIgnoreCase(model.getDomainCode().trim());
+        boolean stale = false;
+        if (population && count > 0) {
+            AnaModelSample first = sampleMapper.selectOne(new LambdaQueryWrapper<AnaModelSample>()
+                    .eq(AnaModelSample::getModelId, modelId)
+                    .orderByAsc(AnaModelSample::getRowNo)
+                    .last("LIMIT 1"));
+            String d1 = first == null || first.getDim1() == null ? "" : first.getDim1();
+            stale = d1.startsWith("Y202");
+        }
+        if (count < need || stale) {
             ensureSamples(modelId, need);
         }
         return sampleMapper.selectList(new LambdaQueryWrapper<AnaModelSample>()
@@ -91,17 +102,41 @@ public class AnalysisDemoService {
     }
 
     private void ensureSamples(Long modelId, int need) {
+        AnaAnalysisModel model = getModel(modelId);
         sampleMapper.delete(new LambdaQueryWrapper<AnaModelSample>().eq(AnaModelSample::getModelId, modelId));
+        String mCode = model.getMCode() == null ? "" : model.getMCode().trim().toUpperCase();
+        String[] dims = populationDimLabels(mCode);
         for (int i = 1; i <= need; i++) {
             AnaModelSample s = new AnaModelSample();
             s.setModelId(modelId);
             s.setRowNo(i);
-            s.setDim1("Y202" + (i % 5));
-            s.setDim2("R" + (i % 10));
+            s.setDim1(dims[0] + "_" + (i % 8 + 1));
+            s.setDim2(dims[1] + "_" + (i % 6 + 1));
             s.setMetric1(BigDecimal.valueOf(100 + i * 1.7).setScale(2, RoundingMode.HALF_UP));
             s.setMetric2(BigDecimal.valueOf(50 + i * 0.8).setScale(2, RoundingMode.HALF_UP));
             sampleMapper.insert(s);
         }
+    }
+
+    /** 人口十四模型样例维度标签（对齐规格设计卡）；非人口/未知 M 码回落通用标签 */
+    private static String[] populationDimLabels(String mCode) {
+        return switch (mCode) {
+            case "M161" -> new String[]{"区县", "年龄段"};
+            case "M162" -> new String[]{"区县", "年份"};
+            case "M163" -> new String[]{"年龄段", "年份"};
+            case "M164" -> new String[]{"学历", "区县"};
+            case "M165" -> new String[]{"年份", "性别"};
+            case "M166" -> new String[]{"年份", "原因"};
+            case "M167" -> new String[]{"区县", "致贫因"};
+            case "M168" -> new String[]{"类别", "区县"};
+            case "M169" -> new String[]{"残疾类型", "区县"};
+            case "M170" -> new String[]{"区县", "年份"};
+            case "M171" -> new String[]{"区县", "同比期"};
+            case "M172" -> new String[]{"区县", "同比期"};
+            case "M173" -> new String[]{"行政区", "网格"};
+            case "M174" -> new String[]{"学区", "行政区"};
+            default -> new String[]{"维度A", "维度B"};
+        };
     }
 
     public Map<String, Object> domainSummary() {

@@ -40,6 +40,7 @@ app:
       embed-base: ${DE_EMBED_BASE:http://localhost/de}
     ds:
       url: ${DS_URL:http://dolphinscheduler:12345/dolphinscheduler}
+      ui-base: ${DS_UI_BASE:http://10.10.10.51:12345/dolphinscheduler}
       user: ${DS_USER:admin}
       password: ${DS_PASSWORD:dolphinscheduler123}
       token: ${DS_TOKEN:}

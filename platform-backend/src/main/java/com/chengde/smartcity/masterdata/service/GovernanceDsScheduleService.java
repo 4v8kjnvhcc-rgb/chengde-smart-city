@@ -171,6 +171,16 @@ public class GovernanceDsScheduleService {
         return result;
     }
 
+    /** 门户编排页只读预览：将写入 DS SHELL 的回调脚本。 */
+    public String previewTriggerScript(Long taskId) {
+        return buildTriggerScript(taskId);
+    }
+
+    public String suggestedDefinitionName(GovGovernanceTask task) {
+        String domain = task.getTaskDomain() == null ? "GOVERNANCE" : task.getTaskDomain();
+        return domain + "_" + safeName(task.getTaskName()) + "_" + task.getId();
+    }
+
     private String buildTriggerScript(Long taskId) {
         String base = integrationProperties.getDs().getCallbackBaseUrl();
         if (base == null || base.isBlank()) {

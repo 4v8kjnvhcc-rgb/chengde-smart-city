@@ -8,6 +8,7 @@ import { useRoute, useRouter } from 'vue-router'
 import GovernanceEtlPanel from '../etl/GovernanceEtlPanel.vue'
 
 const FusionScriptView = defineAsyncComponent(() => import('./FusionScriptView.vue'))
+const FusionDsWorkflowComposerView = defineAsyncComponent(() => import('./FusionDsWorkflowComposerView.vue'))
 const DirectShareGoldenPathView = defineAsyncComponent(() => import('../DirectShareGoldenPathView.vue'))
 const ProcessedShareGoldenPathView = defineAsyncComponent(() => import('../ProcessedShareGoldenPathView.vue'))
 
@@ -63,6 +64,8 @@ const taskId = computed(() => props.etlTaskId ?? null)
 <template>
   <div class="fusion-cap-host">
     <FusionScriptView v-if="capability === 'script' || capability === 'version'" embedded />
+
+    <FusionDsWorkflowComposerView v-else-if="capability === 'schedule1'" />
 
     <GovernanceEtlPanel
       v-else-if="capability === 'clean' || capability === 'schedule'"

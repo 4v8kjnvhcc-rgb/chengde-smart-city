@@ -2,6 +2,9 @@ package com.chengde.smartcity.analysis.controller;
 
 import com.chengde.smartcity.analysis.entity.AnaIndicator;
 import com.chengde.smartcity.analysis.entity.AnaModelSample;
+import com.chengde.smartcity.analysis.entity.AnaPopBatchLedger;
+import com.chengde.smartcity.analysis.entity.AnaPopServiceContract;
+import com.chengde.smartcity.analysis.entity.AnaPopVerifyLedger;
 import com.chengde.smartcity.analysis.entity.AnaZoneBinding;
 import com.chengde.smartcity.analysis.service.AnalyticsDomainService;
 import com.chengde.smartcity.common.api.ApiResponse;
@@ -165,5 +168,73 @@ public class AnalyticsDomainController {
     public ApiResponse<Map<String, Object>> modelEmbed(@AuthenticationPrincipal UserPrincipal principal,
                                                        @PathVariable Long id) {
         return ApiResponse.ok(service.issueModelEmbedById(principal, id));
+    }
+
+    @GetMapping("/{domain}/verify-ledger")
+    @PreAuthorize("isAuthenticated()")
+    public ApiResponse<List<AnaPopVerifyLedger>> verifyLedger(@PathVariable String domain,
+                                                              @org.springframework.web.bind.annotation.RequestParam(required = false) String mCode) {
+        return ApiResponse.ok(service.listPopVerifyLedger(domain, mCode));
+    }
+
+    @PostMapping("/{domain}/verify-ledger")
+    @PreAuthorize("isAuthenticated()")
+    public ApiResponse<Long> createVerifyLedger(@AuthenticationPrincipal UserPrincipal principal,
+                                                @PathVariable String domain,
+                                                @RequestBody Map<String, Object> body) {
+        return ApiResponse.ok(service.createPopVerifyLedger(principal, domain, body));
+    }
+
+    @PutMapping("/verify-ledger/{id}/feedback")
+    @PreAuthorize("isAuthenticated()")
+    public ApiResponse<Void> updateVerifyFeedback(@AuthenticationPrincipal UserPrincipal principal,
+                                                  @PathVariable Long id,
+                                                  @RequestBody Map<String, Object> body) {
+        service.updatePopVerifyFeedback(principal, id, body);
+        return ApiResponse.ok(null);
+    }
+
+    @GetMapping("/{domain}/services")
+    @PreAuthorize("isAuthenticated()")
+    public ApiResponse<List<AnaPopServiceContract>> popServices(@PathVariable String domain) {
+        return ApiResponse.ok(service.listPopServiceContracts(domain));
+    }
+
+    @PostMapping("/{domain}/services/{serviceCode}/invoke")
+    @PreAuthorize("isAuthenticated()")
+    public ApiResponse<Map<String, Object>> invokePopService(@AuthenticationPrincipal UserPrincipal principal,
+                                                             @PathVariable String domain,
+                                                             @PathVariable String serviceCode,
+                                                             @RequestBody(required = false) Map<String, Object> body) {
+        return ApiResponse.ok(service.invokePopService(principal, domain, serviceCode, body));
+    }
+
+    @GetMapping("/{domain}/batch-ledger")
+    @PreAuthorize("isAuthenticated()")
+    public ApiResponse<List<AnaPopBatchLedger>> batchLedger(@PathVariable String domain) {
+        return ApiResponse.ok(service.listPopBatchLedger(domain));
+    }
+
+    @PostMapping("/{domain}/batch-ledger")
+    @PreAuthorize("isAuthenticated()")
+    public ApiResponse<Long> createBatchLedger(@AuthenticationPrincipal UserPrincipal principal,
+                                               @PathVariable String domain,
+                                               @RequestBody Map<String, Object> body) {
+        return ApiResponse.ok(service.createPopBatchLedger(principal, domain, body));
+    }
+
+    @PutMapping("/batch-ledger/{id}/status")
+    @PreAuthorize("isAuthenticated()")
+    public ApiResponse<Void> updateBatchStatus(@AuthenticationPrincipal UserPrincipal principal,
+                                               @PathVariable Long id,
+                                               @RequestBody Map<String, Object> body) {
+        service.updatePopBatchStatus(principal, id, body);
+        return ApiResponse.ok(null);
+    }
+
+    @GetMapping("/{domain}/storage-summary")
+    @PreAuthorize("isAuthenticated()")
+    public ApiResponse<Map<String, Object>> storageSummary(@PathVariable String domain) {
+        return ApiResponse.ok(service.populationStorageSummary(domain));
     }
 }

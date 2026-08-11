@@ -78,6 +78,46 @@ interface ModelSample {
   metric2?: number | string
 }
 
+interface VerifyLedgerRow {
+  id: number
+  mCode: string
+  sceneCode: string
+  sceneName: string
+  checkType: string
+  sourceDept?: string
+  issueSummary?: string
+  feedbackStatus: string
+  relatedPersonId?: string
+  status: string
+  createdAt?: string
+}
+
+interface ServiceContract {
+  id: number
+  serviceCode: string
+  serviceName: string
+  mCode: string
+  mode: string
+  pathOrChannel?: string
+  requestSample?: string
+  responseSample?: string
+  description?: string
+  status: string
+}
+
+interface BatchLedgerRow {
+  id: number
+  batchCode: string
+  serviceCode?: string
+  channel?: string
+  tableName?: string
+  rowLimit?: number
+  batchStatus: string
+  message?: string
+  status: string
+  createdAt?: string
+}
+
 const ASSET_TYPE_ZH: Record<string, string> = {
   METADATA: '元数据表', MANAGED: '纳管表', CATALOG: '目录资源', OTHER: '其他',
 }
@@ -87,7 +127,10 @@ function assetTypeLabel(v?: string) {
   return ASSET_TYPE_ZH[v] || statusLabel(v)
 }
 
-const SEVEN_DIMS = [
+type DimItem = { key: string; tip: string }
+
+/** 法人等域通用七维（挂载设计器默认文案） */
+const SEVEN_DIMS_GENERIC: DimItem[] = [
   { key: '定位', tip: '本区在人口/法人域架构中的位置与职责边界' },
   { key: '数据模型', tip: '通过下方「资产挂载」选定实体与关系，不平行建库' },
   { key: '加工处理', tip: '数据进入本区前的治理/融合流程在主数据侧完成' },
@@ -95,6 +138,147 @@ const SEVEN_DIMS = [
   { key: '数据来源', tip: '从候选资产选型挂载（元数据/纳管表/目录资源）' },
   { key: '使用者', tip: '内部服务区强调授权边界；共享区面向目录与分析消费' },
   { key: '更新频度', tip: '跟随源任务调度；本页不伪造外部调度成功' },
+]
+
+/** 人口域五区七维度 — 对齐规格 docs/superpowers/specs/2026-08-11-population-bigdata-support-design.md */
+const POPULATION_ZONE_DIMS: Record<string, DimItem[]> = {
+  collect: [
+    { key: '定位', tip: '多源异构人口数据统一汇入平台；含结构化与非结构化；按时效区分行为类/档案类通道' },
+    { key: '数据模型', tip: '贴源结构为主；通道类型覆盖库表、文件、API' },
+    { key: '加工处理', tip: '本区不做主题整合；仅接入、落 ODS、登记元数据' },
+    { key: '存储周期', tip: '长期可存；容量策略随存储扩展' },
+    { key: '数据来源', tip: '公安、民政、法院及教育/人社/卫健等业务系统' },
+    { key: '使用者', tip: '治理反馈区（下游清洗校核）' },
+    { key: '更新频度', tip: '默认月更；可按日/周/季/半年/年配置（ExecCycle + DS）' },
+  ],
+  govern: [
+    { key: '定位', tip: '存放问题数据、半结构/非结构转结构结果；供质量分析与问题反馈' },
+    { key: '数据模型', tip: '贴源 + 规范化；流水类周期增量切片' },
+    { key: '加工处理', tip: '技术性/合法性检核清洗；时点记录变更；半结构预处理' },
+    { key: '存储周期', tip: '长期可存；预处理/反馈库中等体量、高吞吐' },
+    { key: '数据来源', tip: '采集区；外部数据区' },
+    { key: '使用者', tip: '核心区；服务区（须经核心分流，禁止旁路权威）' },
+    { key: '更新频度', tip: '默认月更；可按日/周/季/半年/年' },
+  ],
+  core: [
+    { key: '定位', tip: '统一标准的人口基础/主题权威区；「一数一源」；按业务分类存放' },
+    { key: '数据模型', tip: '宽表、多维；允许冗余；可在基础/主题上扩展专业库（逻辑分层）' },
+    { key: '加工处理', tip: '多源合并到同一人员实体；跨业务计算；提取服务区特征' },
+    { key: '存储周期', tip: '长期可存；垂直分片/水平分区；历史与审计近线' },
+    { key: '数据来源', tip: '治理及反馈区（经融合落入 DWS）' },
+    { key: '使用者', tip: '内部服务区；共享服务区' },
+    { key: '更新频度', tip: '默认月更；可按业务配置' },
+  ],
+  internal: [
+    { key: '定位', tip: '高权限、高敏感人口基础数据应用场景的独立服务边界' },
+    { key: '数据模型', tip: '消费核心区权威结构化数据；不另建第二权威源' },
+    { key: '加工处理', tip: '分级分类 + 双重授权；系统管理员不可直接授跨部门数据访问权' },
+    { key: '存储周期', tip: '跟随核心；访问审计日志可近线' },
+    { key: '数据来源', tip: '核心区' },
+    { key: '使用者', tip: '部门内高敏业务应用与管理员' },
+    { key: '更新频度', tip: '跟随核心供数节奏' },
+  ],
+  share: [
+    { key: '定位', tip: '人口资源目录、接口/批量共享、指标与十四分析模型消费' },
+    { key: '数据模型', tip: '可发布目录项、接口契约、批量交换库、ADS 指标/专题结果' },
+    { key: '加工处理', tip: '目录发布；小流量接口（校核/比对）；大批量前置；自研模型结果展示' },
+    { key: '存储周期', tip: '目录与接口元数据长期；批量结果库按交换周期清理或归档' },
+    { key: '数据来源', tip: '核心区（及 ADS）' },
+    { key: '使用者', tip: '共建单位应用、目录用户、人口 Hub 分析用户' },
+    { key: '更新频度', tip: '跟随核心/专题；模型结果随指标任务' },
+  ],
+}
+
+const POPULATION_ZONE_ALERT: Record<string, string> = {
+  collect: '采集区 = 多源汇入设计入口。挂载 ODS/SOURCE 候选；真正抽数在数据归集（Kettle + DS）。本区不做主题整合。',
+  govern: '治理反馈区 = 清洗校核与问题回流。挂载 DWD；深链数据治理。更新维护(M155)/信息校核(M156) 为设计口径，问题反馈源部门后再入链。',
+  core: '核心区 = 「一数一源」权威库。挂载资源中心纳管表（逻辑 DWS）；深链资源中心。融合落库后供内部/共享分流。',
+  internal: '内部服务区 = 高敏受控消费边界。对齐双重授权（M158/M048）：系统管理员可授角色，不可直接授跨部门数据权。',
+  share: '共享服务区 = 目录/接口/批量 + 指标 + 十四模型。人口域模型以自研样例/结果表展示，不使用 DataEase/BI。',
+}
+
+const GOVERN_MECHANISM_CARDS = [
+  {
+    code: 'M155',
+    title: '更新维护',
+    points: [
+      '户籍基准由公安定时维护；各部门负责本域基础数据增改',
+      '平台主动采集至 ODS，再经治理/融合进入 DWS',
+      '技术落点复用归集定时（DS + Kettle），人口域不自建调度',
+    ],
+  },
+  {
+    code: 'M156',
+    title: '信息校核',
+    points: [
+      '入原始库后做检查与基准校核，使业务信息与人员基础信息对应',
+      '覆盖注销人员、出生未申报户口、婚姻状况等多源场景',
+      '质量问题反馈提供单位更正后再入链；不在核心区静默篡改权威值',
+    ],
+  },
+]
+
+const SHARE_SERVICE_CARDS = [
+  {
+    code: 'M159',
+    title: '服务接口',
+    points: [
+      '适用小数据量：应用校核、核查比对、基准叠加',
+      '政务外网向共建单位应用提供',
+      '现网：本页说明 + 接口交换深链；生产 API 属后续工程',
+    ],
+  },
+  {
+    code: 'M160',
+    title: '大批量应用',
+    points: [
+      '适用大数据量：共建单位前置批量库 ↔ 交换系统 ↔ 共享平台结果库',
+      '批量结果库按交换周期清理或归档',
+      '现网：批量台账 LEDGER + 应用/交换深链；全链路属后续工程',
+    ],
+  },
+]
+
+const COLLECT_SOURCE_CHANNELS = [
+  { dept: '公安局', channel: '库表/API', latency: '高时效+档案', remark: '户籍基准与人员主数据' },
+  { dept: '民政局', channel: '库表/文件', latency: '月更为主', remark: '婚姻、救助等' },
+  { dept: '法院', channel: '文件/API', latency: '按案件周期', remark: '裁判文书等结构化抽取' },
+  { dept: '教育局', channel: '库表', latency: '学期/年', remark: '学籍与学历' },
+  { dept: '人社局', channel: '库表/API', latency: '月更', remark: '社保就业' },
+  { dept: '卫健委', channel: '库表/文件', latency: '日/月', remark: '出生死亡等' },
+]
+
+const DUAL_AUTH_CARDS = [
+  {
+    code: 'M158',
+    title: '双重授权边界',
+    points: [
+      '高敏人口基础数据独立服务边界；消费核心区权威数据',
+      '系统管理员可授部门管理员角色，不可直接授跨部门数据访问权',
+      '跨部门数据权走申请审批；对齐全局 M048/M211',
+    ],
+  },
+  {
+    code: 'M048',
+    title: '平台授权能力（复用）',
+    points: [
+      '项目授权 / 数据授权 / 跨部门审批在归集登记「访问控制」',
+      '人口内部区不另造授权引擎，深链复用现网 RBAC',
+      '主题表数据权扩展到 DWS 查询路径属生产强化项',
+    ],
+  },
+]
+
+const STORAGE_DESIGN_CARDS = [
+  {
+    code: 'M157',
+    title: '存储管理设计',
+    points: [
+      '垂直分片：相片等与基础信息分库（逻辑）',
+      '水平分区：按区县/时间等切分；历史与审计近线',
+      '现网：资源中心分区策略 LEDGER；真正 ALTER 需运维窗口',
+    ],
+  },
 ]
 
 function modelRowClassName({ row }: { row: AnalysisModel }) {
@@ -106,7 +290,7 @@ const ZONE_DEFS: Record<string, ZoneDef[]> = {
     { key: 'zone.collect', zoneCode: 'collect', label: '人口数据采集区设计', mCodes: ['M152'], deepLink: '/exchange/ingestion', deepLabel: '打开数据归集' },
     { key: 'zone.govern', zoneCode: 'govern', label: '人口数据治理及反馈区设计', mCodes: ['M153', 'M155', 'M156'], deepLink: '/governance', deepLabel: '打开数据治理' },
     { key: 'zone.core', zoneCode: 'core', label: '人口核心数据区设计', mCodes: ['M157'], deepLink: '/resource-center', deepLabel: '打开资源中心' },
-    { key: 'zone.internal', zoneCode: 'internal', label: '人口数据内部服务区设计', mCodes: ['M158'], deepLink: '/resource-center', deepLabel: '打开资源中心' },
+    { key: 'zone.internal', zoneCode: 'internal', label: '人口数据内部服务区设计', mCodes: ['M158'], deepLink: '/exchange/ingestion?system=register&module=m048', deepLabel: '打开双重授权(M048)' },
     { key: 'zone.share', zoneCode: 'share', label: '人口数据共享服务区设计', mCodes: ['M154', 'M159', 'M160', 'M161', 'M162', 'M163', 'M164', 'M165', 'M166', 'M167', 'M168', 'M169', 'M170', 'M171', 'M172', 'M173', 'M174'], deepLink: '/catalog', deepLabel: '打开资源目录' },
   ],
   legal: [
@@ -139,6 +323,10 @@ const isPopulation = computed(() => meta.value.domain === 'population')
 const dataEaseHealthy = ref(false)
 const activeNav = ref('')
 const shareTab = ref<'mount' | 'catalog' | 'api' | 'indicators' | 'models'>('mount')
+const governTab = ref<'mount' | 'mechanism' | 'verify'>('mount')
+const collectTab = ref<'mount' | 'sources'>('mount')
+const coreTab = ref<'mount' | 'storage'>('mount')
+const internalTab = ref<'mount' | 'auth'>('mount')
 const highlightModelCode = ref('')
 
 const bindings = ref<Binding[]>([])
@@ -147,6 +335,32 @@ const indicators = ref<Indicator[]>([])
 const models = ref<AnalysisModel[]>([])
 const modelSamples = ref<ModelSample[]>([])
 const samplesLoading = ref(false)
+const verifyRows = ref<VerifyLedgerRow[]>([])
+const verifyLoading = ref(false)
+const serviceContracts = ref<ServiceContract[]>([])
+const serviceLoading = ref(false)
+const invokeResult = ref('')
+const batchRows = ref<BatchLedgerRow[]>([])
+const batchLoading = ref(false)
+const accessOverview = ref<Record<string, unknown> | null>(null)
+const storageSummary = ref<Record<string, unknown> | null>(null)
+const storageLoading = ref(false)
+const verifyForm = ref({
+  mCode: 'M156',
+  sceneCode: '',
+  sceneName: '',
+  checkType: 'MULTI_SOURCE',
+  sourceDept: '',
+  issueSummary: '',
+})
+const verifyDialog = ref(false)
+const batchDialog = ref(false)
+const batchForm = ref({
+  batchCode: '',
+  tableName: 'dws_population_base',
+  rowLimit: 1000,
+  message: '',
+})
 
 const bindDialog = ref(false)
 const selectedCandidate = ref<Candidate | null>(null)
@@ -180,11 +394,36 @@ const navGroups = computed<HubNavGroup[]>(() => {
 
 const activeZone = computed(() => zones.value.find((z) => z.key === activeNav.value) || null)
 const isShare = computed(() => activeZone.value?.zoneCode === 'share')
+const isGovern = computed(() => activeZone.value?.zoneCode === 'govern')
+const isCollect = computed(() => activeZone.value?.zoneCode === 'collect')
+const isCore = computed(() => activeZone.value?.zoneCode === 'core')
+const isInternal = computed(() => activeZone.value?.zoneCode === 'internal')
 const isDesignerOnly = computed(() => !hasZones.value && activeNav.value === 'designer')
+const apiContracts = computed(() => serviceContracts.value.filter((c) => c.mode === 'API'))
+const batchContracts = computed(() => serviceContracts.value.filter((c) => c.mode === 'BATCH'))
+const storagePartitions = computed(() => (storageSummary.value?.partitions as Record<string, unknown>[]) || [])
+const storageOps = computed(() => (storageSummary.value?.ops as Record<string, unknown>[]) || [])
+const storageManaged = computed(() => (storageSummary.value?.managedTables as Record<string, unknown>[]) || [])
 const pageTitle = computed(() => {
   if (activeZone.value) return activeZone.value.label
   if (isDesignerOnly.value) return `${meta.value.title} · 指标与分析模型`
   return meta.value.title
+})
+
+const zoneDims = computed<DimItem[]>(() => {
+  const z = activeZone.value?.zoneCode
+  if (isPopulation.value && z && POPULATION_ZONE_DIMS[z]) {
+    return POPULATION_ZONE_DIMS[z]
+  }
+  return SEVEN_DIMS_GENERIC
+})
+
+const zoneAlertTitle = computed(() => {
+  const z = activeZone.value?.zoneCode
+  if (isPopulation.value && z && POPULATION_ZONE_ALERT[z]) {
+    return POPULATION_ZONE_ALERT[z]
+  }
+  return '区设计 = 从现有资产选型挂载（挂载≠复制）。过程层 DWD 适合治理反馈区，默认可共享资源挂核心区/共享区。'
 })
 
 function zoneApiPath(zoneKey: string) {
@@ -226,8 +465,22 @@ function resolveFromRoute() {
     if (parentZone) {
       activeNav.value = parentZone.key
       if (parentZone.zoneCode === 'share') {
-        shareTab.value = 'models'
-        highlightModelCode.value = code
+        if (code === 'M159' || code === 'M160') {
+          shareTab.value = 'api'
+        } else if (code === 'M154') {
+          shareTab.value = 'catalog'
+        } else {
+          shareTab.value = 'models'
+          highlightModelCode.value = code
+        }
+      } else if (parentZone.zoneCode === 'govern' && (code === 'M155' || code === 'M156')) {
+        governTab.value = 'verify'
+      } else if (parentZone.zoneCode === 'core' && code === 'M157') {
+        coreTab.value = 'storage'
+      } else if (parentZone.zoneCode === 'internal' && code === 'M158') {
+        internalTab.value = 'auth'
+      } else if (parentZone.zoneCode === 'collect' && code === 'M152') {
+        collectTab.value = 'sources'
       }
     } else if (hasZones.value) {
       pickDefaultNav()
@@ -287,6 +540,129 @@ async function loadDesigner(force = false) {
   designerLoaded.value = true
 }
 
+async function loadModelSamples(modelId: number) {
+  samplesLoading.value = true
+  try {
+    const res = await api.get(`/analytics/domain/models/${modelId}/samples`)
+    modelSamples.value = res.data || []
+  } catch (e: unknown) {
+    ElMessage.error(e instanceof Error ? e.message : '加载样例失败')
+  } finally {
+    samplesLoading.value = false
+  }
+}
+
+async function loadVerifyLedger() {
+  if (!isPopulation.value) return
+  verifyLoading.value = true
+  try {
+    const res = await api.get(`/analytics/domain/${meta.value.domain}/verify-ledger`)
+    verifyRows.value = res.data || []
+  } catch (e: unknown) {
+    ElMessage.error(e instanceof Error ? e.message : '加载校核台账失败')
+  } finally {
+    verifyLoading.value = false
+  }
+}
+
+async function loadServiceContracts() {
+  if (!isPopulation.value) return
+  serviceLoading.value = true
+  try {
+    const res = await api.get(`/analytics/domain/${meta.value.domain}/services`)
+    serviceContracts.value = res.data || []
+  } catch (e: unknown) {
+    ElMessage.error(e instanceof Error ? e.message : '加载服务契约失败')
+  } finally {
+    serviceLoading.value = false
+  }
+}
+
+async function loadBatchLedger() {
+  if (!isPopulation.value) return
+  batchLoading.value = true
+  try {
+    const res = await api.get(`/analytics/domain/${meta.value.domain}/batch-ledger`)
+    batchRows.value = res.data || []
+  } catch (e: unknown) {
+    ElMessage.error(e instanceof Error ? e.message : '加载批量台账失败')
+  } finally {
+    batchLoading.value = false
+  }
+}
+
+async function loadStorageSummary() {
+  if (!isPopulation.value) return
+  storageLoading.value = true
+  try {
+    const res = await api.get(`/analytics/domain/${meta.value.domain}/storage-summary`)
+    storageSummary.value = res.data || null
+  } catch (e: unknown) {
+    ElMessage.error(e instanceof Error ? e.message : '加载存储摘要失败')
+  } finally {
+    storageLoading.value = false
+  }
+}
+
+async function loadAccessOverview() {
+  if (!isPopulation.value) return
+  try {
+    const res = await api.get('/system/access/overview')
+    accessOverview.value = res.data || null
+  } catch {
+    accessOverview.value = null
+  }
+}
+
+async function createVerifyRow() {
+  if (!verifyForm.value.sceneCode || !verifyForm.value.sceneName) {
+    ElMessage.warning('请填写场景编码与名称')
+    return
+  }
+  await api.post(`/analytics/domain/${meta.value.domain}/verify-ledger`, { ...verifyForm.value })
+  ElMessage.success('已登记校核台账')
+  verifyDialog.value = false
+  await loadVerifyLedger()
+}
+
+async function createBatchRow() {
+  await api.post(`/analytics/domain/${meta.value.domain}/batch-ledger`, {
+    batchCode: batchForm.value.batchCode || undefined,
+    tableName: batchForm.value.tableName,
+    rowLimit: batchForm.value.rowLimit,
+    message: batchForm.value.message || 'LEDGER 登记',
+    batchStatus: 'OPEN',
+  })
+  ElMessage.success('已登记批量台账')
+  batchDialog.value = false
+  await loadBatchLedger()
+}
+
+async function setBatchStatus(row: BatchLedgerRow, batchStatus: string) {
+  await api.put(`/analytics/domain/batch-ledger/${row.id}/status`, { batchStatus })
+  ElMessage.success('批次状态已更新')
+  await loadBatchLedger()
+}
+
+async function setVerifyFeedback(row: VerifyLedgerRow, feedbackStatus: string) {
+  await api.put(`/analytics/domain/verify-ledger/${row.id}/feedback`, { feedbackStatus })
+  ElMessage.success('反馈状态已更新')
+  await loadVerifyLedger()
+}
+
+async function invokeContract(row: ServiceContract) {
+  let body: Record<string, unknown> = {}
+  try {
+    body = row.requestSample ? JSON.parse(row.requestSample) : {}
+  } catch {
+    body = {}
+  }
+  const res = await api.post(`/analytics/domain/${meta.value.domain}/services/${row.serviceCode}/invoke`, body)
+  invokeResult.value = JSON.stringify(res.data, null, 2)
+  ElMessage.success('LEDGER 试调完成')
+  if (row.mode === 'BATCH') await loadBatchLedger()
+}
+
 async function loadCurrentView() {
   iframeSrc.value = ''
   embedMode.value = ''
@@ -296,6 +672,18 @@ async function loadCurrentView() {
     await loadBindings()
     if (isShare.value || shareTab.value === 'indicators' || shareTab.value === 'models') {
       await loadDesigner()
+    }
+    if (isPopulation.value && isShare.value && shareTab.value === 'api') {
+      await Promise.all([loadServiceContracts(), loadBatchLedger()])
+    }
+    if (isPopulation.value && isGovern.value && governTab.value === 'verify') {
+      await loadVerifyLedger()
+    }
+    if (isPopulation.value && isCore.value && coreTab.value === 'storage') {
+      await loadStorageSummary()
+    }
+    if (isPopulation.value && isInternal.value && internalTab.value === 'auth') {
+      await loadAccessOverview()
     }
   } else if (isDesignerOnly.value) {
     await loadDesigner()
@@ -341,19 +729,6 @@ function onIndicatorsRefreshed() {
 
 function openPortalPreview() {
   if (embedUrl.value) window.open(embedUrl.value, '_blank')
-}
-
-async function loadModelSamples(modelId: number) {
-  samplesLoading.value = true
-  modelSamples.value = []
-  try {
-    const res = await api.get(`/analytics/domain/models/${modelId}/samples`)
-    modelSamples.value = (res.data as ModelSample[]) || []
-  } catch (e: unknown) {
-    ElMessage.error(e instanceof Error ? e.message : '加载样例失败')
-  } finally {
-    samplesLoading.value = false
-  }
 }
 
 function openModelDesign(row: AnalysisModel) {
@@ -417,6 +792,10 @@ async function issueModelEmbed() {
 function onHubSelect(key: string) {
   activeNav.value = key
   if (key.endsWith('share')) shareTab.value = 'mount'
+  if (key.endsWith('govern')) governTab.value = 'mount'
+  if (key.endsWith('collect')) collectTab.value = 'mount'
+  if (key.endsWith('core')) coreTab.value = 'mount'
+  if (key.endsWith('internal')) internalTab.value = 'mount'
   if (!applyingRoute) syncQuery()
   loadCurrentView()
 }
@@ -444,6 +823,32 @@ watch(shareTab, async (t) => {
     if (t === 'indicators' || t === 'models') await loadDesigner()
     if (t === 'mount' && activeZone.value) await loadBindings()
   }
+  if (t === 'api' && isPopulation.value && isShare.value) {
+    await Promise.all([loadServiceContracts(), loadBatchLedger()])
+  }
+})
+
+watch(governTab, async (t) => {
+  if (!isPopulation.value || !isGovern.value) return
+  if (t === 'mount') await loadBindings()
+  if (t === 'verify') await loadVerifyLedger()
+})
+
+watch(collectTab, async (t) => {
+  if (!isPopulation.value || !isCollect.value) return
+  if (t === 'mount') await loadBindings()
+})
+
+watch(coreTab, async (t) => {
+  if (!isPopulation.value || !isCore.value) return
+  if (t === 'mount') await loadBindings()
+  if (t === 'storage') await loadStorageSummary()
+})
+
+watch(internalTab, async (t) => {
+  if (!isPopulation.value || !isInternal.value) return
+  if (t === 'mount') await loadBindings()
+  if (t === 'auth') await loadAccessOverview()
 })
 
 onMounted(async () => {
@@ -467,40 +872,280 @@ onMounted(async () => {
           type="info"
           :closable="false"
           style="margin-bottom:12px"
-          title="区设计 = 从现有资产选型挂载（挂载≠复制）。过程层 DWD 适合治理反馈区，默认可共享资源挂核心区/共享区。"
+          :title="zoneAlertTitle"
         />
         <div class="dim-grid">
-          <div v-for="d in SEVEN_DIMS" :key="d.key" class="dim-item">
+          <div v-for="d in zoneDims" :key="d.key" class="dim-item">
             <div class="dim-key">{{ d.key }}</div>
             <div class="dim-tip">{{ d.tip }}</div>
           </div>
         </div>
-        <el-form inline class="portal-inline-form portal-inline-form--block">
-          <el-form-item class="portal-form-actions">
-            <el-button type="primary" @click="openBindDialog">选型挂载</el-button>
-            <el-button @click="$router.push(activeZone.deepLink)">{{ activeZone.deepLabel }}</el-button>
-            <el-button @click="loadBindings(true)">刷新</el-button>
-          </el-form-item>
-        </el-form>
-        <el-table :data="bindings" stripe size="small" empty-text="尚未挂载资产，请从候选中选型">
-          <el-table-column prop="assetName" label="资产名称" min-width="160" />
-          <el-table-column label="类型" width="100">
-            <template #default="{ row }">{{ assetTypeLabel(row.assetType) }}</template>
-          </el-table-column>
-          <el-table-column prop="physicalTable" label="物理表" min-width="140" show-overflow-tooltip />
-          <el-table-column prop="dataLayer" label="分层" width="90" />
-          <el-table-column label="状态" width="90">
-            <template #default="{ row }">
-              <el-tag :type="statusTagType(row.status)" size="small">{{ statusLabel(row.status) }}</el-tag>
-            </template>
-          </el-table-column>
-          <el-table-column prop="createdAt" label="挂载时间" width="170" />
-          <el-table-column label="操作" width="90">
-            <template #default="{ row }">
-              <el-button link type="danger" @click="unbind(row)">解除</el-button>
-            </template>
-          </el-table-column>
-        </el-table>
+
+        <template v-if="isPopulation && isGovern">
+          <el-tabs v-model="governTab">
+            <el-tab-pane label="资产挂载" name="mount">
+              <el-form inline class="portal-inline-form portal-inline-form--block">
+                <el-form-item class="portal-form-actions">
+                  <el-button type="primary" @click="openBindDialog">选型挂载</el-button>
+                  <el-button @click="$router.push(activeZone.deepLink)">{{ activeZone.deepLabel }}</el-button>
+                  <el-button @click="loadBindings(true)">刷新</el-button>
+                </el-form-item>
+              </el-form>
+              <el-table :data="bindings" stripe size="small" empty-text="尚未挂载资产，请从候选中选型">
+                <el-table-column prop="assetName" label="资产名称" min-width="160" />
+                <el-table-column label="类型" width="100">
+                  <template #default="{ row }">{{ assetTypeLabel(row.assetType) }}</template>
+                </el-table-column>
+                <el-table-column prop="physicalTable" label="物理表" min-width="140" show-overflow-tooltip />
+                <el-table-column prop="dataLayer" label="分层" width="90" />
+                <el-table-column label="状态" width="90">
+                  <template #default="{ row }">
+                    <el-tag :type="statusTagType(row.status)" size="small">{{ statusLabel(row.status) }}</el-tag>
+                  </template>
+                </el-table-column>
+                <el-table-column prop="createdAt" label="挂载时间" width="170" />
+                <el-table-column label="操作" width="90">
+                  <template #default="{ row }">
+                    <el-button link type="danger" @click="unbind(row)">解除</el-button>
+                  </template>
+                </el-table-column>
+              </el-table>
+            </el-tab-pane>
+            <el-tab-pane label="更新/校核机制" name="mechanism">
+              <div class="mech-grid">
+                <div v-for="c in GOVERN_MECHANISM_CARDS" :key="c.code" class="mech-card">
+                  <div class="mech-title"><el-tag size="small" type="warning">{{ c.code }}</el-tag> {{ c.title }}</div>
+                  <ul class="mech-list">
+                    <li v-for="(p, i) in c.points" :key="i">{{ p }}</li>
+                  </ul>
+                </div>
+              </div>
+              <el-button type="primary" @click="$router.push('/governance')">打开数据治理</el-button>
+            </el-tab-pane>
+            <el-tab-pane label="校核台账" name="verify">
+              <p class="hint">M155/M156 设计台账（LEDGER）：登记问题与反馈状态，不在此运行真实校核引擎。</p>
+              <el-form inline class="portal-inline-form">
+                <el-form-item class="portal-form-actions">
+                  <el-button type="primary" @click="verifyDialog = true">登记台账</el-button>
+                  <el-button :loading="verifyLoading" @click="loadVerifyLedger">刷新</el-button>
+                </el-form-item>
+              </el-form>
+              <el-table v-loading="verifyLoading" :data="verifyRows" stripe size="small" empty-text="暂无校核台账">
+                <el-table-column prop="mCode" label="模块" width="80" />
+                <el-table-column prop="sceneName" label="场景" min-width="140" />
+                <el-table-column prop="checkType" label="类型" width="120" />
+                <el-table-column prop="sourceDept" label="来源部门" width="120" />
+                <el-table-column prop="issueSummary" label="问题摘要" min-width="180" show-overflow-tooltip />
+                <el-table-column prop="feedbackStatus" label="反馈" width="100">
+                  <template #default="{ row }">
+                    <el-tag size="small" :type="row.feedbackStatus === 'CLOSED' ? 'success' : row.feedbackStatus === 'FEEDBACK' ? 'warning' : 'info'">
+                      {{ row.feedbackStatus }}
+                    </el-tag>
+                  </template>
+                </el-table-column>
+                <el-table-column label="操作" width="200">
+                  <template #default="{ row }">
+                    <el-button link type="primary" @click="setVerifyFeedback(row, 'FEEDBACK')">已反馈</el-button>
+                    <el-button link type="success" @click="setVerifyFeedback(row, 'CLOSED')">关闭</el-button>
+                  </template>
+                </el-table-column>
+              </el-table>
+            </el-tab-pane>
+          </el-tabs>
+        </template>
+
+        <template v-else-if="isPopulation && isCollect">
+          <el-tabs v-model="collectTab">
+            <el-tab-pane label="资产挂载" name="mount">
+              <el-form inline class="portal-inline-form portal-inline-form--block">
+                <el-form-item class="portal-form-actions">
+                  <el-button type="primary" @click="openBindDialog">选型挂载</el-button>
+                  <el-button @click="$router.push(activeZone.deepLink)">{{ activeZone.deepLabel }}</el-button>
+                  <el-button @click="loadBindings(true)">刷新</el-button>
+                </el-form-item>
+              </el-form>
+              <el-table :data="bindings" stripe size="small" empty-text="尚未挂载资产，请从候选中选型">
+                <el-table-column prop="assetName" label="资产名称" min-width="160" />
+                <el-table-column label="类型" width="100">
+                  <template #default="{ row }">{{ assetTypeLabel(row.assetType) }}</template>
+                </el-table-column>
+                <el-table-column prop="physicalTable" label="物理表" min-width="140" show-overflow-tooltip />
+                <el-table-column prop="dataLayer" label="分层" width="90" />
+                <el-table-column label="状态" width="90">
+                  <template #default="{ row }">
+                    <el-tag :type="statusTagType(row.status)" size="small">{{ statusLabel(row.status) }}</el-tag>
+                  </template>
+                </el-table-column>
+                <el-table-column prop="createdAt" label="挂载时间" width="170" />
+                <el-table-column label="操作" width="90">
+                  <template #default="{ row }">
+                    <el-button link type="danger" @click="unbind(row)">解除</el-button>
+                  </template>
+                </el-table-column>
+              </el-table>
+            </el-tab-pane>
+            <el-tab-pane label="多源通道清单" name="sources">
+              <p class="hint">采集区通道设计清单（演示）：真正抽数在数据归集（Kettle + DS），本页不伪造调度成功。</p>
+              <el-table :data="COLLECT_SOURCE_CHANNELS" stripe size="small">
+                <el-table-column prop="dept" label="来源部门" width="120" />
+                <el-table-column prop="channel" label="通道类型" width="120" />
+                <el-table-column prop="latency" label="时效" width="140" />
+                <el-table-column prop="remark" label="说明" min-width="180" />
+              </el-table>
+              <el-button type="primary" style="margin-top:12px" @click="$router.push('/exchange/ingestion')">打开数据归集</el-button>
+            </el-tab-pane>
+          </el-tabs>
+        </template>
+
+        <template v-else-if="isPopulation && isCore">
+          <el-tabs v-model="coreTab">
+            <el-tab-pane label="资产挂载" name="mount">
+              <el-form inline class="portal-inline-form portal-inline-form--block">
+                <el-form-item class="portal-form-actions">
+                  <el-button type="primary" @click="openBindDialog">选型挂载</el-button>
+                  <el-button @click="$router.push(activeZone.deepLink)">{{ activeZone.deepLabel }}</el-button>
+                  <el-button @click="loadBindings(true)">刷新</el-button>
+                </el-form-item>
+              </el-form>
+              <el-table :data="bindings" stripe size="small" empty-text="尚未挂载资产，请从候选中选型">
+                <el-table-column prop="assetName" label="资产名称" min-width="160" />
+                <el-table-column label="类型" width="100">
+                  <template #default="{ row }">{{ assetTypeLabel(row.assetType) }}</template>
+                </el-table-column>
+                <el-table-column prop="physicalTable" label="物理表" min-width="140" show-overflow-tooltip />
+                <el-table-column prop="dataLayer" label="分层" width="90" />
+                <el-table-column label="状态" width="90">
+                  <template #default="{ row }">
+                    <el-tag :type="statusTagType(row.status)" size="small">{{ statusLabel(row.status) }}</el-tag>
+                  </template>
+                </el-table-column>
+                <el-table-column prop="createdAt" label="挂载时间" width="170" />
+                <el-table-column label="操作" width="90">
+                  <template #default="{ row }">
+                    <el-button link type="danger" @click="unbind(row)">解除</el-button>
+                  </template>
+                </el-table-column>
+              </el-table>
+            </el-tab-pane>
+            <el-tab-pane label="存储/分区" name="storage">
+              <div class="mech-grid">
+                <div v-for="c in STORAGE_DESIGN_CARDS" :key="c.code" class="mech-card">
+                  <div class="mech-title"><el-tag size="small" type="success">{{ c.code }}</el-tag> {{ c.title }}</div>
+                  <ul class="mech-list">
+                    <li v-for="(p, i) in c.points" :key="i">{{ p }}</li>
+                  </ul>
+                </div>
+              </div>
+              <p class="hint">{{ String(storageSummary?.message || '预检通过 ≠ 已物理分区') }}</p>
+              <el-button :loading="storageLoading" @click="loadStorageSummary">刷新摘要</el-button>
+              <el-button type="primary" @click="$router.push('/resource-center')">打开资源中心</el-button>
+              <h4 class="sub-title">纳管表</h4>
+              <el-table :data="storageManaged" stripe size="small" empty-text="暂无（需 V190）">
+                <el-table-column prop="physicalTable" label="物理表" min-width="160" />
+                <el-table-column prop="metaEntryCode" label="元数据编码" min-width="160" />
+                <el-table-column prop="recordCount" label="行数" width="90" />
+                <el-table-column prop="status" label="状态" width="90" />
+              </el-table>
+              <h4 class="sub-title">分区策略</h4>
+              <el-table :data="storagePartitions" stripe size="small" empty-text="暂无分区策略">
+                <el-table-column prop="partitionCode" label="编码" width="140" />
+                <el-table-column prop="partitionName" label="名称" min-width="140" />
+                <el-table-column prop="tableName" label="表" min-width="140" />
+                <el-table-column prop="partitionColumn" label="分区列" width="110" />
+                <el-table-column prop="pretestStatus" label="预检" width="90" />
+                <el-table-column prop="pretestMessage" label="预检说明" min-width="180" show-overflow-tooltip />
+              </el-table>
+              <h4 class="sub-title">运维计划（LEDGER）</h4>
+              <el-table :data="storageOps" stripe size="small" empty-text="暂无运维计划">
+                <el-table-column prop="physicalTable" label="表" min-width="140" />
+                <el-table-column prop="opType" label="类型" width="120" />
+                <el-table-column prop="opStatus" label="状态" width="100" />
+                <el-table-column prop="message" label="说明" min-width="180" show-overflow-tooltip />
+              </el-table>
+            </el-tab-pane>
+          </el-tabs>
+        </template>
+
+        <template v-else-if="isPopulation && isInternal">
+          <el-tabs v-model="internalTab">
+            <el-tab-pane label="资产挂载" name="mount">
+              <el-form inline class="portal-inline-form portal-inline-form--block">
+                <el-form-item class="portal-form-actions">
+                  <el-button type="primary" @click="openBindDialog">选型挂载</el-button>
+                  <el-button @click="$router.push('/resource-center')">打开资源中心</el-button>
+                  <el-button @click="loadBindings(true)">刷新</el-button>
+                </el-form-item>
+              </el-form>
+              <el-table :data="bindings" stripe size="small" empty-text="尚未挂载资产，请从候选中选型">
+                <el-table-column prop="assetName" label="资产名称" min-width="160" />
+                <el-table-column label="类型" width="100">
+                  <template #default="{ row }">{{ assetTypeLabel(row.assetType) }}</template>
+                </el-table-column>
+                <el-table-column prop="physicalTable" label="物理表" min-width="140" show-overflow-tooltip />
+                <el-table-column prop="dataLayer" label="分层" width="90" />
+                <el-table-column label="状态" width="90">
+                  <template #default="{ row }">
+                    <el-tag :type="statusTagType(row.status)" size="small">{{ statusLabel(row.status) }}</el-tag>
+                  </template>
+                </el-table-column>
+                <el-table-column prop="createdAt" label="挂载时间" width="170" />
+                <el-table-column label="操作" width="90">
+                  <template #default="{ row }">
+                    <el-button link type="danger" @click="unbind(row)">解除</el-button>
+                  </template>
+                </el-table-column>
+              </el-table>
+            </el-tab-pane>
+            <el-tab-pane label="双重授权" name="auth">
+              <div class="mech-grid">
+                <div v-for="c in DUAL_AUTH_CARDS" :key="c.code" class="mech-card">
+                  <div class="mech-title"><el-tag size="small" type="danger">{{ c.code }}</el-tag> {{ c.title }}</div>
+                  <ul class="mech-list">
+                    <li v-for="(p, i) in c.points" :key="i">{{ p }}</li>
+                  </ul>
+                </div>
+              </div>
+              <p class="hint">复用平台访问控制概览（只读）；授权操作请进入 M048。</p>
+              <el-button type="primary" @click="$router.push(activeZone.deepLink)">打开双重授权(M048)</el-button>
+              <el-button @click="loadAccessOverview">刷新概览</el-button>
+              <el-descriptions v-if="accessOverview" :column="2" border size="small" style="margin-top:12px">
+                <el-descriptions-item v-for="(v, k) in accessOverview" :key="String(k)" :label="String(k)">
+                  {{ typeof v === 'object' ? JSON.stringify(v) : v }}
+                </el-descriptions-item>
+              </el-descriptions>
+              <el-empty v-else description="暂无概览（需登录且访问控制可用）" />
+            </el-tab-pane>
+          </el-tabs>
+        </template>
+
+        <template v-else>
+          <el-form inline class="portal-inline-form portal-inline-form--block">
+            <el-form-item class="portal-form-actions">
+              <el-button type="primary" @click="openBindDialog">选型挂载</el-button>
+              <el-button @click="$router.push(activeZone.deepLink)">{{ activeZone.deepLabel }}</el-button>
+              <el-button @click="loadBindings(true)">刷新</el-button>
+            </el-form-item>
+          </el-form>
+          <el-table :data="bindings" stripe size="small" empty-text="尚未挂载资产，请从候选中选型">
+            <el-table-column prop="assetName" label="资产名称" min-width="160" />
+            <el-table-column label="类型" width="100">
+              <template #default="{ row }">{{ assetTypeLabel(row.assetType) }}</template>
+            </el-table-column>
+            <el-table-column prop="physicalTable" label="物理表" min-width="140" show-overflow-tooltip />
+            <el-table-column prop="dataLayer" label="分层" width="90" />
+            <el-table-column label="状态" width="90">
+              <template #default="{ row }">
+                <el-tag :type="statusTagType(row.status)" size="small">{{ statusLabel(row.status) }}</el-tag>
+              </template>
+            </el-table-column>
+            <el-table-column prop="createdAt" label="挂载时间" width="170" />
+            <el-table-column label="操作" width="90">
+              <template #default="{ row }">
+                <el-button link type="danger" @click="unbind(row)">解除</el-button>
+              </template>
+            </el-table-column>
+          </el-table>
+        </template>
       </PageCard>
 
       <!-- 共享服务区：挂载 + 指标 + 模型 -->
@@ -510,7 +1155,7 @@ onMounted(async () => {
           type="info"
           :closable="false"
           style="margin-bottom:12px"
-          title="共享服务区：目录/接口深链 + 指标库 + 分析模型；人口域模型以自研样例/结果表展示，不使用 DataEase/BI。"
+          :title="zoneAlertTitle"
         />
         <el-alert
           v-else
@@ -521,6 +1166,12 @@ onMounted(async () => {
             ? '共享服务区：目录/接口深链 + 指标库 + 分析模型列表；DataEase 在线可实时嵌入'
             : '共享服务区设计器可用；DataEase 离线时模型预览仅为台账（LEDGER）'"
         />
+        <div v-if="isPopulation" class="dim-grid" style="margin-bottom:12px">
+          <div v-for="d in zoneDims" :key="d.key" class="dim-item">
+            <div class="dim-key">{{ d.key }}</div>
+            <div class="dim-tip">{{ d.tip }}</div>
+          </div>
+        </div>
         <el-tabs v-model="shareTab">
           <el-tab-pane label="资产挂载" name="mount">
             <el-form inline class="portal-inline-form">
@@ -541,13 +1192,88 @@ onMounted(async () => {
             </el-table>
           </el-tab-pane>
           <el-tab-pane label="目录深链" name="catalog">
-            <p class="hint">共享目录编制、审批与门户在数据目录管理系统完成；此处仅作区设计入口。</p>
+            <p class="hint">共享目录编制、审批与门户在数据目录管理系统完成；此处仅作区设计入口（M154）。</p>
             <el-button type="primary" @click="$router.push('/catalog')">打开资源目录</el-button>
           </el-tab-pane>
           <el-tab-pane label="接口/批量" name="api">
-            <p class="hint">接口交换与批量共享走共享交换平台能力，不在分析域平行实现。</p>
-            <el-button type="primary" @click="$router.push('/exchange/esb')">打开接口交换</el-button>
-            <el-button @click="$router.push('/exchange/application')">打开应用平台</el-button>
+            <template v-if="isPopulation">
+              <div class="mech-grid">
+                <div v-for="c in SHARE_SERVICE_CARDS" :key="c.code" class="mech-card">
+                  <div class="mech-title"><el-tag size="small">{{ c.code }}</el-tag> {{ c.title }}</div>
+                  <ul class="mech-list">
+                    <li v-for="(p, i) in c.points" :key="i">{{ p }}</li>
+                  </ul>
+                </div>
+              </div>
+              <h4 class="sub-title">M159 接口契约（LEDGER 试调）</h4>
+              <el-form inline class="portal-inline-form">
+                <el-form-item class="portal-form-actions">
+                  <el-button :loading="serviceLoading" @click="loadServiceContracts">刷新契约</el-button>
+                  <el-button type="primary" @click="$router.push('/exchange/esb')">打开接口交换</el-button>
+                </el-form-item>
+              </el-form>
+              <el-table v-loading="serviceLoading" :data="apiContracts" stripe size="small" empty-text="暂无接口契约（需 V190）">
+                <el-table-column prop="serviceName" label="服务名称" min-width="160" />
+                <el-table-column prop="serviceCode" label="编码" min-width="140" />
+                <el-table-column prop="description" label="说明" min-width="180" show-overflow-tooltip />
+                <el-table-column label="操作" width="100">
+                  <template #default="{ row }">
+                    <el-button link type="primary" @click="invokeContract(row)">试调</el-button>
+                  </template>
+                </el-table-column>
+              </el-table>
+
+              <h4 class="sub-title">M160 批量交换台账</h4>
+              <el-form inline class="portal-inline-form">
+                <el-form-item class="portal-form-actions">
+                  <el-button type="primary" @click="batchDialog = true">登记批次</el-button>
+                  <el-button :loading="batchLoading" @click="loadBatchLedger">刷新批次</el-button>
+                  <el-button @click="$router.push('/exchange/application')">打开应用平台</el-button>
+                </el-form-item>
+              </el-form>
+              <el-table v-loading="serviceLoading" :data="batchContracts" stripe size="small" empty-text="暂无批量契约" style="margin-bottom:8px">
+                <el-table-column prop="serviceName" label="批量服务" min-width="160" />
+                <el-table-column prop="serviceCode" label="编码" min-width="140" />
+                <el-table-column label="操作" width="120">
+                  <template #default="{ row }">
+                    <el-button link type="primary" @click="invokeContract(row)">试调登记</el-button>
+                  </template>
+                </el-table-column>
+              </el-table>
+              <el-table v-loading="batchLoading" :data="batchRows" stripe size="small" empty-text="暂无批量台账（需 V191）">
+                <el-table-column prop="batchCode" label="批次号" min-width="160" />
+                <el-table-column prop="tableName" label="表" min-width="140" />
+                <el-table-column prop="rowLimit" label="行上限" width="90" />
+                <el-table-column prop="batchStatus" label="状态" width="100">
+                  <template #default="{ row }">
+                    <el-tag size="small" :type="row.batchStatus === 'DONE' ? 'success' : row.batchStatus === 'FAILED' ? 'danger' : 'warning'">
+                      {{ row.batchStatus }}
+                    </el-tag>
+                  </template>
+                </el-table-column>
+                <el-table-column prop="message" label="说明" min-width="180" show-overflow-tooltip />
+                <el-table-column label="操作" width="220">
+                  <template #default="{ row }">
+                    <el-button link type="primary" @click="setBatchStatus(row, 'ACCEPTED')">受理</el-button>
+                    <el-button link type="success" @click="setBatchStatus(row, 'DONE')">完成</el-button>
+                    <el-button link type="danger" @click="setBatchStatus(row, 'FAILED')">失败</el-button>
+                  </template>
+                </el-table-column>
+              </el-table>
+              <el-input
+                v-if="invokeResult"
+                v-model="invokeResult"
+                type="textarea"
+                :rows="8"
+                readonly
+                style="margin-top:12px"
+              />
+            </template>
+            <template v-else>
+              <p class="hint">接口交换与批量共享走共享交换平台能力，不在分析域平行实现。</p>
+              <el-button type="primary" @click="$router.push('/exchange/esb')">打开接口交换</el-button>
+              <el-button @click="$router.push('/exchange/application')">打开应用平台</el-button>
+            </template>
           </el-tab-pane>
           <el-tab-pane label="指标库" name="indicators">
             <DomainIndicatorSqlLibrary
@@ -621,6 +1347,45 @@ onMounted(async () => {
         <el-empty description="请从左侧选择数据区" />
       </PageCard>
     </HubSideLayout>
+
+    <el-dialog v-model="batchDialog" title="登记批量交换台账" width="520px" destroy-on-close>
+      <el-form label-width="100px">
+        <el-form-item label="批次号"><el-input v-model="batchForm.batchCode" placeholder="可空，自动生成" /></el-form-item>
+        <el-form-item label="物理表"><el-input v-model="batchForm.tableName" /></el-form-item>
+        <el-form-item label="行上限"><el-input-number v-model="batchForm.rowLimit" :min="1" :max="1000000" /></el-form-item>
+        <el-form-item label="说明"><el-input v-model="batchForm.message" type="textarea" :rows="2" /></el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="batchDialog = false">取消</el-button>
+        <el-button type="primary" @click="createBatchRow">保存</el-button>
+      </template>
+    </el-dialog>
+
+    <el-dialog v-model="verifyDialog" title="登记校核/更新台账" width="520px" destroy-on-close>
+      <el-form label-width="100px">
+        <el-form-item label="模块">
+          <el-select v-model="verifyForm.mCode" style="width:100%">
+            <el-option label="M155 更新维护" value="M155" />
+            <el-option label="M156 信息校核" value="M156" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="场景编码"><el-input v-model="verifyForm.sceneCode" /></el-form-item>
+        <el-form-item label="场景名称"><el-input v-model="verifyForm.sceneName" /></el-form-item>
+        <el-form-item label="校核类型">
+          <el-select v-model="verifyForm.checkType" style="width:100%">
+            <el-option label="MULTI_SOURCE" value="MULTI_SOURCE" />
+            <el-option label="BASELINE" value="BASELINE" />
+            <el-option label="UPDATE" value="UPDATE" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="来源部门"><el-input v-model="verifyForm.sourceDept" /></el-form-item>
+        <el-form-item label="问题摘要"><el-input v-model="verifyForm.issueSummary" type="textarea" :rows="2" /></el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="verifyDialog = false">取消</el-button>
+        <el-button type="primary" @click="createVerifyRow">保存</el-button>
+      </template>
+    </el-dialog>
 
     <el-dialog v-model="bindDialog" title="从现有资产选型挂载" width="720px" destroy-on-close>
       <el-alert type="info" :closable="false" style="margin-bottom:8px" title="只登记归属关系，不复制数据。优先选择已登记元数据或已纳管对象。" />
@@ -732,6 +1497,21 @@ onMounted(async () => {
 }
 .dim-key { font-weight: 600; font-size: 13px; margin-bottom: 4px; }
 .dim-tip { font-size: 12px; color: var(--el-text-color-secondary); line-height: 1.4; }
+.mech-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 10px;
+  margin-bottom: 12px;
+}
+.mech-card {
+  border: 1px solid var(--portal-border, #e4e7ed);
+  border-radius: 6px;
+  padding: 10px 12px;
+  background: var(--el-fill-color-light, #f5f7fa);
+}
+.mech-title { font-weight: 600; font-size: 13px; margin-bottom: 6px; display: flex; align-items: center; gap: 6px; }
+.mech-list { margin: 0; padding-left: 18px; font-size: 12px; color: var(--el-text-color-secondary); line-height: 1.55; }
+.sub-title { margin: 16px 0 8px; font-size: 14px; font-weight: 600; }
 .hint { color: var(--el-text-color-secondary); margin: 0 0 12px; font-size: 13px; }
 .iframe-shell {
   margin-top: 12px;

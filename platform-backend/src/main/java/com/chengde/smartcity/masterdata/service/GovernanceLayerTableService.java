@@ -95,6 +95,12 @@ public class GovernanceLayerTableService {
                     created.add(targetQualified);
                     log.info("governance auto-created target table: {} from {}.{}",
                             targetQualified, sourceDb, sourceTable);
+                } else {
+                    int added = layerJdbc.syncMissingColumns(sourceDb, sourceTable, targetDb, targetTable);
+                    if (added > 0) {
+                        log.info("governance synced {} missing column(s) onto {} from {}.{}",
+                                added, targetQualified, sourceDb, sourceTable);
+                    }
                 }
             }
             ensureMaskResultColumns(nodes, targets);
