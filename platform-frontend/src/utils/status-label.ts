@@ -250,6 +250,7 @@ const STATUS_ZH: Record<string, string> = {
   AUTHORIZE_EXISTING: '授权现有',
   // 通道类型
   FTP: 'FTP',
+  S3: '对象存储(S3)',
   LOCAL: '本地文件',
   NAS: 'NAS存储',
   GZIP: 'GZIP压缩',
@@ -282,6 +283,7 @@ const STATUS_ZH: Record<string, string> = {
   DATABASE: '数据库',
   OTHER: '其他',
   REALTIME: '实时',
+  HOURLY: '每小时',
   DAILY: '每日',
   WEEKLY: '每周',
   MONTHLY: '每月',

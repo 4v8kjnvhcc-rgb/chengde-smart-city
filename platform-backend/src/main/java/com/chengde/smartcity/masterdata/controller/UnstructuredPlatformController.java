@@ -5,6 +5,7 @@ import com.chengde.smartcity.masterdata.entity.UnsCleanRule;
 import com.chengde.smartcity.masterdata.entity.UnsDocCategory;
 import com.chengde.smartcity.masterdata.entity.UnsDocPipeline;
 import com.chengde.smartcity.masterdata.entity.UnsDocument;
+import com.chengde.smartcity.masterdata.entity.UnsExternalPlatform;
 import com.chengde.smartcity.masterdata.service.UnstructuredCleanService;
 import com.chengde.smartcity.masterdata.service.UnstructuredPlatformService;
 import com.chengde.smartcity.security.UserPrincipal;
@@ -74,6 +75,37 @@ public class UnstructuredPlatformController {
     public ApiResponse<Void> deleteCategory(@AuthenticationPrincipal UserPrincipal principal,
                                             @PathVariable Long id) {
         service.deleteCategory(principal, id);
+        return ApiResponse.ok(null);
+    }
+
+    @GetMapping("/external-platforms")
+    @PreAuthorize("isAuthenticated()")
+    public ApiResponse<List<UnsExternalPlatform>> externalPlatforms(
+            @RequestParam(required = false) String platformName) {
+        return ApiResponse.ok(service.listExternalPlatforms(platformName));
+    }
+
+    @PostMapping("/external-platforms")
+    @PreAuthorize("isAuthenticated()")
+    public ApiResponse<Long> createExternalPlatform(@AuthenticationPrincipal UserPrincipal principal,
+                                                    @RequestBody Map<String, Object> body) {
+        return ApiResponse.ok(service.createExternalPlatform(principal, body));
+    }
+
+    @PutMapping("/external-platforms/{id}")
+    @PreAuthorize("isAuthenticated()")
+    public ApiResponse<Void> updateExternalPlatform(@AuthenticationPrincipal UserPrincipal principal,
+                                                    @PathVariable Long id,
+                                                    @RequestBody Map<String, Object> body) {
+        service.updateExternalPlatform(principal, id, body);
+        return ApiResponse.ok(null);
+    }
+
+    @DeleteMapping("/external-platforms/{id}")
+    @PreAuthorize("isAuthenticated()")
+    public ApiResponse<Void> deleteExternalPlatform(@AuthenticationPrincipal UserPrincipal principal,
+                                                    @PathVariable Long id) {
+        service.deleteExternalPlatform(principal, id);
         return ApiResponse.ok(null);
     }
 
