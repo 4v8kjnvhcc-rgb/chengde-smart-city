@@ -625,7 +625,7 @@ onMounted(loadList)
             </el-col>
             <el-col :span="12">
               <el-form-item label="执行周期" required>
-                <ExecCycleSelect v-model="form.cronExpr" @change="onCycleChange" />
+                <ExecCycleSelect v-model="form.cronExpr" :allow-custom="false" @change="onCycleChange" />
               </el-form-item>
             </el-col>
             <el-col :span="24">

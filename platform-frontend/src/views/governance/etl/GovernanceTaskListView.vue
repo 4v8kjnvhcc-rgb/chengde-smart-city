@@ -870,7 +870,7 @@ defineExpose({ reload: load })
           </template>
           <template v-else>
             <el-form-item label="执行周期">
-              <ExecCycleSelect v-model="form.scheduleCron" />
+              <ExecCycleSelect v-model="form.scheduleCron" :allow-custom="false" />
             </el-form-item>
           </template>
         </template>
@@ -931,7 +931,7 @@ defineExpose({ reload: load })
         </template>
         <template v-if="scheduleForm.scheduleEnabled && scheduleForm.scheduleMode === 'CRON'">
           <el-form-item label="执行周期">
-            <ExecCycleSelect v-model="scheduleForm.scheduleCron" />
+            <ExecCycleSelect v-model="scheduleForm.scheduleCron" :allow-custom="false" />
           </el-form-item>
         </template>
         <el-form-item v-if="scheduleForm.nextRunAt" label="下次运行">

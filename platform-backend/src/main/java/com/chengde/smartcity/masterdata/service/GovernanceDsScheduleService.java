@@ -30,17 +30,20 @@ public class GovernanceDsScheduleService {
     private final IntegrationProperties integrationProperties;
     private final AuditService auditService;
     private final GovernanceTaskService taskService;
+    private final KettleExecuteService kettleExecuteService;
 
     public GovernanceDsScheduleService(DolphinSchedulerClient dsClient,
                                        GovGovernanceTaskMapper taskMapper,
                                        IntegrationProperties integrationProperties,
                                        AuditService auditService,
-                                       @Lazy GovernanceTaskService taskService) {
+                                       @Lazy GovernanceTaskService taskService,
+                                       KettleExecuteService kettleExecuteService) {
         this.dsClient = dsClient;
         this.taskMapper = taskMapper;
         this.integrationProperties = integrationProperties;
         this.auditService = auditService;
         this.taskService = taskService;
+        this.kettleExecuteService = kettleExecuteService;
     }
 
     public boolean isDsAvailable() {
@@ -164,7 +167,30 @@ public class GovernanceDsScheduleService {
             task.setDsInstanceId(dsInstanceId);
             taskMapper.updateById(task);
         }
-        Map<String, Object> result = taskService.run(null, taskId);
+        Map<String, Object> started = taskService.run(null, taskId);
+        Object statusObj = started.get("status");
+        String st = statusObj == null ? "" : String.valueOf(statusObj);
+        if ("FAILED".equalsIgnoreCase(st)) {
+            throw new BusinessException(500, String.valueOf(started.getOrDefault("message", "治理/融合任务启动失败")));
+        }
+        Long runId = null;
+        Object runIdObj = started.get("runId");
+        if (runIdObj != null) {
+            try {
+                runId = Long.valueOf(String.valueOf(runIdObj));
+            } catch (Exception ignored) {
+            }
+        }
+        Map<String, Object> result = started;
+        if (runId != null) {
+            result = kettleExecuteService.waitForRunTerminal(runId);
+            String terminal = String.valueOf(result.getOrDefault("runStatus", result.get("status")));
+            if (!"SUCCESS".equalsIgnoreCase(terminal) && !"FINISHED".equalsIgnoreCase(terminal)) {
+                throw new BusinessException(500,
+                        String.valueOf(result.getOrDefault("runMessage",
+                                result.getOrDefault("message", "治理/融合任务执行失败"))));
+            }
+        }
         auditService.log(null, "dolphinscheduler", null,
                 "GOV_TASK_DS_CALLBACK", "gov_governance_task", String.valueOf(taskId),
                 "instance=" + dsInstanceId);

@@ -1,11 +1,12 @@
 <script setup lang="ts">
 /**
  * V3.0「数据融合处理」子能力宿主。
- * 数据清洗 / 调度 / 执行：仅融合任务（DWD→DWS/ADS），与数据治理任务隔离；不含组件勾选页。
+ * schedule=工作流定时（融合任务 DS 定时）；workflow=工作流调度（跨模块流水线）。
  */
 import { computed, defineAsyncComponent, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import GovernanceEtlPanel from '../etl/GovernanceEtlPanel.vue'
+import CrossModulePipelinePanel from './CrossModulePipelinePanel.vue'
 
 const FusionScriptView = defineAsyncComponent(() => import('./FusionScriptView.vue'))
 const FusionDsWorkflowComposerView = defineAsyncComponent(() => import('./FusionDsWorkflowComposerView.vue'))
@@ -67,8 +68,23 @@ const taskId = computed(() => props.etlTaskId ?? null)
 
     <FusionDsWorkflowComposerView v-else-if="capability === 'schedule1'" />
 
+    <div v-else-if="capability === 'schedule'" class="fusion-schedule">
+      <GovernanceEtlPanel
+        :sub="etlSub"
+        :view="view"
+        :task-id="taskId"
+        task-domain="FUSION"
+        @design="emit('design', $event)"
+        @monitor="emit('monitor', $event)"
+      />
+    </div>
+
+    <div v-else-if="capability === 'workflow'" class="fusion-workflow">
+      <CrossModulePipelinePanel />
+    </div>
+
     <GovernanceEtlPanel
-      v-else-if="capability === 'clean' || capability === 'schedule'"
+      v-else-if="capability === 'clean'"
       :sub="etlSub"
       :view="view"
       :task-id="taskId"
@@ -97,3 +113,12 @@ const taskId = computed(() => props.etlTaskId ?? null)
     </div>
   </div>
 </template>
+
+<style scoped>
+.fusion-schedule,
+.fusion-workflow {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+</style>

@@ -865,7 +865,7 @@ onMounted(async () => {
           </el-select>
         </el-form-item>
         <el-form-item label="执行周期" required>
-          <ExecCycleSelect v-model="taskForm.cronExpr" style="max-width:420px" />
+          <ExecCycleSelect v-model="taskForm.cronExpr" :allow-custom="false" style="max-width:420px" />
         </el-form-item>
         <el-form-item label="采集范围">
           <el-radio-group v-model="taskForm.scopeType">

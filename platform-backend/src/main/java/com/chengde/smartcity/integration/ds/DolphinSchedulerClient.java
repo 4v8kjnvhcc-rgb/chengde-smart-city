@@ -200,11 +200,58 @@ public class DolphinSchedulerClient {
     }
 
     public void releaseDefinition(long projectCode, long definitionCode, String state) {
+        releaseDefinition(projectCode, definitionCode, state, null);
+    }
+
+    /**
+     * @param state ONLINE / OFFLINE
+     * @param name  流程名；下线时 DS 常要求传 name，为空则按 code 反查
+     */
+    public void releaseDefinition(long projectCode, long definitionCode, String state, String name) {
+        String releaseName = name;
+        if (releaseName == null || releaseName.isBlank()) {
+            releaseName = findDefinitionName(projectCode, definitionCode);
+        }
         String url = base() + "/projects/" + projectCode + "/process-definition/" + definitionCode + "/release";
         MultiValueMap<String, String> form = new LinkedMultiValueMap<>();
-        form.add("name", "");
+        form.add("name", releaseName == null ? "" : releaseName);
         form.add("releaseState", state);
-        requirePost(url, form, "上线 DS 流程定义");
+        String action = "OFFLINE".equalsIgnoreCase(state) ? "下线 DS 流程定义" : "上线 DS 流程定义";
+        requirePost(url, form, action);
+    }
+
+    /** 分页列出项目下流程定义（最多 200 条）。 */
+    public List<Map<String, Object>> listProcessDefinitions(long projectCode) {
+        List<Map<String, Object>> out = new ArrayList<>();
+        String url = base() + "/projects/" + projectCode + "/process-definition?pageNo=1&pageSize=200";
+        JsonNode root = requireGet(url, "查询 DS 流程定义");
+        JsonNode defs = root.path("data").path("totalList");
+        if (!defs.isArray()) {
+            return out;
+        }
+        for (JsonNode n : defs) {
+            Map<String, Object> row = new HashMap<>();
+            row.put("code", n.path("code").asLong());
+            row.put("name", n.path("name").asText(""));
+            row.put("releaseState", n.path("releaseState").asText(""));
+            out.add(row);
+        }
+        return out;
+    }
+
+    private String findDefinitionName(long projectCode, long definitionCode) {
+        try {
+            for (Map<String, Object> row : listProcessDefinitions(projectCode)) {
+                Object code = row.get("code");
+                if (code != null && Long.parseLong(String.valueOf(code)) == definitionCode) {
+                    Object name = row.get("name");
+                    return name == null ? null : String.valueOf(name);
+                }
+            }
+        } catch (Exception e) {
+            log.warn("反查 DS 流程名失败 project={} def={}: {}", projectCode, definitionCode, e.getMessage());
+        }
+        return null;
     }
 
     // ---------- 实例 ----------
