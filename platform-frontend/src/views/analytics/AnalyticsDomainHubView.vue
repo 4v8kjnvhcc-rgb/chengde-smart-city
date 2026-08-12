@@ -6,7 +6,11 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import PageCard from '@/components/common/PageCard.vue'
 import HubSideLayout, { type HubNavGroup } from '@/components/common/HubSideLayout.vue'
 import DomainIndicatorSqlLibrary from '@/views/analytics/DomainIndicatorSqlLibrary.vue'
+import DomainIndicatorDomainManage from '@/views/analytics/DomainIndicatorDomainManage.vue'
+import DomainIndicatorGroupManage from '@/views/analytics/DomainIndicatorGroupManage.vue'
+import DomainIndicatorTaskPanel from '@/views/analytics/DomainIndicatorTaskPanel.vue'
 import { statusLabel, statusTagType } from '@/utils/status-label'
+import { ingestionApi } from '@/views/exchange/ingestion/useIngestionHub'
 
 interface ZoneDef {
   key: string
@@ -25,6 +29,8 @@ interface Binding {
   physicalTable?: string
   metaEntryCode?: string
   dataLayer?: string
+  dimGroup?: string
+  accessMode?: string
   status: string
   createdBy?: string
   createdAt?: string
@@ -37,6 +43,49 @@ interface Candidate {
   physicalTable?: string
   metaEntryCode?: string
   dataLayer?: string
+  dimGroup?: string
+  accessMode?: string
+}
+
+interface MetaSourceOption {
+  id: number
+  sourceName: string
+  categoryId?: number
+  categoryName?: string
+}
+
+interface CategoryNode {
+  id: number
+  label: string
+  categoryCode?: string
+  layerCode?: string
+  children?: CategoryNode[]
+}
+
+interface OdsTableRow {
+  tableName: string
+  sourceName: string
+  dataLayer: string
+}
+
+interface DocRow {
+  id: number
+  title: string
+  categoryCode?: string
+  categoryName?: string
+  sourceType?: string
+  publishStatus?: string
+  updatedAt?: string
+}
+
+interface ChannelRow {
+  id: number
+  channelCode: string
+  channelName: string
+  channelType: string
+  status: string
+  lastRunAt?: string
+  lastMessage?: string
 }
 
 interface Indicator {
@@ -119,12 +168,40 @@ interface BatchLedgerRow {
 }
 
 const ASSET_TYPE_ZH: Record<string, string> = {
-  METADATA: '元数据表', MANAGED: '纳管表', CATALOG: '目录资源', OTHER: '其他',
+  METADATA: '元数据表',
+  MANAGED: '纳管表',
+  CATALOG: '目录资源',
+  DOCUMENT: '文件资源',
+  CHANNEL_API: 'API通道',
+  CHANNEL_CDC: 'CDC通道',
+  OTHER: '其他',
+}
+
+const DIM_GROUP_ZH: Record<string, string> = {
+  DATATYPE: '数据类型',
+  LATENCY: '数据时效性',
+}
+
+const ACCESS_MODE_ZH: Record<string, string> = {
+  STRUCT: '结构化数据接入',
+  UNSTRUCT: '非结构化数据接入',
+  API: 'API接口数据接入',
+  CDC: 'CDC实时数据接入',
 }
 
 function assetTypeLabel(v?: string) {
   if (!v) return '—'
   return ASSET_TYPE_ZH[v] || statusLabel(v)
+}
+
+function dimGroupLabel(v?: string) {
+  if (!v) return '—'
+  return DIM_GROUP_ZH[v] || statusLabel(v)
+}
+
+function accessModeLabel(v?: string) {
+  if (!v) return '—'
+  return ACCESS_MODE_ZH[v] || statusLabel(v)
 }
 
 type DimItem = { key: string; tip: string }
@@ -323,6 +400,8 @@ const isPopulation = computed(() => meta.value.domain === 'population')
 const dataEaseHealthy = ref(false)
 const activeNav = ref('')
 const shareTab = ref<'mount' | 'catalog' | 'api' | 'indicators' | 'models'>('mount')
+const indicatorLibTab = ref<'domains' | 'groups' | 'tasks'>('domains')
+const indicatorDomainTick = ref(0)
 const governTab = ref<'mount' | 'mechanism' | 'verify'>('mount')
 const collectTab = ref<'mount' | 'sources'>('mount')
 const coreTab = ref<'mount' | 'storage'>('mount')
@@ -364,6 +443,73 @@ const batchForm = ref({
 
 const bindDialog = ref(false)
 const selectedCandidate = ref<Candidate | null>(null)
+/** 采集区三级选型：1=维度分组 2=接入方式 3=选择对象；其他区仍用单步候选 */
+const collectWizard = ref(false)
+const bindStep = ref<1 | 2 | 3>(1)
+const bindDimGroup = ref<'DATATYPE' | 'LATENCY' | ''>('')
+const bindAccessMode = ref<'STRUCT' | 'UNSTRUCT' | 'API' | 'CDC' | ''>('')
+const bindObjectLoading = ref(false)
+const odsSources = ref<MetaSourceOption[]>([])
+const odsSourceId = ref<number | null>(null)
+const odsTableKeyword = ref('')
+const odsTablesAll = ref<OdsTableRow[]>([])
+const odsTablePage = ref(1)
+const odsTablePageSize = ref(10)
+const selectedOdsTable = ref<OdsTableRow | null>(null)
+const docKeyword = ref('')
+const docCategoryCode = ref('')
+const docPublishStatus = ref('')
+const docCategories = ref<Array<{ categoryCode: string; categoryName: string }>>([])
+const docsAll = ref<DocRow[]>([])
+const docPage = ref(1)
+const docPageSize = ref(10)
+const selectedDoc = ref<DocRow | null>(null)
+const channelKeyword = ref('')
+const channelsAll = ref<ChannelRow[]>([])
+const channelPage = ref(1)
+const channelPageSize = ref(10)
+const selectedChannel = ref<ChannelRow | null>(null)
+
+const bindStepActive = computed(() => bindStep.value - 1)
+const bindBreadcrumb = computed(() => {
+  const parts: string[] = []
+  if (bindDimGroup.value) parts.push(dimGroupLabel(bindDimGroup.value))
+  if (bindAccessMode.value) parts.push(accessModeLabel(bindAccessMode.value))
+  return parts.join(' / ')
+})
+const odsTablesFiltered = computed(() => {
+  const kw = odsTableKeyword.value.trim().toLowerCase()
+  if (!kw) return odsTablesAll.value
+  return odsTablesAll.value.filter((t) =>
+    t.tableName.toLowerCase().includes(kw) || t.sourceName.toLowerCase().includes(kw),
+  )
+})
+const odsTablesPaged = computed(() => {
+  const start = (odsTablePage.value - 1) * odsTablePageSize.value
+  return odsTablesFiltered.value.slice(start, start + odsTablePageSize.value)
+})
+const docsPaged = computed(() => {
+  const start = (docPage.value - 1) * docPageSize.value
+  return docsAll.value.slice(start, start + docPageSize.value)
+})
+const channelsFiltered = computed(() => {
+  const kw = channelKeyword.value.trim().toLowerCase()
+  if (!kw) return channelsAll.value
+  return channelsAll.value.filter((c) =>
+    c.channelCode.toLowerCase().includes(kw) || c.channelName.toLowerCase().includes(kw),
+  )
+})
+const channelsPaged = computed(() => {
+  const start = (channelPage.value - 1) * channelPageSize.value
+  return channelsFiltered.value.slice(start, start + channelPageSize.value)
+})
+const canConfirmCollectBind = computed(() => {
+  if (bindAccessMode.value === 'STRUCT') return !!selectedOdsTable.value
+  if (bindAccessMode.value === 'UNSTRUCT') return !!selectedDoc.value
+  if (bindAccessMode.value === 'API' || bindAccessMode.value === 'CDC') return !!selectedChannel.value
+  return false
+})
+
 const modelDrawer = ref(false)
 const editingModel = ref<AnalysisModel | null>(null)
 const modelForm = ref({
@@ -690,15 +836,204 @@ async function loadCurrentView() {
   }
 }
 
+function resetCollectWizard() {
+  bindStep.value = 1
+  bindDimGroup.value = ''
+  bindAccessMode.value = ''
+  selectedCandidate.value = null
+  odsSources.value = []
+  odsSourceId.value = null
+  odsTableKeyword.value = ''
+  odsTablesAll.value = []
+  odsTablePage.value = 1
+  selectedOdsTable.value = null
+  docKeyword.value = ''
+  docCategoryCode.value = ''
+  docPublishStatus.value = ''
+  docsAll.value = []
+  docPage.value = 1
+  selectedDoc.value = null
+  channelKeyword.value = ''
+  channelsAll.value = []
+  channelPage.value = 1
+  selectedChannel.value = null
+}
+
+function collectOdsCategoryIds(nodes: CategoryNode[], out: Set<number>) {
+  for (const n of nodes) {
+    const code = String(n.categoryCode || '')
+    const layer = String(n.layerCode || '')
+    const label = String(n.label || '')
+    if (layer === 'ODS' || /ODS|贴源/i.test(code) || /ODS|贴源/i.test(label)) {
+      out.add(n.id)
+    }
+    if (n.children?.length) collectOdsCategoryIds(n.children, out)
+  }
+}
+
+async function loadOdsSources() {
+  const tree = ((await api.get('/governance/platform/metadata/source-categories/tree')).data || []) as CategoryNode[]
+  const odsIds = new Set<number>()
+  collectOdsCategoryIds(tree, odsIds)
+  const all = ((await api.get('/governance/platform/metadata/data-sources')).data || []) as MetaSourceOption[]
+  let filtered = odsIds.size
+    ? all.filter((s) => s.categoryId != null && odsIds.has(s.categoryId))
+    : all.filter((s) => /ODS|贴源/i.test(String(s.categoryName || '')))
+  if (!filtered.length) filtered = all
+  odsSources.value = filtered
+  if (!odsSourceId.value && filtered.length) {
+    odsSourceId.value = filtered[0].id
+  }
+}
+
+async function loadOdsTables() {
+  selectedOdsTable.value = null
+  odsTablesAll.value = []
+  odsTablePage.value = 1
+  const id = odsSourceId.value
+  if (id == null || id <= 0) return
+  bindObjectLoading.value = true
+  try {
+    const src = odsSources.value.find((s) => s.id === id)
+    const rows = ((await api.get(`/governance/platform/metadata/collect/meta-data-sources/${id}/tables`)).data || []) as Array<{
+      sourceTable?: string
+      tableName?: string
+    }>
+    odsTablesAll.value = rows
+      .map((r) => String(r.sourceTable || r.tableName || '').trim())
+      .filter(Boolean)
+      .map((tableName) => ({
+        tableName,
+        sourceName: src?.sourceName || '—',
+        dataLayer: 'ODS',
+      }))
+  } catch {
+    odsTablesAll.value = []
+    ElMessage.error('加载 ODS 表失败')
+  } finally {
+    bindObjectLoading.value = false
+  }
+}
+
+async function loadDocsForBind() {
+  selectedDoc.value = null
+  docPage.value = 1
+  bindObjectLoading.value = true
+  try {
+    if (!docCategories.value.length) {
+      docCategories.value = ((await api.get('/unstructured/platform/categories')).data || []).map((c: Record<string, unknown>) => ({
+        categoryCode: String(c.categoryCode || ''),
+        categoryName: String(c.categoryName || c.name || c.categoryCode || ''),
+      }))
+    }
+    docsAll.value = ((await api.get('/unstructured/platform/documents', {
+      params: {
+        keyword: docKeyword.value.trim() || undefined,
+        categoryCode: docCategoryCode.value || undefined,
+        publishStatus: docPublishStatus.value || undefined,
+      },
+    })).data || []) as DocRow[]
+  } catch {
+    docsAll.value = []
+    ElMessage.error('加载文件资源失败')
+  } finally {
+    bindObjectLoading.value = false
+  }
+}
+
+async function loadChannelsForBind(type: 'API' | 'CDC') {
+  selectedChannel.value = null
+  channelPage.value = 1
+  channelKeyword.value = ''
+  bindObjectLoading.value = true
+  try {
+    channelsAll.value = ((await ingestionApi.channels(type)).data || []) as ChannelRow[]
+  } catch {
+    channelsAll.value = []
+    ElMessage.error(`加载${type}通道失败`)
+  } finally {
+    bindObjectLoading.value = false
+  }
+}
+
 async function openBindDialog() {
   if (!activeZone.value) return
-  await loadBindings(true)
   selectedCandidate.value = null
+  if (isCollect.value) {
+    collectWizard.value = true
+    resetCollectWizard()
+    bindDialog.value = true
+    return
+  }
+  collectWizard.value = false
+  await loadBindings(true)
   bindDialog.value = true
 }
 
+function onSelectDimGroup(g: 'DATATYPE' | 'LATENCY') {
+  bindDimGroup.value = g
+  bindAccessMode.value = ''
+}
+
+function onSelectAccessMode(m: 'STRUCT' | 'UNSTRUCT' | 'API' | 'CDC') {
+  bindAccessMode.value = m
+}
+
+async function bindWizardNext() {
+  if (bindStep.value === 1) {
+    if (!bindDimGroup.value) {
+      ElMessage.warning('请选择数据类型或数据时效性')
+      return
+    }
+    bindStep.value = 2
+    return
+  }
+  if (bindStep.value === 2) {
+    if (!bindAccessMode.value) {
+      ElMessage.warning('请选择接入方式')
+      return
+    }
+    if (bindDimGroup.value === 'DATATYPE' && bindAccessMode.value !== 'STRUCT' && bindAccessMode.value !== 'UNSTRUCT') {
+      ElMessage.warning('数据类型下请选择结构化或非结构化接入')
+      return
+    }
+    if (bindDimGroup.value === 'LATENCY' && bindAccessMode.value !== 'API' && bindAccessMode.value !== 'CDC') {
+      ElMessage.warning('数据时效性下请选择 API 或 CDC')
+      return
+    }
+    bindStep.value = 3
+    if (bindAccessMode.value === 'STRUCT') {
+      await loadOdsSources()
+      await loadOdsTables()
+    } else if (bindAccessMode.value === 'UNSTRUCT') {
+      await loadDocsForBind()
+    } else if (bindAccessMode.value === 'API' || bindAccessMode.value === 'CDC') {
+      await loadChannelsForBind(bindAccessMode.value)
+    }
+  }
+}
+
+function bindWizardPrev() {
+  if (bindStep.value === 3) {
+    selectedOdsTable.value = null
+    selectedDoc.value = null
+    selectedChannel.value = null
+    bindStep.value = 2
+    return
+  }
+  if (bindStep.value === 2) {
+    bindAccessMode.value = ''
+    bindStep.value = 1
+  }
+}
+
 async function confirmBind() {
-  if (!activeZone.value || !selectedCandidate.value) {
+  if (!activeZone.value) return
+  if (collectWizard.value) {
+    await confirmCollectBind()
+    return
+  }
+  if (!selectedCandidate.value) {
     ElMessage.warning('请选择候选资产')
     return
   }
@@ -711,6 +1046,57 @@ async function confirmBind() {
     metaEntryCode: c.metaEntryCode,
     dataLayer: c.dataLayer,
   })
+  ElMessage.success('已挂载')
+  bindDialog.value = false
+  await loadBindings(true)
+}
+
+async function confirmCollectBind() {
+  if (!activeZone.value || !bindDimGroup.value || !bindAccessMode.value) return
+  let body: Record<string, unknown> | null = null
+  if (bindAccessMode.value === 'STRUCT' && selectedOdsTable.value) {
+    const t = selectedOdsTable.value
+    const sid = odsSourceId.value
+    body = {
+      assetType: 'METADATA',
+      assetRef: `MDS_${sid}_${t.tableName}`,
+      assetName: t.tableName,
+      physicalTable: t.tableName,
+      metaEntryCode: sid != null ? `MDS_${sid}` : undefined,
+      dataLayer: 'ODS',
+      dimGroup: 'DATATYPE',
+      accessMode: 'STRUCT',
+    }
+  } else if (bindAccessMode.value === 'UNSTRUCT' && selectedDoc.value) {
+    const d = selectedDoc.value
+    body = {
+      assetType: 'DOCUMENT',
+      assetRef: String(d.id),
+      assetName: d.title || String(d.id),
+      physicalTable: undefined,
+      dataLayer: 'UNSTRUCT',
+      dimGroup: 'DATATYPE',
+      accessMode: 'UNSTRUCT',
+      remark: d.categoryName || d.categoryCode || undefined,
+    }
+  } else if ((bindAccessMode.value === 'API' || bindAccessMode.value === 'CDC') && selectedChannel.value) {
+    const ch = selectedChannel.value
+    body = {
+      assetType: bindAccessMode.value === 'API' ? 'CHANNEL_API' : 'CHANNEL_CDC',
+      assetRef: ch.channelCode,
+      assetName: ch.channelName || ch.channelCode,
+      physicalTable: undefined,
+      dataLayer: bindAccessMode.value,
+      dimGroup: 'LATENCY',
+      accessMode: bindAccessMode.value,
+      remark: ch.status,
+    }
+  }
+  if (!body) {
+    ElMessage.warning('请选择要挂载的对象')
+    return
+  }
+  await api.post(`/analytics/domain/${meta.value.domain}/zones/${activeZone.value.zoneCode}/bindings`, body)
   ElMessage.success('已挂载')
   bindDialog.value = false
   await loadBindings(true)
@@ -791,7 +1177,10 @@ async function issueModelEmbed() {
 
 function onHubSelect(key: string) {
   activeNav.value = key
-  if (key.endsWith('share')) shareTab.value = 'mount'
+  if (key.endsWith('share')) {
+    shareTab.value = 'mount'
+    indicatorLibTab.value = 'domains'
+  }
   if (key.endsWith('govern')) governTab.value = 'mount'
   if (key.endsWith('collect')) collectTab.value = 'mount'
   if (key.endsWith('core')) coreTab.value = 'mount'
@@ -820,7 +1209,7 @@ watch(() => route.query.tab, async () => {
 
 watch(shareTab, async (t) => {
   if ((t === 'indicators' || t === 'models' || t === 'mount') && (isShare.value || isDesignerOnly.value)) {
-    if (t === 'indicators' || t === 'models') await loadDesigner()
+    if (t === 'models' || t === 'indicators') await loadDesigner()
     if (t === 'mount' && activeZone.value) await loadBindings()
   }
   if (t === 'api' && isPopulation.value && isShare.value) {
@@ -966,11 +1355,16 @@ onMounted(async () => {
               </el-form>
               <el-table :data="bindings" stripe size="small" empty-text="尚未挂载资产，请从候选中选型">
                 <el-table-column prop="assetName" label="资产名称" min-width="160" />
-                <el-table-column label="类型" width="100">
+                <el-table-column label="维度分组" width="110">
+                  <template #default="{ row }">{{ dimGroupLabel(row.dimGroup) }}</template>
+                </el-table-column>
+                <el-table-column label="接入方式" width="140">
+                  <template #default="{ row }">{{ accessModeLabel(row.accessMode) }}</template>
+                </el-table-column>
+                <el-table-column label="来源类型" width="110">
                   <template #default="{ row }">{{ assetTypeLabel(row.assetType) }}</template>
                 </el-table-column>
-                <el-table-column prop="physicalTable" label="物理表" min-width="140" show-overflow-tooltip />
-                <el-table-column prop="dataLayer" label="分层" width="90" />
+                <el-table-column prop="physicalTable" label="物理表/引用" min-width="140" show-overflow-tooltip />
                 <el-table-column label="状态" width="90">
                   <template #default="{ row }">
                     <el-tag :type="statusTagType(row.status)" size="small">{{ statusLabel(row.status) }}</el-tag>
@@ -1276,7 +1670,26 @@ onMounted(async () => {
             </template>
           </el-tab-pane>
           <el-tab-pane label="指标库" name="indicators">
+            <el-tabs v-if="isPopulation" v-model="indicatorLibTab" class="indicator-lib-tabs">
+              <el-tab-pane label="指标域管理" name="domains" lazy>
+                <DomainIndicatorDomainManage
+                  :domain="meta.domain"
+                  @changed="indicatorDomainTick++"
+                />
+              </el-tab-pane>
+              <el-tab-pane label="指标组管理" name="groups" lazy>
+                <DomainIndicatorGroupManage
+                  :key="`groups-${indicatorDomainTick}`"
+                  :domain="meta.domain"
+                  :active="indicatorLibTab === 'groups'"
+                />
+              </el-tab-pane>
+              <el-tab-pane label="指标任务" name="tasks" lazy>
+                <DomainIndicatorTaskPanel :domain="meta.domain" />
+              </el-tab-pane>
+            </el-tabs>
             <DomainIndicatorSqlLibrary
+              v-else
               :domain="meta.domain"
               @refreshed="onIndicatorsRefreshed"
             />
@@ -1387,26 +1800,269 @@ onMounted(async () => {
       </template>
     </el-dialog>
 
-    <el-dialog v-model="bindDialog" title="从现有资产选型挂载" width="720px" destroy-on-close>
-      <el-alert type="info" :closable="false" style="margin-bottom:8px" title="只登记归属关系，不复制数据。优先选择已登记元数据或已纳管对象。" />
-      <el-table
-        :data="candidates"
-        stripe
-        size="small"
-        highlight-current-row
-        max-height="360"
-        @current-change="(row: Candidate | null) => { selectedCandidate = row }"
-      >
-        <el-table-column prop="assetName" label="名称" min-width="160" />
-        <el-table-column label="类型" width="100">
-          <template #default="{ row }">{{ assetTypeLabel(row.assetType) }}</template>
-        </el-table-column>
-        <el-table-column prop="physicalTable" label="物理表" min-width="140" show-overflow-tooltip />
-        <el-table-column prop="dataLayer" label="分层" width="90" />
-      </el-table>
+    <el-dialog
+      v-model="bindDialog"
+      :title="collectWizard ? '选型挂载' : '从现有资产选型挂载'"
+      :width="collectWizard ? '760px' : '720px'"
+      destroy-on-close
+    >
+      <template v-if="collectWizard">
+        <el-steps :active="bindStepActive" finish-status="success" align-center style="margin-bottom:16px">
+          <el-step title="选维度分组" />
+          <el-step title="选接入方式" />
+          <el-step title="选择对象" />
+        </el-steps>
+        <div v-if="bindBreadcrumb" class="bind-crumb">{{ bindBreadcrumb }}</div>
+
+        <div v-if="bindStep === 1" class="bind-card-grid">
+          <div
+            class="bind-card"
+            :class="{ active: bindDimGroup === 'DATATYPE' }"
+            @click="onSelectDimGroup('DATATYPE')"
+          >
+            <div class="bind-card-title">数据类型</div>
+            <div class="bind-card-desc">结构化 / 非结构化接入</div>
+          </div>
+          <div
+            class="bind-card"
+            :class="{ active: bindDimGroup === 'LATENCY' }"
+            @click="onSelectDimGroup('LATENCY')"
+          >
+            <div class="bind-card-title">数据时效性</div>
+            <div class="bind-card-desc">API / CDC 实时接入</div>
+          </div>
+        </div>
+
+        <div v-else-if="bindStep === 2 && bindDimGroup === 'DATATYPE'" class="bind-card-grid">
+          <div
+            class="bind-card"
+            :class="{ active: bindAccessMode === 'STRUCT' }"
+            @click="onSelectAccessMode('STRUCT')"
+          >
+            <div class="bind-card-title">结构化数据接入</div>
+            <div class="bind-card-desc">ODS 贴源表</div>
+          </div>
+          <div
+            class="bind-card"
+            :class="{ active: bindAccessMode === 'UNSTRUCT' }"
+            @click="onSelectAccessMode('UNSTRUCT')"
+          >
+            <div class="bind-card-title">非结构化数据接入</div>
+            <div class="bind-card-desc">文件资源管理</div>
+          </div>
+        </div>
+
+        <div v-else-if="bindStep === 2 && bindDimGroup === 'LATENCY'" class="bind-card-grid">
+          <div
+            class="bind-card"
+            :class="{ active: bindAccessMode === 'API' }"
+            @click="onSelectAccessMode('API')"
+          >
+            <div class="bind-card-title">API 接口数据接入</div>
+            <div class="bind-card-desc">归集 API 通道</div>
+          </div>
+          <div
+            class="bind-card"
+            :class="{ active: bindAccessMode === 'CDC' }"
+            @click="onSelectAccessMode('CDC')"
+          >
+            <div class="bind-card-title">CDC 实时数据接入</div>
+            <div class="bind-card-desc">归集 CDC 通道</div>
+          </div>
+        </div>
+
+        <div v-else-if="bindStep === 3" v-loading="bindObjectLoading">
+          <template v-if="bindAccessMode === 'STRUCT'">
+            <el-form inline class="portal-inline-form portal-inline-form--sm" size="small">
+              <el-form-item label="ODS数据源" class="portal-field-xl">
+                <el-select
+                  v-model="odsSourceId"
+                  filterable
+                  placeholder="选择数据源"
+                  @change="loadOdsTables"
+                >
+                  <el-option
+                    v-for="s in odsSources"
+                    :key="s.id"
+                    :label="s.sourceName"
+                    :value="s.id"
+                  />
+                </el-select>
+              </el-form-item>
+              <el-form-item label="表名" class="portal-field-lg">
+                <el-input v-model="odsTableKeyword" clearable placeholder="表名关键字" @keyup.enter="odsTablePage = 1" />
+              </el-form-item>
+              <el-form-item class="portal-form-actions">
+                <el-button type="primary" @click="odsTablePage = 1">查询</el-button>
+                <el-button @click="odsTableKeyword = ''; odsTablePage = 1">重置</el-button>
+              </el-form-item>
+            </el-form>
+            <el-table
+              :data="odsTablesPaged"
+              stripe
+              size="small"
+              highlight-current-row
+              max-height="320"
+              empty-text="暂无表，请先选择 ODS 数据源"
+              @current-change="(row: OdsTableRow | null) => { selectedOdsTable = row }"
+            >
+              <el-table-column prop="tableName" label="表名" min-width="160" />
+              <el-table-column prop="sourceName" label="数据源" min-width="140" show-overflow-tooltip />
+              <el-table-column prop="dataLayer" label="分层" width="80" />
+            </el-table>
+            <div class="bind-pager">
+              <el-pagination
+                v-model:current-page="odsTablePage"
+                v-model:page-size="odsTablePageSize"
+                layout="total, prev, pager, next"
+                :total="odsTablesFiltered.length"
+                small
+              />
+            </div>
+          </template>
+
+          <template v-else-if="bindAccessMode === 'UNSTRUCT'">
+            <el-form inline class="portal-inline-form portal-inline-form--sm" size="small">
+              <el-form-item label="关键词" class="portal-field-md">
+                <el-input v-model="docKeyword" clearable />
+              </el-form-item>
+              <el-form-item label="分类" class="portal-field-md">
+                <el-select v-model="docCategoryCode" clearable placeholder="全部">
+                  <el-option
+                    v-for="c in docCategories"
+                    :key="c.categoryCode"
+                    :label="c.categoryName"
+                    :value="c.categoryCode"
+                  />
+                </el-select>
+              </el-form-item>
+              <el-form-item label="发布状态" class="portal-field-sm">
+                <el-select v-model="docPublishStatus" clearable placeholder="全部">
+                  <el-option label="已发布" value="PUBLISHED" />
+                  <el-option label="草稿" value="DRAFT" />
+                  <el-option label="已下线" value="OFFLINE" />
+                </el-select>
+              </el-form-item>
+              <el-form-item class="portal-form-actions">
+                <el-button type="primary" @click="loadDocsForBind">查询</el-button>
+                <el-button @click="docKeyword = ''; docCategoryCode = ''; docPublishStatus = ''; loadDocsForBind()">重置</el-button>
+              </el-form-item>
+            </el-form>
+            <el-table
+              :data="docsPaged"
+              stripe
+              size="small"
+              highlight-current-row
+              max-height="320"
+              empty-text="暂无文件资源"
+              @current-change="(row: DocRow | null) => { selectedDoc = row }"
+            >
+              <el-table-column prop="title" label="标题" min-width="160" show-overflow-tooltip />
+              <el-table-column label="分类" width="120">
+                <template #default="{ row }">{{ row.categoryName || row.categoryCode || '—' }}</template>
+              </el-table-column>
+              <el-table-column label="来源" width="100">
+                <template #default="{ row }">{{ row.sourceType === 'EXTERNAL' ? '外部平台' : '本地上传' }}</template>
+              </el-table-column>
+              <el-table-column label="发布状态" width="100">
+                <template #default="{ row }">{{ statusLabel(row.publishStatus) }}</template>
+              </el-table-column>
+              <el-table-column prop="updatedAt" label="更新时间" width="160" />
+            </el-table>
+            <div class="bind-pager">
+              <el-pagination
+                v-model:current-page="docPage"
+                v-model:page-size="docPageSize"
+                layout="total, prev, pager, next"
+                :total="docsAll.length"
+                small
+              />
+            </div>
+          </template>
+
+          <template v-else-if="bindAccessMode === 'API' || bindAccessMode === 'CDC'">
+            <el-form inline class="portal-inline-form portal-inline-form--sm" size="small">
+              <el-form-item label="通道名" class="portal-field-lg">
+                <el-input v-model="channelKeyword" clearable placeholder="编码/名称" @keyup.enter="channelPage = 1" />
+              </el-form-item>
+              <el-form-item class="portal-form-actions">
+                <el-button type="primary" @click="channelPage = 1">查询</el-button>
+                <el-button @click="channelKeyword = ''; channelPage = 1">重置</el-button>
+              </el-form-item>
+            </el-form>
+            <el-table
+              :data="channelsPaged"
+              stripe
+              size="small"
+              highlight-current-row
+              max-height="320"
+              empty-text="暂无通道，请先在数据归集中配置"
+              @current-change="(row: ChannelRow | null) => { selectedChannel = row }"
+            >
+              <el-table-column prop="channelCode" label="通道编码" min-width="140" />
+              <el-table-column prop="channelName" label="名称" min-width="160" show-overflow-tooltip />
+              <el-table-column label="状态" width="100">
+                <template #default="{ row }">{{ statusLabel(row.status) }}</template>
+              </el-table-column>
+              <el-table-column prop="lastRunAt" label="最近同步" width="160" />
+            </el-table>
+            <div class="bind-pager">
+              <el-pagination
+                v-model:current-page="channelPage"
+                v-model:page-size="channelPageSize"
+                layout="total, prev, pager, next"
+                :total="channelsFiltered.length"
+                small
+              />
+            </div>
+          </template>
+        </div>
+      </template>
+
+      <template v-else>
+        <el-alert type="info" :closable="false" style="margin-bottom:8px" title="只登记归属关系，不复制数据。优先选择已登记元数据或已纳管对象。" />
+        <el-table
+          :data="candidates"
+          stripe
+          size="small"
+          highlight-current-row
+          max-height="360"
+          @current-change="(row: Candidate | null) => { selectedCandidate = row }"
+        >
+          <el-table-column prop="assetName" label="名称" min-width="160" />
+          <el-table-column label="类型" width="100">
+            <template #default="{ row }">{{ assetTypeLabel(row.assetType) }}</template>
+          </el-table-column>
+          <el-table-column prop="physicalTable" label="物理表" min-width="140" show-overflow-tooltip />
+          <el-table-column prop="dataLayer" label="分层" width="90" />
+        </el-table>
+      </template>
+
       <template #footer>
-        <el-button @click="bindDialog = false">取消</el-button>
-        <el-button type="primary" :disabled="!selectedCandidate" @click="confirmBind">确认挂载</el-button>
+        <template v-if="collectWizard">
+          <el-button @click="bindDialog = false">取消</el-button>
+          <el-button v-if="bindStep > 1" @click="bindWizardPrev">上一步</el-button>
+          <el-button
+            v-if="bindStep < 3"
+            type="primary"
+            :disabled="bindStep === 1 ? !bindDimGroup : !bindAccessMode"
+            @click="bindWizardNext"
+          >
+            下一步
+          </el-button>
+          <el-button
+            v-else
+            type="primary"
+            :disabled="!canConfirmCollectBind"
+            @click="confirmBind"
+          >
+            确认挂载
+          </el-button>
+        </template>
+        <template v-else>
+          <el-button @click="bindDialog = false">取消</el-button>
+          <el-button type="primary" :disabled="!selectedCandidate" @click="confirmBind">确认挂载</el-button>
+        </template>
       </template>
     </el-dialog>
 
@@ -1533,4 +2189,36 @@ onMounted(async () => {
   text-align: center;
 }
 :deep(.row-hl) { background: var(--el-color-primary-light-9) !important; }
+.bind-crumb {
+  font-size: 13px;
+  color: var(--el-text-color-secondary);
+  margin-bottom: 12px;
+}
+.bind-card-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+.bind-card {
+  border: 1px solid var(--portal-border, #dcdfe6);
+  border-radius: 8px;
+  padding: 20px 16px;
+  cursor: pointer;
+  background: var(--el-fill-color-blank, #fff);
+  transition: border-color 0.15s, box-shadow 0.15s;
+}
+.bind-card:hover {
+  border-color: var(--el-color-primary-light-3);
+}
+.bind-card.active {
+  border-color: var(--el-color-primary);
+  box-shadow: 0 0 0 1px var(--el-color-primary-light-5);
+  background: var(--el-color-primary-light-9);
+}
+.bind-card-title { font-weight: 600; font-size: 15px; margin-bottom: 6px; }
+.bind-card-desc { font-size: 12px; color: var(--el-text-color-secondary); }
+.bind-pager { margin-top: 10px; display: flex; justify-content: flex-end; }
+.indicator-lib-tabs :deep(.el-tabs__header) {
+  margin-bottom: 12px;
+}
 </style>

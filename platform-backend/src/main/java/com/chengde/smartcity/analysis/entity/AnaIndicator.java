@@ -10,12 +10,14 @@ public class AnaIndicator {
     @TableId(type = IdType.AUTO)
     private Long id;
     private String domainCode;
+    private Long groupId;
     private Long queryId;
     private String resultField;
     private String fieldType;
     private Integer fieldLength;
     private Integer fieldPrecision;
     private String fieldName;
+    private String indicatorFlag;
     private String indicatorCode;
     private String indicatorName;
     private String sourceTable;
@@ -37,6 +39,8 @@ public class AnaIndicator {
     public void setId(Long id) { this.id = id; }
     public String getDomainCode() { return domainCode; }
     public void setDomainCode(String domainCode) { this.domainCode = domainCode; }
+    public Long getGroupId() { return groupId; }
+    public void setGroupId(Long groupId) { this.groupId = groupId; }
     public Long getQueryId() { return queryId; }
     public void setQueryId(Long queryId) { this.queryId = queryId; }
     public String getResultField() { return resultField; }
@@ -49,6 +53,8 @@ public class AnaIndicator {
     public void setFieldPrecision(Integer fieldPrecision) { this.fieldPrecision = fieldPrecision; }
     public String getFieldName() { return fieldName; }
     public void setFieldName(String fieldName) { this.fieldName = fieldName; }
+    public String getIndicatorFlag() { return indicatorFlag; }
+    public void setIndicatorFlag(String indicatorFlag) { this.indicatorFlag = indicatorFlag; }
     public String getIndicatorCode() { return indicatorCode; }
     public void setIndicatorCode(String indicatorCode) { this.indicatorCode = indicatorCode; }
     public String getIndicatorName() { return indicatorName; }
