@@ -22,7 +22,7 @@ const FusionCapabilityHost = defineAsyncComponent(() => import('./fusion/FusionC
 const GovernanceComponentsView = defineAsyncComponent(() => import('./etl/GovernanceComponentsView.vue'))
 
 /** V3.0：数据融合处理下挂子能力，侧栏三级可见 */
-const FUSION_CAPS = ['script', 'clean', 'schedule', 'schedule1', 'workflow', 'execute', 'version'] as const
+const FUSION_CAPS = ['script', 'clean', 'schedule', 'workflow', 'execute', 'version'] as const
 
 const NAV_BASE: HubNavItem[] = [
   {
@@ -62,7 +62,6 @@ const NAV_BASE: HubNavItem[] = [
           { key: 'model.script', label: '脚本开发' },
           { key: 'model.clean', label: '数据清洗', subLabel: '多表融合加工→DWS/ADS' },
           { key: 'model.schedule', label: '工作流定时' },
-          { key: 'model.schedule1', label: '工作流调度1' },
           { key: 'model.workflow', label: '工作流调度' },
           { key: 'model.execute', label: '任务执行', subLabel: '加工/直通共享' },
           { key: 'model.version', label: '版本管理' },
@@ -153,6 +152,7 @@ function normalizeModelSub(raw: string): string {
   const s = String(raw || 'warehouse')
   if (s === 'logic' || s === 'model') return 'warehouse'
   if (s === 'processing') return 'script'
+  if (s === 'schedule1') return 'workflow'
   if (s === 'direct-share' || s === 'processed-share') return 'execute'
   if (s === 'warehouse' || s === 'components') return s
   if ((FUSION_CAPS as readonly string[]).includes(s)) return s
@@ -307,7 +307,7 @@ function resetEtlToListIfNeeded(navKey: string) {
 
 function onHubNavSelect(key: string) {
   // 融合处理子能力切换时也退出画布
-  if (key.startsWith('model.') && ['model.clean', 'model.schedule', 'model.schedule1', 'model.workflow', 'model.execute', 'model.script', 'model.version'].includes(key)) {
+  if (key.startsWith('model.') && ['model.clean', 'model.schedule', 'model.workflow', 'model.execute', 'model.script', 'model.version'].includes(key)) {
     etlView.value = 'list'
     etlTaskId.value = null
   }

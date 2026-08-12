@@ -9,7 +9,6 @@ import GovernanceEtlPanel from '../etl/GovernanceEtlPanel.vue'
 import CrossModulePipelinePanel from './CrossModulePipelinePanel.vue'
 
 const FusionScriptView = defineAsyncComponent(() => import('./FusionScriptView.vue'))
-const FusionDsWorkflowComposerView = defineAsyncComponent(() => import('./FusionDsWorkflowComposerView.vue'))
 const DirectShareGoldenPathView = defineAsyncComponent(() => import('../DirectShareGoldenPathView.vue'))
 const ProcessedShareGoldenPathView = defineAsyncComponent(() => import('../ProcessedShareGoldenPathView.vue'))
 
@@ -65,8 +64,6 @@ const taskId = computed(() => props.etlTaskId ?? null)
 <template>
   <div class="fusion-cap-host">
     <FusionScriptView v-if="capability === 'script' || capability === 'version'" embedded />
-
-    <FusionDsWorkflowComposerView v-else-if="capability === 'schedule1'" />
 
     <div v-else-if="capability === 'schedule'" class="fusion-schedule">
       <GovernanceEtlPanel
