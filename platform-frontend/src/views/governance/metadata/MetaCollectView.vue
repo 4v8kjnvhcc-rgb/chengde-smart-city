@@ -600,9 +600,6 @@ onMounted(async () => {
   <PageCard title="元数据采集">
     <el-tabs v-model="activeTab">
       <el-tab-pane label="手动采集" name="manual">
-        <div class="meta-collect-tip">
-          分类与数据源与「数据源管理」同步；创建后将立即执行采集，执行详情请在「元数据采集监控」查看。
-        </div>
         <el-form inline class="portal-inline-form portal-inline-form--block">
           <el-form-item class="portal-form-actions">
             <el-button type="primary" @click="openManualDialog">+ 创建</el-button>
@@ -687,9 +684,6 @@ onMounted(async () => {
       </el-tab-pane>
 
       <el-tab-pane label="定时任务采集" name="scheduled">
-        <div class="meta-collect-tip">
-          定时任务发布后将按周期执行；若探测到元数据变更，调度自动暂停并在「元数据维护 → 变更提醒」提示，须在本页<strong>发布定版</strong>后恢复调度；版本可在「元数据版本管理」按任务查看并对比。
-        </div>
         <el-form inline class="portal-inline-form portal-inline-form--block">
           <el-form-item class="portal-form-actions">
             <el-button type="primary" @click="openCreateTaskDialog">+ 新增</el-button>
@@ -939,11 +933,6 @@ onMounted(async () => {
 </template>
 
 <style scoped>
-.meta-collect-tip {
-  margin-bottom: 12px;
-  font-size: 13px;
-  color: var(--el-text-color-secondary);
-}
 .meta-section-title {
   font-weight: 600;
   font-size: 14px;

@@ -1,12 +1,16 @@
 package com.chengde.smartcity.analysis.controller;
 
 import com.chengde.smartcity.analysis.entity.AnaIndicator;
+import com.chengde.smartcity.analysis.entity.AnaIndicatorDomain;
+import com.chengde.smartcity.analysis.entity.AnaIndicatorGroup;
+import com.chengde.smartcity.analysis.entity.AnaIndicatorTask;
 import com.chengde.smartcity.analysis.entity.AnaModelSample;
 import com.chengde.smartcity.analysis.entity.AnaPopBatchLedger;
 import com.chengde.smartcity.analysis.entity.AnaPopServiceContract;
 import com.chengde.smartcity.analysis.entity.AnaPopVerifyLedger;
 import com.chengde.smartcity.analysis.entity.AnaZoneBinding;
 import com.chengde.smartcity.analysis.service.AnalyticsDomainService;
+import com.chengde.smartcity.analysis.service.IndicatorTaskService;
 import com.chengde.smartcity.common.api.ApiResponse;
 import com.chengde.smartcity.security.UserPrincipal;
 import java.util.List;
@@ -19,7 +23,9 @@ import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 @RestController
@@ -27,9 +33,11 @@ import org.springframework.web.bind.annotation.RestController;
 public class AnalyticsDomainController {
 
     private final AnalyticsDomainService service;
+    private final IndicatorTaskService indicatorTaskService;
 
-    public AnalyticsDomainController(AnalyticsDomainService service) {
+    public AnalyticsDomainController(AnalyticsDomainService service, IndicatorTaskService indicatorTaskService) {
         this.service = service;
+        this.indicatorTaskService = indicatorTaskService;
     }
 
     @GetMapping("/{domain}/overview")
@@ -84,6 +92,196 @@ public class AnalyticsDomainController {
     public ApiResponse<Void> unbind(@AuthenticationPrincipal UserPrincipal principal, @PathVariable Long id) {
         service.unbindAsset(principal, id);
         return ApiResponse.ok(null);
+    }
+
+    @GetMapping("/{domain}/indicator-domains")
+    @PreAuthorize("isAuthenticated()")
+    public ApiResponse<List<AnaIndicatorDomain>> indicatorDomains(
+            @PathVariable String domain,
+            @RequestParam(required = false) String domainName,
+            @RequestParam(required = false) String domainDbName) {
+        return ApiResponse.ok(service.listIndicatorDomains(domain, domainName, domainDbName));
+    }
+
+    @PostMapping("/{domain}/indicator-domains")
+    @PreAuthorize("isAuthenticated()")
+    public ApiResponse<Long> createIndicatorDomain(@AuthenticationPrincipal UserPrincipal principal,
+                                                   @PathVariable String domain,
+                                                   @RequestBody Map<String, Object> body) {
+        return ApiResponse.ok(service.createIndicatorDomain(principal, domain, body));
+    }
+
+    @PutMapping("/indicator-domains/{id}")
+    @PreAuthorize("isAuthenticated()")
+    public ApiResponse<Void> updateIndicatorDomain(@AuthenticationPrincipal UserPrincipal principal,
+                                                   @PathVariable Long id,
+                                                   @RequestBody Map<String, Object> body) {
+        service.updateIndicatorDomain(principal, id, body);
+        return ApiResponse.ok(null);
+    }
+
+    @DeleteMapping("/indicator-domains/{id}")
+    @PreAuthorize("isAuthenticated()")
+    public ApiResponse<Void> deleteIndicatorDomain(@AuthenticationPrincipal UserPrincipal principal,
+                                                   @PathVariable Long id) {
+        service.deleteIndicatorDomain(principal, id);
+        return ApiResponse.ok(null);
+    }
+
+    @PostMapping("/indicator-domains/{id}/publish")
+    @PreAuthorize("isAuthenticated()")
+    public ApiResponse<Map<String, Object>> publishIndicatorDomain(@AuthenticationPrincipal UserPrincipal principal,
+                                                                   @PathVariable Long id) {
+        return ApiResponse.ok(service.publishIndicatorDomain(principal, id));
+    }
+
+    @GetMapping("/{domain}/indicator-groups")
+    @PreAuthorize("isAuthenticated()")
+    public ApiResponse<List<AnaIndicatorGroup>> indicatorGroups(
+            @PathVariable String domain,
+            @RequestParam(required = false) Long indicatorDomainId,
+            @RequestParam(required = false) String groupName,
+            @RequestParam(required = false) String targetTable,
+            @RequestParam(required = false) String groupCategory) {
+        return ApiResponse.ok(service.listIndicatorGroups(domain, indicatorDomainId, groupName, targetTable, groupCategory));
+    }
+
+    @GetMapping("/indicator-groups/{id}")
+    @PreAuthorize("isAuthenticated()")
+    public ApiResponse<AnaIndicatorGroup> indicatorGroup(@PathVariable Long id) {
+        return ApiResponse.ok(service.getIndicatorGroup(id));
+    }
+
+    @PostMapping("/{domain}/indicator-groups")
+    @PreAuthorize("isAuthenticated()")
+    public ApiResponse<Long> createIndicatorGroup(@AuthenticationPrincipal UserPrincipal principal,
+                                                  @PathVariable String domain,
+                                                  @RequestBody Map<String, Object> body) {
+        return ApiResponse.ok(service.createIndicatorGroup(principal, domain, body));
+    }
+
+    @PutMapping("/indicator-groups/{id}")
+    @PreAuthorize("isAuthenticated()")
+    public ApiResponse<Void> updateIndicatorGroup(@AuthenticationPrincipal UserPrincipal principal,
+                                                  @PathVariable Long id,
+                                                  @RequestBody Map<String, Object> body) {
+        service.updateIndicatorGroup(principal, id, body);
+        return ApiResponse.ok(null);
+    }
+
+    @DeleteMapping("/indicator-groups/{id}")
+    @PreAuthorize("isAuthenticated()")
+    public ApiResponse<Void> deleteIndicatorGroup(@AuthenticationPrincipal UserPrincipal principal,
+                                                  @PathVariable Long id) {
+        service.deleteIndicatorGroup(principal, id);
+        return ApiResponse.ok(null);
+    }
+
+    @PostMapping("/indicator-groups/{id}/publish")
+    @PreAuthorize("isAuthenticated()")
+    public ApiResponse<Void> publishIndicatorGroup(@AuthenticationPrincipal UserPrincipal principal,
+                                                   @PathVariable Long id) {
+        service.publishIndicatorGroup(principal, id);
+        return ApiResponse.ok(null);
+    }
+
+    @GetMapping("/indicator-groups/{id}/indicators")
+    @PreAuthorize("isAuthenticated()")
+    public ApiResponse<List<AnaIndicator>> groupIndicators(@PathVariable Long id) {
+        return ApiResponse.ok(service.listIndicatorsByGroup(id));
+    }
+
+    @GetMapping("/{domain}/indicator-datasource-catalog")
+    @PreAuthorize("isAuthenticated()")
+    public ApiResponse<List<Map<String, Object>>> indicatorDatasourceCatalog(
+            @PathVariable String domain,
+            @RequestParam(required = false) String category,
+            @RequestParam(required = false) String keyword) {
+        return ApiResponse.ok(service.listIndicatorDatasourceCatalog(domain, category, keyword));
+    }
+
+    @GetMapping("/{domain}/indicator-tasks")
+    @PreAuthorize("isAuthenticated()")
+    public ApiResponse<List<AnaIndicatorTask>> indicatorTasks(
+            @PathVariable String domain,
+            @RequestParam(required = false) String taskName,
+            @RequestParam(required = false) String scheduleStatus,
+            @RequestParam(required = false) String execStatus,
+            @RequestParam(required = false) String calcResult) {
+        return ApiResponse.ok(indicatorTaskService.list(domain, taskName, scheduleStatus, execStatus, calcResult));
+    }
+
+    @PostMapping("/indicator-tasks/batch")
+    @PreAuthorize("isAuthenticated()")
+    public ApiResponse<Map<String, Object>> indicatorTasksBatch(@AuthenticationPrincipal UserPrincipal principal,
+                                                                @RequestBody Map<String, Object> body) {
+        List<Long> ids = new java.util.ArrayList<>();
+        Object raw = body.get("ids");
+        if (raw instanceof List<?> list) {
+            for (Object o : list) {
+                if (o instanceof Number n) ids.add(n.longValue());
+                else if (o != null && !String.valueOf(o).isBlank()) {
+                    ids.add(Long.valueOf(String.valueOf(o)));
+                }
+            }
+        }
+        return ApiResponse.ok(indicatorTaskService.batch(principal, String.valueOf(body.get("action")), ids));
+    }
+
+    @PostMapping("/indicator-tasks/{id}/execute")
+    @PreAuthorize("isAuthenticated()")
+    public ApiResponse<Map<String, Object>> executeIndicatorTask(@AuthenticationPrincipal UserPrincipal principal,
+                                                                 @PathVariable Long id) {
+        return ApiResponse.ok(indicatorTaskService.execute(principal, id));
+    }
+
+    @PostMapping("/indicator-tasks/{id}/start")
+    @PreAuthorize("isAuthenticated()")
+    public ApiResponse<Map<String, Object>> startIndicatorTask(@AuthenticationPrincipal UserPrincipal principal,
+                                                               @PathVariable Long id) {
+        return ApiResponse.ok(indicatorTaskService.start(principal, id));
+    }
+
+    @PostMapping("/indicator-tasks/{id}/stop")
+    @PreAuthorize("isAuthenticated()")
+    public ApiResponse<Map<String, Object>> stopIndicatorTask(@AuthenticationPrincipal UserPrincipal principal,
+                                                              @PathVariable Long id) {
+        return ApiResponse.ok(indicatorTaskService.stop(principal, id));
+    }
+
+    @PostMapping("/indicator-tasks/{id}/offline")
+    @PreAuthorize("isAuthenticated()")
+    public ApiResponse<Map<String, Object>> offlineIndicatorTask(@AuthenticationPrincipal UserPrincipal principal,
+                                                                 @PathVariable Long id) {
+        return ApiResponse.ok(indicatorTaskService.offline(principal, id));
+    }
+
+    @GetMapping("/indicator-tasks/{id}/log")
+    @PreAuthorize("isAuthenticated()")
+    public ApiResponse<Map<String, Object>> indicatorTaskLog(@PathVariable Long id) {
+        return ApiResponse.ok(indicatorTaskService.logDetail(id));
+    }
+
+    @GetMapping("/indicator-tasks/{id}/indicators")
+    @PreAuthorize("isAuthenticated()")
+    public ApiResponse<List<AnaIndicator>> indicatorTaskIndicators(@PathVariable Long id) {
+        return ApiResponse.ok(indicatorTaskService.indicatorsOfTask(id));
+    }
+
+    @PostMapping("/indicator-tasks/{id}/ds-trigger")
+    public ApiResponse<Map<String, Object>> indicatorTaskDsTrigger(
+            @PathVariable Long id,
+            @RequestHeader(value = "X-Ds-Callback-Token", required = false) String token,
+            @RequestBody(required = false) Map<String, Object> body) {
+        Long dsInstanceId = null;
+        if (body != null && body.get("dsInstanceId") != null) {
+            Object v = body.get("dsInstanceId");
+            if (v instanceof Number n) dsInstanceId = n.longValue();
+            else {
+                try { dsInstanceId = Long.valueOf(String.valueOf(v)); } catch (Exception ignored) { /* keep null */ }
+            }
+        }
+        return ApiResponse.ok(indicatorTaskService.runFromDsCallback(id, token, dsInstanceId));
     }
 
     @GetMapping("/{domain}/indicators")

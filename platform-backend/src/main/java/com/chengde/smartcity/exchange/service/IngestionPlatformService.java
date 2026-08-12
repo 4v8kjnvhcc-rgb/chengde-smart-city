@@ -916,6 +916,9 @@ public class IngestionPlatformService {
         if ("TABLE".equals(ch.getChannelType())) {
             return runTableChannelToOds(operator, ch);
         }
+        if ("FTP".equals(ch.getChannelType()) || "LOCAL".equals(ch.getChannelType())) {
+            return runFileChannelHonest(operator, ch);
+        }
         String integrationNote = "demo";
         if ("CDC".equals(ch.getChannelType())) {
             integrationNote = String.valueOf(storageClient.canalStatus().get("status"));
@@ -932,6 +935,43 @@ public class IngestionPlatformService {
         auditService.log(operator.getUserId(), operator.getUsername(), operator.getOrgId(),
                 "ING_CHANNEL_RUN", "ing_ingest_channel", String.valueOf(id), ch.getLastMessage());
         return Map.of("channelId", id, "status", ch.getStatus(), "message", ch.getLastMessage(), "integration", integrationNote);
+    }
+
+    /**
+     * FTP/本地目录：禁止再返回随机演示行数。校验配置后明确失败原因，引导走手动上传或后续调度对接。
+     */
+    private Map<String, Object> runFileChannelHonest(UserPrincipal operator, IngIngestChannel ch) {
+        Map<String, Object> cfg = readChannelConfig(ch.getConfigJson());
+        String type = ch.getChannelType();
+        String message;
+        if ("FTP".equals(type)) {
+            String host = str(cfg.get("host"), null);
+            String remotePath = str(cfg.get("remotePath"), null);
+            if (host == null || host.isBlank()) {
+                message = "请先填写并保存 FTP 主机";
+            } else if (remotePath == null || remotePath.isBlank()) {
+                message = "请先填写并保存远程目录";
+            } else {
+                message = "远程文件自动拉取尚未对接调度引擎，已拒绝演示假成功。"
+                        + "主机=" + host + " 目录=" + remotePath
+                        + "。Excel/CSV 请用「手动上传数据」写入 smart_city_ods。";
+            }
+        } else {
+            String localPath = str(cfg.get("localPath"), null);
+            if (localPath == null || localPath.isBlank()) {
+                message = "请先填写并保存服务器可访问目录";
+            } else {
+                message = "本地目录自动扫描入库尚未对接，已拒绝演示假成功。目录=" + localPath
+                        + "。浏览器选文件请用「手动上传数据 / 上传 Excel/CSV」写入 ODS。";
+            }
+        }
+        ch.setStatus("FAILED");
+        ch.setLastRunAt(LocalDateTime.now());
+        ch.setLastMessage(message.length() > 500 ? message.substring(0, 500) : message);
+        channelMapper.updateById(ch);
+        auditService.log(operator.getUserId(), operator.getUsername(), operator.getOrgId(),
+                "ING_CHANNEL_RUN", "ing_ingest_channel", String.valueOf(ch.getId()), ch.getLastMessage());
+        throw new BusinessException(400, message);
     }
 
     /** 结构化库表通道：按配置源表经 Kettle 真实抽取到 smart_city_ods。 */

@@ -551,6 +551,8 @@ public class GovernanceTaskService {
         m.put("status", normalizeLifecycleStatus(t.getStatus()));
         m.put("lockedBy", t.getLockedBy());
         m.put("lockedAt", t.getLockedAt());
+        m.put("versionNo", t.getVersionNo() == null ? 1 : t.getVersionNo());
+        m.put("envScope", t.getEnvScope() == null ? "DEV" : t.getEnvScope());
         m.put("lastRunAt", t.getLastRunAt());
         m.put("lastMessage", t.getLastMessage());
         m.put("scheduleEnabled", t.getScheduleEnabled() != null && t.getScheduleEnabled() == 1);

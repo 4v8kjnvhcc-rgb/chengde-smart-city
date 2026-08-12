@@ -64,12 +64,6 @@ const kpi = ref({
   tableCount: 0,
 })
 
-const catalogKindHint = computed(() =>
-  catalogKind.value === 'source'
-    ? '数据源目录展示数据源管理中 ODS 层（原始库）的数据源及其表结构，左侧为分类→数据源→表，右侧为字段明细。'
-    : '数据资产目录展示数据源管理中 DWD / DWS / ADS 层（治理库、主题库、基础库）的数据源及其表结构。',
-)
-
 const layerFilter = computed(() =>
   catalogKind.value === 'source' ? ['ODS'] : ['DWD', 'DWS', 'ADS'],
 )
@@ -343,7 +337,6 @@ onMounted(() => loadCatalogTree())
         </el-form-item>
       </el-form>
 
-      <el-alert type="info" :closable="false" :title="catalogKindHint" class="mcatalog-hint" />
       <el-alert type="success" :closable="false" :title="inventoryBar" class="mcatalog-stats" />
 
       <div class="mcatalog-workspace">
@@ -475,7 +468,6 @@ onMounted(() => loadCatalogTree())
 .mcatalog-kpi__card.tone-ok b { color: #2e7d32; }
 .mcatalog-kpi__card.tone-layer b { color: #5c6bc0; }
 
-.mcatalog-hint { margin-bottom: 10px; }
 .mcatalog-stats { margin-bottom: 16px; }
 
 .mcatalog-workspace {

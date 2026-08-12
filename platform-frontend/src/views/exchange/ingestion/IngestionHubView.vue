@@ -76,6 +76,10 @@ const moduleComponents: Record<string, ReturnType<typeof defineAsyncComponent>> 
   'ingest.structured': CollectIngestView,
   'ingest.file': CollectIngestView,
   'ingest.other': CollectIngestView,
+  'ingest.unstruct': CollectIngestView,
+  'ingest.semi': CollectIngestView,
+  'ingest.api': CollectIngestView,
+  'ingest.cdc': CollectIngestView,
   pipeline: defineAsyncComponent(() => import('./collect/CollectPipelineView.vue')),
   catalog: defineAsyncComponent(() => import('./collect/catalog/CatalogResourcesView.vue')),
   'catalog.resources': defineAsyncComponent(() => import('./collect/catalog/CatalogResourcesView.vue')),
@@ -177,6 +181,33 @@ function syncFromRoute() {
   }
 
   const resolved = resolveIngestionNav(route.query as Record<string, unknown>)
+  // 旧侧栏「文件上传」落到结构化对应子 Tab
+  const rawMod = String(route.query.module || '').toLowerCase()
+  const rawSec = String(route.query.section || '').toLowerCase()
+  if (rawMod === 'ingest.file' || rawMod === 'file' || rawMod === 'm056' || rawSec === 'file-local') {
+    router.replace({
+      query: {
+        ...route.query,
+        system: 'collect',
+        module: 'ingest.structured',
+        section: 'structured-local',
+        tab: undefined,
+      },
+    })
+    return
+  }
+  if (rawMod === 'm055' || rawSec === 'file-remote' || rawSec === 'other-ftp') {
+    router.replace({
+      query: {
+        ...route.query,
+        system: 'collect',
+        module: 'ingest.structured',
+        section: 'structured-remote',
+        tab: undefined,
+      },
+    })
+    return
+  }
   system.value = resolved.system
   module.value =
     system.value === 'collect'

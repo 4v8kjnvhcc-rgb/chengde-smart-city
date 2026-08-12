@@ -15,14 +15,33 @@ export const QUALITY_SUB_LABELS: Record<QualitySubKey, string> = {
   'quality.assess': '数据质量评估',
 }
 
-/** 数据汇聚接入侧栏叶子（原顶栏 TAB） */
-export const INGEST_SUB_KEYS = ['ingest.structured', 'ingest.file', 'ingest.other'] as const
+/** 数据汇聚接入侧栏叶子（原「其他数据接入」已拆成四个独立菜单） */
+export const INGEST_SUB_KEYS = [
+  'ingest.structured',
+  'ingest.unstruct',
+  'ingest.semi',
+  'ingest.api',
+  'ingest.cdc',
+] as const
 export type IngestSubKey = (typeof INGEST_SUB_KEYS)[number]
 
 export const INGEST_SUB_LABELS: Record<IngestSubKey, string> = {
   'ingest.structured': '结构化数据接入',
-  'ingest.file': '文件上传',
-  'ingest.other': '其他数据接入',
+  'ingest.unstruct': '非结构化数据接入',
+  'ingest.semi': '半结构化数据接入',
+  'ingest.api': 'API 接口数据接入',
+  'ingest.cdc': 'CDC 实时数据接入',
+}
+
+/** 非结构化等通道类型映射 */
+export const INGEST_OTHER_CHANNEL_TYPE: Record<
+  Exclude<IngestSubKey, 'ingest.structured'>,
+  string
+> = {
+  'ingest.unstruct': 'UNSTRUCT',
+  'ingest.semi': 'SEMI',
+  'ingest.api': 'API',
+  'ingest.cdc': 'CDC',
 }
 
 /** 指标与目录体系构建侧栏叶子 */
@@ -48,16 +67,16 @@ export const CATALOG_SUB_PERMISSIONS: Record<CatalogSubKey, string> = {
   'catalog.approvals': 'hub:ingestion:collect:catalog:approvals',
 }
 
-/** 数据资产管理侧栏叶子 */
+/** 数据资产管理侧栏叶子（顺序对齐 V3.0 / 投标功能清单 1.1.1.1.2.5.1～.8） */
 export const ASSET_SUB_KEYS = [
   'asset.classify',
   'asset.mask',
   'asset.tag',
   'asset.search',
-  'asset.global',
   'asset.backup',
   'asset.archive',
   'asset.destroy',
+  'asset.global',
 ] as const
 export type AssetSubKey = (typeof ASSET_SUB_KEYS)[number]
 
@@ -66,10 +85,10 @@ export const ASSET_SUB_LABELS: Record<AssetSubKey, string> = {
   'asset.mask': '数据脱敏策略',
   'asset.tag': '数据标签管理',
   'asset.search': '数据搜索',
-  'asset.global': '全局数据资产视图',
   'asset.backup': '数据备份',
   'asset.archive': '数据归档',
   'asset.destroy': '数据销毁',
+  'asset.global': '全局数据资产视图',
 }
 
 export interface IngestionModuleMeta {
@@ -101,7 +120,7 @@ export const REGISTER_MODULES: IngestionModuleMeta[] = [
 ]
 
 export const COLLECT_MODULES: IngestionModuleMeta[] = [
-  { key: 'ingest', mCode: 'M054', label: '数据汇聚接入', subLabel: '结构化·文件·其他接入', system: 'collect', permission: 'hub:ingestion:collect:ingest' },
+  { key: 'ingest', mCode: 'M054', label: '数据汇聚接入', subLabel: '结构化·非结构·半结构·API·CDC', system: 'collect', permission: 'hub:ingestion:collect:ingest' },
   { key: 'pipeline', mCode: 'M061', label: '规范设计', subLabel: '分类·探查·定义·对账', system: 'collect', permission: 'hub:ingestion:collect:pipeline' },
   { key: 'catalog', mCode: 'M065', label: '指标与目录体系构建', subLabel: '编目·分类·注册发布·审批', system: 'collect', permission: 'hub:ingestion:collect:catalog' },
   {
@@ -144,8 +163,13 @@ export const LEGACY_TAB_MAP: Record<string, { system: IngestionSystem; module: s
   channel: { system: 'collect', module: 'ingest.structured' },
   ingest: { system: 'collect', module: 'ingest.structured' },
   'ingest.structured': { system: 'collect', module: 'ingest.structured' },
-  'ingest.file': { system: 'collect', module: 'ingest.file' },
-  'ingest.other': { system: 'collect', module: 'ingest.other' },
+  /** 旧「文件上传」→ 结构化；旧「其他数据接入」→ API（默认叶子） */
+  'ingest.file': { system: 'collect', module: 'ingest.structured' },
+  'ingest.other': { system: 'collect', module: 'ingest.api' },
+  'ingest.unstruct': { system: 'collect', module: 'ingest.unstruct' },
+  'ingest.semi': { system: 'collect', module: 'ingest.semi' },
+  'ingest.api': { system: 'collect', module: 'ingest.api' },
+  'ingest.cdc': { system: 'collect', module: 'ingest.cdc' },
   pipeline: { system: 'collect', module: 'pipeline' },
   resource: { system: 'collect', module: 'catalog.resources' },
   govern: { system: 'collect', module: 'catalog.approvals' },
@@ -197,8 +221,11 @@ LEGACY_TAB_MAP.m067 = { system: 'collect', module: 'catalog.publish' }
 LEGACY_TAB_MAP.m068 = { system: 'collect', module: 'catalog.approvals' }
 
 function ingestSubKeyFromMCode(num: number): IngestSubKey {
-  if (num >= 55 && num <= 56) return 'ingest.file'
-  if (num >= 57 && num <= 60) return 'ingest.other'
+  // M055 远程 FTP、M056 本地 → 结构化；M057~M060 拆为独立菜单
+  if (num === 57) return 'ingest.unstruct'
+  if (num === 58) return 'ingest.semi'
+  if (num === 59) return 'ingest.api'
+  if (num === 60) return 'ingest.cdc'
   return 'ingest.structured'
 }
 
@@ -538,20 +565,26 @@ export function systemTitle(system: IngestionSystem): string {
   return system === 'register' ? '数据资产登记管理' : '数据资源采集汇聚'
 }
 
-export type IngestMainTab = 'structured' | 'file' | 'other'
+export type IngestMainTab = 'structured' | 'unstruct' | 'semi' | 'api' | 'cdc'
 
 const INGEST_SUB_TO_MAIN: Record<IngestSubKey, IngestMainTab> = {
   'ingest.structured': 'structured',
-  'ingest.file': 'file',
-  'ingest.other': 'other',
+  'ingest.unstruct': 'unstruct',
+  'ingest.semi': 'semi',
+  'ingest.api': 'api',
+  'ingest.cdc': 'cdc',
 }
 
 const LEGACY_SECTION_TO_MAIN: Record<string, IngestMainTab> = {
   m051: 'structured', m052: 'structured', m053: 'structured', m054: 'structured',
   structured: 'structured', 'structured-table': 'structured', 'structured-upload': 'structured',
-  m055: 'file', m056: 'file', file: 'file', 'file-remote': 'file', 'file-local': 'file',
-  m057: 'other', m058: 'other', m059: 'other', m060: 'other', other: 'other',
-  'other-unstruct': 'other', 'other-semi': 'other', 'other-api': 'other', 'other-cdc': 'other',
+  'structured-remote': 'structured', 'structured-local': 'structured',
+  m056: 'structured', file: 'structured', 'file-local': 'structured',
+  m055: 'structured', 'file-remote': 'structured',
+  m057: 'unstruct', 'other-unstruct': 'unstruct',
+  m058: 'semi', 'other-semi': 'semi',
+  m059: 'api', 'other-api': 'api', other: 'api',
+  m060: 'cdc', 'other-cdc': 'cdc',
 }
 
 export function collectIngestMainTab(query: Record<string, unknown>): IngestMainTab {

@@ -1,6 +1,10 @@
 <script setup lang="ts">
+/**
+ * FTP / 本地目录等通道任务面板（非演示假成功）。
+ * LOCAL：引导走真实「手动上传」落 ODS；FTP：保存真实连接配置，执行前校验必填项。
+ */
 import { computed, onMounted, reactive, ref, watch } from 'vue'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import PageCard from '@/components/common/PageCard.vue'
 import { statusLabel, statusTagType } from '@/utils/status-label'
 import { ingestionApi, type Channel } from '../useIngestionHub'
@@ -10,6 +14,8 @@ export interface ConfigField {
   label: string
   defaultValue?: string
   hint?: string
+  secret?: boolean
+  required?: boolean
 }
 
 const props = defineProps<{
@@ -17,6 +23,11 @@ const props = defineProps<{
   channelType: string
   configFields: ConfigField[]
   subtitle?: string
+}>()
+
+const emit = defineEmits<{
+  /** 本地上传引导到真实 Excel/CSV 落库页 */
+  goManualUpload: []
 }>()
 
 const channels = ref<Channel[]>([])
@@ -27,8 +38,28 @@ const dialogVisible = ref(false)
 const editingId = ref<number | undefined>()
 const channelName = ref('')
 const channelForm = reactive<Record<string, string>>({})
+const queryKeyword = ref('')
 
-const dialogTitle = computed(() => (editingId.value ? '编辑上传任务' : '新建上传任务'))
+const isFtp = computed(() => props.channelType === 'FTP')
+const isLocal = computed(() => props.channelType === 'LOCAL')
+
+const dialogTitle = computed(() => {
+  if (editingId.value) return isFtp.value ? '编辑远程接入' : '编辑本地目录接入'
+  return isFtp.value ? '新建远程接入' : '新建本地目录接入'
+})
+
+const filteredChannels = computed(() => {
+  const kw = queryKeyword.value.trim().toLowerCase()
+  if (!kw) return channels.value
+  return channels.value.filter((c) => {
+    const cfg = parseConfig(c.configJson)
+    const blob = [c.channelName, c.channelCode, cfg.host, cfg.remotePath, cfg.localPath]
+      .filter(Boolean)
+      .join(' ')
+      .toLowerCase()
+    return blob.includes(kw)
+  })
+})
 
 function parseConfig(json?: string): Record<string, string> {
   if (!json) return {}
@@ -40,6 +71,33 @@ function parseConfig(json?: string): Record<string, string> {
   } catch {
     return {}
   }
+}
+
+function cfgSummary(row: Channel): string {
+  const cfg = parseConfig(row.configJson)
+  if (isFtp.value) {
+    const host = cfg.host || '—'
+    const port = cfg.port || '21'
+    const path = cfg.remotePath || '/'
+    const pat = cfg.filePattern || '*.*'
+    return `${host}:${port}  ${path}  (${pat})`
+  }
+  if (isLocal.value) {
+    return cfg.localPath || '未配置目录'
+  }
+  if (props.channelType === 'API') {
+    return `${(cfg.method || 'GET').toUpperCase()} ${cfg.url || '未配置地址'}`
+  }
+  if (props.channelType === 'CDC') {
+    return `${cfg.canalHost || '—'} / ${cfg.sourceDb || '未配置源库'}`
+  }
+  if (props.channelType === 'SEMI') {
+    return `${cfg.broker || '—'} · ${cfg.topic || '未配置 Topic'}`
+  }
+  if (props.channelType === 'UNSTRUCT') {
+    return cfg.storagePath || cfg.ftpHost || '未配置路径'
+  }
+  return '—'
 }
 
 function resetForm(ch?: Channel) {
@@ -72,11 +130,30 @@ function openEdit(row: Channel) {
   dialogVisible.value = true
 }
 
-async function saveTask(andRun = false) {
+function validateForm(): boolean {
   if (!channelName.value.trim()) {
     ElMessage.warning('请填写任务名称')
-    return
+    return false
   }
+  for (const f of props.configFields) {
+    if (f.required && !(channelForm[f.key] || '').trim()) {
+      ElMessage.warning(`请填写${f.label}`)
+      return false
+    }
+  }
+  if (isFtp.value && !(channelForm.host || '').trim()) {
+    ElMessage.warning('请填写 FTP 主机')
+    return false
+  }
+  if (isLocal.value && !(channelForm.localPath || '').trim()) {
+    ElMessage.warning('请填写服务器可访问的本地/共享目录')
+    return false
+  }
+  return true
+}
+
+async function saveTask(andRun = false) {
+  if (!validateForm()) return
   saveBusy.value = true
   try {
     const body = {
@@ -87,11 +164,11 @@ async function saveTask(andRun = false) {
     let id = editingId.value
     if (id) {
       await ingestionApi.updateChannel(id, body)
-      ElMessage.success('任务已保存')
+      ElMessage.success('已保存')
     } else {
       id = Number((await ingestionApi.createChannel(body)).data)
       editingId.value = id
-      ElMessage.success('上传任务已创建')
+      ElMessage.success('接入任务已创建')
     }
     await reload()
     if (andRun && id) {
@@ -114,19 +191,33 @@ async function doRun(id: number) {
     dialogVisible.value = false
     await reload()
   } catch {
-    // request 拦截器已提示
+    // 拦截器已提示；失败状态以后端落库为准
+    await reload()
   } finally {
     runBusy.value = false
   }
 }
 
 async function runRow(row: Channel) {
+  if (isLocal.value) {
+    try {
+      await ElMessageBox.confirm(
+        '本地目录通道不会再返回演示行数。浏览器选文件写入 ODS 请用「手动上传数据 / 上传文件」。是否仍按已保存目录配置发起服务端执行？',
+        '执行确认',
+        { type: 'warning', confirmButtonText: '继续执行', cancelButtonText: '去手动上传' },
+      )
+    } catch {
+      emit('goManualUpload')
+      return
+    }
+  }
   await doRun(row.id)
 }
 
 watch(
   () => props.channelType,
   () => {
+    queryKeyword.value = ''
     void reload()
   },
 )
@@ -141,25 +232,70 @@ onMounted(reload)
         <div class="wiz-head">
           <div>
             <div class="wiz-title">{{ title }}</div>
-            <div class="wiz-sub">{{ subtitle || '主界面展示已创建的上传/接入任务；新建请点右上角' }}</div>
+            <div class="wiz-sub">
+              {{
+                subtitle
+                  || (isFtp
+                    ? '登记 FTP/SFTP 连接与目录规则，保存后可按配置发起拉取（不再返回演示行数）'
+                    : '登记服务器可访问目录；浏览器上传 Excel/CSV 请走「手动上传数据」')
+              }}
+            </div>
           </div>
-          <el-button type="primary" @click="openCreate">新建上传任务</el-button>
+          <div class="wiz-actions">
+            <el-button v-if="isLocal" type="success" @click="emit('goManualUpload')">上传 Excel/CSV</el-button>
+            <el-button type="primary" @click="openCreate">{{ isFtp ? '新建远程接入' : '新建目录接入' }}</el-button>
+          </div>
         </div>
       </template>
 
-      <el-table :data="channels" stripe size="small" empty-text="暂无上传任务，请点击右上角新建">
-        <el-table-column prop="channelName" label="任务名称" min-width="160" align="center" header-align="center" show-overflow-tooltip />
-        <el-table-column prop="channelCode" label="编码" width="160" align="center" header-align="center" show-overflow-tooltip />
-        <el-table-column label="状态" width="100" align="center" header-align="center">
+      <el-alert
+        v-if="isLocal"
+        type="warning"
+        :closable="false"
+        show-icon
+        style="margin-bottom: 12px"
+        title="本地文件落库请点右上角「上传 Excel/CSV」：选模板 → 校验预览 → 写入 smart_city_ods。下方目录接入仅登记服务端路径配置。"
+      />
+      <el-alert
+        v-else-if="isFtp"
+        type="info"
+        :closable="false"
+        show-icon
+        style="margin-bottom: 12px"
+        title="请填写真实主机、账号与远程目录。执行前会校验配置；未对接调度拉取时将明确提示，不会再伪造成功行数。"
+      />
+
+      <el-form inline class="portal-inline-form portal-inline-form--block" @submit.prevent>
+        <el-form-item label="关键词" class="portal-field-lg">
+          <el-input v-model="queryKeyword" clearable placeholder="名称 / 主机 / 路径" />
+        </el-form-item>
+        <el-form-item class="portal-form-actions">
+          <el-button @click="reload">刷新</el-button>
+        </el-form-item>
+      </el-form>
+
+      <el-table
+        :data="filteredChannels"
+        stripe
+        size="small"
+        empty-text="暂无接入任务，请点击右上角新建"
+      >
+        <el-table-column prop="channelName" label="任务名称" min-width="150" show-overflow-tooltip />
+        <el-table-column label="连接信息" min-width="240" show-overflow-tooltip>
+          <template #default="{ row }">
+            <code class="cfg-code">{{ cfgSummary(row) }}</code>
+          </template>
+        </el-table-column>
+        <el-table-column label="状态" width="100">
           <template #default="{ row }">
             <el-tag :type="statusTagType(row.status)" size="small">{{ statusLabel(row.status) }}</el-tag>
           </template>
         </el-table-column>
-        <el-table-column prop="lastRunAt" label="最近执行" width="170" align="center" header-align="center">
+        <el-table-column prop="lastRunAt" label="最近执行" width="170">
           <template #default="{ row }">{{ row.lastRunAt || '—' }}</template>
         </el-table-column>
-        <el-table-column prop="lastMessage" label="执行信息" min-width="200" align="center" header-align="center" show-overflow-tooltip />
-        <el-table-column label="操作" width="180" fixed="right" align="center" header-align="center">
+        <el-table-column prop="lastMessage" label="执行说明" min-width="200" show-overflow-tooltip />
+        <el-table-column label="操作" width="180" fixed="right">
           <template #default="{ row }">
             <el-button link type="primary" @click="openEdit(row)">编辑</el-button>
             <el-button link type="success" :loading="runBusy" @click="runRow(row)">执行</el-button>
@@ -171,16 +307,31 @@ onMounted(reload)
     <el-dialog
       v-model="dialogVisible"
       :title="dialogTitle"
-      width="560px"
+      width="620px"
       destroy-on-close
       append-to-body
     >
       <el-form label-width="120px">
         <el-form-item label="任务名称" required>
-          <el-input v-model="channelName" placeholder="如：本地目录日增量上传" maxlength="80" />
+          <el-input
+            v-model="channelName"
+            :placeholder="isFtp ? '如：人社局日报 FTP' : '如：共享盘日增目录'"
+            maxlength="80"
+          />
         </el-form-item>
-        <el-form-item v-for="f in configFields" :key="f.key" :label="f.label">
-          <el-input v-model="channelForm[f.key]" :placeholder="f.hint || ''" />
+        <el-form-item
+          v-for="f in configFields"
+          :key="f.key"
+          :label="f.label"
+          :required="!!f.required || (isFtp && f.key === 'host') || (isLocal && f.key === 'localPath')"
+        >
+          <el-input
+            v-model="channelForm[f.key]"
+            :type="f.secret ? 'password' : 'text'"
+            :show-password="!!f.secret"
+            :placeholder="f.hint || ''"
+            autocomplete="off"
+          />
         </el-form-item>
       </el-form>
       <template #footer>
@@ -210,5 +361,15 @@ onMounted(reload)
   font-size: 12px;
   color: #909399;
   line-height: 1.4;
+}
+.wiz-actions {
+  display: flex;
+  gap: 8px;
+  flex-shrink: 0;
+}
+.cfg-code {
+  font-size: 12px;
+  color: var(--el-text-color-regular);
+  background: transparent;
 }
 </style>

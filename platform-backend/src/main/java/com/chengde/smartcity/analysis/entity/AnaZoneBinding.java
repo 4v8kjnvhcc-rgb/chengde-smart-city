@@ -17,6 +17,10 @@ public class AnaZoneBinding {
     private String physicalTable;
     private String metaEntryCode;
     private String dataLayer;
+    /** DATATYPE | LATENCY */
+    private String dimGroup;
+    /** STRUCT | UNSTRUCT | API | CDC */
+    private String accessMode;
     private String remark;
     private String status;
     private String createdBy;
@@ -40,6 +44,10 @@ public class AnaZoneBinding {
     public void setMetaEntryCode(String metaEntryCode) { this.metaEntryCode = metaEntryCode; }
     public String getDataLayer() { return dataLayer; }
     public void setDataLayer(String dataLayer) { this.dataLayer = dataLayer; }
+    public String getDimGroup() { return dimGroup; }
+    public void setDimGroup(String dimGroup) { this.dimGroup = dimGroup; }
+    public String getAccessMode() { return accessMode; }
+    public void setAccessMode(String accessMode) { this.accessMode = accessMode; }
     public String getRemark() { return remark; }
     public void setRemark(String remark) { this.remark = remark; }
     public String getStatus() { return status; }

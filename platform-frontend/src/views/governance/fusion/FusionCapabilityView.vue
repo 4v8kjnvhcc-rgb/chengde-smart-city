@@ -8,6 +8,7 @@ import PageCard from '@/components/common/PageCard.vue'
 import GovernanceEtlPanel from '../etl/GovernanceEtlPanel.vue'
 
 const FusionScriptView = defineAsyncComponent(() => import('./FusionScriptView.vue'))
+const FusionVersionView = defineAsyncComponent(() => import('./FusionVersionView.vue'))
 const GovernanceComponentsView = defineAsyncComponent(() => import('../etl/GovernanceComponentsView.vue'))
 const DirectShareGoldenPathView = defineAsyncComponent(() => import('../DirectShareGoldenPathView.vue'))
 const ProcessedShareGoldenPathView = defineAsyncComponent(() => import('../ProcessedShareGoldenPathView.vue'))
@@ -48,7 +49,7 @@ const META: Record<string, { title: string; mapsTo: string }> = {
   },
   version: {
     title: '版本管理',
-    mapsTo: '融合脚本的发布、回滚与版本历史（脚本工作台内「版本」）',
+    mapsTo: '脚本与工作流版本发布/回滚、锁定协同、开发/生产隔离、一键发布到生产调度',
   },
   'direct-share': {
     title: '直通共享（场景）',
@@ -98,9 +99,10 @@ function goSibling(mSub: string) {
     <PageCard :title="`数据融合处理 · ${meta.title}`">
       <!-- 脚本 / 版本 -->
       <FusionScriptView
-        v-if="capability === 'script' || capability === 'version'"
+        v-if="capability === 'script'"
         embedded
       />
+      <FusionVersionView v-else-if="capability === 'version'" />
 
       <!-- 数据清洗：组件库 + 任务画布入口 -->
       <template v-else-if="capability === 'clean'">

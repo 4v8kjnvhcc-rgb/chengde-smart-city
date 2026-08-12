@@ -19,6 +19,7 @@ import com.chengde.smartcity.masterdata.support.LayerJdbcSupport;
 import com.chengde.smartcity.security.UserPrincipal;
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import java.io.ByteArrayOutputStream;
 import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.PreparedStatement;
@@ -26,13 +27,23 @@ import java.sql.ResultSet;
 import java.sql.ResultSetMetaData;
 import java.sql.Statement;
 import java.time.LocalDateTime;
+import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.Set;
 import java.util.regex.Pattern;
+import org.apache.poi.ss.usermodel.Cell;
+import org.apache.poi.ss.usermodel.CellStyle;
+import org.apache.poi.ss.usermodel.Font;
+import org.apache.poi.ss.usermodel.Row;
+import org.apache.poi.ss.usermodel.Sheet;
+import org.apache.poi.ss.usermodel.Workbook;
+import org.apache.poi.ss.util.CellRangeAddress;
+import org.apache.poi.xssf.usermodel.XSSFWorkbook;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
@@ -119,6 +130,379 @@ public class FusionModelService {
                 .eq(GovFusionRelation::getDomainId, domainId)
                 .orderByAsc(GovFusionRelation::getId)));
         return root;
+    }
+
+    /**
+     * 模型报告：按主题域导出 Excel（概要 / 逻辑模型图 / 实体列表 / 实体属性 / 物理映射）。
+     */
+    public byte[] exportModelReport(Long domainId) {
+        Map<String, Object> tree = getDomainTree(domainId);
+        GovFusionDomain domain = (GovFusionDomain) tree.get("domain");
+        @SuppressWarnings("unchecked")
+        List<Map<String, Object>> entityNodes = (List<Map<String, Object>>) tree.get("entities");
+        @SuppressWarnings("unchecked")
+        List<GovFusionRelation> relations = (List<GovFusionRelation>) tree.get("relations");
+        if (entityNodes == null) entityNodes = List.of();
+        if (relations == null) relations = List.of();
+
+        Map<Long, GovFusionLogicEntity> entityById = new HashMap<>();
+        for (Map<String, Object> node : entityNodes) {
+            GovFusionLogicEntity e = (GovFusionLogicEntity) node.get("entity");
+            if (e != null && e.getId() != null) entityById.put(e.getId(), e);
+        }
+
+        try (Workbook wb = new XSSFWorkbook(); ByteArrayOutputStream bos = new ByteArrayOutputStream()) {
+            CellStyle titleStyle = wb.createCellStyle();
+            Font titleFont = wb.createFont();
+            titleFont.setBold(true);
+            titleFont.setFontHeightInPoints((short) 14);
+            titleStyle.setFont(titleFont);
+
+            CellStyle headerStyle = wb.createCellStyle();
+            Font headerFont = wb.createFont();
+            headerFont.setBold(true);
+            headerStyle.setFont(headerFont);
+
+            CellStyle wrapStyle = wb.createCellStyle();
+            wrapStyle.setWrapText(true);
+
+            writeSummarySheet(wb, titleStyle, headerStyle, domain, entityNodes, relations);
+            writeDiagramSheet(wb, titleStyle, headerStyle, wrapStyle, domain, entityNodes, relations, entityById);
+            writeEntityListSheet(wb, headerStyle, entityNodes);
+            writeFieldListSheet(wb, headerStyle, entityNodes);
+            writePhysicalSheet(wb, headerStyle, entityNodes);
+
+            wb.write(bos);
+            return bos.toByteArray();
+        } catch (BusinessException e) {
+            throw e;
+        } catch (Exception e) {
+            log.warn("export model report failed domainId={}: {}", domainId, e.getMessage());
+            throw new BusinessException(500, "导出模型报告失败: " + e.getMessage());
+        }
+    }
+
+    public String modelReportFileName(Long domainId) {
+        GovFusionDomain d = requireDomain(domainId);
+        String code = d.getDomainCode() == null ? "domain" : d.getDomainCode().replaceAll("[^A-Za-z0-9_\\-]", "_");
+        String ts = LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyyMMdd_HHmmss"));
+        return "模型报告_" + code + "_" + ts + ".xlsx";
+    }
+
+    private void writeSummarySheet(Workbook wb, CellStyle titleStyle, CellStyle headerStyle,
+                                   GovFusionDomain domain,
+                                   List<Map<String, Object>> entityNodes,
+                                   List<GovFusionRelation> relations) {
+        Sheet sheet = wb.createSheet("报告概要");
+        int r = 0;
+        Row title = sheet.createRow(r++);
+        Cell tc = title.createCell(0);
+        tc.setCellValue("数据仓库建设 · 模型报告");
+        tc.setCellStyle(titleStyle);
+
+        r++;
+        putKv(sheet, r++, "主题域编码", nullToEmpty(domain.getDomainCode()), headerStyle);
+        putKv(sheet, r++, "主题域名称", nullToEmpty(domain.getDomainName()), headerStyle);
+        putKv(sheet, r++, "描述", nullToEmpty(domain.getDescription()), headerStyle);
+        putKv(sheet, r++, "状态", statusZh(domain.getStatus()), headerStyle);
+        putKv(sheet, r++, "逻辑实体数", String.valueOf(entityNodes.size()), headerStyle);
+        putKv(sheet, r++, "实体关系数", String.valueOf(relations.size()), headerStyle);
+
+        int fieldCount = 0;
+        int physicalCount = 0;
+        for (Map<String, Object> node : entityNodes) {
+            @SuppressWarnings("unchecked")
+            List<GovFusionField> fields = (List<GovFusionField>) node.get("fields");
+            @SuppressWarnings("unchecked")
+            List<GovFusionPhysical> physicals = (List<GovFusionPhysical>) node.get("physical");
+            if (fields != null) fieldCount += fields.size();
+            if (physicals != null) physicalCount += physicals.size();
+        }
+        putKv(sheet, r++, "实体属性数", String.valueOf(fieldCount), headerStyle);
+        putKv(sheet, r++, "物理映射数", String.valueOf(physicalCount), headerStyle);
+        putKv(sheet, r++, "生成时间", LocalDateTime.now().format(DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss")), headerStyle);
+
+        r++;
+        Row tip = sheet.createRow(r);
+        tip.createCell(0).setCellValue("说明：本报告由「数据仓库建设」当前主题域导出，含逻辑模型图（文本/Mermaid）、实体列表、实体属性列表与物理映射。");
+        sheet.setColumnWidth(0, 18 * 256);
+        sheet.setColumnWidth(1, 60 * 256);
+    }
+
+    private void writeDiagramSheet(Workbook wb, CellStyle titleStyle, CellStyle headerStyle, CellStyle wrapStyle,
+                                   GovFusionDomain domain,
+                                   List<Map<String, Object>> entityNodes,
+                                   List<GovFusionRelation> relations,
+                                   Map<Long, GovFusionLogicEntity> entityById) {
+        Sheet sheet = wb.createSheet("逻辑模型图");
+        int r = 0;
+        Row title = sheet.createRow(r++);
+        Cell tc = title.createCell(0);
+        tc.setCellValue("主题域「" + nullToEmpty(domain.getDomainName()) + "」逻辑模型");
+        tc.setCellStyle(titleStyle);
+        sheet.addMergedRegion(new CellRangeAddress(0, 0, 0, 3));
+
+        r++;
+        Row h1 = sheet.createRow(r++);
+        Cell h1c = h1.createCell(0);
+        h1c.setCellValue("一、Mermaid ER 图（可粘贴至支持 Mermaid 的文档/工具渲染）");
+        h1c.setCellStyle(headerStyle);
+
+        String mermaid = buildMermaidEr(entityNodes, relations, entityById);
+        Row mrow = sheet.createRow(r++);
+        Cell mc = mrow.createCell(0);
+        mc.setCellValue(mermaid);
+        mc.setCellStyle(wrapStyle);
+        mrow.setHeightInPoints(Math.min(320, 18f * Math.max(6, mermaid.split("\n").length)));
+        sheet.addMergedRegion(new CellRangeAddress(r - 1, r - 1, 0, 3));
+
+        r++;
+        Row h2 = sheet.createRow(r++);
+        Cell h2c = h2.createCell(0);
+        h2c.setCellValue("二、实体关系清单");
+        h2c.setCellStyle(headerStyle);
+
+        Row rh = sheet.createRow(r++);
+        String[] relHeaders = {"关系编码", "关系名称", "类型", "源实体", "目标实体"};
+        for (int i = 0; i < relHeaders.length; i++) {
+            Cell c = rh.createCell(i);
+            c.setCellValue(relHeaders[i]);
+            c.setCellStyle(headerStyle);
+        }
+        for (GovFusionRelation rel : relations) {
+            Row row = sheet.createRow(r++);
+            row.createCell(0).setCellValue(nullToEmpty(rel.getRelationCode()));
+            row.createCell(1).setCellValue(nullToEmpty(rel.getRelationName()));
+            row.createCell(2).setCellValue(relationTypeZh(rel.getRelationType()));
+            row.createCell(3).setCellValue(entityLabel(entityById.get(rel.getFromEntityId())));
+            row.createCell(4).setCellValue(entityLabel(entityById.get(rel.getToEntityId())));
+        }
+        if (relations.isEmpty()) {
+            Row empty = sheet.createRow(r++);
+            empty.createCell(0).setCellValue("（暂无实体关系）");
+        }
+
+        sheet.setColumnWidth(0, 18 * 256);
+        sheet.setColumnWidth(1, 22 * 256);
+        sheet.setColumnWidth(2, 12 * 256);
+        sheet.setColumnWidth(3, 28 * 256);
+        sheet.setColumnWidth(4, 28 * 256);
+    }
+
+    private void writeEntityListSheet(Workbook wb, CellStyle headerStyle, List<Map<String, Object>> entityNodes) {
+        Sheet sheet = wb.createSheet("实体列表");
+        Row rh = sheet.createRow(0);
+        String[] headers = {"序号", "实体编码", "实体名称", "状态", "描述", "字段数", "物理映射数"};
+        for (int i = 0; i < headers.length; i++) {
+            Cell c = rh.createCell(i);
+            c.setCellValue(headers[i]);
+            c.setCellStyle(headerStyle);
+        }
+        int r = 1;
+        int idx = 1;
+        for (Map<String, Object> node : entityNodes) {
+            GovFusionLogicEntity e = (GovFusionLogicEntity) node.get("entity");
+            if (e == null) continue;
+            @SuppressWarnings("unchecked")
+            List<GovFusionField> fields = (List<GovFusionField>) node.get("fields");
+            @SuppressWarnings("unchecked")
+            List<GovFusionPhysical> physicals = (List<GovFusionPhysical>) node.get("physical");
+            Row row = sheet.createRow(r++);
+            row.createCell(0).setCellValue(idx++);
+            row.createCell(1).setCellValue(nullToEmpty(e.getEntityCode()));
+            row.createCell(2).setCellValue(nullToEmpty(e.getEntityName()));
+            row.createCell(3).setCellValue(statusZh(e.getStatus()));
+            row.createCell(4).setCellValue(nullToEmpty(e.getDescription()));
+            row.createCell(5).setCellValue(fields == null ? 0 : fields.size());
+            row.createCell(6).setCellValue(physicals == null ? 0 : physicals.size());
+        }
+        for (int i = 0; i < headers.length; i++) {
+            sheet.setColumnWidth(i, (i == 4 ? 36 : 16) * 256);
+        }
+    }
+
+    private void writeFieldListSheet(Workbook wb, CellStyle headerStyle, List<Map<String, Object>> entityNodes) {
+        Sheet sheet = wb.createSheet("实体属性列表");
+        Row rh = sheet.createRow(0);
+        String[] headers = {"实体编码", "实体名称", "字段编码", "字段名称", "数据类型", "主键", "可空", "排序"};
+        for (int i = 0; i < headers.length; i++) {
+            Cell c = rh.createCell(i);
+            c.setCellValue(headers[i]);
+            c.setCellStyle(headerStyle);
+        }
+        int r = 1;
+        for (Map<String, Object> node : entityNodes) {
+            GovFusionLogicEntity e = (GovFusionLogicEntity) node.get("entity");
+            if (e == null) continue;
+            @SuppressWarnings("unchecked")
+            List<GovFusionField> fields = (List<GovFusionField>) node.get("fields");
+            if (fields == null || fields.isEmpty()) {
+                Row row = sheet.createRow(r++);
+                row.createCell(0).setCellValue(nullToEmpty(e.getEntityCode()));
+                row.createCell(1).setCellValue(nullToEmpty(e.getEntityName()));
+                row.createCell(2).setCellValue("（无字段）");
+                continue;
+            }
+            for (GovFusionField f : fields) {
+                Row row = sheet.createRow(r++);
+                row.createCell(0).setCellValue(nullToEmpty(e.getEntityCode()));
+                row.createCell(1).setCellValue(nullToEmpty(e.getEntityName()));
+                row.createCell(2).setCellValue(nullToEmpty(f.getFieldCode()));
+                row.createCell(3).setCellValue(nullToEmpty(f.getFieldName()));
+                row.createCell(4).setCellValue(nullToEmpty(f.getDataType()));
+                row.createCell(5).setCellValue(f.getPkFlag() != null && f.getPkFlag() == 1 ? "是" : "否");
+                row.createCell(6).setCellValue(f.getNullableFlag() == null || f.getNullableFlag() == 1 ? "是" : "否");
+                row.createCell(7).setCellValue(f.getSortOrder() == null ? 0 : f.getSortOrder());
+            }
+        }
+        for (int i = 0; i < headers.length; i++) {
+            sheet.setColumnWidth(i, 16 * 256);
+        }
+    }
+
+    private void writePhysicalSheet(Workbook wb, CellStyle headerStyle, List<Map<String, Object>> entityNodes) {
+        Sheet sheet = wb.createSheet("物理映射");
+        Row rh = sheet.createRow(0);
+        String[] headers = {"实体编码", "实体名称", "物理编码", "物理表名", "数据源ID", "状态"};
+        for (int i = 0; i < headers.length; i++) {
+            Cell c = rh.createCell(i);
+            c.setCellValue(headers[i]);
+            c.setCellStyle(headerStyle);
+        }
+        int r = 1;
+        for (Map<String, Object> node : entityNodes) {
+            GovFusionLogicEntity e = (GovFusionLogicEntity) node.get("entity");
+            if (e == null) continue;
+            @SuppressWarnings("unchecked")
+            List<GovFusionPhysical> physicals = (List<GovFusionPhysical>) node.get("physical");
+            if (physicals == null || physicals.isEmpty()) {
+                Row row = sheet.createRow(r++);
+                row.createCell(0).setCellValue(nullToEmpty(e.getEntityCode()));
+                row.createCell(1).setCellValue(nullToEmpty(e.getEntityName()));
+                row.createCell(2).setCellValue("（未绑定）");
+                continue;
+            }
+            for (GovFusionPhysical p : physicals) {
+                Row row = sheet.createRow(r++);
+                row.createCell(0).setCellValue(nullToEmpty(e.getEntityCode()));
+                row.createCell(1).setCellValue(nullToEmpty(e.getEntityName()));
+                row.createCell(2).setCellValue(nullToEmpty(p.getPhysicalCode()));
+                row.createCell(3).setCellValue(nullToEmpty(p.getTableName()));
+                row.createCell(4).setCellValue(p.getDatasourceId() == null ? "" : String.valueOf(p.getDatasourceId()));
+                row.createCell(5).setCellValue(statusZh(p.getStatus()));
+            }
+        }
+        for (int i = 0; i < headers.length; i++) {
+            sheet.setColumnWidth(i, 18 * 256);
+        }
+    }
+
+    private static String buildMermaidEr(List<Map<String, Object>> entityNodes,
+                                         List<GovFusionRelation> relations,
+                                         Map<Long, GovFusionLogicEntity> entityById) {
+        StringBuilder sb = new StringBuilder();
+        sb.append("erDiagram\n");
+        for (Map<String, Object> node : entityNodes) {
+            GovFusionLogicEntity e = (GovFusionLogicEntity) node.get("entity");
+            if (e == null) continue;
+            String alias = mermaidAlias(e);
+            sb.append("  ").append(alias).append(" {\n");
+            @SuppressWarnings("unchecked")
+            List<GovFusionField> fields = (List<GovFusionField>) node.get("fields");
+            if (fields != null) {
+                int n = 0;
+                for (GovFusionField f : fields) {
+                    if (n++ >= 12) {
+                        sb.append("    string more \"…\"\n");
+                        break;
+                    }
+                    String type = mermaidType(f.getDataType());
+                    String pk = f.getPkFlag() != null && f.getPkFlag() == 1 ? " PK" : "";
+                    sb.append("    ").append(type).append(' ')
+                            .append(safeIdent(f.getFieldCode())).append(pk).append('\n');
+                }
+            }
+            if (fields == null || fields.isEmpty()) {
+                sb.append("    string id\n");
+            }
+            sb.append("  }\n");
+        }
+        for (GovFusionRelation rel : relations) {
+            GovFusionLogicEntity from = entityById.get(rel.getFromEntityId());
+            GovFusionLogicEntity to = entityById.get(rel.getToEntityId());
+            if (from == null || to == null) continue;
+            String card = mermaidCardinality(rel.getRelationType());
+            sb.append("  ").append(mermaidAlias(from)).append(card).append(mermaidAlias(to))
+                    .append(" : ").append(safeLabel(rel.getRelationName())).append('\n');
+        }
+        if (entityNodes.isEmpty()) {
+            sb.append("  EMPTY {\n    string tip \"暂无逻辑实体\"\n  }\n");
+        }
+        return sb.toString();
+    }
+
+    private static void putKv(Sheet sheet, int rowIdx, String k, String v, CellStyle keyStyle) {
+        Row row = sheet.createRow(rowIdx);
+        Cell kc = row.createCell(0);
+        kc.setCellValue(k);
+        kc.setCellStyle(keyStyle);
+        row.createCell(1).setCellValue(v == null ? "" : v);
+    }
+
+    private static String entityLabel(GovFusionLogicEntity e) {
+        if (e == null) return "—";
+        return nullToEmpty(e.getEntityName()) + " (" + nullToEmpty(e.getEntityCode()) + ")";
+    }
+
+    private static String mermaidAlias(GovFusionLogicEntity e) {
+        return safeIdent(e.getEntityCode() == null ? ("E" + e.getId()) : e.getEntityCode());
+    }
+
+    private static String safeIdent(String raw) {
+        if (raw == null || raw.isBlank()) return "unnamed";
+        String s = raw.replaceAll("[^A-Za-z0-9_]", "_");
+        if (s.isEmpty() || Character.isDigit(s.charAt(0))) s = "f_" + s;
+        return s;
+    }
+
+    private static String safeLabel(String raw) {
+        if (raw == null || raw.isBlank()) return "rel";
+        return raw.replace('"', '\'').replace('\n', ' ');
+    }
+
+    private static String mermaidType(String dataType) {
+        if (dataType == null) return "string";
+        String t = dataType.toLowerCase(Locale.ROOT);
+        if (t.contains("int") || t.contains("long") || t.contains("number") || t.contains("decimal")) return "int";
+        if (t.contains("date") || t.contains("time")) return "datetime";
+        if (t.contains("bool")) return "boolean";
+        return "string";
+    }
+
+    private static String mermaidCardinality(String type) {
+        if ("ONE_TO_ONE".equalsIgnoreCase(type)) return " ||--|| ";
+        if ("MANY_TO_MANY".equalsIgnoreCase(type)) return " }o--o{ ";
+        return " ||--o{ ";
+    }
+
+    private static String relationTypeZh(String type) {
+        if ("ONE_TO_ONE".equalsIgnoreCase(type)) return "一对一";
+        if ("MANY_TO_MANY".equalsIgnoreCase(type)) return "多对多";
+        return "一对多";
+    }
+
+    private static String statusZh(String status) {
+        if (status == null) return "—";
+        return switch (status.toUpperCase(Locale.ROOT)) {
+            case "ACTIVE" -> "启用";
+            case "DRAFT" -> "草稿";
+            case "INACTIVE", "DISABLED" -> "停用";
+            default -> status;
+        };
+    }
+
+    private static String nullToEmpty(String s) {
+        return s == null ? "" : s;
     }
 
     @Transactional

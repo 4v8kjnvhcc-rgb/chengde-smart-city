@@ -95,16 +95,6 @@ const relatedTasks = ref<Array<Record<string, unknown>>>([])
 const maxDepth = ref(10)
 const loadedTabs = ref(new Set<string>())
 
-const analyzeTabHint = computed(() => {
-  if (activeTab.value === 'assoc') {
-    return '关联分析：基于主外键自动解析并可视化表间关联，支持手工维护，为业务梳理提供支撑。'
-  }
-  if (activeTab.value === 'lineage') {
-    return '血缘分析：追溯元数据来源与加工推移，支持表级血缘与字段级下钻，使数据流程可追溯。'
-  }
-  return '影响分析：递归评估变更对象的下游依赖与风险，辅助元数据清理、维护与下线决策。'
-})
-
 const entrySelectOptions = computed(() =>
   tableEntries.value.map(e => ({
     value: e.entryCode,
@@ -432,8 +422,6 @@ onBeforeUnmount(() => {
         <el-tab-pane label="血缘分析" name="lineage" />
         <el-tab-pane label="影响分析" name="impact" />
       </el-tabs>
-
-      <el-alert type="info" :closable="false" :title="analyzeTabHint" style="margin-bottom: 12px" />
 
       <el-form inline class="portal-inline-form portal-inline-form--block">
         <el-form-item label="分析表" class="portal-field-xl">

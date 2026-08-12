@@ -9,6 +9,7 @@ import { useRoute, useRouter } from 'vue-router'
 import PageCard from '@/components/common/PageCard.vue'
 
 const FusionScriptView = defineAsyncComponent(() => import('./FusionScriptView.vue'))
+const FusionVersionView = defineAsyncComponent(() => import('./FusionVersionView.vue'))
 const DirectShareGoldenPathView = defineAsyncComponent(() => import('../DirectShareGoldenPathView.vue'))
 const ProcessedShareGoldenPathView = defineAsyncComponent(() => import('../ProcessedShareGoldenPathView.vue'))
 
@@ -89,9 +90,9 @@ function goFusionComponents() {
     <!-- 脚本开发：本模块已实现 -->
     <FusionScriptView v-if="active === 'script'" embedded />
 
-    <!-- 版本管理：同一脚本能力 -->
+    <!-- 版本管理：脚本 + 工作流 -->
     <div v-else-if="active === 'version'">
-      <FusionScriptView embedded />
+      <FusionVersionView />
     </div>
 
     <!-- 数据清洗：复用治理组件 MASK/FILTER 等 + ETL 画布 -->

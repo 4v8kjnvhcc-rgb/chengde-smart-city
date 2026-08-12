@@ -109,6 +109,9 @@ public class CrossModulePipelineService {
         p.setScheduleEnabled(0);
         p.setPublishStatus("NONE");
         p.setScheduleStatus("STOPPED");
+        p.setPriority(DolphinSchedulerClient.normalizePriority(str(body.get("priority"), "MEDIUM")));
+        p.setVersionNo(1);
+        p.setEnvScope("DEV");
         p.setCreatedBy(operator == null ? null : operator.getUsername());
         p.setCreatedAt(LocalDateTime.now());
         p.setUpdatedAt(LocalDateTime.now());
@@ -124,6 +127,12 @@ public class CrossModulePipelineService {
         if ("RUNNING".equals(p.getScheduleStatus())) {
             throw new BusinessException(400, "请先停止定时再编辑");
         }
+        String user = operator != null ? operator.getUsername() : null;
+        if (p.getLockedBy() != null && !p.getLockedBy().isBlank()
+                && (user == null || !p.getLockedBy().equals(user))
+                && (operator == null || !operator.isSystemAdmin())) {
+            throw new BusinessException(403, "流水线已被 " + p.getLockedBy() + " 锁定");
+        }
         if (body.containsKey("pipelineName")) {
             String name = str(body.get("pipelineName"), null);
             if (name == null || name.isBlank()) {
@@ -136,6 +145,9 @@ public class CrossModulePipelineService {
         }
         if (body.containsKey("scheduleCron")) {
             p.setScheduleCron(str(body.get("scheduleCron"), null));
+        }
+        if (body.containsKey("priority")) {
+            p.setPriority(DolphinSchedulerClient.normalizePriority(str(body.get("priority"), "MEDIUM")));
         }
         if (body.containsKey("steps")) {
             List<Map<String, Object>> steps = parseSteps(body.get("steps"));
@@ -251,7 +263,9 @@ public class CrossModulePipelineService {
             Integer scheduleId = null;
             String cron = p.getScheduleCron();
             if (cron != null && !cron.isBlank()) {
-                scheduleId = dsClient.createAndOnlineSchedule(projectCode, definitionCode, cron.trim());
+                scheduleId = dsClient.createAndOnlineSchedule(
+                        projectCode, definitionCode, cron.trim(),
+                        DolphinSchedulerClient.normalizePriority(p.getPriority()));
                 dsClient.offlineSchedule(projectCode, scheduleId);
             }
 
@@ -347,7 +361,10 @@ public class CrossModulePipelineService {
         if (!isDsAvailable()) {
             throw new BusinessException(502, "DolphinScheduler 不可用");
         }
-        long instanceId = dsClient.startInstance(p.getDsProjectCode(), p.getDsDefinitionCode());
+        long instanceId = dsClient.startInstance(
+                p.getDsProjectCode(),
+                p.getDsDefinitionCode(),
+                DolphinSchedulerClient.normalizePriority(p.getPriority()));
         p.setLastRunAt(LocalDateTime.now());
         p.setLastMessage("已触发立即执行 instance=" + instanceId);
         p.setUpdatedAt(LocalDateTime.now());
@@ -509,11 +526,16 @@ public class CrossModulePipelineService {
         m.put("scheduleEnabled", p.getScheduleEnabled() != null && p.getScheduleEnabled() == 1);
         m.put("publishStatus", p.getPublishStatus());
         m.put("scheduleStatus", p.getScheduleStatus());
+        m.put("priority", p.getPriority() == null ? "MEDIUM" : p.getPriority());
         m.put("dsProjectCode", p.getDsProjectCode());
         m.put("dsDefinitionCode", p.getDsDefinitionCode());
         m.put("dsScheduleId", p.getDsScheduleId());
         m.put("lastRunAt", p.getLastRunAt());
         m.put("lastMessage", p.getLastMessage());
+        m.put("lockedBy", p.getLockedBy());
+        m.put("lockedAt", p.getLockedAt());
+        m.put("versionNo", p.getVersionNo() == null ? 1 : p.getVersionNo());
+        m.put("envScope", p.getEnvScope() == null ? "DEV" : p.getEnvScope());
         m.put("createdBy", p.getCreatedBy());
         m.put("createdAt", p.getCreatedAt());
         m.put("updatedAt", p.getUpdatedAt());

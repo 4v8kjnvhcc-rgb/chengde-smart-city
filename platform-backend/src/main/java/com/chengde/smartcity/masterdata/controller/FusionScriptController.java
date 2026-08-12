@@ -98,4 +98,42 @@ public class FusionScriptController {
                                                      @PathVariable Integer versionNo) {
         return ApiResponse.ok(service.rollback(principal, id, versionNo));
     }
+
+    @PostMapping("/{id}/lock")
+    @PreAuthorize("isAuthenticated()")
+    public ApiResponse<Map<String, Object>> lock(@AuthenticationPrincipal UserPrincipal principal,
+                                                 @PathVariable Long id) {
+        return ApiResponse.ok(service.lock(principal, id));
+    }
+
+    @PostMapping("/{id}/unlock")
+    @PreAuthorize("isAuthenticated()")
+    public ApiResponse<Map<String, Object>> unlock(@AuthenticationPrincipal UserPrincipal principal,
+                                                   @PathVariable Long id) {
+        return ApiResponse.ok(service.unlock(principal, id));
+    }
+
+    @PutMapping("/{id}/env")
+    @PreAuthorize("isAuthenticated()")
+    public ApiResponse<Map<String, Object>> setEnv(@AuthenticationPrincipal UserPrincipal principal,
+                                                   @PathVariable Long id,
+                                                   @RequestBody Map<String, Object> body) {
+        String env = body == null || body.get("envScope") == null ? null : String.valueOf(body.get("envScope"));
+        return ApiResponse.ok(service.setEnv(principal, id, env));
+    }
+
+    @PostMapping("/{id}/deploy-prod")
+    @PreAuthorize("isAuthenticated()")
+    public ApiResponse<Map<String, Object>> deployProd(@AuthenticationPrincipal UserPrincipal principal,
+                                                       @PathVariable Long id,
+                                                       @RequestBody(required = false) Map<String, Object> body) {
+        return ApiResponse.ok(service.deployToProduction(principal, id, body));
+    }
+
+    @PostMapping("/{id}/ds-trigger")
+    public ApiResponse<Map<String, Object>> dsTrigger(@PathVariable Long id,
+                                                      @org.springframework.web.bind.annotation.RequestHeader(
+                                                              value = "X-Ds-Callback-Token", required = false) String token) {
+        return ApiResponse.ok(service.executeFromDsCallback(id, token));
+    }
 }

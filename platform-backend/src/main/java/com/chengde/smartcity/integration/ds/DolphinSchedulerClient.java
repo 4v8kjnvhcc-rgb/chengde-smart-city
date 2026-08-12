@@ -47,10 +47,27 @@ public class DolphinSchedulerClient {
         if (!props.isEnabled()) {
             return false;
         }
+        String base = base();
         try {
-            rest.getForEntity(props.getDs().getUrl() + "/actuator/health", String.class);
+            ResponseEntity<String> res = rest.getForEntity(base + "/actuator/health", String.class);
+            if (res.getStatusCode().is2xxSuccessful()) {
+                return true;
+            }
+        } catch (Exception e) {
+            log.debug("DS actuator health failed url={}: {}", base, e.getMessage());
+        }
+        // 部分环境未暴露 actuator：再试登录接口可达性
+        try {
+            rest.exchange(base + "/login", HttpMethod.POST,
+                    new HttpEntity<>(new HttpHeaders()), String.class);
             return true;
         } catch (Exception e) {
+            // 405/400 也说明服务已起来
+            String msg = e.getMessage() == null ? "" : e.getMessage();
+            if (msg.contains("405") || msg.contains("400") || msg.contains("401") || msg.contains("403")) {
+                return true;
+            }
+            log.warn("DS health check failed url={}: {}", base, msg);
             return false;
         }
     }
@@ -256,12 +273,14 @@ public class DolphinSchedulerClient {
 
     // ---------- 实例 ----------
 
-    /** 启动流程实例，返回真实 processInstanceId（轮询最近实例获取）。 */
     public long startInstance(long projectCode, long definitionCode) {
+        return startInstance(projectCode, definitionCode, "MEDIUM");
+    }
+
+    public long startInstance(long projectCode, long definitionCode, String priority) {
         String url = base() + "/projects/" + projectCode + "/executors/start-process-instance";
         MultiValueMap<String, String> form = new LinkedMultiValueMap<>();
         form.add("processDefinitionCode", String.valueOf(definitionCode));
-        // DS 3.2.2 必填；空串表示立即执行（非补数）
         form.add("scheduleTime", "");
         form.add("failureStrategy", "END");
         form.add("warningType", "NONE");
@@ -270,7 +289,7 @@ public class DolphinSchedulerClient {
         form.add("startNodeList", "");
         form.add("taskDependType", "TASK_POST");
         form.add("runMode", "RUN_MODE_SERIAL");
-        form.add("processInstancePriority", "MEDIUM");
+        form.add("processInstancePriority", normalizePriority(priority));
         form.add("workerGroup", "default");
         form.add("tenantCode", resolveTenant());
         form.add("environmentCode", "-1");
@@ -334,9 +353,194 @@ public class DolphinSchedulerClient {
         return execute(projectCode, instanceId, "STOP", "停止 DS 实例");
     }
 
-    /** 失败重跑（从失败任务恢复）。 */
     public Map<String, Object> retryInstance(long projectCode, long instanceId) {
         return execute(projectCode, instanceId, "START_FAILURE_TASK_PROCESS", "重跑 DS 实例");
+    }
+
+    public Map<String, Object> pauseInstance(long projectCode, long instanceId) {
+        return execute(projectCode, instanceId, "PAUSE", "暂停 DS 实例");
+    }
+
+    public Map<String, Object> resumeInstance(long projectCode, long instanceId) {
+        return execute(projectCode, instanceId, "RECOVER_SUSPENDED_PROCESS", "恢复 DS 实例");
+    }
+
+    public Map<String, Object> listProcessInstances(long projectCode, int pageNo, int pageSize,
+                                                    String startDate, String endDate,
+                                                    String searchVal, String stateType) {
+        StringBuilder url = new StringBuilder(base())
+                .append("/projects/").append(projectCode)
+                .append("/process-instances?pageNo=").append(Math.max(1, pageNo))
+                .append("&pageSize=").append(Math.min(Math.max(pageSize, 1), 100));
+        if (startDate != null && !startDate.isBlank()) {
+            url.append("&startDate=").append(enc(startDate));
+        }
+        if (endDate != null && !endDate.isBlank()) {
+            url.append("&endDate=").append(enc(endDate));
+        }
+        if (searchVal != null && !searchVal.isBlank()) {
+            url.append("&searchVal=").append(enc(searchVal));
+        }
+        if (stateType != null && !stateType.isBlank()) {
+            url.append("&stateType=").append(enc(stateType));
+        }
+        JsonNode root = requireGet(url.toString(), "查询 DS 流程实例");
+        JsonNode data = root.path("data");
+        List<Map<String, Object>> rows = new ArrayList<>();
+        JsonNode list = data.path("totalList");
+        if (list.isArray()) {
+            for (JsonNode n : list) {
+                Map<String, Object> row = new HashMap<>();
+                row.put("id", n.path("id").asLong());
+                row.put("name", n.path("name").asText(""));
+                row.put("state", n.path("state").asText(""));
+                row.put("startTime", n.path("startTime").asText(null));
+                row.put("endTime", n.path("endTime").asText(null));
+                row.put("duration", n.path("duration").asText(null));
+                row.put("processDefinitionCode", n.path("processDefinitionCode").asLong(0L));
+                row.put("commandType", n.path("commandType").asText(null));
+                row.put("host", n.path("host").asText(null));
+                row.put("processInstancePriority", n.path("processInstancePriority").asText(null));
+                rows.add(row);
+            }
+        }
+        Map<String, Object> out = new HashMap<>();
+        out.put("total", data.path("total").asInt(rows.size()));
+        out.put("totalList", rows);
+        return out;
+    }
+
+    public List<Map<String, Object>> listTaskInstances(long projectCode, long processInstanceId) {
+        String url = base() + "/projects/" + projectCode
+                + "/task-instances?pageNo=1&pageSize=100&processInstanceId=" + processInstanceId;
+        try {
+            JsonNode root = requireGet(url, "查询 DS 任务实例");
+            JsonNode list = root.path("data").path("totalList");
+            List<Map<String, Object>> out = new ArrayList<>();
+            if (list.isArray()) {
+                for (JsonNode n : list) {
+                    out.add(taskNodeToMap(n));
+                }
+                return out;
+            }
+        } catch (Exception e) {
+            log.warn("task-instances 分页查询失败，尝试 process-instances/tasks: {}", e.getMessage());
+        }
+        String alt = base() + "/projects/" + projectCode + "/process-instances/" + processInstanceId + "/tasks";
+        JsonNode root = requireGet(alt, "查询 DS 任务实例");
+        JsonNode data = root.path("data");
+        List<Map<String, Object>> out = new ArrayList<>();
+        if (data.isArray()) {
+            for (JsonNode n : data) {
+                out.add(taskNodeToMap(n));
+            }
+        }
+        return out;
+    }
+
+    private Map<String, Object> taskNodeToMap(JsonNode n) {
+        Map<String, Object> row = new HashMap<>();
+        row.put("id", n.path("id").asLong());
+        row.put("name", n.path("name").asText(""));
+        row.put("state", n.path("state").asText(""));
+        row.put("startTime", n.path("startTime").asText(null));
+        row.put("endTime", n.path("endTime").asText(null));
+        row.put("host", n.path("host").asText(null));
+        row.put("logPath", n.path("logPath").asText(null));
+        return row;
+    }
+
+    public String queryTaskLog(long taskInstanceId, int skipLineNum, int limit) {
+        String url = base() + "/log/detail?taskInstanceId=" + taskInstanceId
+                + "&skipLineNum=" + Math.max(0, skipLineNum)
+                + "&limit=" + Math.min(Math.max(limit, 1), 5000);
+        JsonNode root = requireGet(url, "查询 DS 任务日志");
+        JsonNode data = root.path("data");
+        if (data.isTextual()) {
+            return data.asText("");
+        }
+        String message = data.path("message").asText(null);
+        if (message != null) {
+            return message;
+        }
+        return data.toString();
+    }
+
+    public Map<String, Object> clusterSnapshot() {
+        Map<String, Object> out = new HashMap<>();
+        List<Map<String, Object>> masters = new ArrayList<>();
+        List<Map<String, Object>> workers = new ArrayList<>();
+        try {
+            JsonNode root = requireGet(base() + "/monitor/masters", "查询 DS Master");
+            JsonNode data = root.path("data");
+            if (data.isArray()) {
+                for (JsonNode n : data) {
+                    Map<String, Object> row = new HashMap<>();
+                    row.put("host", n.path("host").asText(n.path("server").path("host").asText("")));
+                    row.put("port", n.path("port").asInt(n.path("server").path("port").asInt(0)));
+                    row.put("resInfo", n.path("resInfo").asText(n.path("server").path("resInfo").asText("")));
+                    row.put("createTime", n.path("createTime").asText(null));
+                    row.put("lastHeartbeatTime", n.path("lastHeartbeatTime").asText(null));
+                    masters.add(row);
+                }
+            }
+        } catch (Exception e) {
+            log.warn("查询 DS Master 失败: {}", e.getMessage());
+        }
+        try {
+            JsonNode root = requireGet(base() + "/monitor/workers", "查询 DS Worker");
+            JsonNode data = root.path("data");
+            if (data.isArray()) {
+                for (JsonNode n : data) {
+                    Map<String, Object> row = new HashMap<>();
+                    row.put("host", n.path("host").asText(n.path("server").path("host").asText("")));
+                    row.put("port", n.path("port").asInt(n.path("server").path("port").asInt(0)));
+                    row.put("resInfo", n.path("resInfo").asText(n.path("server").path("resInfo").asText("")));
+                    row.put("workerGroups", n.path("workerGroups").asText(null));
+                    row.put("lastHeartbeatTime", n.path("lastHeartbeatTime").asText(null));
+                    workers.add(row);
+                }
+            }
+        } catch (Exception e) {
+            log.warn("查询 DS Worker 失败: {}", e.getMessage());
+        }
+        out.put("masters", masters);
+        out.put("workers", workers);
+        StringBuilder text = new StringBuilder();
+        text.append("=== Master ===\n");
+        if (masters.isEmpty()) {
+            text.append("(无)\n");
+        } else {
+            for (Map<String, Object> m : masters) {
+                text.append(m.get("host")).append(':').append(m.get("port"))
+                        .append(" res=").append(m.get("resInfo"))
+                        .append(" heartbeat=").append(m.get("lastHeartbeatTime")).append('\n');
+            }
+        }
+        text.append("=== Worker ===\n");
+        if (workers.isEmpty()) {
+            text.append("(无)\n");
+        } else {
+            for (Map<String, Object> w : workers) {
+                text.append(w.get("host")).append(':').append(w.get("port"))
+                        .append(" res=").append(w.get("resInfo"))
+                        .append(" groups=").append(w.get("workerGroups"))
+                        .append(" heartbeat=").append(w.get("lastHeartbeatTime")).append('\n');
+            }
+        }
+        out.put("text", text.toString());
+        return out;
+    }
+
+    public static String normalizePriority(String priority) {
+        if (priority == null || priority.isBlank()) {
+            return "MEDIUM";
+        }
+        String p = priority.trim().toUpperCase(Locale.ROOT);
+        return switch (p) {
+            case "HIGHEST", "HIGH", "MEDIUM", "LOW" -> p;
+            default -> "MEDIUM";
+        };
     }
 
     private Map<String, Object> execute(long projectCode, long instanceId, String executeType, String action) {
@@ -354,11 +558,11 @@ public class DolphinSchedulerClient {
 
     // ---------- 定时调度 ----------
 
-    /**
-     * 为已上线流程定义创建 Cron 调度并上线，返回 scheduleId。
-     * cronExpr 为 Spring/Quartz 6 段或 7 段表达式，统一转为 DS Quartz 7 段。
-     */
     public int createAndOnlineSchedule(long projectCode, long definitionCode, String cronExpr) {
+        return createAndOnlineSchedule(projectCode, definitionCode, cronExpr, "MEDIUM");
+    }
+
+    public int createAndOnlineSchedule(long projectCode, long definitionCode, String cronExpr, String priority) {
         IntegrationConfig.requireIntegration(props, "DolphinScheduler");
         String crontab = toDsCrontab(cronExpr);
         java.time.LocalDateTime now = java.time.LocalDateTime.now();
@@ -373,7 +577,7 @@ public class DolphinSchedulerClient {
         form.add("warningType", "NONE");
         form.add("warningGroupId", "0");
         form.add("failureStrategy", "END");
-        form.add("processInstancePriority", "MEDIUM");
+        form.add("processInstancePriority", normalizePriority(priority));
         form.add("workerGroup", "default");
         form.add("tenantCode", resolveTenant());
         form.add("environmentCode", "-1");
@@ -508,7 +712,19 @@ public class DolphinSchedulerClient {
     }
 
     private String base() {
-        return props.getDs().getUrl();
+        String url = props.getDs().getUrl();
+        if (url == null || url.isBlank()) {
+            return "http://127.0.0.1:12345/dolphinscheduler";
+        }
+        url = url.trim();
+        if (url.endsWith("/")) {
+            url = url.substring(0, url.length() - 1);
+        }
+        // Windows 上 localhost 可能走 IPv6，统一成 127.0.0.1 更稳
+        if (url.contains("://localhost:") || url.contains("://localhost/")) {
+            url = url.replace("://localhost", "://127.0.0.1");
+        }
+        return url;
     }
 
     private void ensureSession() {
@@ -518,6 +734,10 @@ public class DolphinSchedulerClient {
         if (sessionId != null) {
             return;
         }
+        loginSession();
+    }
+
+    private void loginSession() {
         String url = base() + "/login?userName=" + enc(props.getDs().getUser())
                 + "&userPassword=" + enc(props.getDs().getPassword());
         HttpHeaders h = new HttpHeaders();
@@ -530,11 +750,18 @@ public class DolphinSchedulerClient {
                 throw new BusinessException(502, "DS 登录未返回 sessionId：" + trim(res.getBody()));
             }
             sessionId = sid;
+            log.info("DS login ok user={}", props.getDs().getUser());
         } catch (BusinessException be) {
+            sessionId = null;
             throw be;
         } catch (Exception e) {
+            sessionId = null;
             throw new BusinessException(502, "DS 登录失败: " + e.getMessage());
         }
+    }
+
+    private void invalidateSession() {
+        sessionId = null;
     }
 
     private HttpHeaders authHeaders(MediaType contentType) {
@@ -559,10 +786,27 @@ public class DolphinSchedulerClient {
                     new HttpEntity<>(authHeaders(null)), String.class);
             return requireOk(res.getBody(), action);
         } catch (BusinessException be) {
+            if (isSessionExpired(be) && (props.getDs().getToken() == null || props.getDs().getToken().isBlank())) {
+                invalidateSession();
+                try {
+                    ResponseEntity<String> res = rest.exchange(url, HttpMethod.GET,
+                            new HttpEntity<>(authHeaders(null)), String.class);
+                    return requireOk(res.getBody(), action);
+                } catch (BusinessException be2) {
+                    throw be2;
+                } catch (Exception e2) {
+                    throw new BusinessException(502, action + "失败: " + e2.getMessage());
+                }
+            }
             throw be;
         } catch (Exception e) {
             throw new BusinessException(502, action + "失败: " + e.getMessage());
         }
+    }
+
+    private boolean isSessionExpired(BusinessException be) {
+        String m = be.getMessage() == null ? "" : be.getMessage();
+        return m.contains("session") || m.contains("登录") || m.contains("401") || m.contains("未登录");
     }
 
     private JsonNode requirePost(String url, MultiValueMap<String, String> form, String action) {

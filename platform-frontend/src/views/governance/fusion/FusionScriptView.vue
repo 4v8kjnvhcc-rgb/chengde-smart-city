@@ -54,20 +54,48 @@ interface RunRow {
 
 const scripts = ref<ScriptRow[]>([])
 const runs = ref<RunRow[]>([])
+
+const scriptQuery = reactive({ keyword: '', publishStatus: '' })
+const runQuery = reactive({ keyword: '', status: '' })
+
+const filteredScripts = computed(() => {
+  const kw = scriptQuery.keyword.trim().toLowerCase()
+  return scripts.value.filter((s) => {
+    if (kw) {
+      const hit = `${s.scriptCode || ''} ${s.scriptName || ''}`.toLowerCase().includes(kw)
+      if (!hit) return false
+    }
+    if (scriptQuery.publishStatus && s.publishStatus !== scriptQuery.publishStatus) return false
+    return true
+  })
+})
+
+const filteredRuns = computed(() => {
+  const kw = runQuery.keyword.trim().toLowerCase()
+  return runs.value.filter((r) => {
+    if (kw) {
+      const name = `${r.scriptName || ''} ${r.scriptId || ''}`.toLowerCase()
+      if (!name.includes(kw)) return false
+    }
+    if (runQuery.status && String(r.status || '').toUpperCase() !== runQuery.status) return false
+    return true
+  })
+})
+
 const {
   page: scriptPage,
   pageSize: scriptPageSize,
   paged: pagedScripts,
   total: scriptTotal,
   resetPage: resetScriptPage,
-} = useClientPager(scripts)
+} = useClientPager(filteredScripts)
 const {
   page: runPage,
   pageSize: runPageSize,
   paged: pagedRuns,
   total: runTotal,
   resetPage: resetRunPage,
-} = useClientPager(runs)
+} = useClientPager(filteredRuns)
 const loading = ref(false)
 const drawer = ref(false)
 const versionDrawer = ref(false)
@@ -120,6 +148,14 @@ async function loadRuns() {
   } catch {
     runs.value = []
   }
+}
+
+async function searchScripts() {
+  await loadScripts()
+}
+
+async function searchRuns() {
+  await loadRuns()
 }
 
 async function loadSources() {
@@ -272,7 +308,6 @@ async function rollbackVersion(ver: VersionRow) {
 
 onMounted(() => {
   void loadScripts()
-  void loadRuns()
 })
 </script>
 
@@ -283,9 +318,23 @@ onMounted(() => {
       <el-tab-pane label="运行记录" name="runs" />
     </el-tabs>
     <el-form v-if="activeTab === 'list'" inline class="portal-inline-form portal-inline-form--block">
+      <el-form-item label="名称/编码" class="portal-field-lg">
+        <el-input
+          v-model="scriptQuery.keyword"
+          clearable
+          placeholder="脚本名称或编码"
+          @keyup.enter="searchScripts"
+        />
+      </el-form-item>
+      <el-form-item label="发布状态" class="portal-field-md">
+        <el-select v-model="scriptQuery.publishStatus" clearable placeholder="全部">
+          <el-option label="草稿" value="DRAFT" />
+          <el-option label="已发布" value="PUBLISHED" />
+        </el-select>
+      </el-form-item>
       <el-form-item class="portal-form-actions">
-        <el-button type="primary" @click="openCreate">新建脚本</el-button>
-        <el-button @click="loadScripts">刷新</el-button>
+        <el-button type="primary" @click="searchScripts">查询</el-button>
+        <el-button type="primary" plain @click="openCreate">新建脚本</el-button>
       </el-form-item>
     </el-form>
 
@@ -316,12 +365,30 @@ onMounted(() => {
       v-model:page-size="scriptPageSize"
       :total="scriptTotal"
     />
-    <el-empty v-if="activeTab === 'list' && !loading && !scripts.length" description="暂无融合脚本" />
+    <el-empty
+      v-if="activeTab === 'list' && !loading && !filteredScripts.length"
+      :description="scripts.length ? '无匹配脚本' : '暂无融合脚本'"
+    />
 
     <template v-if="activeTab === 'runs'">
       <el-form inline class="portal-inline-form portal-inline-form--block">
+        <el-form-item label="脚本" class="portal-field-lg">
+          <el-input
+            v-model="runQuery.keyword"
+            clearable
+            placeholder="脚本名称"
+            @keyup.enter="searchRuns"
+          />
+        </el-form-item>
+        <el-form-item label="状态" class="portal-field-md">
+          <el-select v-model="runQuery.status" clearable placeholder="全部">
+            <el-option label="成功" value="SUCCESS" />
+            <el-option label="失败" value="FAILED" />
+            <el-option label="运行中" value="RUNNING" />
+          </el-select>
+        </el-form-item>
         <el-form-item class="portal-form-actions">
-          <el-button @click="loadRuns">刷新运行</el-button>
+          <el-button type="primary" @click="searchRuns">查询</el-button>
         </el-form-item>
       </el-form>
       <el-table :data="pagedRuns" stripe size="small">
@@ -343,7 +410,10 @@ onMounted(() => {
         v-model:page-size="runPageSize"
         :total="runTotal"
       />
-      <el-empty v-if="!runs.length" description="暂无运行记录；执行脚本后将写入此处" />
+      <el-empty
+        v-if="!filteredRuns.length"
+        :description="runs.length ? '无匹配运行记录' : '暂无运行记录；执行脚本后将写入此处'"
+      />
     </template>
 
     <el-drawer v-model="drawer" :title="form.id ? `编辑 · ${form.scriptName}` : '新建脚本'" size="560px">

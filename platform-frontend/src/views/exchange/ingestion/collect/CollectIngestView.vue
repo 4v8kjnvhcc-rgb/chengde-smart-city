@@ -41,37 +41,25 @@ const { loading, loadError, withLoad } = useIngestionLoading()
 
 
 
-const FILE_MODES = [
-
-  { key: 'file-remote', type: 'FTP', label: '远程文件接入' },
-
-  { key: 'file-local', type: 'LOCAL', label: '本地文件上传' },
-
-]
-
-
-
-const OTHER_MODES = [
-
-  { key: 'other-unstruct', type: 'UNSTRUCT', label: '非结构化数据接入' },
-
-  { key: 'other-semi', type: 'SEMI', label: '半结构化数据接入' },
-
-  { key: 'other-api', type: 'API', label: 'API 接口数据接入' },
-
-  { key: 'other-cdc', type: 'CDC', label: 'CDC 实时数据接入' },
-
-]
+const OTHER_CHANNEL_BY_TAB: Record<Exclude<IngestMainTab, 'structured'>, { type: string; section: string; label: string }> = {
+  unstruct: { type: 'UNSTRUCT', section: 'other-unstruct', label: '非结构化数据接入' },
+  semi: { type: 'SEMI', section: 'other-semi', label: '半结构化数据接入' },
+  api: { type: 'API', section: 'other-api', label: 'API 接口数据接入' },
+  cdc: { type: 'CDC', section: 'other-cdc', label: 'CDC 实时数据接入' },
+}
 
 
 
-type ViewScope = 'structured-table' | 'structured-upload' | string
+type ViewScope =
+  | 'structured-table'
+  | 'structured-upload'
+  | 'structured-remote'
+  | 'structured-local'
+  | string
 
 
 
 const structuredSub = ref('structured-table')
-
-const fileSub = ref('file-remote')
 
 const otherSub = ref('other-api')
 
@@ -140,12 +128,21 @@ const writeMode = ref<'APPEND' | 'REPLACE'>('APPEND')
 
 const activeChannelType = computed(() => {
 
-  if (mainTab.value === 'structured') return 'TABLE'
+  if (mainTab.value === 'structured') {
+    if (structuredSub.value === 'structured-remote') return 'FTP'
+    if (structuredSub.value === 'structured-local') return 'LOCAL'
+    return 'TABLE'
+  }
 
-  if (mainTab.value === 'file') return FILE_MODES.find((m) => m.key === fileSub.value)?.type
+  return OTHER_CHANNEL_BY_TAB[mainTab.value]?.type || 'API'
 
-  return OTHER_MODES.find((m) => m.key === otherSub.value)?.type
+})
 
+
+
+const activeOtherMeta = computed(() => {
+  if (mainTab.value === 'structured') return null
+  return OTHER_CHANNEL_BY_TAB[mainTab.value] || OTHER_CHANNEL_BY_TAB.api
 })
 
 
@@ -160,9 +157,7 @@ function currentScope(): ViewScope {
 
   if (mainTab.value === 'structured') return structuredSub.value
 
-  if (mainTab.value === 'file') return fileSub.value
-
-  return otherSub.value
+  return activeOtherMeta.value?.section || 'other-api'
 
 }
 
@@ -300,17 +295,19 @@ function configFields(type: string) {
 
       return [
 
-        { key: 'host', label: 'FTP 主机', defaultValue: '' },
+        { key: 'protocol', label: '协议', defaultValue: 'FTP', hint: 'FTP 或 SFTP' },
 
-        { key: 'port', label: '端口', defaultValue: '21' },
+        { key: 'host', label: '主机', defaultValue: '', hint: '如 10.10.10.20', required: true },
 
-        { key: 'username', label: '用户名', defaultValue: '' },
+        { key: 'port', label: '端口', defaultValue: '21', hint: 'FTP 默认 21，SFTP 常用 22' },
 
-        { key: 'password', label: '密码', defaultValue: '' },
+        { key: 'username', label: '用户名', defaultValue: '', required: true },
 
-        { key: 'remotePath', label: '远程目录', defaultValue: '/' },
+        { key: 'password', label: '密码', defaultValue: '', secret: true },
 
-        { key: 'filePattern', label: '文件匹配', defaultValue: '*.csv' },
+        { key: 'remotePath', label: '远程目录', defaultValue: '/', hint: '如 /data/inbox', required: true },
+
+        { key: 'filePattern', label: '文件匹配', defaultValue: '*.csv', hint: '如 *.csv / *.xlsx' },
 
       ]
 
@@ -318,31 +315,11 @@ function configFields(type: string) {
 
       return [
 
-        { key: 'localPath', label: '本地目录', defaultValue: '' },
+        { key: 'localPath', label: '服务器目录', defaultValue: '', hint: '后端机器可访问的绝对路径或共享盘', required: true },
+
+        { key: 'filePattern', label: '文件匹配', defaultValue: '*.csv', hint: '如 *.csv / *.xlsx' },
 
         { key: 'writeMode', label: '写入模式', defaultValue: 'append', hint: 'append 追加 / overwrite 覆盖' },
-
-      ]
-
-    case 'UNSTRUCT':
-
-      return [
-
-        { key: 'ftpHost', label: 'FTP 主机', defaultValue: '' },
-
-        { key: 'storagePath', label: '对象存储路径', defaultValue: '/data/unstruct' },
-
-      ]
-
-    case 'SEMI':
-
-      return [
-
-        { key: 'broker', label: '消息中间件', defaultValue: '' },
-
-        { key: 'topic', label: 'Topic', defaultValue: '' },
-
-        { key: 'dataFormat', label: '数据格式', defaultValue: 'json', hint: 'json / xml' },
 
       ]
 
@@ -350,11 +327,13 @@ function configFields(type: string) {
 
       return [
 
-        { key: 'url', label: '接口地址', defaultValue: '' },
+        { key: 'url', label: '接口地址', defaultValue: '', hint: 'https://example.com/api/data', required: true },
 
-        { key: 'method', label: '请求方式', defaultValue: 'GET' },
+        { key: 'method', label: '请求方式', defaultValue: 'GET', hint: 'GET / POST' },
 
-        { key: 'retryCount', label: '失败重试次数', defaultValue: '3' },
+        { key: 'authHeader', label: '鉴权头', defaultValue: '', hint: '可选，如 Bearer token' },
+
+        { key: 'retryCount', label: '失败重试', defaultValue: '3' },
 
       ]
 
@@ -362,11 +341,35 @@ function configFields(type: string) {
 
       return [
 
-        { key: 'canalHost', label: 'Canal 地址', defaultValue: 'localhost:19090' },
+        { key: 'canalHost', label: 'Canal 地址', defaultValue: '', hint: '如 10.10.10.51:19090', required: true },
 
-        { key: 'sourceDb', label: '源库', defaultValue: '' },
+        { key: 'sourceDb', label: '源库', defaultValue: '', required: true },
 
         { key: 'targetTable', label: '目标表', defaultValue: '' },
+
+      ]
+
+    case 'UNSTRUCT':
+
+      return [
+
+        { key: 'ftpHost', label: '文件主机', defaultValue: '', hint: 'FTP/对象存储入口' },
+
+        { key: 'storagePath', label: '存储路径', defaultValue: '/data/unstruct', required: true },
+
+        { key: 'filePattern', label: '文件匹配', defaultValue: '*.*', hint: '如 *.pdf / *.jpg' },
+
+      ]
+
+    case 'SEMI':
+
+      return [
+
+        { key: 'broker', label: '消息中间件', defaultValue: '', hint: 'Kafka/MQ 地址', required: true },
+
+        { key: 'topic', label: 'Topic', defaultValue: '', required: true },
+
+        { key: 'dataFormat', label: '数据格式', defaultValue: 'json', hint: 'json / xml' },
 
       ]
 
@@ -394,11 +397,35 @@ function syncSectionQuery() {
 
 function applySectionFromRoute() {
 
+  const mod = String(route.query.module || '').toLowerCase()
   const sec = String(route.query.section || '')
 
-  if (sec.startsWith('file-')) fileSub.value = sec
+  // 旧「文件上传 · 本地」→ 结构化 · 本地文件上传
+  if (mod === 'ingest.file' || sec === 'file-local' || sec === 'm056') {
+    structuredSub.value = 'structured-local'
+    mainTab.value = 'structured'
+    router.replace({
+      query: { ...route.query, module: 'ingest.structured', section: 'structured-local' },
+    })
+    return
+  }
+  // 旧「文件上传 · 远程」→ 结构化 · 远程文件接入
+  if (sec === 'file-remote' || sec === 'm055' || sec === 'other-ftp') {
+    structuredSub.value = 'structured-remote'
+    mainTab.value = 'structured'
+    router.replace({
+      query: { ...route.query, module: 'ingest.structured', section: 'structured-remote' },
+    })
+    return
+  }
 
-  else if (sec.startsWith('other-')) otherSub.value = sec
+  if (sec.startsWith('other-')) {
+    otherSub.value = sec
+    const hit = (Object.values(OTHER_CHANNEL_BY_TAB) as Array<{ section: string }>).find((m) => m.section === sec)
+    if (hit) {
+      // mainTab 由 collectIngestMainTab 决定
+    }
+  }
 
   else if (sec.startsWith('structured-')) structuredSub.value = sec
 
@@ -535,26 +562,6 @@ async function ensureScopeLoaded(scope = currentScope(), force = false) {
 
 
 function onStructuredSubChange() {
-
-  syncSectionQuery()
-
-  ensureScopeLoaded()
-
-}
-
-
-
-function onFileSubChange() {
-
-  syncSectionQuery()
-
-  ensureScopeLoaded()
-
-}
-
-
-
-function onOtherSubChange() {
 
   syncSectionQuery()
 
@@ -1097,7 +1104,7 @@ onMounted(() => {
 
     <el-alert v-if="loadError" type="error" :title="loadError" show-icon :closable="false" style="margin-bottom:12px" />
 
-    <!-- 结构化：库表接入 + 手动上传（一级「结构化/文件/其他」已在 Hub 左侧菜单） -->
+    <!-- 结构化：原有库表/手动上传 + 新增远程/本地文件两个 Tab -->
 
     <template v-if="mainTab === 'structured'">
 
@@ -1107,73 +1114,50 @@ onMounted(() => {
 
         <el-radio-button value="structured-upload">手动上传数据</el-radio-button>
 
-      </el-radio-group>
+        <el-radio-button value="structured-remote">远程文件接入</el-radio-button>
 
-
-
-      <template v-if="structuredSub === 'structured-table'">
-        <StructuredTableWizard />
-      </template>
-      <template v-else>
-        <ManualUploadView />
-      </template>
-
-    </template>
-
-
-
-    <!-- 文件上传：远程 / 本地 —— 列表展示已有任务，右上角新建 -->
-
-    <template v-else-if="mainTab === 'file'">
-
-      <el-radio-group v-model="fileSub" style="margin-bottom:12px" @change="onFileSubChange">
-
-        <el-radio-button v-for="m in FILE_MODES" :key="m.key" :value="m.key">{{ m.label }}</el-radio-button>
+        <el-radio-button value="structured-local">本地文件上传</el-radio-button>
 
       </el-radio-group>
+
+
+
+      <StructuredTableWizard v-if="structuredSub === 'structured-table'" />
+
+      <ManualUploadView v-else-if="structuredSub === 'structured-upload'" />
 
       <ChannelTaskPanel
+        v-else-if="structuredSub === 'structured-remote'"
+        key="structured-remote"
+        title="远程文件接入"
+        channel-type="FTP"
+        :config-fields="configFields('FTP')"
+        @go-manual-upload="structuredSub = 'structured-upload'; syncSectionQuery()"
+      />
 
-        :key="fileSub"
-
-        :title="FILE_MODES.find(m => m.key === fileSub)?.label || '文件上传'"
-
-        :channel-type="activeChannelType || 'FTP'"
-
-        :config-fields="configFields(activeChannelType || 'FTP')"
-
-        subtitle="主界面展示已上传/接入任务信息；点击右上角新建上传任务"
-
+      <ChannelTaskPanel
+        v-else
+        key="structured-local"
+        title="本地文件上传"
+        channel-type="LOCAL"
+        :config-fields="configFields('LOCAL')"
+        @go-manual-upload="structuredSub = 'structured-upload'; syncSectionQuery()"
       />
 
     </template>
 
 
 
-    <!-- 其他数据接入 —— 列表展示已有任务，右上角新建 -->
+    <!-- 非结构 / 半结构 / API / CDC：侧栏各一菜单，页内不再套 Tab -->
 
     <template v-else>
-
-      <el-radio-group v-model="otherSub" style="margin-bottom:12px" @change="onOtherSubChange">
-
-        <el-radio-button v-for="m in OTHER_MODES" :key="m.key" :value="m.key">{{ m.label }}</el-radio-button>
-
-      </el-radio-group>
-
       <ChannelTaskPanel
-
-        :key="otherSub"
-
-        :title="OTHER_MODES.find(m => m.key === otherSub)?.label || '其他数据接入'"
-
+        :key="mainTab"
+        :title="activeOtherMeta?.label || '数据接入'"
         :channel-type="activeChannelType || 'API'"
-
         :config-fields="configFields(activeChannelType || 'API')"
-
-        subtitle="主界面展示已接入任务信息；点击右上角新建上传任务"
-
+        subtitle="登记接入任务与连接参数；执行结果见列表最近说明"
       />
-
     </template>
 
 

@@ -1,14 +1,13 @@
 <script setup lang="ts">
-import { onMounted, reactive, ref, watch, computed } from 'vue'
+import { onMounted, reactive, ref, watch, computed, nextTick } from 'vue'
 import { useRouter } from 'vue-router'
 import api from '@/api/http'
 import { ElMessage, ElMessageBox } from 'element-plus'
+import type { TableInstance } from 'element-plus'
 import PageCard from '@/components/common/PageCard.vue'
 import PortalPagination from '@/components/common/PortalPagination.vue'
 import { useClientPager } from '@/composables/useClientPager'
 import { statusLabel, statusTagType } from '@/utils/status-label'
-
-const router = useRouter()
 import {
   groupSourcesByRole,
   loadQualitySourceOptions,
@@ -64,6 +63,10 @@ interface PhysicalRow {
   status: string
 }
 
+type DetailTab = 'entities' | 'relations' | 'fields' | 'physical'
+
+const router = useRouter()
+
 const domains = ref<DomainRow[]>([])
 const {
   page: domainPage,
@@ -74,25 +77,68 @@ const {
 } = useClientPager(domains)
 const selectedDomainId = ref<number | null>(null)
 const entities = ref<EntityRow[]>([])
+const entityQuery = reactive({ keyword: '', status: '' })
+const filteredEntities = computed(() => {
+  const kw = entityQuery.keyword.trim().toLowerCase()
+  return entities.value.filter((e) => {
+    if (kw && !`${e.entityCode || ''} ${e.entityName || ''}`.toLowerCase().includes(kw)) return false
+    if (entityQuery.status && e.status !== entityQuery.status) return false
+    return true
+  })
+})
 const {
   page: entityPage,
   pageSize: entityPageSize,
   paged: pagedEntities,
   total: entityTotal,
   resetPage: resetEntityPage,
-} = useClientPager(entities)
+} = useClientPager(filteredEntities)
 const fields = ref<FieldRow[]>([])
+const fieldQuery = reactive({ keyword: '', dataType: '' })
+const filteredFields = computed(() => {
+  const kw = fieldQuery.keyword.trim().toLowerCase()
+  return fields.value.filter((f) => {
+    if (kw && !`${f.fieldCode || ''} ${f.fieldName || ''}`.toLowerCase().includes(kw)) return false
+    if (fieldQuery.dataType && String(f.dataType || '').toUpperCase() !== fieldQuery.dataType.toUpperCase()) return false
+    return true
+  })
+})
 const relations = ref<RelationRow[]>([])
+const relationQuery = reactive({ keyword: '', relationType: '' })
+const filteredRelations = computed(() => {
+  const kw = relationQuery.keyword.trim().toLowerCase()
+  return relations.value.filter((r) => {
+    if (kw) {
+      const from = entities.value.find((e) => e.id === r.fromEntityId)?.entityName || ''
+      const to = entities.value.find((e) => e.id === r.toEntityId)?.entityName || ''
+      const text = `${r.relationCode || ''} ${r.relationName || ''} ${from} ${to}`.toLowerCase()
+      if (!text.includes(kw)) return false
+    }
+    if (relationQuery.relationType && r.relationType !== relationQuery.relationType) return false
+    return true
+  })
+})
 const physicals = ref<PhysicalRow[]>([])
+const physicalQuery = reactive({ keyword: '', status: '' })
+const filteredPhysicals = computed(() => {
+  const kw = physicalQuery.keyword.trim().toLowerCase()
+  return physicals.value.filter((p) => {
+    if (kw && !`${p.physicalCode || ''} ${p.tableName || ''}`.toLowerCase().includes(kw)) return false
+    if (physicalQuery.status && p.status !== physicalQuery.status) return false
+    return true
+  })
+})
 const {
   page: physicalPage,
   pageSize: physicalPageSize,
   paged: pagedPhysicals,
   total: physicalTotal,
   resetPage: resetPhysicalPage,
-} = useClientPager(physicals)
+} = useClientPager(filteredPhysicals)
 const selectedEntityId = ref<number | null>(null)
 const loading = ref(false)
+const detailLoading = ref(false)
+const detailTab = ref<DetailTab>('entities')
 const sources = ref<QualitySourceOption[]>([])
 const sourceGroups = computed(() => groupSourcesByRole(sources.value))
 const tables = ref<QualityTableMeta[]>([])
@@ -100,6 +146,8 @@ const tablesLoading = ref(false)
 const previewVisible = ref(false)
 const previewRows = ref<Record<string, unknown>[]>([])
 const previewTitle = ref('')
+
+const entityTableRef = ref<TableInstance>()
 
 const domainDlg = ref(false)
 const entityDlg = ref(false)
@@ -123,6 +171,10 @@ const physicalForm = reactive({
   ddlSql: '',
 })
 
+const selectedDomain = computed(() => domains.value.find((d) => d.id === selectedDomainId.value) || null)
+const selectedEntity = computed(() => entities.value.find((e) => e.id === selectedEntityId.value) || null)
+const exportingReport = ref(false)
+
 async function loadDomains() {
   loading.value = true
   try {
@@ -144,8 +196,10 @@ async function loadDomainDetail() {
     relations.value = []
     fields.value = []
     physicals.value = []
+    selectedEntityId.value = null
     return
   }
+  detailLoading.value = true
   try {
     const tree = (await api.get(`/governance/fusion/models/domains/${selectedDomainId.value}/tree`)).data
     entities.value = (tree.entities || []).map((n: { entity: EntityRow }) => n.entity)
@@ -156,8 +210,12 @@ async function loadDomainDetail() {
     } else if (selectedEntityId.value && !entities.value.find((e) => e.id === selectedEntityId.value)) {
       selectedEntityId.value = entities.value[0]?.id ?? null
     }
+    await nextTick()
+    syncEntityCurrentRow()
   } catch {
     ElMessage.error('加载模型树失败')
+  } finally {
+    detailLoading.value = false
   }
 }
 
@@ -174,6 +232,26 @@ async function loadEntityDetail() {
   } catch {
     ElMessage.error('加载字段/物理映射失败')
   }
+}
+
+function selectDomain(row: DomainRow) {
+  if (selectedDomainId.value === row.id) return
+  selectedEntityId.value = null
+  selectedDomainId.value = row.id
+  detailTab.value = 'entities'
+}
+
+function selectEntity(row: EntityRow | undefined) {
+  selectedEntityId.value = row?.id ?? null
+}
+
+function syncEntityCurrentRow() {
+  const row = entities.value.find((e) => e.id === selectedEntityId.value)
+  entityTableRef.value?.setCurrentRow(row || undefined)
+}
+
+function onDetailTab(name: string | number) {
+  detailTab.value = String(name) as DetailTab
 }
 
 function openDomainCreate() {
@@ -428,6 +506,40 @@ function entityName(id: number) {
   return entities.value.find((e) => e.id === id)?.entityName || String(id)
 }
 
+function relationTypeLabel(t: string) {
+  if (t === 'ONE_TO_ONE') return '一对一'
+  if (t === 'MANY_TO_MANY') return '多对多'
+  return '一对多'
+}
+
+async function exportModelReport() {
+  if (!selectedDomainId.value || !selectedDomain.value) {
+    ElMessage.warning('请先选择业务域')
+    return
+  }
+  exportingReport.value = true
+  try {
+    const res = await api.get(`/governance/fusion/models/domains/${selectedDomainId.value}/report`, {
+      responseType: 'blob',
+    })
+    const blob = new Blob([res.data], {
+      type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+    })
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    const code = (selectedDomain.value.domainCode || 'domain').replace(/[^\w\-]/g, '_')
+    a.download = `模型报告_${code}.xlsx`
+    a.click()
+    URL.revokeObjectURL(url)
+    ElMessage.success('模型报告已导出')
+  } catch {
+    ElMessage.error('导出模型报告失败')
+  } finally {
+    exportingReport.value = false
+  }
+}
+
 watch(selectedDomainId, () => { void loadDomainDetail() })
 watch(selectedEntityId, () => { void loadEntityDetail() })
 
@@ -439,127 +551,276 @@ onMounted(async () => {
 
 <template>
   <PageCard title="数据仓库建设">
-    <el-row :gutter="12">
-      <el-col :span="8">
-        <div class="panel-head">
-          <span>业务域</span>
+    <div class="warehouse-layout">
+      <!-- 左侧：业务域 -->
+      <aside class="domain-pane" v-loading="loading">
+        <div class="pane-toolbar">
+          <span class="pane-title">业务域</span>
           <el-button type="primary" size="small" @click="openDomainCreate">新增</el-button>
         </div>
-        <el-table
-          v-loading="loading"
-          :data="pagedDomains"
-          stripe
-          size="small"
-          highlight-current-row
-          @current-change="(row: DomainRow | undefined) => { selectedDomainId = row?.id ?? null }"
-        >
-          <el-table-column prop="domainCode" label="编码" width="100" />
-          <el-table-column prop="domainName" label="名称" />
-          <el-table-column prop="entityCount" label="实体" width="50" />
-          <el-table-column label="操作" width="60">
-            <template #default="{ row }">
-              <el-button link type="danger" @click.stop="removeDomain(row)">删</el-button>
-            </template>
-          </el-table-column>
-        </el-table>
+        <div v-if="!pagedDomains.length" class="pane-empty">
+          <el-empty description="暂无业务域" :image-size="56" />
+        </div>
+        <ul v-else class="domain-list">
+          <li
+            v-for="row in pagedDomains"
+            :key="row.id"
+            class="domain-item"
+            :class="{ active: row.id === selectedDomainId }"
+            @click="selectDomain(row)"
+          >
+            <div class="domain-item-main">
+              <div class="domain-name">{{ row.domainName }}</div>
+              <div class="domain-code">{{ row.domainCode }}</div>
+            </div>
+            <div class="domain-item-meta">
+              <el-tag size="small" type="info" effect="plain">{{ row.entityCount ?? 0 }} 实体</el-tag>
+              <el-button link type="danger" @click.stop="removeDomain(row)">删除</el-button>
+            </div>
+          </li>
+        </ul>
         <PortalPagination
+          v-if="domainTotal > 10"
           v-model:page="domainPage"
           v-model:page-size="domainPageSize"
           :total="domainTotal"
+          class="pane-pager"
         />
-      </el-col>
+      </aside>
 
-      <el-col :span="8">
-        <div class="panel-head">
-          <span>逻辑实体</span>
-          <el-button type="primary" size="small" :disabled="!selectedDomainId" @click="openEntityCreate">新增</el-button>
+      <!-- 右侧：当前域下的模型详情 -->
+      <section class="detail-pane">
+        <div v-if="!selectedDomain" class="pane-empty pane-empty--center">
+          <el-empty description="请选择或新建业务域" :image-size="72" />
         </div>
-        <el-table
-          :data="pagedEntities"
-          stripe
-          size="small"
-          highlight-current-row
-          @current-change="(row: EntityRow | undefined) => { selectedEntityId = row?.id ?? null }"
-        >
-          <el-table-column prop="entityCode" label="编码" width="90" />
-          <el-table-column prop="entityName" label="名称" />
-          <el-table-column label="状态" width="70">
-            <template #default="{ row }">
-              <el-tag size="small" :type="statusTagType(row.status)">{{ statusLabel(row.status) }}</el-tag>
-            </template>
-          </el-table-column>
-          <el-table-column label="操作" width="60">
-            <template #default="{ row }">
-              <el-button link type="danger" @click.stop="removeEntity(row)">删</el-button>
-            </template>
-          </el-table-column>
-        </el-table>
-        <PortalPagination
-          v-model:page="entityPage"
-          v-model:page-size="entityPageSize"
-          :total="entityTotal"
-        />
 
-        <div class="panel-head" style="margin-top:12px">
-          <span>实体关系</span>
-          <el-button size="small" :disabled="!selectedDomainId" @click="openRelationCreate">新增</el-button>
-        </div>
-        <el-table :data="relations" stripe size="small" max-height="160">
-          <el-table-column prop="relationName" label="关系" />
-          <el-table-column label="从→到" min-width="120">
-            <template #default="{ row }">{{ entityName(row.fromEntityId) }} → {{ entityName(row.toEntityId) }}</template>
-          </el-table-column>
-          <el-table-column label="" width="40">
-            <template #default="{ row }">
-              <el-button link type="danger" @click="removeRelation(row)">删</el-button>
-            </template>
-          </el-table-column>
-        </el-table>
-      </el-col>
+        <template v-else>
+          <div class="detail-header">
+            <div class="detail-header-row">
+              <div class="crumb">
+                <span class="crumb-muted">建模路径</span>
+                <span class="crumb-sep">/</span>
+                <span class="crumb-strong">{{ selectedDomain.domainName }}</span>
+                <template v-if="selectedEntity">
+                  <span class="crumb-sep">/</span>
+                  <span class="crumb-strong">{{ selectedEntity.entityName }}</span>
+                </template>
+              </div>
+              <el-button type="primary" plain :loading="exportingReport" @click="exportModelReport">
+                导出模型报告
+              </el-button>
+            </div>
+          </div>
 
-      <el-col :span="8">
-        <div class="panel-head">
-          <span>字段</span>
-          <el-button type="primary" size="small" :disabled="!selectedEntityId" @click="openFieldCreate">新增</el-button>
-        </div>
-        <el-table :data="fields" stripe size="small" max-height="220">
-          <el-table-column prop="fieldCode" label="编码" width="90" />
-          <el-table-column prop="fieldName" label="名称" />
-          <el-table-column prop="dataType" label="类型" width="80" />
-          <el-table-column label="" width="40">
-            <template #default="{ row }">
-              <el-button link type="danger" @click="removeField(row)">删</el-button>
-            </template>
-          </el-table-column>
-        </el-table>
+          <div v-loading="detailLoading" class="detail-body">
+            <el-tabs :model-value="detailTab" class="detail-tabs" @tab-change="onDetailTab">
+              <el-tab-pane name="entities">
+                <template #label>
+                  <span>逻辑实体<span v-if="entities.length" class="tab-count">{{ entities.length }}</span></span>
+                </template>
+                <div class="tab-panel">
+                  <el-form inline class="portal-inline-form portal-inline-form--block">
+                    <el-form-item label="名称/编码" class="portal-field-lg">
+                      <el-input v-model="entityQuery.keyword" clearable placeholder="实体名称或编码" />
+                    </el-form-item>
+                    <el-form-item label="状态" class="portal-field-md">
+                      <el-select v-model="entityQuery.status" clearable placeholder="全部">
+                        <el-option label="启用" value="ACTIVE" />
+                        <el-option label="草稿" value="DRAFT" />
+                      </el-select>
+                    </el-form-item>
+                    <el-form-item class="portal-form-actions">
+                      <el-button type="primary" @click="resetEntityPage">查询</el-button>
+                      <el-button type="primary" plain @click="openEntityCreate">新增逻辑实体</el-button>
+                    </el-form-item>
+                  </el-form>
+                  <el-table
+                    ref="entityTableRef"
+                    :data="pagedEntities"
+                    stripe
+                    size="small"
+                    highlight-current-row
+                    row-key="id"
+                    empty-text="当前业务域下暂无逻辑实体"
+                    @current-change="selectEntity"
+                    @row-click="selectEntity"
+                  >
+                    <el-table-column prop="entityCode" label="编码" min-width="140" show-overflow-tooltip />
+                    <el-table-column prop="entityName" label="名称" min-width="140" show-overflow-tooltip />
+                    <el-table-column label="状态" width="90">
+                      <template #default="{ row }">
+                        <el-tag size="small" :type="statusTagType(row.status)">{{ statusLabel(row.status) }}</el-tag>
+                      </template>
+                    </el-table-column>
+                    <el-table-column label="操作" width="88" fixed="right">
+                      <template #default="{ row }">
+                        <el-button link type="danger" @click.stop="removeEntity(row)">删除</el-button>
+                      </template>
+                    </el-table-column>
+                  </el-table>
+                  <PortalPagination
+                    v-model:page="entityPage"
+                    v-model:page-size="entityPageSize"
+                    :total="entityTotal"
+                  />
+                </div>
+              </el-tab-pane>
 
-        <div class="panel-head" style="margin-top:12px">
-          <span>物理映射</span>
-          <el-button size="small" :disabled="!selectedEntityId" @click="openPhysicalCreate">新增</el-button>
-        </div>
-        <el-table :data="pagedPhysicals" stripe size="small">
-          <el-table-column prop="physicalCode" label="编码" width="80" />
-          <el-table-column prop="tableName" label="表名" min-width="100" />
-          <el-table-column label="状态" width="70">
-            <template #default="{ row }">{{ statusLabel(row.status) }}</template>
-          </el-table-column>
-          <el-table-column label="操作" width="200">
-            <template #default="{ row }">
-              <el-button link type="primary" @click="previewPhysical(row)">数据</el-button>
-              <el-button link @click="importFieldsFromRow(row)">导字段</el-button>
-              <el-button link type="success" @click="goProcessedShare(row)">加工落库</el-button>
-              <el-button link type="danger" @click="removePhysical(row)">删</el-button>
-            </template>
-          </el-table-column>
-        </el-table>
-        <PortalPagination
-          v-model:page="physicalPage"
-          v-model:page-size="physicalPageSize"
-          :total="physicalTotal"
-        />
-        <el-empty v-if="selectedEntityId && !physicals.length" description="尚未绑定物理表" :image-size="48" />
-      </el-col>
-    </el-row>
+              <el-tab-pane name="relations">
+                <template #label>
+                  <span>实体关系<span v-if="relations.length" class="tab-count">{{ relations.length }}</span></span>
+                </template>
+                <div class="tab-panel">
+                  <el-form inline class="portal-inline-form portal-inline-form--block">
+                    <el-form-item label="关键词" class="portal-field-lg">
+                      <el-input v-model="relationQuery.keyword" clearable placeholder="关系名称 / 实体" />
+                    </el-form-item>
+                    <el-form-item label="类型" class="portal-field-md">
+                      <el-select v-model="relationQuery.relationType" clearable placeholder="全部">
+                        <el-option label="一对一" value="ONE_TO_ONE" />
+                        <el-option label="一对多" value="ONE_TO_MANY" />
+                        <el-option label="多对多" value="MANY_TO_MANY" />
+                      </el-select>
+                    </el-form-item>
+                    <el-form-item class="portal-form-actions">
+                      <el-button type="primary" :disabled="entities.length < 2" @click="openRelationCreate">新增关系</el-button>
+                    </el-form-item>
+                  </el-form>
+                  <el-alert
+                    v-if="entities.length < 2"
+                    type="info"
+                    :closable="false"
+                    show-icon
+                    title="至少两个逻辑实体后才能建立关系"
+                    style="margin-bottom: 12px"
+                  />
+                  <el-table :data="filteredRelations" stripe size="small" empty-text="暂无实体关系">
+                    <el-table-column prop="relationCode" label="编码" width="120" show-overflow-tooltip />
+                    <el-table-column prop="relationName" label="关系名称" min-width="120" show-overflow-tooltip />
+                    <el-table-column label="从 → 到" min-width="200">
+                      <template #default="{ row }">
+                        {{ entityName(row.fromEntityId) }} → {{ entityName(row.toEntityId) }}
+                      </template>
+                    </el-table-column>
+                    <el-table-column label="类型" width="90">
+                      <template #default="{ row }">{{ relationTypeLabel(row.relationType) }}</template>
+                    </el-table-column>
+                    <el-table-column label="操作" width="88" fixed="right">
+                      <template #default="{ row }">
+                        <el-button link type="danger" @click="removeRelation(row)">删除</el-button>
+                      </template>
+                    </el-table-column>
+                  </el-table>
+                </div>
+              </el-tab-pane>
+
+              <el-tab-pane name="fields">
+                <template #label>
+                  <span>字段<span v-if="fields.length" class="tab-count">{{ fields.length }}</span></span>
+                </template>
+                <div v-if="!selectedEntityId" class="pane-empty pane-empty--center">
+                  <el-empty description="请先在「逻辑实体」中选中一个实体" :image-size="64">
+                    <el-button type="primary" @click="detailTab = 'entities'">去选择实体</el-button>
+                  </el-empty>
+                </div>
+                <div v-else class="tab-panel">
+                  <el-form inline class="portal-inline-form portal-inline-form--block">
+                    <el-form-item label="名称/编码" class="portal-field-lg">
+                      <el-input v-model="fieldQuery.keyword" clearable placeholder="字段名称或编码" />
+                    </el-form-item>
+                    <el-form-item label="类型" class="portal-field-md">
+                      <el-select v-model="fieldQuery.dataType" clearable placeholder="全部" filterable allow-create>
+                        <el-option label="VARCHAR" value="VARCHAR" />
+                        <el-option label="BIGINT" value="BIGINT" />
+                        <el-option label="DECIMAL" value="DECIMAL" />
+                        <el-option label="DATETIME" value="DATETIME" />
+                        <el-option label="TEXT" value="TEXT" />
+                      </el-select>
+                    </el-form-item>
+                    <el-form-item class="portal-form-actions">
+                      <el-button type="primary" plain @click="openFieldCreate">新增字段</el-button>
+                    </el-form-item>
+                  </el-form>
+                  <el-table :data="filteredFields" stripe size="small" empty-text="暂无字段，可手工新增或从物理表导入">
+                    <el-table-column prop="fieldCode" label="编码" min-width="120" show-overflow-tooltip />
+                    <el-table-column prop="fieldName" label="名称" min-width="120" show-overflow-tooltip />
+                    <el-table-column prop="dataType" label="类型" width="100" />
+                    <el-table-column label="主键" width="70">
+                      <template #default="{ row }">{{ row.pkFlag ? '是' : '—' }}</template>
+                    </el-table-column>
+                    <el-table-column label="操作" width="88" fixed="right">
+                      <template #default="{ row }">
+                        <el-button link type="danger" @click="removeField(row)">删除</el-button>
+                      </template>
+                    </el-table-column>
+                  </el-table>
+                </div>
+              </el-tab-pane>
+
+              <el-tab-pane name="physical">
+                <template #label>
+                  <span>物理映射<span v-if="physicals.length" class="tab-count">{{ physicals.length }}</span></span>
+                </template>
+                <div v-if="!selectedEntityId" class="pane-empty pane-empty--center">
+                  <el-empty description="请先在「逻辑实体」中选中一个实体" :image-size="64">
+                    <el-button type="primary" @click="detailTab = 'entities'">去选择实体</el-button>
+                  </el-empty>
+                </div>
+                <div v-else class="tab-panel">
+                  <el-form inline class="portal-inline-form portal-inline-form--block">
+                    <el-form-item label="表名/编码" class="portal-field-lg">
+                      <el-input v-model="physicalQuery.keyword" clearable placeholder="物理表或编码" />
+                    </el-form-item>
+                    <el-form-item label="状态" class="portal-field-md">
+                      <el-select v-model="physicalQuery.status" clearable placeholder="全部">
+                        <el-option label="启用" value="ACTIVE" />
+                        <el-option label="草稿" value="DRAFT" />
+                      </el-select>
+                    </el-form-item>
+                    <el-form-item class="portal-form-actions">
+                      <el-button type="primary" @click="resetPhysicalPage">查询</el-button>
+                      <el-button type="primary" plain @click="openPhysicalCreate">绑定物理表</el-button>
+                      <el-button @click="goProcessedShare()">加工落库</el-button>
+                    </el-form-item>
+                  </el-form>
+                  <el-table :data="pagedPhysicals" stripe size="small" empty-text="尚未绑定物理表">
+                    <el-table-column prop="physicalCode" label="编码" min-width="120" show-overflow-tooltip />
+                    <el-table-column prop="tableName" label="表名" min-width="140" show-overflow-tooltip />
+                    <el-table-column label="状态" width="90">
+                      <template #default="{ row }">
+                        <el-tag size="small" :type="statusTagType(row.status)">{{ statusLabel(row.status) }}</el-tag>
+                      </template>
+                    </el-table-column>
+                    <el-table-column label="操作" width="220" fixed="right">
+                      <template #default="{ row }">
+                        <el-button link type="primary" @click="previewPhysical(row)">查看数据</el-button>
+                        <el-button link @click="importFieldsFromRow(row)">导入字段</el-button>
+                        <el-dropdown trigger="click">
+                          <el-button link type="primary">更多</el-button>
+                          <template #dropdown>
+                            <el-dropdown-menu>
+                              <el-dropdown-item @click="goProcessedShare(row)">加工落库</el-dropdown-item>
+                              <el-dropdown-item divided @click="removePhysical(row)">
+                                <span class="danger-text">删除映射</span>
+                              </el-dropdown-item>
+                            </el-dropdown-menu>
+                          </template>
+                        </el-dropdown>
+                      </template>
+                    </el-table-column>
+                  </el-table>
+                  <PortalPagination
+                    v-model:page="physicalPage"
+                    v-model:page-size="physicalPageSize"
+                    :total="physicalTotal"
+                  />
+                </div>
+              </el-tab-pane>
+            </el-tabs>
+          </div>
+        </template>
+      </section>
+    </div>
 
     <el-dialog v-model="domainDlg" title="业务域" width="420px">
       <el-form label-width="80px">
@@ -667,12 +928,188 @@ onMounted(async () => {
 </template>
 
 <style scoped>
-.panel-head {
+.warehouse-layout {
+  display: flex;
+  gap: 16px;
+  min-height: 520px;
+  align-items: stretch;
+}
+
+.domain-pane {
+  width: 260px;
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--el-border-color-lighter);
+  border-radius: 8px;
+  background: var(--el-fill-color-blank);
+  overflow: hidden;
+}
+
+.pane-toolbar {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  margin-bottom: 8px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--el-border-color-lighter);
+}
+
+.pane-title {
+  font-weight: 600;
+  font-size: 14px;
+}
+
+.domain-list {
+  list-style: none;
+  margin: 0;
+  padding: 8px;
+  overflow: auto;
+  flex: 1;
+}
+
+.domain-item {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 10px 12px;
+  border-radius: 6px;
+  cursor: pointer;
+  border: 1px solid transparent;
+  margin-bottom: 6px;
+  transition: background 0.15s, border-color 0.15s;
+}
+
+.domain-item:hover {
+  background: var(--el-fill-color-light);
+}
+
+.domain-item.active {
+  background: var(--el-color-primary-light-9);
+  border-color: var(--el-color-primary-light-5);
+}
+
+.domain-name {
   font-weight: 600;
   font-size: 13px;
+  line-height: 1.3;
+}
+
+.domain-code {
+  font-size: 12px;
+  color: var(--el-text-color-secondary);
+  margin-top: 2px;
+}
+
+.domain-item-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.pane-pager {
+  padding: 4px 8px 8px;
+  border-top: 1px solid var(--el-border-color-lighter);
+}
+
+.detail-pane {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--el-border-color-lighter);
+  border-radius: 8px;
+  background: var(--el-bg-color);
+  padding: 12px 16px 16px;
+}
+
+.detail-header {
+  margin-bottom: 4px;
+}
+
+.detail-header-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.crumb {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px;
+  font-size: 14px;
+}
+
+.crumb-muted {
+  color: var(--el-text-color-secondary);
+}
+
+.crumb-sep {
+  color: var(--el-text-color-placeholder);
+  margin: 0 2px;
+}
+
+.crumb-strong {
+  font-weight: 600;
+  color: var(--el-text-color-primary);
+}
+
+.detail-tabs {
+  margin-top: 4px;
+}
+
+.detail-tabs :deep(.el-tabs__header) {
+  margin-bottom: 12px;
+}
+
+.tab-count {
+  display: inline-block;
+  margin-left: 6px;
+  min-width: 18px;
+  padding: 0 6px;
+  border-radius: 9px;
+  background: var(--el-fill-color);
+  color: var(--el-text-color-secondary);
+  font-size: 12px;
+  line-height: 18px;
+  text-align: center;
+  font-weight: 500;
+}
+
+.detail-body {
+  flex: 1;
+  min-height: 280px;
+}
+
+.tab-panel {
+  min-height: 240px;
+}
+
+.pane-empty {
+  padding: 24px 12px;
+}
+
+.pane-empty--center {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 320px;
+}
+
+.danger-text {
+  color: var(--el-color-danger);
+}
+
+@media (max-width: 960px) {
+  .warehouse-layout {
+    flex-direction: column;
+  }
+
+  .domain-pane {
+    width: 100%;
+    max-height: 240px;
+  }
 }
 </style>

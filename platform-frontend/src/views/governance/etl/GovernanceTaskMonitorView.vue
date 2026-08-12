@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref, watch } from 'vue'
+import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import api from '@/api/http'
 import { ElMessage, ElMessageBox } from 'element-plus'
@@ -65,13 +65,25 @@ interface ProcessInfo {
 }
 
 const runs = ref<RunRow[]>([])
+const runQuery = reactive({ keyword: '', status: '' })
+const filteredRuns = computed(() => {
+  const kw = runQuery.keyword.trim().toLowerCase()
+  return runs.value.filter((r) => {
+    if (kw) {
+      const hit = `${r.transName || ''} ${r.message || ''} ${r.id} ${r.triggeredBy || ''}`.toLowerCase().includes(kw)
+      if (!hit) return false
+    }
+    if (runQuery.status && String(r.status || '').toUpperCase() !== runQuery.status) return false
+    return true
+  })
+})
 const {
   page: runPage,
   pageSize: runPageSize,
   paged: pagedRuns,
   total: runTotal,
   resetPage: resetRunPage,
-} = useClientPager(runs)
+} = useClientPager(filteredRuns)
 const logs = ref<NodeLog[]>([])
 const selectedRunId = ref<number | null>(null)
 const loading = ref(false)
@@ -180,11 +192,16 @@ async function loadRuns() {
     if (props.taskId) params.taskId = props.taskId
     runs.value = (await api.get('/governance/gov-tasks/runs', { params })).data || []
     resetRunPage()
-    if (runs.value.length) {
-      const current = selectedRunId.value && runs.value.some(r => r.id === selectedRunId.value)
+    if (filteredRuns.value.length) {
+      const prefer = selectedRunId.value && filteredRuns.value.some((r) => r.id === selectedRunId.value)
         ? selectedRunId.value
-        : runs.value[0].id
-      await openRun(current!)
+        : filteredRuns.value[0].id
+      await openRun(prefer!)
+    } else if (runs.value.length) {
+      selectedRunId.value = null
+      logs.value = []
+      processInfo.value = {}
+      kettleLogText.value = ''
     } else {
       selectedRunId.value = null
       logs.value = []
@@ -197,6 +214,10 @@ async function loadRuns() {
   } finally {
     loading.value = false
   }
+}
+
+async function searchRuns() {
+  await loadRuns()
 }
 
 async function openRun(runId: number) {
@@ -370,9 +391,24 @@ onUnmounted(clearPoll)
 <template>
   <PageCard :title="taskId ? `ETL监控 · 任务 ${taskId}` : 'ETL监控'">
     <el-form inline class="portal-inline-form portal-inline-form--block">
+      <el-form-item label="关键词" class="portal-field-lg">
+        <el-input
+          v-model="runQuery.keyword"
+          clearable
+          placeholder="转换名 / 摘要 / 实例ID"
+          @keyup.enter="searchRuns"
+        />
+      </el-form-item>
+      <el-form-item label="状态" class="portal-field-md">
+        <el-select v-model="runQuery.status" clearable placeholder="全部">
+          <el-option label="成功" value="SUCCESS" />
+          <el-option label="失败" value="FAILED" />
+          <el-option label="运行中" value="RUNNING" />
+        </el-select>
+      </el-form-item>
       <el-form-item class="portal-form-actions">
+        <el-button type="primary" @click="searchRuns">查询</el-button>
         <el-button @click="backToList">返回列表</el-button>
-        <el-button @click="loadRuns">刷新</el-button>
         <el-button
           v-if="taskId && taskStatus !== 'RUNNING'"
           type="success"
