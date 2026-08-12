@@ -15,11 +15,16 @@ public class GovCrossPipeline {
     private Integer scheduleEnabled;
     private String publishStatus;
     private String scheduleStatus;
+    private String priority;
     private Long dsProjectCode;
     private Long dsDefinitionCode;
     private Integer dsScheduleId;
     private LocalDateTime lastRunAt;
     private String lastMessage;
+    private String lockedBy;
+    private LocalDateTime lockedAt;
+    private Integer versionNo;
+    private String envScope;
     private String createdBy;
     private LocalDateTime createdAt;
     private LocalDateTime updatedAt;
@@ -38,6 +43,8 @@ public class GovCrossPipeline {
     public void setPublishStatus(String publishStatus) { this.publishStatus = publishStatus; }
     public String getScheduleStatus() { return scheduleStatus; }
     public void setScheduleStatus(String scheduleStatus) { this.scheduleStatus = scheduleStatus; }
+    public String getPriority() { return priority; }
+    public void setPriority(String priority) { this.priority = priority; }
     public Long getDsProjectCode() { return dsProjectCode; }
     public void setDsProjectCode(Long dsProjectCode) { this.dsProjectCode = dsProjectCode; }
     public Long getDsDefinitionCode() { return dsDefinitionCode; }
@@ -48,6 +55,14 @@ public class GovCrossPipeline {
     public void setLastRunAt(LocalDateTime lastRunAt) { this.lastRunAt = lastRunAt; }
     public String getLastMessage() { return lastMessage; }
     public void setLastMessage(String lastMessage) { this.lastMessage = lastMessage; }
+    public String getLockedBy() { return lockedBy; }
+    public void setLockedBy(String lockedBy) { this.lockedBy = lockedBy; }
+    public LocalDateTime getLockedAt() { return lockedAt; }
+    public void setLockedAt(LocalDateTime lockedAt) { this.lockedAt = lockedAt; }
+    public Integer getVersionNo() { return versionNo; }
+    public void setVersionNo(Integer versionNo) { this.versionNo = versionNo; }
+    public String getEnvScope() { return envScope; }
+    public void setEnvScope(String envScope) { this.envScope = envScope; }
     public String getCreatedBy() { return createdBy; }
     public void setCreatedBy(String createdBy) { this.createdBy = createdBy; }
     public LocalDateTime getCreatedAt() { return createdAt; }

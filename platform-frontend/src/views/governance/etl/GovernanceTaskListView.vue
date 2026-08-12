@@ -226,10 +226,35 @@ const createDialogTitle = computed(() =>
   isFusion.value ? '新建融合加工任务（DWD→DWS/ADS）' : '新增治理任务（ODS→DWD）',
 )
 
-/** 运行页：排除草稿与停用，展示可执行任务 */
+/** 运行页：排除草稿与停用；各模式再叠加查询条件 */
+const listQuery = reactive({
+  keyword: '',
+  status: '',
+  scheduleFlag: '' as '' | 'ON' | 'OFF',
+})
+
 const displayTasks = computed(() => {
-  if (props.mode !== 'run') return tasks.value
-  return tasks.value.filter(t => t.status !== 'DRAFT' && t.status !== 'DISABLED')
+  let list = tasks.value
+  if (props.mode === 'run') {
+    list = list.filter((t) => t.status !== 'DRAFT' && t.status !== 'DISABLED')
+  }
+  const kw = listQuery.keyword.trim().toLowerCase()
+  if (kw) {
+    list = list.filter((t) =>
+      `${t.taskName || ''} ${t.taskCode || ''} ${t.description || ''}`.toLowerCase().includes(kw),
+    )
+  }
+  if (props.mode === 'mgmt' && listQuery.status) {
+    list = list.filter((t) => t.status === listQuery.status)
+  }
+  if (props.mode === 'run' && listQuery.status) {
+    list = list.filter((t) => String(t.lastRunStatus || '').toUpperCase() === listQuery.status)
+  }
+  if (props.mode === 'schedule' && listQuery.scheduleFlag) {
+    const on = listQuery.scheduleFlag === 'ON'
+    list = list.filter((t) => !!t.scheduleEnabled === on)
+  }
+  return list
 })
 const {
   page: taskPage,
@@ -238,6 +263,10 @@ const {
   total: taskTotal,
   resetPage: resetTaskPage,
 } = useClientPager(displayTasks)
+
+async function searchTasks() {
+  await load()
+}
 
 const selectedSource = computed(() => sourceOptions.value.find(s => s.value === form.sourceConnection))
 
@@ -640,6 +669,12 @@ async function onPreviewTableChange(table: string) {
 
 onMounted(load)
 watch(() => props.taskDomain, () => { void load() })
+watch(() => props.mode, () => {
+  listQuery.keyword = ''
+  listQuery.status = ''
+  listQuery.scheduleFlag = ''
+  resetTaskPage()
+})
 
 defineExpose({ reload: load })
 </script>
@@ -647,11 +682,40 @@ defineExpose({ reload: load })
 <template>
   <PageCard :title="pageTitle">
     <el-form inline class="portal-inline-form portal-inline-form--block">
+      <el-form-item label="任务名称" class="portal-field-lg">
+        <el-input
+          v-model="listQuery.keyword"
+          clearable
+          placeholder="名称 / 编码"
+          @keyup.enter="searchTasks"
+        />
+      </el-form-item>
+      <el-form-item v-if="mode === 'mgmt'" label="生命周期" class="portal-field-md">
+        <el-select v-model="listQuery.status" clearable placeholder="全部">
+          <el-option label="草稿" value="DRAFT" />
+          <el-option label="已配置" value="CONFIGURED" />
+          <el-option label="锁定" value="LOCKED" />
+          <el-option label="已发布" value="PUBLISHED" />
+        </el-select>
+      </el-form-item>
+      <el-form-item v-else-if="mode === 'run'" label="运行状态" class="portal-field-md">
+        <el-select v-model="listQuery.status" clearable placeholder="全部">
+          <el-option label="成功" value="SUCCESS" />
+          <el-option label="失败" value="FAILED" />
+          <el-option label="运行中" value="RUNNING" />
+        </el-select>
+      </el-form-item>
+      <el-form-item v-else-if="mode === 'schedule'" label="定时状态" class="portal-field-md">
+        <el-select v-model="listQuery.scheduleFlag" clearable placeholder="全部">
+          <el-option label="已启用" value="ON" />
+          <el-option label="未启用" value="OFF" />
+        </el-select>
+      </el-form-item>
       <el-form-item class="portal-form-actions">
-        <el-button v-if="mode === 'mgmt'" type="primary" @click="openCreate">
+        <el-button type="primary" @click="searchTasks">查询</el-button>
+        <el-button v-if="mode === 'mgmt'" type="primary" plain @click="openCreate">
           {{ isFusion ? '新建融合任务' : '新增治理任务' }}
         </el-button>
-        <el-button @click="load">刷新</el-button>
         <el-button
           v-if="mode === 'mgmt'"
           type="danger"

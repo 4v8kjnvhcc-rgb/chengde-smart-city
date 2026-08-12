@@ -19,6 +19,8 @@ public class GovGovernanceTask {
     private LocalDateTime lockedAt;
     private LocalDateTime lastRunAt;
     private String lastMessage;
+    private Integer versionNo;
+    private String envScope;
     private Integer scheduleEnabled;
     private String scheduleCron;
     private String scheduleMode;
@@ -60,6 +62,10 @@ public class GovGovernanceTask {
     public void setLastRunAt(LocalDateTime lastRunAt) { this.lastRunAt = lastRunAt; }
     public String getLastMessage() { return lastMessage; }
     public void setLastMessage(String lastMessage) { this.lastMessage = lastMessage; }
+    public Integer getVersionNo() { return versionNo; }
+    public void setVersionNo(Integer versionNo) { this.versionNo = versionNo; }
+    public String getEnvScope() { return envScope; }
+    public void setEnvScope(String envScope) { this.envScope = envScope; }
     public Integer getScheduleEnabled() { return scheduleEnabled; }
     public void setScheduleEnabled(Integer scheduleEnabled) { this.scheduleEnabled = scheduleEnabled; }
     public String getScheduleCron() { return scheduleCron; }

@@ -19,6 +19,13 @@ public class GovFusionScript {
     private String status;
     private LocalDateTime lastRunAt;
     private String lastMessage;
+    private String lockedBy;
+    private LocalDateTime lockedAt;
+    private String envScope;
+    private Long dsProjectCode;
+    private Long dsDefinitionCode;
+    private Integer prodDeployedVersion;
+    private LocalDateTime prodDeployedAt;
     private String createdBy;
     private LocalDateTime createdAt;
     private LocalDateTime updatedAt;
@@ -45,6 +52,20 @@ public class GovFusionScript {
     public void setLastRunAt(LocalDateTime lastRunAt) { this.lastRunAt = lastRunAt; }
     public String getLastMessage() { return lastMessage; }
     public void setLastMessage(String lastMessage) { this.lastMessage = lastMessage; }
+    public String getLockedBy() { return lockedBy; }
+    public void setLockedBy(String lockedBy) { this.lockedBy = lockedBy; }
+    public LocalDateTime getLockedAt() { return lockedAt; }
+    public void setLockedAt(LocalDateTime lockedAt) { this.lockedAt = lockedAt; }
+    public String getEnvScope() { return envScope; }
+    public void setEnvScope(String envScope) { this.envScope = envScope; }
+    public Long getDsProjectCode() { return dsProjectCode; }
+    public void setDsProjectCode(Long dsProjectCode) { this.dsProjectCode = dsProjectCode; }
+    public Long getDsDefinitionCode() { return dsDefinitionCode; }
+    public void setDsDefinitionCode(Long dsDefinitionCode) { this.dsDefinitionCode = dsDefinitionCode; }
+    public Integer getProdDeployedVersion() { return prodDeployedVersion; }
+    public void setProdDeployedVersion(Integer prodDeployedVersion) { this.prodDeployedVersion = prodDeployedVersion; }
+    public LocalDateTime getProdDeployedAt() { return prodDeployedAt; }
+    public void setProdDeployedAt(LocalDateTime prodDeployedAt) { this.prodDeployedAt = prodDeployedAt; }
     public String getCreatedBy() { return createdBy; }
     public void setCreatedBy(String createdBy) { this.createdBy = createdBy; }
     public LocalDateTime getCreatedAt() { return createdAt; }

@@ -7,8 +7,13 @@ import com.chengde.smartcity.masterdata.entity.GovFusionPhysical;
 import com.chengde.smartcity.masterdata.entity.GovFusionRelation;
 import com.chengde.smartcity.masterdata.service.FusionModelService;
 import com.chengde.smartcity.security.UserPrincipal;
+import java.net.URLEncoder;
+import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.Map;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.MediaType;
+import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.DeleteMapping;
@@ -41,6 +46,20 @@ public class FusionModelController {
     @PreAuthorize("isAuthenticated()")
     public ApiResponse<Map<String, Object>> domainTree(@PathVariable Long id) {
         return ApiResponse.ok(service.getDomainTree(id));
+    }
+
+    /** 导出当前主题域模型报告（Excel：概要/逻辑模型图/实体/属性/物理映射） */
+    @GetMapping("/domains/{id}/report")
+    @PreAuthorize("isAuthenticated()")
+    public ResponseEntity<byte[]> exportModelReport(@PathVariable Long id) {
+        byte[] bytes = service.exportModelReport(id);
+        String fileName = service.modelReportFileName(id);
+        String encoded = URLEncoder.encode(fileName, StandardCharsets.UTF_8).replace("+", "%20");
+        return ResponseEntity.ok()
+                .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename*=UTF-8''" + encoded)
+                .contentType(MediaType.parseMediaType(
+                        "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"))
+                .body(bytes);
     }
 
     @PostMapping("/domains")

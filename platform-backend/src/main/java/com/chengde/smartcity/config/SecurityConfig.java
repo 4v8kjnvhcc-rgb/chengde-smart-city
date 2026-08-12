@@ -43,6 +43,7 @@ public class SecurityConfig {
                                 "/api/v1/governance/platform/metadata/collect/tasks/*/run-callback",
                                 "/api/v1/exchange/ingestion/collect/jobs/*/ds-trigger",
                                 "/api/v1/governance/gov-tasks/*/ds-trigger",
+                                "/api/v1/governance/fusion/scripts/*/ds-trigger",
                                 "/api/v1/governance/quality/schemes/*/run-callback").permitAll()
                         .anyRequest().authenticated())
                 .exceptionHandling(ex -> ex

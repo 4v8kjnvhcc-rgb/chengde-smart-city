@@ -888,13 +888,6 @@ async function doRecheck() {
 
 <template>
   <PageCard title="元模型管理">
-    <el-alert
-      type="info"
-      :closable="false"
-      style="margin-bottom: 12px"
-      title="元模型是表/字段结构规范模板。保存时将按定义在所选数据源对应库中执行建表或改字段，并供元数据采集任务绑定校验。"
-    />
-
     <el-form inline class="portal-inline-form portal-inline-form--block" @submit.prevent="doQuery">
       <el-form-item label="状态" class="portal-field-sm">
         <el-select v-model="queryStatus" clearable placeholder="全部">

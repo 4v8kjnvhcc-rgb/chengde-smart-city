@@ -491,13 +491,6 @@ function applyKpiFilter(kind: 'all' | 'republish' | 'notice') {
 
       <!-- 手工维护 -->
       <template v-if="activeTab === 'manual'">
-        <el-alert
-          type="info"
-          :closable="false"
-          show-icon
-          style="margin-bottom:12px"
-          title="人工编辑元数据信息项、数据分级分类、数据标签等；保存后生成新版本并提示需重新发布。"
-        />
         <el-form inline class="portal-inline-form portal-inline-form--block">
           <el-form-item label="关键字" class="portal-field-lg">
             <el-input v-model="filter.keyword" clearable placeholder="名称/编码/标签" @keyup.enter="onSearch" />
@@ -569,13 +562,6 @@ function applyKpiFilter(kind: 'all' | 'republish' | 'notice') {
 
       <!-- 自动维护 -->
       <template v-else-if="activeTab === 'auto'">
-        <el-alert
-          type="info"
-          :closable="false"
-          show-icon
-          style="margin-bottom:12px"
-          title="系统根据元数据信息项自动与数据元标准匹配，识别对应数据元并补充说明、分级、标签等属性。"
-        />
         <div class="mmaint-auto-actions">
           <el-button type="primary" :loading="autoRunning" @click="runAuto(false)">一键自动匹配补充</el-button>
           <el-button :loading="autoRunning" :disabled="!selectedPreviewIds.length && !selectedIds.length" @click="runAuto(true)">仅匹配已选条目</el-button>
@@ -619,13 +605,6 @@ function applyKpiFilter(kind: 'all' | 'republish' | 'notice') {
 
       <!-- 变更提醒：仅已有定版后的变更 -->
       <template v-else>
-        <el-alert
-          type="info"
-          :closable="false"
-          show-icon
-          style="margin-bottom:12px"
-          title="变更提醒仅针对「已发布定版后」的内容变更（手工修改、定时采集 diff 等）。首次采集/登记的条目请在「手工维护」Tab 直接「首次发布」，不会出现在下方变更列表。"
-        />
         <el-table :data="notices" stripe size="small" empty-text="暂无变更提醒（首次发布条目不会生成变更提醒）">
           <el-table-column label="状态" width="90">
             <template #default="{ row }">

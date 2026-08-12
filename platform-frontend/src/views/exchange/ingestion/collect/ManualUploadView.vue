@@ -37,6 +37,10 @@ const fileSources = ref<DataSource[]>([])
 const orgs = ref<OrgOption[]>([])
 const queryKeyword = ref('')
 const queryOrgId = ref<number | undefined>()
+const listTab = ref<'templates' | 'records'>('templates')
+const recentUploads = ref<Upload[]>([])
+const recentLoading = ref(false)
+const dropActive = ref(false)
 const tplOrgId = ref<number | undefined>()
 const tplProjectId = ref<number | undefined>()
 const tplSourceId = ref<number | undefined>()
@@ -276,6 +280,22 @@ async function loadLists() {
   if (canPickOrg.value && queryOrgId.value) params.orgId = queryOrgId.value
   const tpl = await ingestionApi.templates(params)
   templates.value = tpl.data || []
+  await loadRecentUploads()
+}
+
+async function loadRecentUploads() {
+  recentLoading.value = true
+  try {
+    const params: { keyword?: string; orgId?: number } = {}
+    if (queryKeyword.value.trim()) params.keyword = queryKeyword.value.trim()
+    if (canPickOrg.value && queryOrgId.value) params.orgId = queryOrgId.value
+    const res = await ingestionApi.uploads(params)
+    recentUploads.value = (res.data || []).slice(0, 50)
+  } catch {
+    recentUploads.value = []
+  } finally {
+    recentLoading.value = false
+  }
 }
 
 async function openCreateTemplate() {
@@ -285,10 +305,12 @@ async function openCreateTemplate() {
   await loadAssetTargets()
 }
 
-async function openUploadDialog() {
+async function openUploadDialog(preselect?: string) {
   resetUploadWizard(false)
+  if (preselect) uploadForm.templateCode = preselect
   uploadDialog.value = true
   await loadLists()
+  if (uploadForm.templateCode) await onTemplateSelect(uploadForm.templateCode)
 }
 
 function resetTplWizard() {
@@ -552,14 +574,11 @@ function matchFileSheets(fileSheets: string[], bindings: TplBinding[]) {
   return matched
 }
 
-async function onFileChange(e: Event) {
+async function processUploadFile(file: File) {
   if (!uploadForm.templateCode) {
     ElMessage.warning('请先选择模板')
-    if (fileInput.value) fileInput.value.value = ''
     return
   }
-  const file = (e.target as HTMLInputElement).files?.[0]
-  if (!file) return
   uploadBusy.value = true
   try {
     const fd = new FormData()
@@ -567,9 +586,10 @@ async function onFileChange(e: Event) {
     const res = await ingestionApi.inspectUpload(fd)
     uploadToken.value = res.data.uploadToken
     uploadFileName.value = res.data.fileName
+    if (!activeBindings.value.length) await onTemplateSelect(uploadForm.templateCode)
     const matched = matchFileSheets(res.data.sheets || [], activeBindings.value)
     if (!matched.length) {
-      ElMessage.error('文件工作表与模板绑定不一致')
+      ElMessage.error('文件工作表与模板绑定不一致，请核对模板或更换文件')
       uploadStep.value = 0
       return
     }
@@ -579,13 +599,41 @@ async function onFileChange(e: Event) {
     committedSheets.value = []
     remainingSheets.value = [...matched]
     uploadStep.value = 1
-    ElMessage.success('文件已识别，请校验预览后写入')
+    ElMessage.success('文件已解析，请校验预览后写入 ODS')
   } catch {
-    ElMessage.error('解析文件失败')
+    ElMessage.error('解析文件失败，请确认是 Excel/CSV')
   } finally {
     uploadBusy.value = false
     if (fileInput.value) fileInput.value.value = ''
   }
+}
+
+async function onFileChange(e: Event) {
+  const file = (e.target as HTMLInputElement).files?.[0]
+  if (!file) return
+  await processUploadFile(file)
+}
+
+function onDropZoneDragOver(e: DragEvent) {
+  e.preventDefault()
+  dropActive.value = true
+}
+
+function onDropZoneDragLeave() {
+  dropActive.value = false
+}
+
+async function onDropZoneDrop(e: DragEvent) {
+  e.preventDefault()
+  dropActive.value = false
+  const file = e.dataTransfer?.files?.[0]
+  if (!file) return
+  const name = file.name.toLowerCase()
+  if (!name.endsWith('.xlsx') && !name.endsWith('.xls') && !name.endsWith('.csv')) {
+    ElMessage.warning('仅支持 .xlsx / .xls / .csv')
+    return
+  }
+  await processUploadFile(file)
 }
 
 async function loadSheetPreview() {
@@ -717,70 +765,109 @@ onMounted(async () => {
           <div>
             <div class="wiz-title">手动上传数据</div>
             <div class="wiz-sub">
-              新建模板时自动登记为数据资产（含字段），数据写入 smart_city_ods，可供目录/发布引用
+              真实 Excel/CSV：建模板（登记资产）→ 选文件校验预览 → 写入 smart_city_ods，可供目录/发布引用
             </div>
           </div>
           <div class="wiz-actions">
-            <el-button type="primary" @click="openCreateTemplate">新建模板</el-button>
-            <el-button type="success" @click="openUploadDialog">上传数据</el-button>
+            <el-button @click="openCreateTemplate">新建模板</el-button>
+            <el-button type="primary" @click="openUploadDialog()">上传文件</el-button>
           </div>
         </div>
       </template>
 
-      <div class="list-toolbar">
-        <el-input
-          v-model="queryKeyword"
-          clearable
-          placeholder="按模板名称查询"
-          style="width: 220px"
-          @keyup.enter="loadLists"
-        />
-        <el-select
-          v-if="canPickOrg"
-          v-model="queryOrgId"
-          clearable
-          filterable
-          placeholder="归属机构"
-          style="width: 200px"
-        >
-          <el-option v-for="o in orgs" :key="o.id" :label="o.orgName" :value="o.id" />
-        </el-select>
-        <el-button type="primary" @click="loadLists">查询</el-button>
-        <el-button @click="queryKeyword = ''; queryOrgId = undefined; loadLists()">重置</el-button>
-      </div>
+      <el-alert
+        type="info"
+        :closable="false"
+        show-icon
+        style="margin-bottom: 12px"
+        title="与旧版「演示通道」不同：此处必须选真实文件并校验字段后才会落库；点「执行」假通道已下线。"
+      />
 
-      <el-table
-        :data="listedTemplates"
-        stripe
-        size="small"
-        empty-text="暂无模板，请点击右上角新建"
-      >
-        <el-table-column prop="templateName" label="模板" min-width="140" align="center" header-align="center" />
-        <el-table-column prop="orgName" label="归属机构" min-width="120" align="center" header-align="center" show-overflow-tooltip>
-          <template #default="{ row }">{{ row.orgName || '—' }}</template>
-        </el-table-column>
-        <el-table-column label="同步资产" min-width="140" align="center" header-align="center" show-overflow-tooltip>
-          <template #default="{ row }">{{ templateAssetLabel(row) }}</template>
-        </el-table-column>
-        <el-table-column label="目标表" min-width="140" align="center" header-align="center" show-overflow-tooltip>
-          <template #default="{ row }">{{ templateTarget(row) }}</template>
-        </el-table-column>
-        <el-table-column label="状态" width="90" align="center" header-align="center">
-          <template #default="{ row }">
-            <el-tag :type="statusTagType(row.status)" size="small">{{ statusLabel(row.status) }}</el-tag>
-          </template>
-        </el-table-column>
-        <el-table-column label="操作" width="260" fixed="right" align="center" header-align="center">
-          <template #default="{ row }">
-            <el-button link type="primary" @click="showTemplateDetail(row)">详情</el-button>
-            <el-button link type="primary" @click="openTemplateRecords(row)">上传记录</el-button>
-            <el-button link :type="row.status === 'INACTIVE' ? 'success' : 'warning'" @click="toggleTemplateStatus(row)">
-              {{ row.status === 'INACTIVE' ? '启用' : '停用' }}
-            </el-button>
-            <el-button link type="danger" @click="removeTemplate(row)">删除</el-button>
-          </template>
-        </el-table-column>
-      </el-table>
+      <el-form inline class="portal-inline-form portal-inline-form--block" @submit.prevent="loadLists">
+        <el-form-item label="关键词" class="portal-field-lg">
+          <el-input
+            v-model="queryKeyword"
+            clearable
+            placeholder="模板名称 / 文件名"
+            @keyup.enter="loadLists"
+          />
+        </el-form-item>
+        <el-form-item v-if="canPickOrg" label="归属机构" class="portal-field-xl">
+          <el-select v-model="queryOrgId" clearable filterable placeholder="全部">
+            <el-option v-for="o in orgs" :key="o.id" :label="o.orgName" :value="o.id" />
+          </el-select>
+        </el-form-item>
+        <el-form-item class="portal-form-actions">
+          <el-button type="primary" @click="loadLists">查询</el-button>
+          <el-button @click="queryKeyword = ''; queryOrgId = undefined; loadLists()">重置</el-button>
+        </el-form-item>
+      </el-form>
+
+      <el-tabs v-model="listTab">
+        <el-tab-pane label="上传模板" name="templates">
+          <el-table
+            :data="listedTemplates"
+            stripe
+            size="small"
+            empty-text="暂无模板：请先「新建模板」用样例文件定义字段，再上传业务数据"
+          >
+            <el-table-column prop="templateName" label="模板" min-width="140" show-overflow-tooltip />
+            <el-table-column prop="orgName" label="归属机构" min-width="120" show-overflow-tooltip>
+              <template #default="{ row }">{{ row.orgName || '—' }}</template>
+            </el-table-column>
+            <el-table-column label="同步资产" min-width="140" show-overflow-tooltip>
+              <template #default="{ row }">{{ templateAssetLabel(row) }}</template>
+            </el-table-column>
+            <el-table-column label="目标表" min-width="140" show-overflow-tooltip>
+              <template #default="{ row }">{{ templateTarget(row) }}</template>
+            </el-table-column>
+            <el-table-column label="状态" width="90">
+              <template #default="{ row }">
+                <el-tag :type="statusTagType(row.status)" size="small">{{ statusLabel(row.status) }}</el-tag>
+              </template>
+            </el-table-column>
+            <el-table-column label="操作" width="300" fixed="right">
+              <template #default="{ row }">
+                <el-button link type="primary" @click="showTemplateDetail(row)">详情</el-button>
+                <el-button
+                  link
+                  type="primary"
+                  :disabled="row.status === 'INACTIVE'"
+                  @click="openUploadDialog(row.templateCode)"
+                >
+                  上传
+                </el-button>
+                <el-button link type="primary" @click="openTemplateRecords(row)">记录</el-button>
+                <el-button link :type="row.status === 'INACTIVE' ? 'success' : 'warning'" @click="toggleTemplateStatus(row)">
+                  {{ row.status === 'INACTIVE' ? '启用' : '停用' }}
+                </el-button>
+                <el-button link type="danger" @click="removeTemplate(row)">删除</el-button>
+              </template>
+            </el-table-column>
+          </el-table>
+        </el-tab-pane>
+        <el-tab-pane label="最近上传" name="records">
+          <el-table
+            v-loading="recentLoading"
+            :data="recentUploads"
+            stripe
+            size="small"
+            empty-text="暂无上传记录，请在「上传模板」中选模板后上传文件"
+          >
+            <el-table-column prop="fileName" label="文件" min-width="160" show-overflow-tooltip />
+            <el-table-column prop="templateCode" label="模板编码" min-width="120" show-overflow-tooltip />
+            <el-table-column prop="sheetName" label="工作表" width="110" show-overflow-tooltip />
+            <el-table-column prop="targetTable" label="目标表" min-width="140" show-overflow-tooltip />
+            <el-table-column prop="rowCount" label="行数" width="80" />
+            <el-table-column label="状态" width="100">
+              <template #default="{ row }">
+                <el-tag :type="statusTagType(row.status)" size="small">{{ statusLabel(row.status) }}</el-tag>
+              </template>
+            </el-table-column>
+            <el-table-column prop="createdAt" label="时间" width="170" show-overflow-tooltip />
+          </el-table>
+        </el-tab-pane>
+      </el-tabs>
     </PageCard>
 
     <!-- 新建模板弹窗 -->
@@ -912,8 +999,8 @@ onMounted(async () => {
     <!-- 上传数据弹窗 -->
     <el-dialog
       v-model="uploadDialog"
-      title="按模板上传数据"
-      width="860px"
+      title="手动上传 · 写入 ODS"
+      width="900px"
       destroy-on-close
       append-to-body
       @closed="onUploadDialogClosed"
@@ -940,14 +1027,31 @@ onMounted(async () => {
             />
           </el-select>
         </el-form-item>
-        <el-form-item class="portal-form-actions">
-          <el-button type="primary" :loading="uploadBusy" :disabled="!uploadForm.templateCode" @click="fileInput?.click()">
-            选择数据文件
-          </el-button>
-        </el-form-item>
-        <input ref="fileInput" type="file" accept=".xlsx,.xls,.csv" style="display:none" @change="onFileChange" />
       </el-form>
-      <p v-if="uploadFileName" class="hint">当前文件：{{ uploadFileName }}</p>
+
+      <div
+        class="drop-zone"
+        :class="{ 'drop-zone--active': dropActive, 'drop-zone--disabled': !uploadForm.templateCode || uploadBusy }"
+        @dragover="onDropZoneDragOver"
+        @dragleave="onDropZoneDragLeave"
+        @drop="onDropZoneDrop"
+        @click="uploadForm.templateCode && !uploadBusy && fileInput?.click()"
+      >
+        <div class="drop-zone__title">拖拽 Excel / CSV 到此处，或点击选择文件</div>
+        <div class="drop-zone__sub">
+          {{ uploadForm.templateCode ? (uploadFileName || '支持 .xlsx / .xls / .csv') : '请先选择上方模板' }}
+        </div>
+        <el-button
+          type="primary"
+          :loading="uploadBusy"
+          :disabled="!uploadForm.templateCode"
+          @click.stop="fileInput?.click()"
+        >
+          选择数据文件
+        </el-button>
+        <input ref="fileInput" type="file" accept=".xlsx,.xls,.csv" style="display:none" @change="onFileChange" />
+      </div>
+
       <el-form v-if="uploadStep >= 1" inline class="portal-inline-form portal-inline-form--block">
         <el-form-item label="工作表" class="portal-field-lg">
           <el-select v-model="selectedSheet" filterable @change="applyBindingSheet">
@@ -993,8 +1097,6 @@ onMounted(async () => {
           :prop="col"
           :label="col"
           min-width="120"
-          align="center"
-          header-align="center"
           show-overflow-tooltip
         />
       </el-table>
@@ -1063,6 +1165,36 @@ onMounted(async () => {
   flex-wrap: wrap;
   gap: 8px;
   align-items: center;
+  margin-bottom: 12px;
+}
+.drop-zone {
+  margin: 8px 0 16px;
+  padding: 28px 16px;
+  border: 1px dashed var(--el-border-color);
+  border-radius: 8px;
+  background: var(--el-fill-color-blank);
+  text-align: center;
+  cursor: pointer;
+  transition: border-color 0.15s, background 0.15s;
+}
+.drop-zone:hover,
+.drop-zone--active {
+  border-color: var(--el-color-primary);
+  background: var(--el-color-primary-light-9);
+}
+.drop-zone--disabled {
+  cursor: not-allowed;
+  opacity: 0.65;
+}
+.drop-zone__title {
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--el-text-color-primary);
+  margin-bottom: 6px;
+}
+.drop-zone__sub {
+  font-size: 12px;
+  color: var(--el-text-color-secondary);
   margin-bottom: 12px;
 }
 .hint {

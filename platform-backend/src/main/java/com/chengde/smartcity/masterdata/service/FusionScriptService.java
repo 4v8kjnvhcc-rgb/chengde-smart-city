@@ -4,6 +4,8 @@ import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.chengde.smartcity.common.exception.BusinessException;
 import com.chengde.smartcity.exchange.entity.IngDataSource;
 import com.chengde.smartcity.exchange.mapper.IngDataSourceMapper;
+import com.chengde.smartcity.integration.config.IntegrationProperties;
+import com.chengde.smartcity.integration.ds.DolphinSchedulerClient;
 import com.chengde.smartcity.masterdata.entity.GovFusionScript;
 import com.chengde.smartcity.masterdata.entity.GovFusionScriptRun;
 import com.chengde.smartcity.masterdata.entity.GovFusionScriptVersion;
@@ -47,23 +49,30 @@ public class FusionScriptService {
     private static final long PLATFORM_DWD_ID = -2L;
     private static final long PLATFORM_DWS_ID = -3L;
     private static final long PLATFORM_ADS_ID = -4L;
+    private static final String DS_PROD_PROJECT = "chengde_fusion_script_prod";
 
     private final GovFusionScriptMapper scriptMapper;
     private final GovFusionScriptVersionMapper versionMapper;
     private final GovFusionScriptRunMapper runMapper;
     private final IngDataSourceMapper dataSourceMapper;
     private final LayerJdbcSupport layerJdbc;
+    private final DolphinSchedulerClient dsClient;
+    private final IntegrationProperties integrationProperties;
 
     public FusionScriptService(GovFusionScriptMapper scriptMapper,
                                GovFusionScriptVersionMapper versionMapper,
                                GovFusionScriptRunMapper runMapper,
                                IngDataSourceMapper dataSourceMapper,
-                               LayerJdbcSupport layerJdbc) {
+                               LayerJdbcSupport layerJdbc,
+                               DolphinSchedulerClient dsClient,
+                               IntegrationProperties integrationProperties) {
         this.scriptMapper = scriptMapper;
         this.versionMapper = versionMapper;
         this.runMapper = runMapper;
         this.dataSourceMapper = dataSourceMapper;
         this.layerJdbc = layerJdbc;
+        this.dsClient = dsClient;
+        this.integrationProperties = integrationProperties;
     }
 
     public List<Map<String, Object>> list() {
@@ -97,6 +106,7 @@ public class FusionScriptService {
         s.setPublishStatus("DRAFT");
         s.setVersionNo(1);
         s.setStatus(str(body.get("status"), "ACTIVE"));
+        s.setEnvScope(normalizeEnv(str(body.get("envScope"), "DEV")));
         if (operator != null) s.setCreatedBy(operator.getUsername());
         s.setCreatedAt(LocalDateTime.now());
         s.setUpdatedAt(LocalDateTime.now());
@@ -107,18 +117,23 @@ public class FusionScriptService {
     @Transactional
     public void update(UserPrincipal operator, Long id, Map<String, Object> body) {
         GovFusionScript s = require(id);
+        assertEditable(operator, s);
         if (body.containsKey("scriptName")) s.setScriptName(str(body.get("scriptName")));
         if (body.containsKey("scriptType")) s.setScriptType(str(body.get("scriptType")));
         if (body.containsKey("scriptContent")) s.setScriptContent(str(body.get("scriptContent")));
         if (body.containsKey("datasourceId")) s.setDatasourceId(longVal(body.get("datasourceId")));
         if (body.containsKey("status")) s.setStatus(str(body.get("status")));
+        if (body.containsKey("envScope")) s.setEnvScope(normalizeEnv(str(body.get("envScope"))));
         s.setUpdatedAt(LocalDateTime.now());
         scriptMapper.updateById(s);
     }
 
     @Transactional
     public void delete(UserPrincipal operator, Long id) {
-        require(id);
+        GovFusionScript s = require(id);
+        if (isLockedByOther(operator, s)) {
+            throw new BusinessException(403, "脚本已被 " + s.getLockedBy() + " 锁定，无法删除");
+        }
         versionMapper.delete(new LambdaQueryWrapper<GovFusionScriptVersion>()
                 .eq(GovFusionScriptVersion::getScriptId, id));
         scriptMapper.deleteById(id);
@@ -269,6 +284,7 @@ public class FusionScriptService {
     @Transactional
     public Map<String, Object> rollback(UserPrincipal operator, Long id, Integer versionNo) {
         GovFusionScript s = require(id);
+        assertEditable(operator, s);
         GovFusionScriptVersion ver = versionMapper.selectOne(new LambdaQueryWrapper<GovFusionScriptVersion>()
                 .eq(GovFusionScriptVersion::getScriptId, id)
                 .eq(GovFusionScriptVersion::getVersionNo, versionNo));
@@ -277,12 +293,196 @@ public class FusionScriptService {
         }
         s.setScriptContent(ver.getScriptContent());
         s.setPublishStatus("DRAFT");
+        s.setEnvScope("DEV");
         s.setUpdatedAt(LocalDateTime.now());
         scriptMapper.updateById(s);
         Map<String, Object> out = new LinkedHashMap<>();
         out.put("versionNo", versionNo);
         out.put("publishStatus", s.getPublishStatus());
+        out.put("envScope", s.getEnvScope());
         return out;
+    }
+
+    @Transactional
+    public Map<String, Object> lock(UserPrincipal operator, Long id) {
+        GovFusionScript s = require(id);
+        String user = operator != null ? operator.getUsername() : "system";
+        if (s.getLockedBy() != null && !s.getLockedBy().isBlank() && !s.getLockedBy().equals(user)) {
+            throw new BusinessException(403, "脚本已被 " + s.getLockedBy() + " 锁定");
+        }
+        s.setLockedBy(user);
+        s.setLockedAt(LocalDateTime.now());
+        s.setUpdatedAt(LocalDateTime.now());
+        scriptMapper.updateById(s);
+        return toMap(s);
+    }
+
+    @Transactional
+    public Map<String, Object> unlock(UserPrincipal operator, Long id) {
+        GovFusionScript s = require(id);
+        String user = operator != null ? operator.getUsername() : "system";
+        boolean privileged = operator != null && operator.isSystemAdmin();
+        if (s.getLockedBy() != null && !s.getLockedBy().isBlank()
+                && !s.getLockedBy().equals(user) && !privileged) {
+            throw new BusinessException(403, "仅锁定人或系统管理员可解锁");
+        }
+        s.setLockedBy(null);
+        s.setLockedAt(null);
+        s.setUpdatedAt(LocalDateTime.now());
+        scriptMapper.updateById(s);
+        return toMap(s);
+    }
+
+    @Transactional
+    public Map<String, Object> setEnv(UserPrincipal operator, Long id, String envScope) {
+        GovFusionScript s = require(id);
+        assertEditable(operator, s);
+        s.setEnvScope(normalizeEnv(envScope));
+        s.setUpdatedAt(LocalDateTime.now());
+        scriptMapper.updateById(s);
+        return toMap(s);
+    }
+
+    /**
+     * 一键发布到生产调度：先落版本快照，再在 DS 生产项目创建可回调执行的流程定义。
+     */
+    @Transactional
+    public Map<String, Object> deployToProduction(UserPrincipal operator, Long id, Map<String, Object> body) {
+        GovFusionScript s = require(id);
+        assertEditable(operator, s);
+        if (s.getScriptContent() == null || s.getScriptContent().isBlank()) {
+            throw new BusinessException(400, "脚本内容为空，无法部署");
+        }
+        if (!isDsAvailable()) {
+            throw new BusinessException(502, "DolphinScheduler 不可用，无法部署到生产调度");
+        }
+        Map<String, Object> published = publish(operator, id, body == null ? Map.of("changeSummary", "一键发布到生产") : body);
+        int versionNo = ((Number) published.get("versionNo")).intValue();
+        s = require(id);
+
+        try {
+            if (s.getDsProjectCode() != null && s.getDsDefinitionCode() != null) {
+                try {
+                    dsClient.releaseDefinition(s.getDsProjectCode(), s.getDsDefinitionCode(), "OFFLINE");
+                    dsClient.deleteDefinition(s.getDsProjectCode(), s.getDsDefinitionCode());
+                } catch (Exception e) {
+                    log.warn("remove old fusion script DS def id={}: {}", id, e.getMessage());
+                }
+            }
+            long projectCode = dsClient.ensureProject(DS_PROD_PROJECT);
+            String tenant = dsClient.resolveTenant();
+            String defName = "融合脚本_" + safeName(s.getScriptName()) + "_" + id + "_v" + versionNo;
+            String shell = buildProdTriggerScript(id);
+            long definitionCode = dsClient.createAndReleaseShellChain(
+                    projectCode, defName, List.of("执行融合脚本"), List.of(shell), tenant);
+            s.setDsProjectCode(projectCode);
+            s.setDsDefinitionCode(definitionCode);
+            s.setProdDeployedVersion(versionNo);
+            s.setProdDeployedAt(LocalDateTime.now());
+            s.setEnvScope("PROD");
+            s.setPublishStatus("PUBLISHED");
+            s.setUpdatedAt(LocalDateTime.now());
+            scriptMapper.updateById(s);
+
+            Map<String, Object> out = new LinkedHashMap<>();
+            out.put("id", id);
+            out.put("versionNo", versionNo);
+            out.put("envScope", s.getEnvScope());
+            out.put("projectCode", projectCode);
+            out.put("definitionCode", definitionCode);
+            out.put("prodDeployedVersion", versionNo);
+            out.put("message", "已发布 v" + versionNo + " 并部署到生产调度项目 " + DS_PROD_PROJECT);
+            return out;
+        } catch (BusinessException e) {
+            throw e;
+        } catch (Exception e) {
+            throw new BusinessException(502, "部署到生产调度失败: " + e.getMessage());
+        }
+    }
+
+    public Map<String, Object> executeFromDsCallback(Long id, String token) {
+        assertCallbackToken(token);
+        return execute(null, id);
+    }
+
+    private String buildProdTriggerScript(Long scriptId) {
+        String base = integrationProperties.getDs().getCallbackBaseUrl();
+        if (base == null || base.isBlank()) {
+            throw new BusinessException(500, "未配置 app.integration.ds.callback-base-url");
+        }
+        if (base.endsWith("/")) {
+            base = base.substring(0, base.length() - 1);
+        }
+        String token = resolveCallbackToken();
+        String url = base + "/api/v1/governance/fusion/scripts/" + scriptId + "/ds-trigger";
+        return "curl -sf -X POST \"" + url + "\" "
+                + "-H \"X-Ds-Callback-Token: " + token + "\" "
+                + "-H \"Content-Type: application/json\" "
+                + "-d \"{}\" "
+                + "|| exit 1";
+    }
+
+    private boolean isDsAvailable() {
+        return integrationProperties.isEnabled() && dsClient.isHealthy();
+    }
+
+    private String resolveCallbackToken() {
+        String token = integrationProperties.getDs().getCallbackToken();
+        if (token != null && !token.isBlank()) {
+            return token.trim();
+        }
+        String pwd = integrationProperties.getDs().getPassword();
+        return pwd == null ? "chengde-gov-callback" : pwd;
+    }
+
+    private void assertCallbackToken(String token) {
+        String expected = resolveCallbackToken();
+        if (token == null || !expected.equals(token.trim())) {
+            throw new BusinessException(403, "DS 回调令牌无效");
+        }
+    }
+
+    private void assertEditable(UserPrincipal operator, GovFusionScript s) {
+        if (isLockedByOther(operator, s)) {
+            throw new BusinessException(403, "脚本已被 " + s.getLockedBy() + " 锁定");
+        }
+        if ("PROD".equalsIgnoreCase(s.getEnvScope())) {
+            String user = operator != null ? operator.getUsername() : null;
+            boolean privileged = operator != null && operator.isSystemAdmin();
+            boolean locker = s.getLockedBy() != null && s.getLockedBy().equals(user);
+            if (!privileged && !locker) {
+                throw new BusinessException(400, "生产环境脚本请先锁定后再编辑，或先回滚到开发环境");
+            }
+        }
+    }
+
+    private boolean isLockedByOther(UserPrincipal operator, GovFusionScript s) {
+        if (s.getLockedBy() == null || s.getLockedBy().isBlank()) {
+            return false;
+        }
+        String user = operator != null ? operator.getUsername() : null;
+        if (user != null && user.equals(s.getLockedBy())) {
+            return false;
+        }
+        return operator == null || !operator.isSystemAdmin();
+    }
+
+    private static String normalizeEnv(String env) {
+        if (env == null || env.isBlank()) {
+            return "DEV";
+        }
+        String e = env.trim().toUpperCase(Locale.ROOT);
+        if (!"DEV".equals(e) && !"PROD".equals(e)) {
+            throw new BusinessException(400, "envScope 仅支持 DEV/PROD");
+        }
+        return e;
+    }
+
+    private static String safeName(String name) {
+        if (name == null || name.isBlank()) {
+            return "script";
+        }
+        return name.replaceAll("[^A-Za-z0-9_\\u4e00-\\u9fa5-]", "_");
     }
 
     private void validateSql(String sql, String scriptType) {
@@ -384,6 +584,13 @@ public class FusionScriptService {
         m.put("status", s.getStatus());
         m.put("lastRunAt", s.getLastRunAt());
         m.put("lastMessage", s.getLastMessage());
+        m.put("lockedBy", s.getLockedBy());
+        m.put("lockedAt", s.getLockedAt());
+        m.put("envScope", s.getEnvScope() == null ? "DEV" : s.getEnvScope());
+        m.put("dsProjectCode", s.getDsProjectCode());
+        m.put("dsDefinitionCode", s.getDsDefinitionCode());
+        m.put("prodDeployedVersion", s.getProdDeployedVersion());
+        m.put("prodDeployedAt", s.getProdDeployedAt());
         m.put("createdBy", s.getCreatedBy());
         m.put("createdAt", s.getCreatedAt());
         m.put("updatedAt", s.getUpdatedAt());

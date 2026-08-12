@@ -521,13 +521,6 @@ onMounted(async () => {
 
       <!-- 发布管理 -->
       <template v-if="activeTab === 'publish'">
-        <el-alert
-          type="info"
-          :closable="false"
-          show-icon
-          style="margin-bottom:12px"
-          title="定版发布后的元数据才会进入元数据目录查询，并支持用户订阅。下线后将从查询中移除。"
-        />
         <el-form inline class="portal-inline-form portal-inline-form--block">
           <el-form-item label="目标类型" class="portal-field-sm">
             <el-select v-model="filter.targetType">
@@ -625,12 +618,6 @@ onMounted(async () => {
         </el-form>
 
         <el-alert
-          type="info"
-          :closable="false"
-          style="margin-bottom:12px"
-          title="定时采集任务检测到元数据变更时，将自动生成版本记录；发布定版、维护、回滚也会写入历史。支持查看详情及与最新版本对比。"
-        />
-        <el-alert
           v-if="selected"
           type="success"
           :closable="false"
@@ -665,13 +652,6 @@ onMounted(async () => {
 
       <!-- 定时任务关联版本 -->
       <template v-else-if="activeTab === 'collect-task'">
-        <el-alert
-          type="info"
-          :closable="false"
-          show-icon
-          style="margin-bottom:12px"
-          :title="`采集任务「${collectTaskName || collectTaskInfo?.taskName || ('#' + collectTaskId)}」的全部版本记录；可选择两个版本进行差异分析。`"
-        />
         <el-table v-loading="collectTaskVersionsLoading" :data="collectTaskVersions" stripe size="small" empty-text="该任务暂无版本记录">
           <el-table-column label="版本号" width="90">
             <template #default="{ row }">
@@ -707,13 +687,6 @@ onMounted(async () => {
 
       <!-- 版本对比 -->
       <template v-else-if="activeTab === 'compare'">
-        <el-alert
-          type="info"
-          :closable="false"
-          show-icon
-          style="margin-bottom:12px"
-          title="可对比历史版本与当前最新版本的基本信息项及属性信息（字段中文名、英文名、数据类型、长度、主键/分区、计量单位、描述）。"
-        />
         <el-form inline class="portal-inline-form portal-inline-form--block">
           <el-form-item label="实体" class="portal-field-xl">
             <el-select

@@ -453,9 +453,6 @@ onUnmounted(() => {
     </div>
 
     <PageCard title="元数据采集监控">
-      <p class="mm-runlog-tip">
-        已发布的定时任务或正在运行的任务可「停止」（终止本次采集并下线定时调度）；已停止的定时任务可「启动」恢复调度。手动任务仍请在「元数据采集」页发起执行。
-      </p>
       <div class="mm-toolbar">
         <el-form inline class="portal-inline-form portal-inline-form--block">
           <el-form-item label="数据源" class="portal-field-xl">
@@ -593,7 +590,6 @@ onUnmounted(() => {
     </PageCard>
 
     <PageCard title="采集运行日志" style="margin-top:12px">
-      <p class="mm-runlog-tip">历史运行明细；运行中记录可点击「停止」，已结束记录停止按钮置灰。</p>
       <el-table :data="runs.slice(0, 50)" stripe size="small" empty-text="暂无运行日志">
         <el-table-column prop="id" label="运行ID" width="80" />
         <el-table-column label="任务" min-width="140" show-overflow-tooltip>
@@ -823,11 +819,6 @@ onUnmounted(() => {
   max-height: 280px; overflow: auto; white-space: pre-wrap; word-break: break-all;
 }
 .mm-drawer-actions { margin-top: 16px; display: flex; gap: 8px; }
-.mm-runlog-tip {
-  margin: 0 0 10px;
-  font-size: 13px;
-  color: var(--el-text-color-secondary);
-}
 @media (max-width: 1100px) {
   .mm-kpi { grid-template-columns: repeat(2, 1fr); }
 }
