@@ -6,7 +6,9 @@
 #   CODE_TGZ=/opt/chengde/inbox/chengde-smart-city_xxx.tar.gz \
 #   bash /opt/chengde/inbox/prod_deploy_on_57.sh
 # =============================================================================
-set -euo pipefail
+set -eu
+# pipefail 在部分旧版 bash（如麒麟 V10）不支持，单独启用
+(set -o pipefail 2>/dev/null) && set -o pipefail || true
 
 REMOTE_ROOT="${REMOTE_ROOT:-/opt/chengde}"
 REMOTE_APP="${REMOTE_APP:-$REMOTE_ROOT/chengde-smart-city}"
