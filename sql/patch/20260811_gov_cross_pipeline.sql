@@ -1,4 +1,4 @@
--- 跨模块流水线（手工补丁，与 Flyway V190 对齐；可重复执行）
+-- 跨模块流水线（手工补丁，与 Flyway V192 对齐；可重复执行）
 -- 目标库：smart_city
 
 CREATE TABLE IF NOT EXISTS gov_cross_pipeline (
