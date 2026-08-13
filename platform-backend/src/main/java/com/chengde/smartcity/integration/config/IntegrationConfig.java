@@ -1,5 +1,6 @@
 package com.chengde.smartcity.integration.config;
 
+import com.chengde.smartcity.analysis.support.IndicatorDatabaseProperties;
 import com.chengde.smartcity.common.exception.BusinessException;
 import com.chengde.smartcity.masterdata.support.LayerDatabaseProperties;
 import org.springframework.boot.context.properties.EnableConfigurationProperties;
@@ -9,7 +10,7 @@ import org.springframework.http.client.SimpleClientHttpRequestFactory;
 import org.springframework.web.client.RestTemplate;
 
 @Configuration
-@EnableConfigurationProperties({IntegrationProperties.class, LayerDatabaseProperties.class})
+@EnableConfigurationProperties({IntegrationProperties.class, LayerDatabaseProperties.class, IndicatorDatabaseProperties.class})
 public class IntegrationConfig {
 
     @Bean

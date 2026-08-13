@@ -14,7 +14,6 @@ import {
 import {
   firstNavPath,
   getAuthorizedPlatforms,
-  PLATFORM_LABELS,
   visibleMenuChildren,
 } from '@/utils/menu'
 import type { MenuNode } from '@/stores/auth'
@@ -131,6 +130,30 @@ function isPlatformMgmtNav(n: PortalNavNode): boolean {
   return n.name === '平台管理' || theme === '/system' || menuPath === '/system'
 }
 
+function hasPlatformMgmtAccess(): boolean {
+  if (auth.isSystemAdmin) return true
+  if ((auth.permissions || []).includes('hub:system:platform')) return true
+  return getAuthorizedPlatforms(auth.menus).some((n) => isPlatformMgmtMenu(n))
+}
+
+/** 合成「平台管理」菜单节点（门户卡兜底，不依赖树结构） */
+function syntheticPlatformMgmtMenu(): MenuNode {
+  return {
+    id: 19,
+    parentId: 1,
+    menuName: '平台管理',
+    menuType: 1,
+    path: '/system',
+    component: '',
+    permission: 'hub:system:platform',
+    icon: '',
+    mCode: '',
+    integrationType: 'self',
+    visible: 1,
+    children: [],
+  }
+}
+
 /** 一级「平台管理」；集成运维已迁入通用支撑，不再作为门户卡片 */
 const menuExtraPlatforms = computed(() =>
   getAuthorizedPlatforms(auth.menus).filter((n) => isPlatformMgmtMenu(n)),
@@ -142,23 +165,35 @@ const displayCards = computed<DisplayCard[]>(() => {
     source: 'nav' as const,
     key: `nav-${n.id}`,
     title: n.name,
-    themePath: n.themeKey || '/exchange',
+    themePath: isPlatformMgmtNav(n) ? '/system' : (n.themeKey || '/exchange'),
     // 门户配置若挂了平台管理，同样直达，不展开空下拉
     direct: isPlatformMgmtNav(n),
     nav: n,
   }))
-  const navHasPlatformMgmt = fromNav.some((c) => c.direct && c.title === '平台管理')
+  const navHasPlatformMgmt = fromNav.some((c) => c.title === '平台管理' || c.themePath === '/system')
   const fromMenu: DisplayCard[] = menuExtraPlatforms.value
     .filter(() => !navHasPlatformMgmt)
     .map((n) => ({
       source: 'menu' as const,
       key: `menu-${n.id}`,
-      title: PLATFORM_LABELS[n.path] || n.menuName,
-      themePath: n.path === '/system' ? '/system' : n.path,
+      title: '平台管理',
+      themePath: '/system',
       direct: true,
       menu: n,
     }))
-  return [...fromNav, ...fromMenu]
+  const cards = [...fromNav, ...fromMenu]
+  // 有权限但导航/菜单树都没带出时，仍出第五张卡（对齐门户五卡）
+  if (!cards.some((c) => c.title === '平台管理' || c.themePath === '/system') && hasPlatformMgmtAccess()) {
+    cards.push({
+      source: 'menu',
+      key: 'menu-platform-mgmt',
+      title: '平台管理',
+      themePath: '/system',
+      direct: true,
+      menu: syntheticPlatformMgmtMenu(),
+    })
+  }
+  return cards
 })
 
 const activeIndex = ref<number | null>(null)

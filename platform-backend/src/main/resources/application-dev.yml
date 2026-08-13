@@ -38,6 +38,8 @@ app:
       password: ${DS_PASSWORD:dolphinscheduler123}
       token: ${DS_TOKEN:}
       tenant-code: ${DS_TENANT:default}
+      callback-base-url: ${DS_CALLBACK_BASE_URL:http://host.docker.internal:9090}
+      callback-token: ${DS_CALLBACK_TOKEN:}
     kettle:
       # 宿主端口 18081（Windows 保留了 8081–8180）；可用环境变量覆盖
       url: ${KETTLE_URL:http\://localhost\:18081}
@@ -66,3 +68,9 @@ app:
       seaweed-bucket: ${SEAWEED_S3_BUCKET:smartcity-docs}
       mongo-url: ${MONGO_URL:mongodb://localhost:27017}
       canal-url: ${CANAL_URL:http://localhost:19090}
+  # 指标结果库（任务执行时建库建表）；本地默认本机 MySQL
+  indicator-db:
+    host: ${INDICATOR_DB_HOST:127.0.0.1}
+    port: ${INDICATOR_DB_PORT:3306}
+    username: ${INDICATOR_DB_USER:root}
+    password: ${INDICATOR_DB_PASSWORD:${MYSQL_PASSWORD:}}

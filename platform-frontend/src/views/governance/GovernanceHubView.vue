@@ -21,6 +21,12 @@ const CatalogPortalView = defineAsyncComponent(() => import('./catalog/CatalogPo
 const FusionModelView = defineAsyncComponent(() => import('./fusion/FusionModelView.vue'))
 const FusionCapabilityHost = defineAsyncComponent(() => import('./fusion/FusionCapabilityHost.vue'))
 const GovernanceComponentsView = defineAsyncComponent(() => import('./etl/GovernanceComponentsView.vue'))
+const DomainIndicatorDomainManage = defineAsyncComponent(() => import('@/views/analytics/DomainIndicatorDomainManage.vue'))
+const DomainIndicatorGroupManage = defineAsyncComponent(() => import('@/views/analytics/DomainIndicatorGroupManage.vue'))
+const DomainIndicatorTaskPanel = defineAsyncComponent(() => import('@/views/analytics/DomainIndicatorTaskPanel.vue'))
+
+/** 与人口数据共享服务区「指标库」同一业务域 */
+const INDICATOR_DOMAIN = 'population'
 
 /** V3.0：数据融合处理下挂子能力，侧栏三级可见 */
 const FUSION_CAPS = ['script', 'clean', 'schedule', 'workflow', 'execute', 'version'] as const
@@ -82,6 +88,15 @@ const NAV_BASE: HubNavItem[] = [
       { key: 'catalog.portal', label: '资源目录门户' },
     ],
   },
+  {
+    key: 'indicator',
+    label: '数据指标',
+    children: [
+      { key: 'indicator.domains', label: '指标域管理' },
+      { key: 'indicator.groups', label: '指标组管理' },
+      { key: 'indicator.tasks', label: '指标任务' },
+    ],
+  },
 ]
 
 /** 治理侧栏按角色菜单 permission 过滤（与「配置菜单」勾选一致） */
@@ -133,6 +148,7 @@ const tabMap: Record<string, string> = {
   etl: 'etl', m098: 'etl', m099: 'etl', m101: 'etl',
   model: 'model', m106: 'model', m111: 'model',
   catalog: 'catalog', m112: 'catalog', m122: 'catalog',
+  indicator: 'indicator',
 }
 
 const tab = computed(() => {
@@ -185,6 +201,21 @@ const isFusionCap = computed(() => (FUSION_CAPS as readonly string[]).includes(m
 const catalogSub = computed(() => (activeNav.value.startsWith('catalog.') ? activeNav.value.slice('catalog.'.length) : 'resources'))
 const etlSub = computed(() => (activeNav.value.startsWith('etl.') ? activeNav.value.slice('etl.'.length) : 'task-mgmt'))
 
+const INDICATOR_SUBS = ['domains', 'groups', 'tasks'] as const
+function normalizeIndicatorSub(raw: string): string {
+  const s = String(raw || 'domains')
+  if ((INDICATOR_SUBS as readonly string[]).includes(s)) return s
+  return 'domains'
+}
+const indicatorSub = computed(() =>
+  activeNav.value.startsWith('indicator.')
+    ? normalizeIndicatorSub(activeNav.value.slice('indicator.'.length))
+    : 'domains',
+)
+
+/** 指标组页依赖指标域列表；域变更后刷新组页 */
+const indicatorDomainTick = ref(0)
+
 const ETL_LIST_SUBS = ['task-mgmt', 'task-run', 'task-schedule', 'components']
 
 function defaultNavForTab(t: string): string {
@@ -193,6 +224,7 @@ function defaultNavForTab(t: string): string {
   if (t === 'etl') return 'etl.task-mgmt'
   if (t === 'model') return 'model.warehouse'
   if (t === 'catalog') return 'catalog.resources'
+  if (t === 'indicator') return 'indicator.domains'
   return DEFAULT_NAV
 }
 
@@ -234,6 +266,8 @@ function resolveFromRoute() {
     let sub = String(route.query.cSub || 'resources')
     if (sub === 'classify') sub = 'resources'
     activeNav.value = `catalog.${sub}`
+  } else if (mapped === 'indicator') {
+    activeNav.value = `indicator.${normalizeIndicatorSub(String(route.query.iSub || 'domains'))}`
   } else {
     activeNav.value = defaultNavForTab(mapped)
   }
@@ -271,7 +305,7 @@ function syncQuery() {
   for (const [k, v] of Object.entries(route.query)) {
     if (v == null) continue
     // 跳过由 Hub 托管的键，下面按当前状态重写
-    if (['tab', 'section', 'qSub', 'mSub', 'cSub', 'etlSub', 'etlView', 'taskId', 'procTab'].includes(k)) continue
+    if (['tab', 'section', 'qSub', 'mSub', 'cSub', 'etlSub', 'etlView', 'taskId', 'procTab', 'iSub'].includes(k)) continue
     q[k] = Array.isArray(v) ? String(v[0]) : String(v)
   }
   q.tab = tab.value
@@ -279,6 +313,7 @@ function syncQuery() {
   if (tab.value === 'quality') q.qSub = qualitySub.value
   if (tab.value === 'model') q.mSub = modelSub.value
   if (tab.value === 'catalog') q.cSub = catalogSub.value
+  if (tab.value === 'indicator') q.iSub = indicatorSub.value
   if (tab.value === 'catalog' && catalogSub.value === 'subscriptions' && route.query.subTab) {
     q.subTab = String(Array.isArray(route.query.subTab) ? route.query.subTab[0] : route.query.subTab)
   }
@@ -344,7 +379,7 @@ watch(activeNav, (nav) => {
   syncQuery()
 })
 watch(
-  () => [route.query.tab, route.query.section, route.query.qSub, route.query.mSub, route.query.cSub, route.query.etlSub],
+  () => [route.query.tab, route.query.section, route.query.qSub, route.query.mSub, route.query.cSub, route.query.etlSub, route.query.iSub],
   () => { resolveFromRoute() },
 )
 watch(() => [route.query.etlView, route.query.taskId], () => {
@@ -393,6 +428,22 @@ onMounted(() => { resolveFromRoute() })
         <CatalogApprovalView v-else-if="tab === 'catalog' && catalogSub === 'approvals'" catalog-origin="GOVERNANCE" />
         <CatalogSubscriptionView v-else-if="tab === 'catalog' && catalogSub === 'subscriptions'" />
         <CatalogPortalView v-else-if="tab === 'catalog' && catalogSub === 'portal'" />
+
+        <DomainIndicatorDomainManage
+          v-else-if="tab === 'indicator' && indicatorSub === 'domains'"
+          :domain="INDICATOR_DOMAIN"
+          @changed="indicatorDomainTick++"
+        />
+        <DomainIndicatorGroupManage
+          v-else-if="tab === 'indicator' && indicatorSub === 'groups'"
+          :key="`gov-ind-groups-${indicatorDomainTick}`"
+          :domain="INDICATOR_DOMAIN"
+          :active="true"
+        />
+        <DomainIndicatorTaskPanel
+          v-else-if="tab === 'indicator' && indicatorSub === 'tasks'"
+          :domain="INDICATOR_DOMAIN"
+        />
 
         <el-empty v-else :description="`未识别的导航：${activeNav}`" />
       </div>
