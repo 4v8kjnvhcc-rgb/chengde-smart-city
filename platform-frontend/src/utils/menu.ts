@@ -67,9 +67,10 @@ export function matchPlatformPath(path: string): string | null {
 export function getAuthorizedPlatforms(menus: MenuNode[]): MenuNode[] {
   const set = new Set(PLATFORM_PATHS)
   return getMenuRoots(menus).filter((n) => {
-    if (!set.has(n.path)) return false
-    // 业务功能可空下拉；平台管理为直达卡片；集成运维已迁出一级
-    if (n.path === '/business' || n.path === '/system') return true
+    // 平台管理：按 path 或名称识别（目录 path 偶发为空时仍出卡）
+    if (n.path === '/system' || n.menuName === '平台管理') return true
+    if (n.path === '/business' || n.menuName === '业务功能平台') return true
+    if (!n.path || !set.has(n.path)) return false
     if (n.path === '/integration') return false
     return visibleMenuChildren(n).length > 0
   })

@@ -60,9 +60,11 @@ public class HubSidebarMenuBootstrap implements ApplicationRunner {
                         + "path = '/business/gaoxin-pop-lib', permission = 'hub:business:gaoxin-pop-lib', "
                         + "integration_type = 'self', sort_order = 1 WHERE id = 6010");
 
-        // 旧平台管理子树 / 集成运维一级壳保持停用
+        // 旧平台管理子树 / 集成运维一级壳 / V210 误复活的旧 UUM「日志审计」保持停用
         jdbcTemplate.update(
                 "UPDATE sys_menu SET status = 0, visible = 0 WHERE id IN (27, 6400, 6401, 6402, 6403, 6500, 30, 31)"
+                        + " OR id BETWEEN 7600 AND 7611"
+                        + " OR id IN (7630, 7631, 7632, 7633)"
                         + " OR path = '/integration'"
                         + " OR (IFNULL(path,'') LIKE '/system/%' AND path <> '/system')");
 

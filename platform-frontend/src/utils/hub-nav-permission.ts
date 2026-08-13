@@ -81,6 +81,9 @@ export const GOVERNANCE_NAV_PERMISSIONS: Record<string, string | string[]> = {
   'catalog.approvals': 'hub:gov:catalog:approvals',
   'catalog.subscriptions': 'hub:gov:catalog:subscriptions',
   'catalog.portal': 'hub:gov:catalog:portal',
+  'indicator.domains': 'hub:gov:indicator:domains',
+  'indicator.groups': 'hub:gov:indicator:groups',
+  'indicator.tasks': 'hub:gov:indicator:tasks',
 }
 
 /** 通用支撑 Hub */

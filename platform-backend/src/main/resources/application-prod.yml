@@ -45,6 +45,8 @@ app:
       password: ${DS_PASSWORD:dolphinscheduler123}
       token: ${DS_TOKEN:}
       tenant-code: ${DS_TENANT:default}
+      callback-base-url: ${DS_CALLBACK_BASE_URL:http://10.10.10.57:8080}
+      callback-token: ${DS_CALLBACK_TOKEN:}
     kettle:
       url: ${KETTLE_URL:http://kettle-carte:8080}
       user: ${KETTLE_USER:cluster}
@@ -84,3 +86,9 @@ app:
       port: ${LAYER_ADS_PORT:0}
       username: ${LAYER_ADS_USER:}
       password: ${LAYER_ADS_PASSWORD:}
+  # 指标结果库：任务执行（手动/DS）时按指标域库名幂等建库建表并落数
+  indicator-db:
+    host: ${INDICATOR_DB_HOST:10.10.10.12}
+    port: ${INDICATOR_DB_PORT:13306}
+    username: ${INDICATOR_DB_USER:root}
+    password: ${INDICATOR_DB_PASSWORD:}

@@ -2,18 +2,26 @@ package com.chengde.smartcity.analysis.service;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.chengde.smartcity.analysis.entity.AnaIndicator;
+import com.chengde.smartcity.analysis.entity.AnaIndicatorDomain;
 import com.chengde.smartcity.analysis.entity.AnaIndicatorGroup;
 import com.chengde.smartcity.analysis.entity.AnaIndicatorQuery;
 import com.chengde.smartcity.analysis.entity.AnaIndicatorTask;
 import com.chengde.smartcity.analysis.entity.AnaIndicatorTaskRun;
+import com.chengde.smartcity.analysis.mapper.AnaIndicatorDomainMapper;
 import com.chengde.smartcity.analysis.mapper.AnaIndicatorGroupMapper;
 import com.chengde.smartcity.analysis.mapper.AnaIndicatorMapper;
 import com.chengde.smartcity.analysis.mapper.AnaIndicatorQueryMapper;
 import com.chengde.smartcity.analysis.mapper.AnaIndicatorTaskMapper;
 import com.chengde.smartcity.analysis.mapper.AnaIndicatorTaskRunMapper;
+import com.chengde.smartcity.analysis.support.IndicatorJdbcSupport;
 import com.chengde.smartcity.audit.AuditService;
 import com.chengde.smartcity.common.exception.BusinessException;
+import com.chengde.smartcity.masterdata.support.TaskConnectionResolver;
 import com.chengde.smartcity.security.UserPrincipal;
+import java.sql.Connection;
+import java.sql.ResultSet;
+import java.sql.ResultSetMetaData;
+import java.sql.Statement;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -37,26 +45,35 @@ public class IndicatorTaskService {
     private final AnaIndicatorTaskMapper taskMapper;
     private final AnaIndicatorTaskRunMapper runMapper;
     private final AnaIndicatorGroupMapper groupMapper;
+    private final AnaIndicatorDomainMapper domainMapper;
     private final AnaIndicatorMapper indicatorMapper;
     private final AnaIndicatorQueryMapper queryMapper;
     private final IndicatorTaskDsScheduleService dsScheduleService;
+    private final IndicatorJdbcSupport indicatorJdbcSupport;
+    private final TaskConnectionResolver connectionResolver;
     private final JdbcTemplate jdbcTemplate;
     private final AuditService auditService;
 
     public IndicatorTaskService(AnaIndicatorTaskMapper taskMapper,
                                 AnaIndicatorTaskRunMapper runMapper,
                                 AnaIndicatorGroupMapper groupMapper,
+                                AnaIndicatorDomainMapper domainMapper,
                                 AnaIndicatorMapper indicatorMapper,
                                 AnaIndicatorQueryMapper queryMapper,
                                 IndicatorTaskDsScheduleService dsScheduleService,
+                                IndicatorJdbcSupport indicatorJdbcSupport,
+                                TaskConnectionResolver connectionResolver,
                                 JdbcTemplate jdbcTemplate,
                                 AuditService auditService) {
         this.taskMapper = taskMapper;
         this.runMapper = runMapper;
         this.groupMapper = groupMapper;
+        this.domainMapper = domainMapper;
         this.indicatorMapper = indicatorMapper;
         this.queryMapper = queryMapper;
         this.dsScheduleService = dsScheduleService;
+        this.indicatorJdbcSupport = indicatorJdbcSupport;
+        this.connectionResolver = connectionResolver;
         this.jdbcTemplate = jdbcTemplate;
         this.auditService = auditService;
     }
@@ -140,11 +157,10 @@ public class IndicatorTaskService {
         if ("OFFLINE".equalsIgnoreCase(task.getPublishStatus())) {
             throw new BusinessException(400, "已下线任务不可执行");
         }
-        // 优先走 DS 实例；DS 不可用时本地直跑 SQL（诚实降级）
+        // 「执行」与 DS 定时回调走同一套增量建库/建表/落数逻辑
         if (dsScheduleService.isDsAvailable()) {
             try {
                 Map<String, Object> ds = dsScheduleService.startOnce(operator, task);
-                // 同步执行计算，便于页面立刻看到结果；DS 回调到来时幂等再跑一次也可
                 Map<String, Object> calc = runCalculation(task, "MANUAL",
                         ds.get("dsInstanceId") instanceof Number n ? n.longValue() : null);
                 calc.putAll(ds);
@@ -257,11 +273,18 @@ public class IndicatorTaskService {
         taskMapper.updateById(task);
 
         AnaIndicatorGroup group = groupMapper.selectById(task.getGroupId());
-        String targetTable = group == null ? null : group.getTargetTable();
+        if (group == null) {
+            return finishFailed(task, triggerType, dsInstanceId, started, "指标组不存在");
+        }
+        AnaIndicatorDomain domain = group.getIndicatorDomainId() == null
+                ? null : domainMapper.selectById(group.getIndicatorDomainId());
+        String domainDb = domain == null ? null : domain.getDomainDbName();
+        String targetTable = group.getTargetTable();
 
         List<AnaIndicator> indicators = indicatorMapper.selectList(new LambdaQueryWrapper<AnaIndicator>()
                 .eq(AnaIndicator::getGroupId, task.getGroupId())
-                .eq(AnaIndicator::getStatus, "ACTIVE"));
+                .eq(AnaIndicator::getStatus, "ACTIVE")
+                .orderByAsc(AnaIndicator::getId));
         Set<Long> queryIds = new LinkedHashSet<>();
         for (AnaIndicator ind : indicators) {
             if (ind.getQueryId() != null && ind.getQueryId() > 0) {
@@ -272,12 +295,30 @@ public class IndicatorTaskService {
         StringBuilder logBuf = new StringBuilder();
         logBuf.append("[").append(started).append("] 触发=").append(triggerType)
                 .append(" 任务=").append(task.getTaskName())
+                .append(" 指标库主机=").append(indicatorJdbcSupport.endpointLabel())
+                .append(" 结果库=").append(domainDb == null ? "-" : domainDb)
                 .append(" 目标表=").append(targetTable == null ? "-" : targetTable)
                 .append(" 指标数=").append(indicators.size())
                 .append(" 语句数=").append(queryIds.size()).append('\n');
 
+        if (domainDb == null || domainDb.isBlank() || targetTable == null || targetTable.isBlank()) {
+            return finishFailed(task, triggerType, dsInstanceId, started,
+                    logBuf + "- 缺少指标域库名或结果表名，无法落库\n");
+        }
+
+        try {
+            indicatorJdbcSupport.ensureResultTable(domainDb, targetTable, indicators);
+            logBuf.append("- 物理库/表增量就绪 ").append(domainDb).append('.').append(targetTable)
+                    .append(" @").append(indicatorJdbcSupport.endpointLabel()).append('\n');
+        } catch (Exception e) {
+            log.warn("indicator ensure ddl failed taskId={}: {}", task.getId(), e.getMessage());
+            return finishFailed(task, triggerType, dsInstanceId, started,
+                    logBuf + "- 建库/建表失败: " + e.getMessage() + '\n');
+        }
+
         int success = 0;
         int failed = 0;
+        Map<String, Object> snapshot = new LinkedHashMap<>();
         for (Long qid : queryIds) {
             AnaIndicatorQuery q = queryMapper.selectById(qid);
             if (q == null || q.getSqlText() == null || q.getSqlText().isBlank()) {
@@ -292,11 +333,23 @@ public class IndicatorTaskService {
                 continue;
             }
             try {
-                String wrapped = "SELECT * FROM (" + sql + ") _ana_ind_run LIMIT 100";
-                List<Map<String, Object>> rows = jdbcTemplate.queryForList(wrapped);
+                List<Map<String, Object>> rows = querySourceRows(q, sql);
+                List<AnaIndicator> ofQuery = indicators.stream()
+                        .filter(i -> qid.equals(i.getQueryId()))
+                        .toList();
+                Map<String, Object> first = rows.isEmpty() ? Map.of() : rows.get(0);
+                for (AnaIndicator ind : ofQuery) {
+                    String col = ind.getFieldName() == null || ind.getFieldName().isBlank()
+                            ? ind.getResultField() : ind.getFieldName();
+                    if (col == null || col.isBlank()) continue;
+                    Object val = pickValue(first, ind.getResultField(), col);
+                    snapshot.put(col.trim().toLowerCase(Locale.ROOT), val);
+                }
                 success++;
                 logBuf.append("- ").append(q.getQueryNo()).append(" OK rows=")
-                        .append(rows.size()).append(" ds=").append(q.getDatasourceName()).append('\n');
+                        .append(rows.size()).append(" ds=")
+                        .append(q.getDatasourceName() == null ? q.getDatasourceKey() : q.getDatasourceName())
+                        .append('\n');
             } catch (Exception e) {
                 failed++;
                 logBuf.append("- ").append(q.getQueryNo()).append(" FAIL ")
@@ -309,30 +362,120 @@ public class IndicatorTaskService {
             failed++;
         }
 
+        boolean wrote = false;
+        if (success > 0) {
+            try {
+                indicatorJdbcSupport.insertSnapshot(domainDb, targetTable, task.getId(), triggerType, snapshot);
+                wrote = true;
+                logBuf.append("- 已写入结果行 cols=").append(snapshot.size()).append('\n');
+            } catch (Exception e) {
+                failed++;
+                logBuf.append("- 写入结果失败: ").append(e.getMessage()).append('\n');
+                log.warn("indicator write failed taskId={}: {}", task.getId(), e.getMessage());
+            }
+        }
+
         String calc;
         String exec;
-        if (failed == 0 && success > 0) {
+        if (failed == 0 && success > 0 && wrote) {
             calc = "ALL_SUCCESS";
             exec = "SUCCESS";
-        } else if (success > 0) {
+        } else if (success > 0 && wrote) {
             calc = "PARTIAL";
             exec = "SUCCESS";
         } else {
             calc = "FAILED";
             exec = "FAILED";
         }
-        String message = "成功语句 " + success + "，失败 " + failed;
-        LocalDateTime finished = LocalDateTime.now();
-        String logText = logBuf.toString();
-        if (logText.length() > 60000) {
-            logText = logText.substring(0, 60000);
-        }
+        String message = "成功语句 " + success + "，失败 " + failed
+                + (wrote ? "；已落库 " + domainDb + "." + targetTable : "；未落库");
+        return finishRun(task, triggerType, dsInstanceId, started, exec, calc, message, logBuf.toString(),
+                success, failed, wrote, domainDb, targetTable);
+    }
 
+    private List<Map<String, Object>> querySourceRows(AnaIndicatorQuery q, String sql) throws Exception {
+        String wrapped = "SELECT * FROM (" + sql + ") _ana_ind_run LIMIT 100";
+        String dsKey = q.getDatasourceKey() == null ? "" : q.getDatasourceKey().trim();
+        if (dsKey.isBlank() || "platform".equalsIgnoreCase(dsKey) || "control".equalsIgnoreCase(dsKey)) {
+            return jdbcTemplate.queryForList(wrapped);
+        }
+        try {
+            var ep = connectionResolver.resolve(dsKey);
+            try (Connection conn = java.sql.DriverManager.getConnection(ep.jdbcUrl(), ep.username(), ep.password());
+                 Statement st = conn.createStatement();
+                 ResultSet rs = st.executeQuery(wrapped)) {
+                return resultSetToMaps(rs);
+            }
+        } catch (BusinessException e) {
+            // 连接键无法解析时回落平台库（兼容历史 platform / 库名）
+            log.debug("indicator source resolve fallback dsKey={}: {}", dsKey, e.getMessage());
+            return jdbcTemplate.queryForList(wrapped);
+        }
+    }
+
+    private static List<Map<String, Object>> resultSetToMaps(ResultSet rs) throws Exception {
+        List<Map<String, Object>> out = new ArrayList<>();
+        ResultSetMetaData md = rs.getMetaData();
+        int n = md.getColumnCount();
+        while (rs.next()) {
+            Map<String, Object> row = new LinkedHashMap<>();
+            for (int i = 1; i <= n; i++) {
+                String label = md.getColumnLabel(i);
+                if (label == null || label.isBlank()) {
+                    label = md.getColumnName(i);
+                }
+                row.put(label, rs.getObject(i));
+            }
+            out.add(row);
+        }
+        return out;
+    }
+
+    private static Object pickValue(Map<String, Object> row, String resultField, String fieldName) {
+        if (row == null || row.isEmpty()) {
+            return null;
+        }
+        if (resultField != null && !resultField.isBlank()) {
+            for (Map.Entry<String, Object> e : row.entrySet()) {
+                if (e.getKey() != null && e.getKey().equalsIgnoreCase(resultField.trim())) {
+                    return e.getValue();
+                }
+            }
+        }
+        if (fieldName != null && !fieldName.isBlank()) {
+            for (Map.Entry<String, Object> e : row.entrySet()) {
+                if (e.getKey() != null && e.getKey().equalsIgnoreCase(fieldName.trim())) {
+                    return e.getValue();
+                }
+            }
+        }
+        // 单列结果时直接取第一列
+        if (row.size() == 1) {
+            return row.values().iterator().next();
+        }
+        return null;
+    }
+
+    private Map<String, Object> finishFailed(AnaIndicatorTask task, String triggerType, Long dsInstanceId,
+                                             LocalDateTime started, String logText) {
+        return finishRun(task, triggerType, dsInstanceId, started, "FAILED", "FAILED",
+                "执行失败", logText, 0, 1, false, null, null);
+    }
+
+    private Map<String, Object> finishRun(AnaIndicatorTask task, String triggerType, Long dsInstanceId,
+                                          LocalDateTime started, String exec, String calc, String message,
+                                          String logText, int success, int failed, boolean wrote,
+                                          String domainDb, String targetTable) {
+        String text = logText == null ? "" : logText;
+        if (text.length() > 60000) {
+            text = text.substring(0, 60000);
+        }
+        LocalDateTime finished = LocalDateTime.now();
         task.setExecStatus(exec);
         task.setCalcResult(calc);
         task.setLastRunAt(finished);
         task.setLastRunMessage(message);
-        task.setLastLog(logText);
+        task.setLastLog(text);
         if (dsInstanceId != null) {
             task.setDsInstanceId(dsInstanceId);
         }
@@ -346,7 +489,7 @@ public class IndicatorTaskService {
         run.setCalcResult(calc);
         run.setDsInstanceId(dsInstanceId);
         run.setMessage(message);
-        run.setLogText(logText);
+        run.setLogText(text);
         run.setStartedAt(started);
         run.setFinishedAt(finished);
         runMapper.insert(run);
@@ -358,6 +501,11 @@ public class IndicatorTaskService {
         out.put("message", message);
         out.put("successQueries", success);
         out.put("failedQueries", failed);
+        out.put("wroteResult", wrote);
+        out.put("physicalPersist", true);
+        out.put("domainDb", domainDb);
+        out.put("targetTable", targetTable);
+        out.put("indicatorHost", indicatorJdbcSupport.endpointLabel());
         out.put("runId", run.getId());
         return out;
     }
