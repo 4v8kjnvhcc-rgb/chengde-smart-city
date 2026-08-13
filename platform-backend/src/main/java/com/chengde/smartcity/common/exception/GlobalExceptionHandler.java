@@ -1,6 +1,9 @@
 package com.chengde.smartcity.common.exception;
 
 import com.chengde.smartcity.common.api.ApiResponse;
+import com.chengde.smartcity.system.service.SysErrorLogService;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.http.HttpStatus;
 import org.springframework.security.access.AccessDeniedException;
 import org.springframework.security.authentication.BadCredentialsException;
@@ -12,6 +15,14 @@ import org.springframework.web.bind.annotation.RestControllerAdvice;
 
 @RestControllerAdvice
 public class GlobalExceptionHandler {
+
+    private static final Logger log = LoggerFactory.getLogger(GlobalExceptionHandler.class);
+
+    private final SysErrorLogService sysErrorLogService;
+
+    public GlobalExceptionHandler(SysErrorLogService sysErrorLogService) {
+        this.sysErrorLogService = sysErrorLogService;
+    }
 
     @ExceptionHandler(BusinessException.class)
     public ApiResponse<Void> handleBusiness(BusinessException ex) {
@@ -43,5 +54,18 @@ public class GlobalExceptionHandler {
                 .map(e -> e.getDefaultMessage())
                 .orElse("参数校验失败");
         return ApiResponse.fail(400, msg);
+    }
+
+    @ExceptionHandler(Exception.class)
+    @ResponseStatus(HttpStatus.INTERNAL_SERVER_ERROR)
+    public ApiResponse<Void> handleUnexpected(Exception ex) {
+        log.error("Unhandled exception", ex);
+        sysErrorLogService.recordBackendException(
+                ex,
+                "system",
+                "系统后端",
+                HttpStatus.INTERNAL_SERVER_ERROR.value(),
+                "500");
+        return ApiResponse.fail(500, "系统异常，请稍后重试");
     }
 }

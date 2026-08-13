@@ -101,6 +101,24 @@ api.interceptors.response.use(
       clearSessionAndRedirect()
     }
 
+    const status = err.response?.status
+    if (status && status >= 500 && original && !url.includes('/error-logs/report')) {
+      void import('@/utils/error-reporter').then(({ reportRuntimeError }) => {
+        const body = err.response?.data as { message?: string; code?: number } | undefined
+        void reportRuntimeError({
+          source: 'FRONTEND',
+          level: 'ERROR',
+          errorCode: String(body?.code ?? status),
+          errorType: 'HttpError',
+          message: body?.message || err.message || `HTTP ${status}`,
+          requestUri: url,
+          httpMethod: original.method?.toUpperCase(),
+          httpStatus: status,
+          pageUrl: typeof window !== 'undefined' ? window.location.href : undefined,
+        })
+      }).catch(() => undefined)
+    }
+
     return rejectFrom(err)
   },
 )

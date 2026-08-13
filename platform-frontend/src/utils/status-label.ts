@@ -70,6 +70,11 @@ const STATUS_ZH: Record<string, string> = {
   EMAIL: '邮件',
   SMS: '短信',
   ERROR: '错误',
+  FATAL: '致命',
+  FRONTEND: '前端',
+  BACKEND: '后端',
+  JOB: '任务',
+  GATEWAY: '网关',
   COMPLETED: '已办结',
   FINISHED: '已完成',
   STOPPED: '已停止',
@@ -566,7 +571,7 @@ export function statusTagType(value: unknown): 'success' | 'warning' | 'info' | 
   if (['PENDING', 'PENDING_ARCHIVE', 'PENDING_REVIEW', 'RUNNING', 'ANALYZING', 'PRE_AUDITING', 'CORRECTION', 'WAITING', 'DRAFT', 'TO_REGISTER', 'SUPERVISING', 'DISPATCHED', 'PROVIDER_RETURNED', 'FULFILLING', 'PARTIAL', 'WARN', 'POC', 'MEDIUM', 'RAW', 'EXTRACTED', 'TAGGED', 'LEDGER', 'OPEN', 'OTHER', 'PRIVATE', 'UNEVEN', 'WITHDRAW_PENDING'].includes(key)) {
     return 'warning'
   }
-  if (['REJECTED', 'FAILED', 'ERROR', 'CANCELLED', 'ABNORMAL', 'EXPIRED', 'RETURNED', 'STOPPED', 'UNMAPPED', 'UNMATCHED', 'CRITICAL', 'BLOCKED', 'MISSING', 'HIGH', 'DOWN', 'FAIL', 'NEGATIVE', 'PROBLEM', 'ABANDONED'].includes(key)) {
+  if (['REJECTED', 'FAILED', 'ERROR', 'FATAL', 'CANCELLED', 'ABNORMAL', 'EXPIRED', 'RETURNED', 'STOPPED', 'UNMAPPED', 'UNMATCHED', 'CRITICAL', 'BLOCKED', 'MISSING', 'HIGH', 'DOWN', 'FAIL', 'NEGATIVE', 'PROBLEM', 'ABANDONED'].includes(key)) {
     return 'danger'
   }
   if (['INACTIVE', 'DISABLED', 'OFFLINE', 'CLOSED', 'WITHDRAWN', 'ARCHIVED', 'STUB', 'EXTERNAL', 'SKIPPED', 'UNTESTED', 'LOW'].includes(key)) {
