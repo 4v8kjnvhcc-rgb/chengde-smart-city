@@ -1,4 +1,4 @@
--- V199: 系统运行/报错日志（前后端统一）+ 挂到「日志审计 → 系统运行日志」
+-- V210: 系统运行/报错日志（前后端统一）+ 挂到「日志审计 → 系统运行日志」
 
 CREATE TABLE IF NOT EXISTS sys_error_log (
   id              BIGINT        NOT NULL AUTO_INCREMENT PRIMARY KEY,
