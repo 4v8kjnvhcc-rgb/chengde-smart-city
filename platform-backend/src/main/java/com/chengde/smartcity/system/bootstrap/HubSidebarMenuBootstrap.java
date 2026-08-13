@@ -42,22 +42,33 @@ public class HubSidebarMenuBootstrap implements ApplicationRunner {
         jdbcTemplate.update(
                 "UPDATE sys_menu SET status = 0 WHERE id = 4100 OR permission = 'exchange:project:delete'");
 
-        // 平台管理：一级目录快捷入口（首页直达统一用户），无下级
+        // 平台管理：无下级快捷入口（menu_type=2 便于角色树勾选回显），首页直达统一用户
         jdbcTemplate.update(
                 "UPDATE sys_menu SET status = 1, visible = 1, parent_id = 1, menu_name = '平台管理', "
-                        + "menu_type = 1, path = '/system', component = NULL, "
+                        + "menu_type = 2, path = '/system', component = NULL, "
                         + "permission = 'hub:system:platform', integration_type = 'self', sort_order = 90 "
                         + "WHERE id = 19");
+
+        // 业务功能平台 + 人口信息库
+        jdbcTemplate.update(
+                "UPDATE sys_menu SET status = 1, visible = 1, parent_id = 1, menu_name = '业务功能平台', "
+                        + "menu_type = 1, path = '/business', permission = 'hub:business:platform', "
+                        + "integration_type = 'self', sort_order = 18 WHERE id = 6000");
+        jdbcTemplate.update(
+                "UPDATE sys_menu SET status = 1, visible = 0, parent_id = 6000, "
+                        + "menu_name = '承德市高新区人口信息库', menu_type = 2, "
+                        + "path = '/business/gaoxin-pop-lib', permission = 'hub:business:gaoxin-pop-lib', "
+                        + "integration_type = 'self', sort_order = 1 WHERE id = 6010");
 
         // 旧平台管理子树 / 集成运维一级壳保持停用
         jdbcTemplate.update(
                 "UPDATE sys_menu SET status = 0, visible = 0 WHERE id IN (27, 6400, 6401, 6402, 6403, 6500, 30, 31)"
                         + " OR path = '/integration'"
-                        + " OR (IFNULL(path,'') LIKE '/system/%')");
+                        + " OR (IFNULL(path,'') LIKE '/system/%' AND path <> '/system')");
 
         // 通用支撑：统一用户 / 智能BI / 任务管理 / 集成运维（7882/7883 为配置与门户入口）
         jdbcTemplate.update(
-                "UPDATE sys_menu SET status = 1 WHERE id IN (12, 7880, 7881, 7882, 7883, 13, 14, 15, 16, 17, 18, 19)");
+                "UPDATE sys_menu SET status = 1 WHERE id IN (12, 7880, 7881, 7882, 7883, 13, 14, 15, 16, 17, 18, 19, 6000, 6010)");
         jdbcTemplate.update(
                 "UPDATE sys_menu SET parent_id = 7880, sort_order = 3, status = 1, visible = 0, "
                         + "menu_name = '任务管理', path = '/analytics/support?tab=tasks', "

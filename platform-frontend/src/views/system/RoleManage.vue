@@ -28,6 +28,7 @@ interface MenuRow {
 interface TreeNode {
   id: number
   label: string
+  disabled?: boolean
   children?: TreeNode[]
 }
 
@@ -39,10 +40,13 @@ const menuDialogVisible = ref(false)
 const formDialogVisible = ref(false)
 const editingId = ref<number | null>(null)
 const currentRoleId = ref<number | null>(null)
+const currentRoleCode = ref<string>('')
 const menuTree = ref<TreeNode[]>([])
 const treeRef = ref<InstanceType<typeof ElTree>>()
 const saving = ref(false)
 const submitting = ref(false)
+/** 系统管理员角色后端强制全量授权，勾选树仅供查看 */
+const isSystemAdminRole = computed(() => currentRoleCode.value === 'SYSTEM_ADMIN')
 
 const form = reactive({
   roleCode: '',
@@ -60,13 +64,13 @@ function isBuiltin(row: Role) {
   return row.roleCode === 'SYSTEM_ADMIN' || row.roleType === 1
 }
 
-function buildTree(rows: MenuRow[]): TreeNode[] {
+function buildTree(rows: MenuRow[], lockAll = false): TreeNode[] {
   const map = new Map<number, TreeNode>()
   const roots: TreeNode[] = []
   for (const r of rows) {
     const id = Number(r.id)
     const suffix = r.menuType === 1 ? ' [目录]' : ''
-    map.set(id, { id, label: `${r.menuName}${suffix}`, children: [] })
+    map.set(id, { id, label: `${r.menuName}${suffix}`, disabled: lockAll, children: [] })
   }
   for (const r of rows) {
     const id = Number(r.id)
@@ -179,12 +183,13 @@ async function removeRole(row: Role) {
 
 async function openMenuConfig(role: Role) {
   currentRoleId.value = role.id
+  currentRoleCode.value = role.roleCode || ''
   menuTree.value = []
   menuDialogVisible.value = true
   try {
     const menusRes = await api.get('/system/menus')
     const rows = Array.isArray(menusRes.data) ? menusRes.data : []
-    menuTree.value = buildTree(rows)
+    menuTree.value = buildTree(rows, role.roleCode === 'SYSTEM_ADMIN')
     if (!rows.length) {
       ElMessage.warning('暂无可用菜单数据，请确认系统菜单已恢复')
       return
@@ -194,6 +199,9 @@ async function openMenuConfig(role: Role) {
       await nextTick()
       const leafKeys = leafKeysForTreeCheck(rows, assignedRes.data || [])
       treeRef.value?.setCheckedKeys(leafKeys, false)
+      if (role.roleCode === 'SYSTEM_ADMIN') {
+        ElMessage.info('系统管理员固定全量菜单，取消勾选保存后也不会生效；请对业务角色配置')
+      }
     } catch (e: unknown) {
       ElMessage.warning(e instanceof Error ? e.message : '已加载菜单树，但未能读取该角色已授权项')
     }
@@ -205,11 +213,16 @@ async function openMenuConfig(role: Role) {
 
 async function saveMenus() {
   if (!currentRoleId.value || !treeRef.value) return
+  if (isSystemAdminRole.value) {
+    ElMessage.warning('系统管理员角色固定拥有全部菜单，无法按勾选削减。请改用业务角色配置菜单。')
+    menuDialogVisible.value = false
+    return
+  }
   saving.value = true
   try {
     const checked = treeRef.value.getCheckedKeys(false) as number[]
     // 只保存勾选项；半选父节点不入库，避免未勾选的下级仍因父 path 被门户匹配出来
-    const menuIds = [...new Set(checked)]
+    const menuIds = [...new Set(checked.map((id) => Number(id)).filter((id) => Number.isFinite(id)))]
     await api.put(`/system/roles/${currentRoleId.value}/menus`, { menuIds })
     ElMessage.success('菜单权限已保存')
     menuDialogVisible.value = false
@@ -331,6 +344,14 @@ onMounted(loadRoles)
     </el-dialog>
 
     <el-dialog v-model="menuDialogVisible" title="配置菜单权限" width="520px" destroy-on-close>
+      <el-alert
+        v-if="isSystemAdminRole"
+        type="warning"
+        :closable="false"
+        show-icon
+        class="menu-role-alert"
+        title="系统管理员固定拥有全部菜单权限，取消勾选后保存也不会生效。请对业务角色做权限裁剪。"
+      />
       <el-tree
         v-if="menuTree.length"
         ref="treeRef"
@@ -338,14 +359,27 @@ onMounted(loadRoles)
         show-checkbox
         node-key="id"
         default-expand-all
-        :props="{ label: 'label', children: 'children' }"
+        :props="{ label: 'label', children: 'children', disabled: 'disabled' }"
         empty-text="暂无菜单"
       />
       <el-empty v-else description="暂无菜单数据，请重新登录后再试" :image-size="72" />
       <template #footer>
         <el-button @click="menuDialogVisible = false">取消</el-button>
-        <el-button type="primary" :loading="saving" :disabled="!menuTree.length" @click="saveMenus">保存</el-button>
+        <el-button
+          type="primary"
+          :loading="saving"
+          :disabled="!menuTree.length || isSystemAdminRole"
+          @click="saveMenus"
+        >
+          保存
+        </el-button>
       </template>
     </el-dialog>
   </div>
 </template>
+
+<style scoped>
+.menu-role-alert {
+  margin-bottom: 12px;
+}
+</style>

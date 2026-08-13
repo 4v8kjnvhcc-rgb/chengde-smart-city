@@ -170,10 +170,15 @@ async function saveRoleMenus() {
     ElMessage.warning('请先选择角色')
     return
   }
+  const role = roles.value.find((r) => r.id === selectedRoleId.value)
+  if (role?.roleCode === 'SYSTEM_ADMIN') {
+    ElMessage.warning('系统管理员角色固定拥有全部菜单，无法按勾选削减。请改用业务角色配置菜单。')
+    return
+  }
   savingMenus.value = true
   try {
     const checked = menuTreeRef.value.getCheckedKeys(false) as number[]
-    const menuIds = [...new Set(checked)]
+    const menuIds = [...new Set(checked.map((id) => Number(id)).filter((id) => Number.isFinite(id)))]
     await api.put(`/system/roles/${selectedRoleId.value}/menus`, { menuIds })
     ElMessage.success('角色菜单权限已保存')
   } catch (e: unknown) {

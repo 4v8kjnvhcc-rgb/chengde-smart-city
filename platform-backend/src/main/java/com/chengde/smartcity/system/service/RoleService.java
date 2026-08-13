@@ -118,7 +118,7 @@ public class RoleService {
         }
         jdbcTemplate.update("DELETE FROM sys_role_menu WHERE role_id = ?", roleId);
         if ("SYSTEM_ADMIN".equals(role.getRoleCode())) {
-            // 系统管理员角色始终全量授权（含侧栏隐藏但仍需权限码的菜单）
+            // 系统管理员角色始终全量授权（含侧栏隐藏但仍需权限码的菜单）；忽略勾选削减
             jdbcTemplate.update(
                     "INSERT INTO sys_role_menu (role_id, menu_id) "
                             + "SELECT ?, id FROM sys_menu m WHERE "
@@ -127,8 +127,12 @@ public class RoleService {
                             + "AND IFNULL(m.menu_name,'') NOT LIKE '%D05%' "
                             + "AND IFNULL(m.menu_name,'') NOT LIKE '%已并入%'",
                     roleId);
+            log.info("SYSTEM_ADMIN menus forced to full set by {}", operator.getUsername());
         } else {
             for (Long menuId : request.menuIds()) {
+                if (menuId == null) {
+                    continue;
+                }
                 jdbcTemplate.update("INSERT INTO sys_role_menu (role_id, menu_id) VALUES (?, ?)", roleId, menuId);
             }
         }
