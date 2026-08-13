@@ -8,8 +8,12 @@ import PortalPagination from '@/components/common/PortalPagination.vue'
 import { useClientPager } from '@/composables/useClientPager'
 import HubSideLayout, { type HubNavItem } from '@/components/common/HubSideLayout.vue'
 import { statusLabel, statusTagType } from '@/utils/status-label'
+import { useAuthStore } from '@/stores/auth'
+import { filterHubNavByPermissions, UNSTRUCT_NAV_PERMISSIONS } from '@/utils/hub-nav-permission'
 
-const navItems: HubNavItem[] = [
+const auth = useAuthStore()
+
+const NAV_BASE: HubNavItem[] = [
   { key: 'files', label: '文件资源管理' },
   { key: 'classify', label: '数据分类管理' },
   { key: 'search', label: '文件资源检索' },
@@ -24,6 +28,12 @@ const navItems: HubNavItem[] = [
     ],
   },
 ]
+
+const navItems = computed(() =>
+  filterHubNavByPermissions(NAV_BASE, auth.permissions, UNSTRUCT_NAV_PERMISSIONS, {
+    isSystemAdmin: auth.isSystemAdmin,
+  }),
+)
 
 interface Category {
   id: number
@@ -381,10 +391,10 @@ const processType = computed<ProcessType>(() => {
 const pageTitle = computed(() => {
   const leaf = activeNav.value
   if (leaf.startsWith('process.')) {
-    const child = navItems.find((n) => n.key === 'process')?.children?.find((c) => c.key === leaf)
+    const child = NAV_BASE.find((n) => n.key === 'process')?.children?.find((c) => c.key === leaf)
     return child?.label || '非结构化数据处理'
   }
-  return navItems.find((n) => n.key === leaf)?.label || '非结构数据融合治理平台'
+  return NAV_BASE.find((n) => n.key === leaf)?.label || '非结构数据融合治理平台'
 })
 const categoryNameById = computed(() => new Map(categories.value.map((c) => [c.id, c.categoryName])))
 

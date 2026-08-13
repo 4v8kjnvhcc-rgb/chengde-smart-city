@@ -13,6 +13,7 @@ import org.springframework.stereotype.Component;
 
 /**
  * 若 Flyway V80 尚未写入 Hub 侧栏菜单（例如后端在迁移脚本加入前已长期运行），启动时补跑 V80。
+ * 平台管理仅保留一级快捷入口（id=19，无子菜单）；禁止复活旧 /system/* 子树。
  */
 @Component
 public class HubSidebarMenuBootstrap implements ApplicationRunner {
@@ -38,29 +39,41 @@ public class HubSidebarMenuBootstrap implements ApplicationRunner {
             }
             log.info("Hub sidebar menus seeded");
         }
-        // 角色菜单树不展示「删除登记项目」按钮项（与 V81 一致，兼容尚未跑迁移的环境）
         jdbcTemplate.update(
                 "UPDATE sys_menu SET status = 0 WHERE id = 4100 OR permission = 'exchange:project:delete'");
-        // 恢复菜单管理入口（与 V82 一致）
-        int restored = jdbcTemplate.update(
-                "UPDATE sys_menu SET status = 1, visible = 1, parent_id = 6402, sort_order = 31, "
-                        + "menu_name = '菜单管理', path = '/system/menus', component = 'system/MenuManage', "
-                        + "permission = 'system:menu:list', integration_type = 'self' WHERE id = 27");
-        if (restored > 0) {
-            jdbcTemplate.update("UPDATE sys_menu SET status = 1, visible = 1 WHERE id = 6402");
-            log.info("Menu management entry restored (id=27)");
-        }
-        // 恢复系统管理员全量菜单授权（与 V83 一致，避免误勾导致门户只剩归集）
-        // 不含 6403：系统管理「访问控制」已迁至归集 Hub，侧栏不再展示
+
+        // 平台管理：一级目录快捷入口（首页直达统一用户），无下级
         jdbcTemplate.update(
-                "UPDATE sys_menu SET status = 1, visible = 1 WHERE id IN "
-                        + "(1,2,3,4,5,6,8,9,10,11,12,13,14,15,16,17,18,19,6400,6401,6402,6500)");
+                "UPDATE sys_menu SET status = 1, visible = 1, parent_id = 1, menu_name = '平台管理', "
+                        + "menu_type = 1, path = '/system', component = NULL, "
+                        + "permission = 'hub:system:platform', integration_type = 'self', sort_order = 90 "
+                        + "WHERE id = 19");
+
+        // 旧平台管理子树 / 集成运维一级壳保持停用
         jdbcTemplate.update(
-                "UPDATE sys_menu SET status = 0, visible = 0 WHERE id = 6403 OR path = '/system/access'");
+                "UPDATE sys_menu SET status = 0, visible = 0 WHERE id IN (27, 6400, 6401, 6402, 6403, 6500, 30, 31)"
+                        + " OR path = '/integration'"
+                        + " OR (IFNULL(path,'') LIKE '/system/%')");
+
+        // 通用支撑：统一用户 / 智能BI / 任务管理 / 集成运维（7882/7883 为配置与门户入口）
+        jdbcTemplate.update(
+                "UPDATE sys_menu SET status = 1 WHERE id IN (12, 7880, 7881, 7882, 7883, 13, 14, 15, 16, 17, 18, 19)");
+        jdbcTemplate.update(
+                "UPDATE sys_menu SET parent_id = 7880, sort_order = 3, status = 1, visible = 0, "
+                        + "menu_name = '任务管理', path = '/analytics/support?tab=tasks', "
+                        + "permission = 'hub:analytics:support:tasks' WHERE id = 7882");
+        jdbcTemplate.update(
+                "UPDATE sys_menu SET parent_id = 7880, sort_order = 4, status = 1, visible = 0, "
+                        + "menu_name = '集成运维', path = '/analytics/support?tab=ops.kettle', "
+                        + "permission = 'hub:analytics:support:ops' WHERE id = 7883");
+        // UUM 内不再保留重复配置项（侧栏仍按 permission 控制）
+        jdbcTemplate.update(
+                "UPDATE sys_menu SET status = 0, visible = 0 WHERE id IN (7507, 7508)");
+
         int granted = jdbcTemplate.update(
                 "INSERT INTO sys_role_menu (role_id, menu_id) "
                         + "SELECT 1, m.id FROM sys_menu m WHERE "
-                        + "(m.status = 1 OR (m.permission IS NOT NULL AND m.permission <> '')) "
+                        + "m.status = 1 "
                         + "AND IFNULL(m.integration_type,'') <> 'catalog' "
                         + "AND IFNULL(m.menu_name,'') NOT LIKE '%D05%' "
                         + "AND IFNULL(m.menu_name,'') NOT LIKE '%已并入%' "

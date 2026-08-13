@@ -11,9 +11,10 @@ import RcStatsAnalysisPanel from '@/views/resource/RcStatsAnalysisPanel.vue'
 import { statusLabel, statusTagType } from '@/utils/status-label'
 import ExecCycleSelect from '@/views/system/ExecCycleSelect.vue'
 import { useAuthStore } from '@/stores/auth'
+import { filterHubNavByPermissions, RESOURCE_NAV_PERMISSIONS } from '@/utils/hub-nav-permission'
 
 /** 侧栏对齐 V3：数据资产区单入口；资源中心管理为可展开父级，下挂六模块 */
-const navItems: HubNavItem[] = [
+const NAV_BASE: HubNavItem[] = [
   { key: 'asset', label: '数据资产区' },
   {
     key: 'mgmt',
@@ -28,6 +29,13 @@ const navItems: HubNavItem[] = [
     ],
   },
 ]
+
+const auth = useAuthStore()
+const navItems = computed(() =>
+  filterHubNavByPermissions(NAV_BASE, auth.permissions, RESOURCE_NAV_PERMISSIONS, {
+    isSystemAdmin: auth.isSystemAdmin,
+  }),
+)
 
 interface Library {
   id: number
@@ -321,7 +329,6 @@ const searchTab = ref('fulltext')
 const catalogTab = ref('query')
 let applyingRoute = false
 
-const auth = useAuthStore()
 const isSysAdmin = computed(() => auth.isSystemAdmin)
 
 const libOverview = ref<Record<string, unknown> | null>(null)

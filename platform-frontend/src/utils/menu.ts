@@ -211,6 +211,7 @@ export function normalizeRoutePath(path: string): string {
 /**
  * 从菜单树收集可访问页面路径（仅 menuType=2 页面节点）。
  * 目录节点（menuType=1）的 path 如 /system 不参与授权，避免「有系统管理目录就能进任意 /system/*」。
+ * Hub 菜单 path 常带 query，规范化后只保留路由基路径（如 /governance）。
  */
 export function collectAllowedMenuPaths(menus: MenuNode[]): Set<string> {
   const paths = new Set<string>()
@@ -239,6 +240,7 @@ export function collectAllowedMenuPaths(menus: MenuNode[]): Set<string> {
  * - 超级管理员放行
  * - 工作台 /dashboard 放行
  * - 其余须匹配本人菜单中的页面 path（精确或为其子路径）
+ * - Hub 页：授权任一子菜单（visible=0 的 hub 节点）即可进入壳路由，子项由 Hub 侧栏再滤
  */
 export function canAccessRoutePath(
   path: string,
@@ -252,9 +254,16 @@ export function canAccessRoutePath(
   if (p === '/catalog' || p.startsWith('/catalog/') || p.startsWith('/modules/')) return true
 
   const allowed = collectAllowedMenuPaths(menus)
+  // 平台管理一级入口：首页直达统一用户管理系统
+  if (
+    (p === '/analytics/support' || p.startsWith('/analytics/support/'))
+    && menuTreeHasPath(menus, '/system')
+  ) {
+    return true
+  }
   // 落地选卡页：有任一子系统菜单即可进入
   if (p === '/analytics/general-support') {
-    return allowed.has('/analytics/support') || allowed.has('/analytics/bi')
+    return allowed.has('/analytics/support') || allowed.has('/analytics/bi') || menuTreeHasPath(menus, '/system')
   }
   if (p === '/analytics/business-support') {
     return (
@@ -265,7 +274,17 @@ export function canAccessRoutePath(
     )
   }
   for (const a of allowed) {
-    if (p === a || p.startsWith(`${a}/`)) return true
+    if (p === a || p.startsWith(`${a}/`) || a.startsWith(`${p}/`)) return true
+  }
+  return false
+}
+
+/** 菜单树（含目录节点）是否包含指定 path */
+function menuTreeHasPath(nodes: MenuNode[], target: string): boolean {
+  const t = normalizeRoutePath(target)
+  for (const n of nodes) {
+    if (normalizeRoutePath(n.path || '') === t) return true
+    if (n.children?.length && menuTreeHasPath(n.children, t)) return true
   }
   return false
 }

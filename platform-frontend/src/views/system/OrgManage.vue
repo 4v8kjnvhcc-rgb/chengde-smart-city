@@ -134,7 +134,7 @@ function buildCheckTree(rows: MenuRow[]): CheckNode[] {
   const map = new Map<number, CheckNode>()
   const roots: CheckNode[] = []
   for (const r of rows) {
-    const suffix = r.menuType === 3 ? ' [按钮]' : r.menuType === 1 ? ' [目录]' : ''
+    const suffix = r.menuType === 1 ? ' [目录]' : ''
     map.set(r.id, { id: r.id, label: `${r.menuName}${suffix}`, children: [] })
   }
   for (const r of rows) {

@@ -6,9 +6,13 @@ import { ElMessage } from 'element-plus'
 import PageCard from '@/components/common/PageCard.vue'
 import HubSideLayout, { type HubNavItem } from '@/components/common/HubSideLayout.vue'
 import { statusLabel, statusTagType } from '@/utils/status-label'
+import { useAuthStore } from '@/stores/auth'
+import { filterHubNavByPermissions, BI_NAV_PERMISSIONS } from '@/utils/hub-nav-permission'
+
+const auth = useAuthStore()
 
 /** V3.0 智能 BI 描述中的六子模块（侧栏全名，无 M 码） */
-const navItems: HubNavItem[] = [
+const NAV_BASE: HubNavItem[] = [
   { key: 'display', label: '显示引擎' },
   { key: 'component', label: '组件引擎' },
   { key: 'map', label: '地图管理' },
@@ -16,6 +20,12 @@ const navItems: HubNavItem[] = [
   { key: 'design', label: '可视化设计' },
   { key: 'self', label: '自助分析' },
 ]
+
+const navItems = computed(() =>
+  filterHubNavByPermissions(NAV_BASE, auth.permissions, BI_NAV_PERMISSIONS, {
+    isSystemAdmin: auth.isSystemAdmin,
+  }),
+)
 
 interface Widget {
   id: number

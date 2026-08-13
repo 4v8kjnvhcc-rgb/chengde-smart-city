@@ -306,7 +306,8 @@ public class PortalNavService {
     }
 
     /**
-     * 有 menu_path：须匹配用户菜单；仅有 url：登录可见；无子且无可点地址的父节点剔除。
+     * 有 menu_path/url：须匹配用户已授权菜单；纯分组仅当有可见子节点时保留。
+     * 一级 platform：无授权子且自身不可达则不展示（禁止仅凭 themeKey 空卡片）。
      */
     private List<PortalNavNodeTree> pruneByPermission(List<PortalNavNodeTree> nodes, Set<String> menuPaths) {
         List<PortalNavNodeTree> kept = new ArrayList<>();
@@ -319,15 +320,12 @@ public class PortalNavService {
             boolean navigable = hasNavigableTarget(node);
 
             if ("platform".equals(node.getNodeType())) {
-                // 业务功能平台等：无子也可展示空卡片
-                if (hasChildren || navigable || THEME_KEYS.contains(nullToEmpty(node.getThemeKey()))) {
+                if (hasChildren || (selfAllowed && navigable)) {
                     kept.add(node);
                 }
                 continue;
             }
             if (hasChildren || (selfAllowed && navigable)) {
-                kept.add(node);
-            } else if (selfAllowed && !navigable && hasChildren) {
                 kept.add(node);
             }
         }
@@ -336,49 +334,90 @@ public class PortalNavService {
 
     private boolean isNodeAllowed(PortalNavNodeTree node, Set<String> menuPaths) {
         String menuPath = node.getMenuPath();
-        if (!StringUtils.hasText(menuPath)) {
-            // 无 menu_path：仅有 url 则登录可见；皆空则作为分组标题，留给子节点决定
-            return true;
+        if (StringUtils.hasText(menuPath)) {
+            return menuPaths.stream().anyMatch(p -> pathMatches(menuPath.trim(), p));
         }
-        return menuPaths.stream().anyMatch(p -> pathMatches(menuPath, p));
+        String url = node.getUrl();
+        if (StringUtils.hasText(url)) {
+            String u = url.trim();
+            if (u.startsWith("/")) {
+                return menuPaths.stream().anyMatch(p -> pathMatches(u, p));
+            }
+            // 外链无 menu_path：不按「登录即可见」放行，避免未授权入口出现在门户
+            return false;
+        }
+        // 纯分组标题：自身不算授权，靠子节点
+        return false;
     }
 
     private boolean hasNavigableTarget(PortalNavNodeTree node) {
         return StringUtils.hasText(node.getUrl()) || StringUtils.hasText(node.getMenuPath());
     }
 
-    /** 路由/菜单 path 匹配：精确、去 query 后相等、或带 system= 时要求一致 */
+    /**
+     * 门户配置 path 与用户菜单 path 匹配。
+     * - 门户带 system/app/tab/section/module 等参数时，用户菜单必须具备相同参数值
+     * - 兼容 /exchange/application/stats-base 与 ?app=stats-base 两种写法
+     */
     static boolean pathMatches(String configured, String menuPath) {
         if (!StringUtils.hasText(configured) || !StringUtils.hasText(menuPath)) {
             return false;
         }
-        String a = configured.trim();
-        String b = menuPath.trim();
+        String a = canonicalizePath(configured.trim());
+        String b = canonicalizePath(menuPath.trim());
         if (a.equals(b)) {
             return true;
         }
         String ap = stripQuery(a);
         String bp = stripQuery(b);
+        if (!ap.equals(bp)) {
+            return false;
+        }
         String aq = queryOf(a);
         String bq = queryOf(b);
-        if (ap.equals(bp)) {
-            if (!StringUtils.hasText(aq) || !StringUtils.hasText(bq)) {
-                return true;
+        for (String key : new String[] {
+                "system", "app", "tab", "section", "module", "mSub", "qSub", "cSub", "assetTab"
+        }) {
+            String av = paramValue(aq, key);
+            if (!StringUtils.hasText(av)) {
+                continue;
             }
-            String asys = paramValue(aq, "system");
-            String bsys = paramValue(bq, "system");
-            if (StringUtils.hasText(asys) && StringUtils.hasText(bsys)) {
-                return asys.equalsIgnoreCase(bsys);
+            String bv = paramValue(bq, key);
+            if (!av.equalsIgnoreCase(bv)) {
+                return false;
             }
-            return aq.equals(bq) || bq.contains(aq) || aq.contains(bq);
         }
-        if (b.startsWith(a + "/") || a.startsWith(b + "/")) {
-            return true;
+        return true;
+    }
+
+    /** 将 /exchange/application/stats-base 规范为 ?app=stats-base，便于与 sys_menu 对齐 */
+    static String canonicalizePath(String path) {
+        String p = path.trim();
+        String base = stripQuery(p);
+        String q = queryOf(p);
+        if ("/exchange/application/stats-base".equals(base)) {
+            return mergeQuery("/exchange/application", "app=stats-base", q);
         }
-        if (b.startsWith(ap + "/") || ap.startsWith(bp + "/")) {
-            return true;
+        if ("/exchange/application/stats-domain".equals(base)) {
+            return mergeQuery("/exchange/application", "app=stats-domain", q);
         }
-        return false;
+        if ("/exchange/application/supply".equals(base)) {
+            return p.contains("?") ? p : "/exchange/application/supply";
+        }
+        if ("/exchange/application/assessment".equals(base)) {
+            return p.contains("?") ? p : "/exchange/application/assessment";
+        }
+        return p;
+    }
+
+    private static String mergeQuery(String base, String required, String existing) {
+        if (!StringUtils.hasText(existing)) {
+            return base + "?" + required;
+        }
+        if (existing.contains(required.split("=")[0] + "=")) {
+            return base + "?" + existing;
+        }
+        return base + "?" + required + "&" + existing;
     }
 
     private static String stripQuery(String path) {
@@ -406,9 +445,5 @@ public class PortalNavService {
             return null;
         }
         return s.trim();
-    }
-
-    private static String nullToEmpty(String s) {
-        return s == null ? "" : s;
     }
 }
