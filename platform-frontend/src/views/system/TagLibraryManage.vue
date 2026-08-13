@@ -190,7 +190,6 @@ defineExpose({ reload })
   <div v-loading="loading">
     <el-empty v-if="denied" description="无权访问标签库" />
     <PageCard v-else-if="!embedded" title="标签管理">
-      <p class="hint">维护 GB/T 21063.4 标准主题类目（只读）与扩展标签。资产挂标请在「数据资产标签登记 → 标签管理」完成。</p>
       <el-form inline class="portal-inline-form portal-inline-form--block">
         <el-form-item label="检索" class="portal-field-xl">
           <el-input v-model="keyword" clearable placeholder="编码/名称/描述模糊搜索" />
@@ -241,7 +240,6 @@ defineExpose({ reload })
       </el-row>
     </PageCard>
     <div v-else>
-      <p class="hint">维护 GB/T 21063.4 标准主题类目（只读）与扩展标签。资产挂标请切换到「标签管理」页签。</p>
       <el-form inline class="portal-inline-form portal-inline-form--block">
         <el-form-item label="检索" class="portal-field-xl">
           <el-input v-model="keyword" clearable placeholder="编码/名称/描述模糊搜索" />

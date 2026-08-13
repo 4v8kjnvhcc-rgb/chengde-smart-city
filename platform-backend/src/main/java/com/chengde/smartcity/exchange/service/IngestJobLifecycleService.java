@@ -34,6 +34,7 @@ public class IngestJobLifecycleService {
     private final IngIngestTaskRunMapper runMapper;
     private final IngestDsScheduleService dsScheduleService;
     private final TableIngestEngine tableIngestEngine;
+    private final CollectUploadService collectUploadService;
     private final AuditService auditService;
     private final ObjectMapper objectMapper = new ObjectMapper();
 
@@ -42,12 +43,14 @@ public class IngestJobLifecycleService {
                                      IngIngestTaskRunMapper runMapper,
                                      IngestDsScheduleService dsScheduleService,
                                      @Lazy TableIngestEngine tableIngestEngine,
+                                     @Lazy CollectUploadService collectUploadService,
                                      AuditService auditService) {
         this.taskMapper = taskMapper;
         this.versionMapper = versionMapper;
         this.runMapper = runMapper;
         this.dsScheduleService = dsScheduleService;
         this.tableIngestEngine = tableIngestEngine;
+        this.collectUploadService = collectUploadService;
         this.auditService = auditService;
     }
 
@@ -161,6 +164,7 @@ public class IngestJobLifecycleService {
                     case "run" -> tableIngestEngine.runJob(operator, id);
                     case "start" -> start(operator, id);
                     case "stop" -> stop(operator, id);
+                    case "delete" -> collectUploadService.deleteJob(operator, id);
                     default -> throw new BusinessException(400, "不支持的批量操作: " + action);
                 }
                 ok++;

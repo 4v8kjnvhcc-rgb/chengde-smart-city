@@ -22,7 +22,6 @@ const props = defineProps<{
   title: string
   channelType: string
   configFields: ConfigField[]
-  subtitle?: string
 }>()
 
 const emit = defineEmits<{
@@ -232,14 +231,6 @@ onMounted(reload)
         <div class="wiz-head">
           <div>
             <div class="wiz-title">{{ title }}</div>
-            <div class="wiz-sub">
-              {{
-                subtitle
-                  || (isFtp
-                    ? '登记 FTP/SFTP 连接与目录规则，保存后可按配置发起拉取（不再返回演示行数）'
-                    : '登记服务器可访问目录；浏览器上传 Excel/CSV 请走「手动上传数据」')
-              }}
-            </div>
           </div>
           <div class="wiz-actions">
             <el-button v-if="isLocal" type="success" @click="emit('goManualUpload')">上传 Excel/CSV</el-button>
@@ -247,23 +238,6 @@ onMounted(reload)
           </div>
         </div>
       </template>
-
-      <el-alert
-        v-if="isLocal"
-        type="warning"
-        :closable="false"
-        show-icon
-        style="margin-bottom: 12px"
-        title="本地文件落库请点右上角「上传 Excel/CSV」：选模板 → 校验预览 → 写入 smart_city_ods。下方目录接入仅登记服务端路径配置。"
-      />
-      <el-alert
-        v-else-if="isFtp"
-        type="info"
-        :closable="false"
-        show-icon
-        style="margin-bottom: 12px"
-        title="请填写真实主机、账号与远程目录。执行前会校验配置；未对接调度拉取时将明确提示，不会再伪造成功行数。"
-      />
 
       <el-form inline class="portal-inline-form portal-inline-form--block" @submit.prevent>
         <el-form-item label="关键词" class="portal-field-lg">
@@ -354,12 +328,6 @@ onMounted(reload)
   font-size: 16px;
   font-weight: 600;
   color: #303133;
-  line-height: 1.4;
-}
-.wiz-sub {
-  margin-top: 4px;
-  font-size: 12px;
-  color: #909399;
   line-height: 1.4;
 }
 .wiz-actions {

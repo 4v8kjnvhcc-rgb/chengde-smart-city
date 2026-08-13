@@ -12,6 +12,8 @@ const pageTitle = computed(() => '数据资源分类')
 const approvalEntryName = computed(() =>
   props.catalogOrigin === 'INGEST' ? '数据资源目录审批' : '资源目录审批',
 )
+/** 归集侧无目录审批，分类增删改直接生效 */
+const directApply = computed(() => props.catalogOrigin === 'INGEST')
 
 interface CategoryRow {
   id: number
@@ -214,10 +216,16 @@ async function save() {
   try {
     if (editingId.value != null) {
       await api.put(`/governance/catalog/categories/${editingId.value}`, body)
-      ElMessage.success('已提交分类编辑审批，请到「' + approvalEntryName.value + '」处理')
+      ElMessage.success(
+        directApply.value
+          ? '分类已更新'
+          : '已提交分类编辑审批，请到「' + approvalEntryName.value + '」处理',
+      )
     } else {
       await api.post('/governance/catalog/categories', body)
-      ElMessage.success('已提交分类新增审批，通过后才会出现在分类树中')
+      ElMessage.success(
+        directApply.value ? '分类已创建' : '已提交分类新增审批，通过后才会出现在分类树中',
+      )
     }
     dialogVisible.value = false
     await load()
@@ -234,7 +242,7 @@ async function remove(row: CategoryRow) {
   )
   try {
     await api.delete(`/governance/catalog/categories/${row.id}`)
-    ElMessage.success('已提交分类删除审批')
+    ElMessage.success(directApply.value ? '分类已删除' : '已提交分类删除审批')
     await load()
   } catch (e: unknown) {
     ElMessage.error((e as Error)?.message || '删除失败')
@@ -338,7 +346,7 @@ onActivated(() => {
       </el-form>
       <template #footer>
         <el-button @click="dialogVisible = false">取消</el-button>
-        <el-button type="primary" @click="save">提交审批</el-button>
+        <el-button type="primary" @click="save">{{ directApply ? '保存' : '提交审批' }}</el-button>
       </template>
     </el-dialog>
   </div>

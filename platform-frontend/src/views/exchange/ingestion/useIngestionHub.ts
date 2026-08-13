@@ -596,7 +596,7 @@ export const ingestionApi = {
   offlineJob: (id: number) => api.post<IngestTask>(`/exchange/ingestion/collect/jobs/${id}/offline`),
   startJob: (id: number) => api.post<Record<string, unknown>>(`/exchange/ingestion/collect/jobs/${id}/start`),
   stopJob: (id: number) => api.post<Record<string, unknown>>(`/exchange/ingestion/collect/jobs/${id}/stop`),
-  batchJobs: (action: 'run' | 'start' | 'stop', ids: number[]) =>
+  batchJobs: (action: 'run' | 'start' | 'stop' | 'delete', ids: number[]) =>
     api.post<{ success: number; failed: number; errors: string[] }>(
       `/exchange/ingestion/collect/jobs/batch/${action}`,
       { ids },

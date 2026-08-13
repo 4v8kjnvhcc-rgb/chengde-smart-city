@@ -630,7 +630,7 @@ function onSelectionChange(rows: IngestTask[]) {
   selectedIds.value = rows.map((r) => r.id)
 }
 
-async function batchAction(action: 'run' | 'start' | 'stop') {
+async function batchAction(action: 'run' | 'start' | 'stop' | 'delete') {
   if (!selectedIds.value.length) {
     ElMessage.warning('请先勾选任务')
     return
@@ -642,14 +642,34 @@ async function batchAction(action: 'run' | 'start' | 'stop') {
     if (d.failed > 0) {
       ElMessage.warning(`成功 ${d.success}，失败 ${d.failed}${d.errors?.[0] ? '：' + d.errors[0] : ''}`)
     } else {
-      ElMessage.success(`批量${action === 'run' ? '执行' : action === 'start' ? '启动' : '停止'}成功：${d.success}`)
+      const label =
+        action === 'run' ? '执行' : action === 'start' ? '启动' : action === 'stop' ? '停止' : '删除'
+      ElMessage.success(`批量${label}成功：${d.success}`)
     }
+    selectedIds.value = []
     await reloadJobs()
   } catch {
     /* interceptor */
   } finally {
     batchBusy.value = false
   }
+}
+
+async function batchDelete() {
+  if (!selectedIds.value.length) {
+    ElMessage.warning('请先勾选任务')
+    return
+  }
+  try {
+    await ElMessageBox.confirm(
+      `确定删除已勾选的 ${selectedIds.value.length} 个任务？仅删除任务配置，不会删除 ODS 已落库数据。仅草稿或已下线任务可删除。`,
+      '批量删除确认',
+      { type: 'warning' },
+    )
+  } catch {
+    return
+  }
+  await batchAction('delete')
 }
 
 async function openVersions(row: IngestTask) {
@@ -921,9 +941,15 @@ onMounted(() => {
         <div class="wiz-head">
           <div>
             <div class="wiz-title">库表接入配置</div>
-            <div class="wiz-sub">单表 / 多表 / 条件 SQL；上线后可执行</div>
           </div>
           <div class="wiz-actions">
+            <el-button
+              :loading="batchBusy"
+              :disabled="!selectedIds.length"
+              type="danger"
+              plain
+              @click="batchDelete"
+            >批量删除</el-button>
             <el-button :loading="batchBusy" :disabled="!selectedIds.length" @click="batchAction('run')">执行</el-button>
             <el-button :loading="batchBusy" :disabled="!selectedIds.length" type="success" @click="batchAction('start')">启动</el-button>
             <el-button :loading="batchBusy" :disabled="!selectedIds.length" type="warning" @click="batchAction('stop')">停止</el-button>

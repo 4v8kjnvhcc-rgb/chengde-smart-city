@@ -1156,7 +1156,6 @@ onMounted(() => {
         :title="activeOtherMeta?.label || '数据接入'"
         :channel-type="activeChannelType || 'API'"
         :config-fields="configFields(activeChannelType || 'API')"
-        subtitle="登记接入任务与连接参数；执行结果见列表最近说明"
       />
     </template>
 

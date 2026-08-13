@@ -54,7 +54,7 @@ public class CatalogCategoryService {
         if (catalogOrigin != null && !catalogOrigin.isBlank()) {
             q.eq(GovCatalogCategory::getCatalogOrigin, catalogOrigin.trim().toUpperCase(Locale.ROOT));
         }
-        // ???????????????????
+        // 已下线分类不在维护列表展示
         q.and(w -> w.isNull(GovCatalogCategory::getStatus)
                 .or().ne(GovCatalogCategory::getStatus, "OFFLINE"));
         return categoryMapper.selectList(q);
@@ -78,28 +78,31 @@ public class CatalogCategoryService {
     public GovCatalogCategory get(Long id) {
         GovCatalogCategory c = categoryMapper.selectById(id);
         if (c == null) {
-            throw new BusinessException(404, "?????");
+            throw new BusinessException(404, "分类不存在");
         }
         return c;
     }
 
-    /** ???????????????? */
+    /** 新建分类：归集域直接生效；治理域提交审批 */
     @Transactional
     public Long create(UserPrincipal operator, Map<String, Object> body) {
         validateCreateBody(body);
         String origin = normalizeOrigin(str(body.get("catalogOrigin"), "GOVERNANCE"));
         assertParentValid(longVal(body.get("parentId"), 0L), origin, null);
-        assertNoPendingCatAction(null, origin, "CAT_CREATE");
         Map<String, Object> payload = new LinkedHashMap<>(body);
         payload.put("catalogOrigin", origin);
         payload.put("parentId", longVal(body.get("parentId"), 0L));
+        if (isDirectApplyOrigin(origin)) {
+            return applyCreate(operator, payload);
+        }
+        assertNoPendingCatAction(null, origin, "CAT_CREATE");
         Long approvalId = insertCategoryApproval(operator, null, origin, "CAT_CREATE",
-                "????????", payload);
+                "提交新建分类审批", payload);
         log.info("catalog category create submitted approvalId={}", approvalId);
         return approvalId;
     }
 
-    /** ???????? */
+    /** 编辑分类：归集域直接生效（含所属类目/排序）；治理域提交审批 */
     @Transactional
     public void update(UserPrincipal operator, Long id, Map<String, Object> body) {
         GovCatalogCategory c = get(id);
@@ -107,25 +110,43 @@ public class CatalogCategoryService {
                 ? longVal(body.get("parentId"), 0L)
                 : (c.getParentId() == null ? 0L : c.getParentId());
         assertParentValid(parentId, c.getCatalogOrigin(), id);
-        assertNoPendingCatAction(id, c.getCatalogOrigin(), "CAT_UPDATE");
         Map<String, Object> payload = new LinkedHashMap<>(body);
         payload.put("categoryId", id);
         payload.put("parentId", parentId);
         payload.put("categoryName", body.containsKey("categoryName")
                 ? body.get("categoryName") : c.getCategoryName());
-        payload.put("categoryCode", c.getCategoryCode());
+        payload.put("categoryCode", body.containsKey("categoryCode")
+                ? body.get("categoryCode") : c.getCategoryCode());
+        if (!payload.containsKey("sortOrder")) {
+            payload.put("sortOrder", c.getSortOrder() == null ? 0 : c.getSortOrder());
+        }
+        if (!payload.containsKey("secretFlag")) {
+            payload.put("secretFlag", c.getSecretFlag() == null ? 0 : c.getSecretFlag());
+        }
+        if (!payload.containsKey("description")) {
+            payload.put("description", c.getDescription());
+        }
+        if (isDirectApplyOrigin(c.getCatalogOrigin())) {
+            applyUpdate(operator, id, payload);
+            return;
+        }
+        assertNoPendingCatAction(id, c.getCatalogOrigin(), "CAT_UPDATE");
         insertCategoryApproval(operator, id, c.getCatalogOrigin(), "CAT_UPDATE",
-                "????????", payload);
+                "提交编辑分类审批", payload);
     }
 
-    /** ???????? */
+    /** 删除分类：归集域直接生效；治理域提交审批 */
     @Transactional
     public void delete(UserPrincipal operator, Long id) {
         GovCatalogCategory c = get(id);
         Long childCount = categoryMapper.selectCount(new LambdaQueryWrapper<GovCatalogCategory>()
                 .eq(GovCatalogCategory::getParentId, id));
         if (childCount != null && childCount > 0) {
-            throw new BusinessException(400, "??????????");
+            throw new BusinessException(400, "存在子分类，无法删除");
+        }
+        if (isDirectApplyOrigin(c.getCatalogOrigin())) {
+            applyDelete(operator, id);
+            return;
         }
         assertNoPendingCatAction(id, c.getCatalogOrigin(), "CAT_DELETE");
         Map<String, Object> payload = new LinkedHashMap<>();
@@ -133,10 +154,10 @@ public class CatalogCategoryService {
         payload.put("categoryName", c.getCategoryName());
         payload.put("categoryCode", c.getCategoryCode());
         insertCategoryApproval(operator, id, c.getCatalogOrigin(), "CAT_DELETE",
-                "????????", payload);
+                "提交删除分类审批", payload);
     }
 
-    /** ??????????? */
+    /** 审批通过后实际新建 */
     @Transactional
     public Long applyCreate(UserPrincipal operator, Map<String, Object> body) {
         validateCreateBody(body);
@@ -163,12 +184,18 @@ public class CatalogCategoryService {
         return c.getId();
     }
 
-    /** ??????????? */
+    /** 审批通过后实际更新 */
     @Transactional
     public void applyUpdate(UserPrincipal operator, Long id, Map<String, Object> body) {
         GovCatalogCategory c = get(id);
         if (body.containsKey("categoryName")) {
             c.setCategoryName(required(body.get("categoryName"), "categoryName").toString());
+        }
+        if (body.containsKey("categoryCode")) {
+            String code = str(body.get("categoryCode"), c.getCategoryCode());
+            if (code != null && !code.isBlank()) {
+                c.setCategoryCode(code);
+            }
         }
         if (body.containsKey("parentId")) {
             Long parentId = longVal(body.get("parentId"), 0L);
@@ -195,18 +222,18 @@ public class CatalogCategoryService {
         }
         c.setCategoryPath(buildPath(c.getParentId(), c.getCategoryName()));
         categoryMapper.updateById(c);
-        // ??/??????????????
+        // 改名/改上级后刷新子孙路径
         refreshDescendantPaths(c.getId());
     }
 
-    /** ???????????????? */
+    /** 审批通过后实际删除；解除下属资源关联 */
     @Transactional
     public void applyDelete(UserPrincipal operator, Long id) {
         get(id);
         Long childCount = categoryMapper.selectCount(new LambdaQueryWrapper<GovCatalogCategory>()
                 .eq(GovCatalogCategory::getParentId, id));
         if (childCount != null && childCount > 0) {
-            throw new BusinessException(400, "??????????");
+            throw new BusinessException(400, "存在子分类，无法删除");
         }
         resourceMapper.update(null, new LambdaUpdateWrapper<GovCatalogResource>()
                 .eq(GovCatalogResource::getCategoryId, id)
@@ -219,36 +246,36 @@ public class CatalogCategoryService {
         required(body.get("categoryName"), "categoryName");
         required(body.get("categoryCode"), "categoryCode");
         if (body.get("secretFlag") == null) {
-            throw new BusinessException(400, "???????");
+            throw new BusinessException(400, "是否涉密为必填");
         }
     }
 
     /**
-     * ????????????????????????????
-     * parentId=0 ???????
+     * 校验所属上级：不可自挂、不可挂到子孙、须同目录域。
+     * parentId=0 表示顶级目录。
      */
     private void assertParentValid(Long parentId, String origin, Long selfId) {
         if (parentId == null || parentId <= 0L) {
             return;
         }
         if (selfId != null && Objects.equals(selfId, parentId)) {
-            throw new BusinessException(400, "????????????");
+            throw new BusinessException(400, "不能将自身设为上级分类");
         }
         GovCatalogCategory parent = categoryMapper.selectById(parentId);
         if (parent == null) {
-            throw new BusinessException(400, "???????????????????????????");
+            throw new BusinessException(400, "上级分类不存在或已失效，请重新选择");
         }
         String parentOrigin = parent.getCatalogOrigin() == null ? "GOVERNANCE" : parent.getCatalogOrigin();
         String expectOrigin = origin == null ? "GOVERNANCE" : origin.toUpperCase(Locale.ROOT);
         if (!parentOrigin.equalsIgnoreCase(expectOrigin)) {
-            throw new BusinessException(400, "??????????????");
+            throw new BusinessException(400, "上级分类与当前目录域不一致");
         }
         if (selfId != null && isDescendantOf(parentId, selfId)) {
-            throw new BusinessException(400, "?????????????????");
+            throw new BusinessException(400, "不能挂到自己的下级分类下");
         }
     }
 
-    /** ?? candidateId ??? ancestorId ??? */
+    /** 判断 candidateId 是否为 ancestorId 的子孙 */
     private boolean isDescendantOf(Long candidateId, Long ancestorId) {
         Long cursor = candidateId;
         int guard = 0;
@@ -282,12 +309,12 @@ public class CatalogCategoryService {
         if (categoryId != null) {
             q.eq(GovCatalogApproval::getCategoryId, categoryId);
         } else if (origin != null) {
-            // ?????????????
+            // 新建审批按域粗检意义不大，跳过
             return;
         }
         Long n = approvalMapper.selectCount(q);
         if (n != null && n > 0) {
-            throw new BusinessException(400, "??????????" + actionType + "???");
+            throw new BusinessException(400, "该分类已有待审批的" + actionType + "申请");
         }
     }
 
@@ -307,7 +334,7 @@ public class CatalogCategoryService {
         try {
             a.setPayloadJson(objectMapper.writeValueAsString(payload));
         } catch (Exception e) {
-            throw new BusinessException(500, "?????????");
+            throw new BusinessException(500, "审批载荷序列化失败");
         }
         approvalMapper.insert(a);
         return a.getId();
@@ -342,7 +369,7 @@ public class CatalogCategoryService {
         }
         GovCatalogCategory parent = categoryMapper.selectById(parentId);
         if (parent == null) {
-            throw new BusinessException(400, "??????");
+            throw new BusinessException(400, "父分类不存在");
         }
         String base = parent.getCategoryPath();
         if (base == null || base.isBlank()) {
@@ -351,17 +378,22 @@ public class CatalogCategoryService {
         return base + "/" + name;
     }
 
+    /** 归集侧无目录审批菜单，分类增删改直接落库 */
+    private static boolean isDirectApplyOrigin(String origin) {
+        return origin != null && "INGEST".equalsIgnoreCase(origin.trim());
+    }
+
     private static String normalizeOrigin(String origin) {
         String o = origin == null ? "GOVERNANCE" : origin.trim().toUpperCase(Locale.ROOT);
         if (!"INGEST".equals(o) && !"GOVERNANCE".equals(o)) {
-            throw new BusinessException(400, "catalogOrigin ??? INGEST / GOVERNANCE");
+            throw new BusinessException(400, "catalogOrigin 仅支持 INGEST / GOVERNANCE");
         }
         return o;
     }
 
     private static Object required(Object v, String field) {
         if (v == null || String.valueOf(v).isBlank()) {
-            throw new BusinessException(400, field + " ????");
+            throw new BusinessException(400, field + " 不能为空");
         }
         return v;
     }

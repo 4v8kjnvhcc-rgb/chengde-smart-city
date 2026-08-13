@@ -764,9 +764,6 @@ onMounted(async () => {
         <div class="wiz-head">
           <div>
             <div class="wiz-title">手动上传数据</div>
-            <div class="wiz-sub">
-              真实 Excel/CSV：建模板（登记资产）→ 选文件校验预览 → 写入 smart_city_ods，可供目录/发布引用
-            </div>
           </div>
           <div class="wiz-actions">
             <el-button @click="openCreateTemplate">新建模板</el-button>
@@ -774,14 +771,6 @@ onMounted(async () => {
           </div>
         </div>
       </template>
-
-      <el-alert
-        type="info"
-        :closable="false"
-        show-icon
-        style="margin-bottom: 12px"
-        title="与旧版「演示通道」不同：此处必须选真实文件并校验字段后才会落库；点「执行」假通道已下线。"
-      />
 
       <el-form inline class="portal-inline-form portal-inline-form--block" @submit.prevent="loadLists">
         <el-form-item label="关键词" class="portal-field-lg">
