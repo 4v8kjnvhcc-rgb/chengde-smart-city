@@ -42,10 +42,10 @@ public class HubSidebarMenuBootstrap implements ApplicationRunner {
         jdbcTemplate.update(
                 "UPDATE sys_menu SET status = 0 WHERE id = 4100 OR permission = 'exchange:project:delete'");
 
-        // 平台管理：无下级快捷入口（menu_type=2 便于角色树勾选回显），首页直达统一用户
+        // 平台管理：无下级目录快捷入口，首页直达统一用户
         jdbcTemplate.update(
                 "UPDATE sys_menu SET status = 1, visible = 1, parent_id = 1, menu_name = '平台管理', "
-                        + "menu_type = 2, path = '/system', component = NULL, "
+                        + "menu_type = 1, path = '/system', component = NULL, "
                         + "permission = 'hub:system:platform', integration_type = 'self', sort_order = 90 "
                         + "WHERE id = 19");
 

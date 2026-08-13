@@ -120,9 +120,20 @@ const navLoadError = ref(false)
 /** 路由守卫已预取时首屏直接出卡；保活返回时组件不销毁 */
 const navReady = ref(bootCache !== null)
 
-/** 一级「平台管理」（原系统管理）；集成运维已迁入通用支撑，不再作为门户卡片 */
+/** 平台管理：一级目录快捷入口，点击直达统一用户管理系统 */
+function isPlatformMgmtMenu(n: MenuNode): boolean {
+  return n.path === '/system' || n.menuName === '平台管理'
+}
+
+function isPlatformMgmtNav(n: PortalNavNode): boolean {
+  const theme = (n.themeKey || '').trim()
+  const menuPath = (n.menuPath || '').trim()
+  return n.name === '平台管理' || theme === '/system' || menuPath === '/system'
+}
+
+/** 一级「平台管理」；集成运维已迁入通用支撑，不再作为门户卡片 */
 const menuExtraPlatforms = computed(() =>
-  getAuthorizedPlatforms(auth.menus).filter((n) => n.path === '/system'),
+  getAuthorizedPlatforms(auth.menus).filter((n) => isPlatformMgmtMenu(n)),
 )
 
 const displayCards = computed<DisplayCard[]>(() => {
@@ -132,18 +143,21 @@ const displayCards = computed<DisplayCard[]>(() => {
     key: `nav-${n.id}`,
     title: n.name,
     themePath: n.themeKey || '/exchange',
-    direct: false,
+    // 门户配置若挂了平台管理，同样直达，不展开空下拉
+    direct: isPlatformMgmtNav(n),
     nav: n,
   }))
-  const fromMenu: DisplayCard[] = menuExtraPlatforms.value.map((n) => ({
-    source: 'menu' as const,
-    key: `menu-${n.id}`,
-    title: PLATFORM_LABELS[n.path] || n.menuName,
-    themePath: n.path,
-    // 平台管理：无下拉，点击直达统一用户管理系统（通用支撑平台）
-    direct: n.path === '/system',
-    menu: n,
-  }))
+  const navHasPlatformMgmt = fromNav.some((c) => c.direct && c.title === '平台管理')
+  const fromMenu: DisplayCard[] = menuExtraPlatforms.value
+    .filter(() => !navHasPlatformMgmt)
+    .map((n) => ({
+      source: 'menu' as const,
+      key: `menu-${n.id}`,
+      title: PLATFORM_LABELS[n.path] || n.menuName,
+      themePath: n.path === '/system' ? '/system' : n.path,
+      direct: true,
+      menu: n,
+    }))
   return [...fromNav, ...fromMenu]
 })
 
@@ -233,15 +247,24 @@ function toggleDrawer(index: number) {
   hoverGroupKey.value = null
 }
 
+function enterPlatformMgmt() {
+  activeIndex.value = null
+  hoverGroupKey.value = null
+  // 平台管理目录 → 统一用户管理系统
+  router.push({ path: '/analytics/support', query: { tab: 'users.org' } })
+}
+
 function onCardHeaderClick(card: DisplayCard, index: number) {
-  if (card.direct && card.source === 'menu') {
-    activeIndex.value = null
-    // 平台管理 → 统一用户管理系统（通用支撑 Hub）
-    if (card.menu.path === '/system') {
-      router.push('/analytics/support')
-      return
-    }
-    enterMenuNode(card.menu)
+  if (card.direct) {
+    enterPlatformMgmt()
+    return
+  }
+  if (card.source === 'menu' && isPlatformMgmtMenu(card.menu)) {
+    enterPlatformMgmt()
+    return
+  }
+  if (card.source === 'nav' && isPlatformMgmtNav(card.nav)) {
+    enterPlatformMgmt()
     return
   }
   toggleDrawer(index)
@@ -426,7 +449,8 @@ onActivated(() => {
         class="drawer-card"
         :class="{
           'is-open': activeIndex === index,
-          'is-dim': activeIndex !== null && activeIndex !== index,
+          // 直达卡（平台管理）不灰化，避免看起来像「没了」
+          'is-dim': !card.direct && activeIndex !== null && activeIndex !== index,
           'is-direct': card.direct,
         }"
         :style="{
@@ -451,7 +475,8 @@ onActivated(() => {
             </el-icon>
           </div>
           <div class="card-title">{{ card.title }}</div>
-          <div v-if="!card.direct" class="card-arrow" />
+          <!-- 直达卡也保留色条，避免平台管理看起来像失效 -->
+          <div class="card-arrow" :class="{ 'is-direct-arrow': card.direct }" />
         </button>
 
         <div v-if="!card.direct" class="drawer-body">
@@ -495,9 +520,7 @@ onActivated(() => {
                   ? navLoadError
                     ? '门户配置加载失败，请稍后重试或联系管理员'
                     : '暂无入口，请在「通用支撑平台 → 门户配置」中维护'
-                  : card.themePath === '/system'
-                    ? '平台管理能力已并入「大数据挖掘分析平台 → 通用支撑平台」'
-                    : '暂无入口'
+                  : '暂无入口'
               }}
             </div>
           </div>
@@ -673,6 +696,9 @@ onActivated(() => {
   height: 6px;
   border-radius: 3px;
   background: var(--card-accent);
+}
+.card-arrow.is-direct-arrow {
+  width: 54px;
 }
 .drawer-card.is-open .card-arrow {
   width: 54px;
