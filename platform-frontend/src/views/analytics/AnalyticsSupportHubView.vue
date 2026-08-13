@@ -14,6 +14,7 @@ import ClusterManage from '@/views/system/ClusterManage.vue'
 import MenuManage from '@/views/system/MenuManage.vue'
 import TagLibraryManage from '@/views/system/TagLibraryManage.vue'
 import AuditLog from '@/views/system/AuditLog.vue'
+import RuntimeErrorLog from '@/views/system/RuntimeErrorLog.vue'
 import AccessControlView from '@/views/exchange/ingestion/register/AccessControlView.vue'
 import SecurityConfig from '@/views/system/SecurityConfig.vue'
 import SystemMaintenanceView from '@/views/system/maintenance/SystemMaintenanceView.vue'
@@ -74,7 +75,8 @@ const navItems: HubNavItem[] = [
     key: 'audit',
     label: '日志审计',
     children: [
-      { key: 'audit.log', label: '日志审计' },
+      { key: 'audit.log', label: '操作审计' },
+      { key: 'audit.runtime', label: '系统运行日志' },
       { key: 'audit.access', label: '访问控制' },
       { key: 'audit.security', label: '等保安全' },
     ],
@@ -613,6 +615,7 @@ onMounted(() => {
 
         <!-- 日志审计 -->
         <div v-else-if="tab === 'audit.log'" class="support-embed"><AuditLog /></div>
+        <div v-else-if="tab === 'audit.runtime'" class="support-embed"><RuntimeErrorLog /></div>
         <PageCard v-else-if="tab === 'audit.access'" title="访问控制">
           <el-alert
             type="warning"

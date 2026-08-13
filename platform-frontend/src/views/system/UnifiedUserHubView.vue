@@ -4,20 +4,42 @@ import { useRoute, useRouter } from 'vue-router'
 import api from '@/api/http'
 import { ElMessage, ElMessageBox, type ElTree } from 'element-plus'
 import PageCard from '@/components/common/PageCard.vue'
-import HubSideLayout from '@/components/common/HubSideLayout.vue'
+import HubSideLayout, { type HubNavItem } from '@/components/common/HubSideLayout.vue'
 import { statusLabel } from '@/utils/status-label'
 import { leafKeysForTreeCheck } from '@/utils/menu-tree-check'
 import PortalNavConfigPanel from '@/views/system/PortalNavConfigPanel.vue'
+import AuditLog from '@/views/system/AuditLog.vue'
+import RuntimeErrorLog from '@/views/system/RuntimeErrorLog.vue'
 
-const navItems = [
+const navItems: HubNavItem[] = [
   { key: 'users', label: '用户中心' },
   { key: 'apps', label: '应用中心' },
   { key: 'auth', label: '认证中心' },
   { key: 'services', label: '服务中心' },
-  { key: 'audit', label: '日志审计' },
+  {
+    key: 'audit',
+    label: '日志审计',
+    children: [
+      { key: 'audit.log', label: '操作审计' },
+      { key: 'audit.runtime', label: '系统运行日志' },
+    ],
+  },
   { key: 'integration', label: '系统对接' },
   { key: 'portal', label: '门户配置' },
 ]
+
+const LEAF_KEYS = new Set<string>()
+function collectLeaves(items: HubNavItem[]) {
+  for (const it of items) {
+    if (it.children?.length) collectLeaves(it.children)
+    else LEAF_KEYS.add(it.key)
+  }
+}
+collectLeaves(navItems)
+
+const OLD_TAB_MAP: Record<string, string> = {
+  audit: 'audit.log',
+}
 
 const route = useRoute()
 const router = useRouter()
@@ -118,12 +140,13 @@ const svcForm = reactive({ serviceName: '', servicePath: '/api/v1/', protocol: '
 const applyForm = reactive({ serviceId: undefined as number | undefined, reason: '' })
 
 function resolveTab() {
-  const t = String(route.query.tab || 'users').toLowerCase()
+  let t = String(route.query.tab || 'users').toLowerCase()
   if (t === 'config') {
     router.replace('/system/maintenance')
     return
   }
-  tab.value = navItems.some((n) => n.key === t) ? t : 'users'
+  if (OLD_TAB_MAP[t]) t = OLD_TAB_MAP[t]
+  tab.value = LEAF_KEYS.has(t) ? t : 'users'
 }
 
 async function loadOverview() {
@@ -523,10 +546,12 @@ onMounted(async () => {
         <p class="hint" style="margin-top:8px">API 版本/文档/在线测试：登记服务路径后由开发侧对接 OpenAPI；本页提供注册、监控与审批。</p>
       </PageCard>
 
-      <PageCard v-if="tab === 'audit'" title="日志审计">
-        <p class="hint">登录与操作审计为 INSERT-ONLY，不可篡改删除。</p>
-        <el-button type="primary" @click="router.push('/system/audit')">打开审计日志（支持筛选）</el-button>
-      </PageCard>
+      <div v-if="tab === 'audit.log'" class="uum-embed">
+        <AuditLog />
+      </div>
+      <div v-if="tab === 'audit.runtime'" class="uum-embed">
+        <RuntimeErrorLog />
+      </div>
 
       <PageCard v-if="tab === 'portal'" title="门户配置">
         <PortalNavConfigPanel />
@@ -559,6 +584,7 @@ onMounted(async () => {
   min-height: 0;
 }
 .hint { color: var(--el-text-color-secondary); margin: 0 0 12px; line-height: 1.6; }
+.uum-embed { height: 100%; overflow: auto; padding: 0 4px 12px; }
 h4, .section-title { margin: 20px 0 12px; font-size: 14px; font-weight: 600; }
 .menu-perm-panel {
   max-height: 360px;
