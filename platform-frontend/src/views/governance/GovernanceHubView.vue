@@ -5,6 +5,7 @@ import HubSideLayout, { type HubNavItem } from '@/components/common/HubSideLayou
 import { useAuthStore } from '@/stores/auth'
 import { metaSectionItems, resolveMetaSection } from './metadata/meta-nav'
 import GovernanceEtlPanel from './etl/GovernanceEtlPanel.vue'
+import { filterHubNavByPermissions, GOVERNANCE_NAV_PERMISSIONS } from '@/utils/hub-nav-permission'
 
 const auth = useAuthStore()
 
@@ -83,26 +84,39 @@ const NAV_BASE: HubNavItem[] = [
   },
 ]
 
-/** 治理侧目录：部门管理员仅红框四项；超管含审批及全部一级模块 */
-const DEPT_CATALOG_KEYS = new Set([
-  'catalog.resources',
-  'catalog.publish',
-  'catalog.subscriptions',
-  'catalog.portal',
-])
+/** 治理侧栏按角色菜单 permission 过滤（与「配置菜单」勾选一致） */
+const navItems = computed<HubNavItem[]>(() =>
+  filterHubNavByPermissions(NAV_BASE, auth.permissions, GOVERNANCE_NAV_PERMISSIONS, {
+    isSystemAdmin: auth.isSystemAdmin,
+  }),
+)
 
-const navItems = computed<HubNavItem[]>(() => {
-  if (auth.isSystemAdmin) return NAV_BASE
-  // 部门管理员：只保留「数据目录管理系统」下红框菜单
-  const catalog = NAV_BASE.find((g) => g.key === 'catalog')
-  if (!catalog?.children) return []
-  return [
-    {
-      ...catalog,
-      children: catalog.children.filter((c) => DEPT_CATALOG_KEYS.has(c.key)),
-    },
-  ]
-})
+function firstAllowedNavKey(): string {
+  const pick = (nodes: HubNavItem[]): string | null => {
+    for (const g of nodes) {
+      if (g.children?.length) {
+        const c = pick(g.children)
+        if (c) return c
+      } else {
+        return g.key
+      }
+    }
+    return null
+  }
+  return pick(navItems.value) || DEFAULT_NAV
+}
+
+function isNavKeyAllowed(key: string): boolean {
+  if (auth.isSystemAdmin) return true
+  const walk = (nodes: HubNavItem[]): boolean => {
+    for (const n of nodes) {
+      if (n.key === key) return true
+      if (n.children?.length && walk(n.children)) return true
+    }
+    return false
+  }
+  return walk(navItems.value)
+}
 
 const DEFAULT_NAV = 'metadata.model'
 const activeNav = ref(DEFAULT_NAV)
@@ -187,16 +201,6 @@ let applyingRoute = false
 
 function resolveFromRoute() {
   applyingRoute = true
-  // 部门管理员：仅允许红框目录菜单，默认进编制
-  if (!auth.isSystemAdmin) {
-    let sub = String(route.query.cSub || 'resources')
-    if (sub === 'classify' || sub === 'approvals') sub = 'resources'
-    const key = `catalog.${sub}`
-    activeNav.value = DEPT_CATALOG_KEYS.has(key) ? key : 'catalog.resources'
-    resolveEtlView()
-    nextTick(() => { applyingRoute = false })
-    return
-  }
   const qTab = String(route.query.tab || 'metadata').toLowerCase()
   const mapped = tabMap[qTab] || 'metadata'
   if (mapped === 'etl') {
@@ -232,6 +236,9 @@ function resolveFromRoute() {
     activeNav.value = `catalog.${sub}`
   } else {
     activeNav.value = defaultNavForTab(mapped)
+  }
+  if (!isNavKeyAllowed(activeNav.value)) {
+    activeNav.value = firstAllowedNavKey()
   }
   resolveEtlView()
   nextTick(() => { applyingRoute = false })

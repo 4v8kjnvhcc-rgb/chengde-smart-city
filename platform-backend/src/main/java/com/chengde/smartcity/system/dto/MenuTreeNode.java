@@ -13,6 +13,7 @@ public record MenuTreeNode(
         String icon,
         String mCode,
         String integrationType,
+        Integer visible,
         List<MenuTreeNode> children
 ) {
 }

@@ -53,7 +53,7 @@ const formRules = {
   path: [
     {
       validator: (_: unknown, v: string, cb: (e?: Error) => void) => {
-        if (form.menuType === 1 || form.menuType === 3) return cb()
+        if (form.menuType === 1) return cb()
         if (!v?.trim()) return cb(new Error('请输入访问地址'))
         cb()
       },
@@ -120,8 +120,8 @@ const childRows = computed(() =>
 
 function typeLabel(t: number) {
   if (t === 1) return '目录'
-  if (t === 3) return '按钮'
-  return '菜单项'
+  if (t === 2) return '菜单项'
+  return '—'
 }
 
 function displayName(row: RegisterMenuRow) {
@@ -325,7 +325,7 @@ onMounted(load)
           <el-input v-model="form.icon" placeholder="可选" />
         </el-form-item>
         <el-form-item label="访问地址" prop="path">
-          <el-input v-model="form.path" placeholder="目录/按钮可空；菜单项如 /exchange/ingestion?system=register&module=..." />
+          <el-input v-model="form.path" placeholder="目录可空；菜单项如 /exchange/ingestion?system=register&module=..." />
         </el-form-item>
         <el-form-item label="文件地址">
           <el-input v-model="form.component" placeholder="组件路径，可空" />
@@ -334,7 +334,6 @@ onMounted(load)
           <el-select v-model="form.menuType" style="width: 100%">
             <el-option :value="1" label="目录" />
             <el-option :value="2" label="菜单项" />
-            <el-option :value="3" label="按钮" />
           </el-select>
         </el-form-item>
         <el-form-item label="是否隐藏">

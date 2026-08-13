@@ -55,9 +55,10 @@ public class MenuService {
     }
 
     private List<MenuTreeNode> buildTree(List<SysMenu> source) {
+        // 须包含 Hub 节点（visible=0）：角色勾选后权限/路由鉴权依赖 path+permission；
+        // 外层门户侧栏由前端 visibleMenuChildren 再按 visible 隐藏，避免撑爆顶栏。
         List<SysMenu> menus = source.stream()
                 .filter(m -> m.getMenuType() == null || m.getMenuType() != 3)
-                .filter(m -> m.getVisible() == null || m.getVisible() == 1)
                 .filter(this::isDeliveryMenu)
                 .sorted(Comparator.comparingInt(m -> m.getSortOrder() == null ? 0 : m.getSortOrder()))
                 .toList();
@@ -72,17 +73,21 @@ public class MenuService {
                 roots.add(node);
             } else if (index.containsKey(m.getParentId())) {
                 index.get(m.getParentId()).children().add(node);
+            } else {
+                // 父节点未授权时仍保留已授权子节点，避免「勾了叶子却整棵丢失」
+                roots.add(node);
             }
         }
         return roots;
     }
 
     /**
-     * 角色/组织菜单授权用：仅启用且属交付界面的菜单（排除 D05 catalog、已并入旧入口）。
+     * 角色/组织菜单授权用：仅启用的目录/菜单项（不含按钮；本系统不做按钮级授权配置）。
      */
     public List<SysMenu> listAll() {
         return menuMapper.selectList(new LambdaQueryWrapper<SysMenu>()
                         .eq(SysMenu::getStatus, 1)
+                        .ne(SysMenu::getMenuType, 3)
                         .orderByAsc(SysMenu::getSortOrder)
                         .orderByAsc(SysMenu::getId))
                 .stream()
@@ -90,10 +95,11 @@ public class MenuService {
                 .toList();
     }
 
-    /** 菜单管理页：含隐藏项与按钮，排除已停用与 D05 catalog */
+    /** 菜单管理页：不含按钮、不含已停用与 D05 catalog */
     public List<SysMenu> listForManage() {
         return menuMapper.selectList(new LambdaQueryWrapper<SysMenu>()
                         .ne(SysMenu::getStatus, 0)
+                        .ne(SysMenu::getMenuType, 3)
                         .orderByAsc(SysMenu::getSortOrder)
                         .orderByAsc(SysMenu::getId))
                 .stream()
@@ -265,6 +271,7 @@ public class MenuService {
                 m.getIcon(),
                 m.getMCode(),
                 m.getIntegrationType(),
+                m.getVisible(),
                 new ArrayList<>()
         );
     }
@@ -413,8 +420,8 @@ public class MenuService {
     }
 
     private void validateType(Integer menuType) {
-        if (menuType == null || menuType < 1 || menuType > 3) {
-            throw new BusinessException(400, "类型无效");
+        if (menuType == null || menuType < 1 || menuType > 2) {
+            throw new BusinessException(400, "类型无效（仅支持目录/菜单项，不支持按钮）");
         }
     }
 

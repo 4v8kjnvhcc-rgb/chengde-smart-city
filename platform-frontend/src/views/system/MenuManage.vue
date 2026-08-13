@@ -52,8 +52,8 @@ const formRules = {
   path: [
     {
       validator: (_: unknown, v: string, cb: (e?: Error) => void) => {
-        // 目录、按钮可不填访问地址
-        if (form.menuType === 1 || form.menuType === 3) return cb()
+        // 目录可不填访问地址
+        if (form.menuType === 1) return cb()
         if (!v?.trim()) return cb(new Error('请输入访问地址'))
         cb()
       },
@@ -131,8 +131,8 @@ function displayName(row: MenuRow) {
 
 function typeLabel(t: number) {
   if (t === 1) return '目录'
-  if (t === 3) return '按钮'
-  return '菜单项'
+  if (t === 2) return '菜单项'
+  return '—'
 }
 
 function matchKeyword(row: MenuRow, q: string) {
@@ -443,7 +443,7 @@ onMounted(load)
           <el-form-item label="访问地址" prop="path">
             <el-input
               v-model="form.path"
-              placeholder="目录/按钮可空；菜单项必填，如 /analytics/support"
+              placeholder="目录可空；菜单项必填，如 /analytics/support"
             />
           </el-form-item>
           <el-form-item label="组件路径">
@@ -453,7 +453,6 @@ onMounted(load)
             <el-select v-model="form.menuType" style="width: 100%">
               <el-option :value="1" label="目录" />
               <el-option :value="2" label="菜单项" />
-              <el-option :value="3" label="按钮" />
             </el-select>
           </el-form-item>
           <el-form-item label="是否隐藏">

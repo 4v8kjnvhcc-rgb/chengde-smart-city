@@ -24,9 +24,13 @@ import SysDictManagePanel from '@/views/system/SysDictManagePanel.vue'
 import BuiltinAttrManageView from '@/views/system/BuiltinAttrManageView.vue'
 import KettleView from '@/views/integration/KettleView.vue'
 import SchedulerView from '@/views/integration/SchedulerView.vue'
+import { useAuthStore } from '@/stores/auth'
+import { filterHubNavByPermissions, SUPPORT_NAV_PERMISSIONS } from '@/utils/hub-nav-permission'
+
+const auth = useAuthStore()
 
 /** 整合后的通用支撑平台 IA */
-const navItems: HubNavItem[] = [
+const NAV_BASE: HubNavItem[] = [
   {
     key: 'users',
     label: '用户中心',
@@ -89,6 +93,12 @@ const navItems: HubNavItem[] = [
   },
 ]
 
+const navItems = computed(() =>
+  filterHubNavByPermissions(NAV_BASE, auth.permissions, SUPPORT_NAV_PERMISSIONS, {
+    isSystemAdmin: auth.isSystemAdmin,
+  }),
+)
+
 const LEAF_KEYS = new Set<string>()
 function collectLeaves(items: HubNavItem[]) {
   for (const it of items) {
@@ -96,7 +106,7 @@ function collectLeaves(items: HubNavItem[]) {
     else LEAF_KEYS.add(it.key)
   }
 }
-collectLeaves(navItems)
+collectLeaves(NAV_BASE)
 
 const OLD_TAB_MAP: Record<string, string> = {
   users: 'users.org',
@@ -193,14 +203,22 @@ const paneTitle = computed(() => {
     }
     return null
   }
-  return find(navItems) || '通用支撑平台'
+  return find(NAV_BASE) || '通用支撑平台'
 })
 
 function resolveFromRoute() {
   applyingRoute = true
   const raw = String(route.query.tab || DEFAULT_NAV).toLowerCase()
   const mapped = OLD_TAB_MAP[raw] || raw
-  tab.value = LEAF_KEYS.has(mapped) ? mapped : DEFAULT_NAV
+  const allowed = new Set<string>()
+  const collect = (items: HubNavItem[]) => {
+    for (const it of items) {
+      if (it.children?.length) collect(it.children)
+      else allowed.add(it.key)
+    }
+  }
+  collect(navItems.value)
+  tab.value = allowed.has(mapped) ? mapped : (allowed.values().next().value || DEFAULT_NAV)
   nextTick(() => {
     applyingRoute = false
   })
@@ -220,13 +238,16 @@ function buildCheckTree(rows: MenuRow[]): CheckNode[] {
   const map = new Map<number, CheckNode>()
   const roots: CheckNode[] = []
   for (const r of rows) {
-    const suffix = r.menuType === 3 ? ' [按钮]' : r.menuType === 1 ? ' [目录]' : ''
-    map.set(r.id, { id: r.id, label: `${r.menuName}${suffix}`, children: [] })
+    const id = Number(r.id)
+    const suffix = r.menuType === 1 ? ' [目录]' : ''
+    map.set(id, { id, label: `${r.menuName}${suffix}`, children: [] })
   }
   for (const r of rows) {
-    const node = map.get(r.id)!
-    if (!r.parentId || r.parentId === 0 || !map.has(r.parentId)) roots.push(node)
-    else map.get(r.parentId)!.children!.push(node)
+    const id = Number(r.id)
+    const parentId = Number(r.parentId || 0)
+    const node = map.get(id)!
+    if (!parentId || !map.has(parentId)) roots.push(node)
+    else map.get(parentId)!.children!.push(node)
   }
   const prune = (nodes: CheckNode[]) => {
     for (const n of nodes) {
@@ -307,8 +328,7 @@ async function saveRoleMenus() {
   savingMenus.value = true
   try {
     const checked = menuTreeRef.value.getCheckedKeys(false) as number[]
-    const half = menuTreeRef.value.getHalfCheckedKeys() as number[]
-    await api.put(`/system/roles/${selectedRoleId.value}/menus`, { menuIds: [...checked, ...half] })
+    await api.put(`/system/roles/${selectedRoleId.value}/menus`, { menuIds: [...new Set(checked)] })
     ElMessage.success('角色菜单权限已保存')
   } catch (e: unknown) {
     ElMessage.error(e instanceof Error ? e.message : '保存失败')
@@ -634,7 +654,7 @@ onMounted(() => {
 
         <!-- 其他 -->
         <PageCard v-else-if="tab === 'other.roleMenus'" title="角色菜单权限">
-          <p class="ana-hint">选择角色后勾选菜单树，保存即调整该角色可见菜单与按钮权限。</p>
+          <p class="ana-hint">选择角色后勾选菜单树，保存即调整该角色可见菜单。</p>
           <el-form inline class="portal-inline-form portal-inline-form--block">
             <el-form-item label="角色" class="portal-field-xl">
               <el-select :model-value="selectedRoleId" filterable placeholder="选择角色" @update:model-value="onRoleChange">

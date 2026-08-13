@@ -83,7 +83,7 @@ function buildCheckTree(rows: MenuRow[]): CheckNode[] {
   const map = new Map<number, CheckNode>()
   const roots: CheckNode[] = []
   for (const r of rows) {
-    const suffix = r.menuType === 3 ? ' [按钮]' : r.menuType === 1 ? ' [目录]' : ''
+    const suffix = r.menuType === 1 ? ' [目录]' : ''
     map.set(r.id, { id: r.id, label: `${r.menuName}${suffix}`, children: [] })
   }
   for (const r of rows) {
@@ -103,8 +103,8 @@ function buildCheckTree(rows: MenuRow[]): CheckNode[] {
 
 function menuTypeLabel(t: number) {
   if (t === 1) return '目录'
-  if (t === 3) return '按钮'
-  return '菜单'
+  if (t === 2) return '菜单项'
+  return '—'
 }
 
 const appForm = reactive({ appName: '', appType: 'WEB', endpointUrl: '/' })
@@ -173,8 +173,7 @@ async function saveRoleMenus() {
   savingMenus.value = true
   try {
     const checked = menuTreeRef.value.getCheckedKeys(false) as number[]
-    const half = menuTreeRef.value.getHalfCheckedKeys() as number[]
-    const menuIds = [...new Set([...checked, ...half])]
+    const menuIds = [...new Set(checked)]
     await api.put(`/system/roles/${selectedRoleId.value}/menus`, { menuIds })
     ElMessage.success('角色菜单权限已保存')
   } catch (e: unknown) {
@@ -325,7 +324,7 @@ onMounted(async () => {
         </el-descriptions>
 
         <h4 class="section-title">角色菜单权限</h4>
-        <p class="hint">选择角色后勾选菜单树，保存即调整该角色（及绑定用户）可见菜单与按钮权限。</p>
+        <p class="hint">选择角色后勾选菜单树，保存即调整该角色（及绑定用户）可见菜单。</p>
         <el-form inline class="portal-inline-form portal-inline-form--block">
           <el-form-item label="角色" class="portal-field-xl">
             <el-select

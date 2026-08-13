@@ -12,6 +12,8 @@ interface UserRow {
   displayName: string
   orgId: number
   status: number
+  roleIds?: number[]
+  roleNames?: string[]
 }
 
 interface Org {
@@ -227,6 +229,7 @@ async function submitRoleConfig() {
     await api.put(`/system/users/${roleForm.id}`, { roleIds: roleForm.roleIds })
     ElMessage.success('角色已更新')
     roleDialogVisible.value = false
+    await load()
     load()
   } catch (e: unknown) {
     ElMessage.error(e instanceof Error ? e.message : '配置角色失败')
@@ -261,6 +264,21 @@ onMounted(async () => {
         <el-table-column label="机构" min-width="140">
           <template #default="{ row }">
             {{ orgNameById.get(row.orgId) || row.orgId || '—' }}
+          </template>
+        </el-table-column>
+        <el-table-column label="角色" min-width="180">
+          <template #default="{ row }">
+            <template v-if="row.roleNames?.length">
+              <el-tag
+                v-for="name in row.roleNames"
+                :key="name"
+                size="small"
+                class="role-tag"
+              >
+                {{ name }}
+              </el-tag>
+            </template>
+            <span v-else class="muted">未分配</span>
           </template>
         </el-table-column>
         <el-table-column label="状态" width="100">
@@ -420,5 +438,12 @@ onMounted(async () => {
 .pager {
   margin-top: 16px;
   justify-content: flex-end;
+}
+.role-tag {
+  margin: 0 6px 4px 0;
+}
+.muted {
+  color: var(--el-text-color-secondary);
+  font-size: 13px;
 }
 </style>

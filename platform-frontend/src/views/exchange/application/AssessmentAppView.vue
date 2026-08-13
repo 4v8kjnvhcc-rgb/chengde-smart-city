@@ -1,13 +1,22 @@
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
+import { computed, onMounted, ref } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import UserAccountMenu from '@/components/layout/UserAccountMenu.vue'
+import { useAuthStore } from '@/stores/auth'
 import { assessmentExternalUrl, openAssessmentWithPortalSso } from './application-nav'
 
 const router = useRouter()
+const auth = useAuthStore()
 const hint = ref('')
 const DEFAULT_LANDING = 'http://127.0.0.1:18081/sxev/index'
+
+const canConfig = computed(
+  () =>
+    auth.isSystemAdmin
+    || auth.hasPermission('hub:application:assessment:config')
+    || auth.hasPermission('system:exchange:assessment-config'),
+)
 
 async function openExt() {
   const landing = assessmentExternalUrl() || DEFAULT_LANDING
@@ -29,7 +38,12 @@ onMounted(openExt)
     <header class="app-shell__top">
       <div class="app-shell__brand">考核评估系统</div>
       <div class="app-shell__actions">
-        <button type="button" class="app-shell__btn" @click="router.push('/exchange/application/assessment-config')">考核配置</button>
+        <button
+          v-if="canConfig"
+          type="button"
+          class="app-shell__btn"
+          @click="router.push('/exchange/application/assessment-config')"
+        >考核配置</button>
         <button type="button" class="app-shell__btn app-shell__btn--ghost" @click="router.push('/dashboard')">返回总览</button>
         <UserAccountMenu tone="onDark" />
       </div>

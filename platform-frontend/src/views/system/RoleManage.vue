@@ -64,15 +64,18 @@ function buildTree(rows: MenuRow[]): TreeNode[] {
   const map = new Map<number, TreeNode>()
   const roots: TreeNode[] = []
   for (const r of rows) {
-    const suffix = r.menuType === 3 ? ' [按钮]' : ''
-    map.set(r.id, { id: r.id, label: `${r.menuName}${suffix}`, children: [] })
+    const id = Number(r.id)
+    const suffix = r.menuType === 1 ? ' [目录]' : ''
+    map.set(id, { id, label: `${r.menuName}${suffix}`, children: [] })
   }
   for (const r of rows) {
-    const node = map.get(r.id)!
-    if (!r.parentId || r.parentId === 0 || !map.has(r.parentId)) {
+    const id = Number(r.id)
+    const parentId = Number(r.parentId || 0)
+    const node = map.get(id)!
+    if (!parentId || !map.has(parentId)) {
       roots.push(node)
     } else {
-      map.get(r.parentId)!.children!.push(node)
+      map.get(parentId)!.children!.push(node)
     }
   }
   const prune = (nodes: TreeNode[]) => {
@@ -205,8 +208,8 @@ async function saveMenus() {
   saving.value = true
   try {
     const checked = treeRef.value.getCheckedKeys(false) as number[]
-    const half = treeRef.value.getHalfCheckedKeys() as number[]
-    const menuIds = [...new Set([...checked, ...half])]
+    // 只保存勾选项；半选父节点不入库，避免未勾选的下级仍因父 path 被门户匹配出来
+    const menuIds = [...new Set(checked)]
     await api.put(`/system/roles/${currentRoleId.value}/menus`, { menuIds })
     ElMessage.success('菜单权限已保存')
     menuDialogVisible.value = false
