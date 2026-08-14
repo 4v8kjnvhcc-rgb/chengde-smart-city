@@ -472,13 +472,7 @@ onMounted(async () => {
       </PageCard>
 
       <PageCard v-if="tab === 'auth'" title="认证中心">
-        <el-alert
-          type="info"
-          :closable="false"
-          title="一期：JWT 用户名密码 + 可选 TOTP。短信验证码 / 指纹识别为扩展配置位，不伪造已上线能力。"
-          style="margin-bottom:12px"
-        />
-        <el-table :data="authConfigs" stripe size="small">
+<el-table :data="authConfigs" stripe size="small">
           <el-table-column prop="configKey" label="配置项" width="200" />
           <el-table-column prop="description" label="说明" min-width="220" />
           <el-table-column label="值" min-width="160">

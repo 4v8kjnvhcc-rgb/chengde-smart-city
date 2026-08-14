@@ -266,14 +266,6 @@ const POPULATION_ZONE_DIMS: Record<string, DimItem[]> = {
   ],
 }
 
-const POPULATION_ZONE_ALERT: Record<string, string> = {
-  collect: '采集区 = 多源汇入设计入口。挂载 ODS/SOURCE 候选；真正抽数在数据归集（Kettle + DS）。本区不做主题整合。',
-  govern: '治理反馈区 = 清洗校核与问题回流。挂载 DWD；深链数据治理。更新维护(M155)/信息校核(M156) 为设计口径，问题反馈源部门后再入链。',
-  core: '核心区 = 「一数一源」权威库。挂载资源中心纳管表（逻辑 DWS）；深链资源中心。融合落库后供内部/共享分流。',
-  internal: '内部服务区 = 高敏受控消费边界。对齐双重授权（M158/M048）：系统管理员可授角色，不可直接授跨部门数据权。',
-  share: '共享服务区 = 目录/接口/批量 + 指标 + 十四模型。人口域模型以自研样例/结果表展示，不使用 DataEase/BI。',
-}
-
 const GOVERN_MECHANISM_CARDS = [
   {
     code: 'M155',
@@ -562,14 +554,6 @@ const zoneDims = computed<DimItem[]>(() => {
     return POPULATION_ZONE_DIMS[z]
   }
   return SEVEN_DIMS_GENERIC
-})
-
-const zoneAlertTitle = computed(() => {
-  const z = activeZone.value?.zoneCode
-  if (isPopulation.value && z && POPULATION_ZONE_ALERT[z]) {
-    return POPULATION_ZONE_ALERT[z]
-  }
-  return '区设计 = 从现有资产选型挂载（挂载≠复制）。过程层 DWD 适合治理反馈区，默认可共享资源挂核心区/共享区。'
 })
 
 function zoneApiPath(zoneKey: string) {
@@ -1257,13 +1241,7 @@ onMounted(async () => {
     <HubSideLayout v-model="activeNav" :groups="navGroups" @select="onHubSelect">
       <!-- 五区：资产挂载设计 -->
       <PageCard v-if="activeZone && !isShare" :title="pageTitle">
-        <el-alert
-          type="info"
-          :closable="false"
-          style="margin-bottom:12px"
-          :title="zoneAlertTitle"
-        />
-        <div class="dim-grid">
+<div class="dim-grid">
           <div v-for="d in zoneDims" :key="d.key" class="dim-item">
             <div class="dim-key">{{ d.key }}</div>
             <div class="dim-tip">{{ d.tip }}</div>
@@ -1544,23 +1522,7 @@ onMounted(async () => {
 
       <!-- 共享服务区：挂载 + 指标 + 模型 -->
       <PageCard v-else-if="activeZone && isShare" :title="pageTitle">
-        <el-alert
-          v-if="isPopulation"
-          type="info"
-          :closable="false"
-          style="margin-bottom:12px"
-          :title="zoneAlertTitle"
-        />
-        <el-alert
-          v-else
-          :type="dataEaseHealthy ? 'success' : 'warning'"
-          :closable="false"
-          style="margin-bottom:12px"
-          :title="dataEaseHealthy
-            ? '共享服务区：目录/接口深链 + 指标库 + 分析模型列表；DataEase 在线可实时嵌入'
-            : '共享服务区设计器可用；DataEase 离线时模型预览仅为台账（LEDGER）'"
-        />
-        <div v-if="isPopulation" class="dim-grid" style="margin-bottom:12px">
+<div v-if="isPopulation" class="dim-grid" style="margin-bottom:12px">
           <div v-for="d in zoneDims" :key="d.key" class="dim-item">
             <div class="dim-key">{{ d.key }}</div>
             <div class="dim-tip">{{ d.tip }}</div>
@@ -2020,8 +1982,7 @@ onMounted(async () => {
       </template>
 
       <template v-else>
-        <el-alert type="info" :closable="false" style="margin-bottom:8px" title="只登记归属关系，不复制数据。优先选择已登记元数据或已纳管对象。" />
-        <el-table
+<el-table
           :data="candidates"
           stripe
           size="small"
@@ -2099,14 +2060,7 @@ onMounted(async () => {
       </el-form>
 
       <template v-if="isPopulation">
-        <el-alert
-          type="info"
-          :closable="false"
-          style="margin-bottom:8px"
-          title="自研结果预览"
-          description="人口域不嵌入 DataEase；下表为模型样例/结果行（可验收 ≥100 行）。"
-        />
-        <el-table v-loading="samplesLoading" :data="modelSamples" stripe size="small" max-height="360" empty-text="暂无样例">
+<el-table v-loading="samplesLoading" :data="modelSamples" stripe size="small" max-height="360" empty-text="暂无样例">
           <el-table-column prop="rowNo" label="#" width="60" />
           <el-table-column prop="dim1" label="维度1" min-width="100" />
           <el-table-column prop="dim2" label="维度2" min-width="100" />

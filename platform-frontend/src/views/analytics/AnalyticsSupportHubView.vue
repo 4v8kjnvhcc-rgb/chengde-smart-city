@@ -519,13 +519,7 @@ onMounted(() => {
 
         <!-- 认证 / 服务 -->
         <PageCard v-else-if="tab === 'auth'" title="认证中心">
-          <el-alert
-            type="info"
-            :closable="false"
-            title="一期：JWT 用户名密码 + 可选 TOTP。短信验证码 / 指纹为扩展配置位。"
-            style="margin-bottom:12px"
-          />
-          <el-table :data="authConfigs" stripe size="small">
+<el-table :data="authConfigs" stripe size="small">
             <el-table-column prop="configKey" label="配置项" width="200" />
             <el-table-column prop="description" label="说明" min-width="220" />
             <el-table-column label="值" min-width="160">
@@ -606,13 +600,7 @@ onMounted(() => {
           <SysDictManagePanel />
         </PageCard>
         <PageCard v-else-if="tab === 'sys.cfg.general'" title="通用配置">
-          <el-alert
-            type="info"
-            :closable="false"
-            style="margin-bottom:12px"
-            title="系统级通用参数。其中「部门数据共享门户地址」用于供需对接「选择目录」提示中的跳转链接，支持相对路径（如 /exchange/analysis-portal/dept）或完整 URL。"
-          />
-          <el-table :data="systemConfigs" stripe size="small" v-loading="loading">
+<el-table :data="systemConfigs" stripe size="small" v-loading="loading">
             <el-table-column prop="configKey" label="配置项" width="200" />
             <el-table-column prop="description" label="说明" min-width="220" />
             <el-table-column label="值" min-width="280">
@@ -643,13 +631,7 @@ onMounted(() => {
         <div v-else-if="tab === 'audit.log'" class="support-embed"><AuditLog /></div>
         <div v-else-if="tab === 'audit.runtime'" class="support-embed"><RuntimeErrorLog /></div>
         <PageCard v-else-if="tab === 'audit.access'" title="访问控制">
-          <el-alert
-            type="warning"
-            :closable="false"
-            style="margin-bottom:12px"
-            title="双入口：本页为系统侧访问控制；归集平台「访问控制管理」入口同时保留。"
-          />
-          <el-button
+<el-button
             style="margin-bottom:12px"
             @click="router.push('/exchange/ingestion?system=register&module=m048')"
           >
@@ -696,13 +678,7 @@ onMounted(() => {
         </PageCard>
 
         <PageCard v-else-if="tab === 'other.probe'" title="对接探测">
-          <el-alert
-            type="info"
-            :closable="false"
-            title="探测 DataEase / DolphinScheduler / OpenMetadata 等；未启动目标服务时如实显示未连通。"
-            style="margin-bottom:12px"
-          />
-          <el-table :data="probeIntegrations" stripe size="small">
+<el-table :data="probeIntegrations" stripe size="small">
             <el-table-column prop="integrationCode" label="编码" width="100" />
             <el-table-column prop="integrationName" label="名称" />
             <el-table-column prop="targetSystem" label="目标系统" width="140" />

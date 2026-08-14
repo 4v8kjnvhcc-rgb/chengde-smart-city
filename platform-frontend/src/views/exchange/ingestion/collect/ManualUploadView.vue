@@ -1139,11 +1139,6 @@ onMounted(async () => {
   font-size: 15px;
   font-weight: 600;
 }
-.wiz-sub {
-  margin-top: 4px;
-  font-size: 12px;
-  color: var(--portal-text-secondary, #909399);
-}
 .wiz-actions {
   display: flex;
   gap: 8px;

@@ -393,6 +393,13 @@ public class PortalNavService {
     /** 将 /exchange/application/stats-base 规范为 ?app=stats-base，便于与 sys_menu 对齐 */
     static String canonicalizePath(String path) {
         String p = path.trim();
+        // 门户配置若误带前端 publicPath 前缀，与 sys_menu（无 /bigdata-web）对齐
+        if (p.startsWith("/bigdata-web/") || "/bigdata-web".equals(p)) {
+            p = p.substring("/bigdata-web".length());
+            if (p.isEmpty()) {
+                p = "/";
+            }
+        }
         String base = stripQuery(p);
         String q = queryOf(p);
         if ("/exchange/application/stats-base".equals(base)) {

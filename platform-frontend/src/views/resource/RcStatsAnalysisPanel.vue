@@ -472,16 +472,6 @@ onBeforeUnmount(() => {
     <el-tabs v-model="activeTab" @tab-change="onTabChange">
       <!-- 一、汇总聚合与描述性统计 -->
       <el-tab-pane label="汇总统计" name="summary">
-        <el-alert
-          v-if="summary"
-          type="info"
-          :closable="false"
-          show-icon
-          style="margin-bottom: 12px"
-          :title="summary.scopeHint"
-        >
-          统计时间：{{ summary.generatedAt }}
-        </el-alert>
         <el-form inline class="portal-inline-form portal-inline-form--block">
           <el-form-item label="库类型" class="portal-field-md">
             <el-select v-model="filterLibType" clearable placeholder="全部">

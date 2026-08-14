@@ -1347,13 +1347,6 @@ onMounted(() => {
     <HubSideLayout v-model="activeNav" :items="navItems">
       <!-- 数据资产区：四模块页内 Tab -->
       <PageCard v-if="activeNav === 'asset'" title="数据资产区">
-        <el-alert
-          type="info"
-          :closable="false"
-          show-icon
-          style="margin-bottom:12px"
-          title="数据资产区是归集、治理、融合的最终成果区。以表为资产核心单元，按基础库/半结构化/非结构化盘点，并按业务数据中心模块化管理；文件目录库与索引库支撑非结构化与结构化互查。"
-        />
         <el-tabs v-model="assetTab">
           <el-tab-pane label="基础库、半结构化和非结构化库管理" name="libraries">
             <el-descriptions v-if="inventory" :column="4" border size="small" style="margin-bottom:12px">
@@ -1434,13 +1427,6 @@ onMounted(() => {
           </el-tab-pane>
 
           <el-tab-pane label="数据资产管理与分类" name="classify">
-            <el-alert
-              type="info"
-              :closable="false"
-              show-icon
-              style="margin-bottom:12px"
-              title="以表为资产核心单元：须从已登记元数据候选选用；关联资源类型（基础库/半结构化/非结构化）与主题/专题库，保证盘点精准。"
-            />
             <el-form inline class="portal-inline-form portal-inline-form--block">
               <el-form-item label="名称" class="portal-field-md">
                 <el-input v-model="themeForm.themeName" placeholder="主题/专题库名称" />
@@ -1580,14 +1566,7 @@ onMounted(() => {
           </el-tab-pane>
 
           <el-tab-pane label="数据资产中心模块化管理" name="modules">
-            <el-alert
-              type="info"
-              :closable="false"
-              show-icon
-              style="margin-bottom:12px"
-              title="按业务领域划分数据中心模块，统一管理各模块下纳管表，支撑跨领域资产集成与盘点。"
-            />
-            <el-row :gutter="12" style="margin-bottom:16px">
+<el-row :gutter="12" style="margin-bottom:16px">
               <el-col v-for="m in assetModules" :key="m.moduleCode" :xs="24" :sm="12" :md="8" style="margin-bottom:12px">
                 <el-card shadow="hover" body-style="padding:12px">
                   <div style="font-weight:600;margin-bottom:6px">{{ m.moduleName }}</div>
@@ -1632,14 +1611,7 @@ onMounted(() => {
           </el-tab-pane>
 
           <el-tab-pane label="文件目录库、文件索引库管理" name="files">
-            <el-alert
-              type="info"
-              :closable="false"
-              show-icon
-              style="margin-bottom:12px"
-              :title="fileLibOverview?.hint || '维护文件目录库与文件索引库，支持非结构化与结构化数据关联查询。'"
-            />
-            <el-descriptions :column="4" border size="small" style="margin-bottom:12px">
+<el-descriptions :column="4" border size="small" style="margin-bottom:12px">
               <el-descriptions-item label="文档总数">{{ fileLibOverview?.documentCount ?? unsOverview?.documents ?? 0 }}</el-descriptions-item>
               <el-descriptions-item label="目录库条目">{{ fileLibOverview?.catalogCount ?? 0 }}</el-descriptions-item>
               <el-descriptions-item label="索引库条目">{{ fileLibOverview?.indexCount ?? 0 }}</el-descriptions-item>
@@ -1715,14 +1687,7 @@ onMounted(() => {
 
       <!-- 分区设计管理：策略 / 监控 / 维护 / 备份恢复 -->
       <PageCard v-else-if="activeNav === 'partition'" title="分区设计管理">
-        <el-alert
-          type="info"
-          :closable="false"
-          show-icon
-          style="margin-bottom:12px"
-          title="通过范围/哈希/列表策略与分区键设计提升查询与可维护性。物理 ALTER PARTITION 仅预检不自动执行；维护除统计更新外以台账登记；恢复禁止自动覆写生产表。"
-        />
-        <el-tabs v-model="partitionTab">
+<el-tabs v-model="partitionTab">
           <el-tab-pane label="策略设计" name="design">
             <el-form inline class="portal-inline-form portal-inline-form--block">
               <el-form-item label="策略名" class="portal-field-md">
@@ -1964,14 +1929,7 @@ onMounted(() => {
           </el-tab-pane>
 
           <el-tab-pane label="备份恢复" name="backup">
-            <el-alert
-              type="warning"
-              :closable="false"
-              show-icon
-              style="margin-bottom:12px"
-              title="备份为纳管表 JDBC 逻辑备份（可 SHA-256 校验）；恢复仅登记计划，禁止自动覆写生产表。"
-            />
-            <el-form inline class="portal-inline-form portal-inline-form--block">
+<el-form inline class="portal-inline-form portal-inline-form--block">
               <el-form-item label="纳管表" class="portal-field-xl">
                 <el-select v-model="backupPartitionForm.managedTableId" filterable placeholder="选择已纳管表">
                   <el-option v-for="t in managedTables" :key="t.id" :label="t.physicalTable" :value="t.id" />
@@ -2058,14 +2016,7 @@ onMounted(() => {
             <RcStorageLifecyclePanel mode="destroy" />
           </el-tab-pane>
           <el-tab-pane label="执行策略管理" name="policy">
-            <el-alert
-              type="info"
-              :closable="false"
-              show-icon
-              style="margin-bottom:12px"
-              title="通过关联纳管表配置生命周期策略，支持保存天数与周期 Cron 自动调度。"
-            />
-            <el-form inline class="portal-inline-form portal-inline-form--block">
+<el-form inline class="portal-inline-form portal-inline-form--block">
               <el-form-item label="策略名" class="portal-field-md">
                 <el-input v-model="policyForm.policyName" placeholder="生命周期策略名称" />
               </el-form-item>
@@ -2259,14 +2210,7 @@ onMounted(() => {
 
       <!-- 资产目录 -->
       <PageCard v-else-if="activeNav === 'catalog'" title="资产目录管理">
-        <el-alert
-          type="info"
-          :closable="false"
-          show-icon
-          style="margin-bottom:12px"
-          title="门户各子系统共享同一套公开资源目录；子系统各自维护未公开目录。公开与审批由系统管理员控制；公开目录可驱动数据交换并自动完成交换台账。"
-        />
-        <el-tabs v-model="catalogTab">
+<el-tabs v-model="catalogTab">
           <el-tab-pane label="目录查询" name="query">
             <el-form inline class="portal-inline-form portal-inline-form--block">
               <el-form-item label="关键词" class="portal-field-md">
@@ -2390,17 +2334,10 @@ onMounted(() => {
                 <el-button type="primary" @click="createCatalog">登记编目</el-button>
               </el-form-item>
             </el-form>
-            <el-alert type="warning" :closable="false" title="新登记目录默认为子系统未公开目录；提交公开后由系统管理员审批，通过后进入共享公开目录。" />
-          </el-tab-pane>
+</el-tab-pane>
 
           <el-tab-pane label="公开审批" name="approve">
-            <el-alert
-              type="info"
-              :closable="false"
-              style="margin-bottom:12px"
-              :title="isSysAdmin ? '系统管理员可审批公开申请。通过后进入各子系统共享的公开资源目录。' : '仅系统管理员可审批公开申请；您可查看待审列表。'"
-            />
-            <el-table :data="catalogEntries" stripe size="small">
+<el-table :data="catalogEntries" stripe size="small">
               <el-table-column prop="entryCode" label="编码" width="140" />
               <el-table-column prop="entryName" label="名称" min-width="120" />
               <el-table-column prop="subsystemName" label="申请子系统" min-width="140" />
@@ -2467,21 +2404,9 @@ onMounted(() => {
 
       <!-- 数据库检索查询：数据全文检索 / 元数据检索 / 数据查询与下载 -->
       <PageCard v-else-if="activeNav === 'search'" title="数据库检索查询">
-        <el-alert
-          type="info"
-          :closable="false"
-          style="margin-bottom:12px"
-          title="面向数据管理员与业务分析人员：可直接全文检索关键业务数据，也可先通过元数据定位物理表，再查询或下载。"
-        />
-        <el-tabs v-model="searchTab">
+<el-tabs v-model="searchTab">
           <el-tab-pane label="数据全文检索" name="fulltext">
-            <el-alert
-              type="success"
-              :closable="false"
-              style="margin-bottom:12px"
-              title="通过关键词检索核心数据资产（如人物姓名、身份证号码、手机号），浏览命中结果与详细信息；也可锁定物理表后做条件查询/下载。"
-            />
-            <el-form inline class="portal-inline-form portal-inline-form--block">
+<el-form inline class="portal-inline-form portal-inline-form--block">
               <el-form-item label="关键词" class="portal-field-xl">
                 <el-input
                   v-model="fulltextQ"
@@ -2548,13 +2473,7 @@ onMounted(() => {
           </el-tab-pane>
 
           <el-tab-pane label="元数据检索" name="meta">
-            <el-alert
-              type="success"
-              :closable="false"
-              style="margin-bottom:12px"
-              title="当不明确业务数据位置时，可按分类、标签、数据项等从元数据库查找，锁定物理表后再按条件浏览或下载。"
-            />
-            <el-form inline class="portal-inline-form portal-inline-form--block">
+<el-form inline class="portal-inline-form portal-inline-form--block">
               <el-form-item label="关键词" class="portal-field-md">
                 <el-input v-model="metaQ" placeholder="编码/名称/表名" clearable @keyup.enter="doMetadataSearch" />
               </el-form-item>
@@ -2615,13 +2534,7 @@ onMounted(() => {
           </el-tab-pane>
 
           <el-tab-pane label="数据查询与下载" name="query">
-            <el-alert
-              type="success"
-              :closable="false"
-              style="margin-bottom:12px"
-              title="锁定已纳管物理表后，可按关键词/指定列过滤浏览业务数据，并下载 CSV。"
-            />
-            <el-form inline class="portal-inline-form portal-inline-form--block">
+<el-form inline class="portal-inline-form portal-inline-form--block">
               <el-form-item label="纳管表" class="portal-field-xl">
                 <el-select v-model="queryTableId" placeholder="选择已纳管表" filterable clearable>
                   <el-option

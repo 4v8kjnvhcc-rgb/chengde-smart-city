@@ -513,15 +513,6 @@ onMounted(load)
 
 <template>
   <div class="std-mon">
-    <el-alert
-      type="info"
-      :closable="false"
-      show-icon
-      class="std-tip"
-      title="数据标准监控"
-      description="对数据采集抽取、集成融合总体情况与标准质量全程监控；问题可定位到库/表/字段/值，并支持邮件或短信通知。本页为演示。"
-    />
-
     <el-tabs v-model="subTab" class="std-sub">
       <el-tab-pane label="命名标准监控" name="naming">
         <el-form inline class="portal-inline-form portal-inline-form--block" @submit.prevent="resetNamePage">
@@ -737,9 +728,6 @@ onMounted(load)
   display: flex;
   flex-direction: column;
   gap: 12px;
-}
-.std-tip {
-  border-radius: 8px;
 }
 .sec-title {
   margin: 14px 0 8px;

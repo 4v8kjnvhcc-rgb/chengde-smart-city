@@ -1151,28 +1151,6 @@ async function doRecheck() {
           title="该分类下暂无数据源，请先在「数据源管理」中在该分类下创建并配置 JDBC。"
           style="margin-bottom:12px"
         />
-        <el-alert
-          v-if="form.modelType === 'TABLE'"
-          type="info"
-          :closable="false"
-          title="表模型：为所选数据源定义一张新表，填写表名并手动设计全部字段后保存；保存成功会在对应库中 CREATE TABLE。"
-          style="margin-bottom:12px"
-        />
-        <el-alert
-          v-else-if="form.columnAction === 'ADD'"
-          type="info"
-          :closable="false"
-          title="新增字段：上方展示源表现有字段；下方可一次添加多个新字段，保存后会在物理库执行 ALTER TABLE ADD COLUMN。"
-          style="margin-bottom:12px"
-        />
-        <el-alert
-          v-else
-          type="info"
-          :closable="false"
-          title="修改字段：选择已有字段并加载当前结构，修改类型、长度、必填等规范后保存。"
-          style="margin-bottom:12px"
-        />
-
         <template v-if="form.modelType === 'COLUMN' && form.columnAction === 'ADD'">
           <el-divider content-position="left">
             现有字段（{{ existingTableFields.length }}）

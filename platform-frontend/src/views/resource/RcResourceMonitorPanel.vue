@@ -126,15 +126,7 @@ onMounted(loadOverview)
 
 <template>
   <div v-loading="loading">
-    <el-alert
-      type="info"
-      :closable="false"
-      show-icon
-      style="margin-bottom:12px"
-      :title="hint || '对数据资源进行可用性、完整性、安全性与性能的实时监控'"
-    />
-
-    <el-form inline class="portal-inline-form portal-inline-form--block">
+<el-form inline class="portal-inline-form portal-inline-form--block">
       <el-form-item label="最近采集">
         <span>{{ checkedAt }}</span>
       </el-form-item>

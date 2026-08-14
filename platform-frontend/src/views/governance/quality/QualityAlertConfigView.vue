@@ -94,13 +94,6 @@ onMounted(load)
               placeholder="多个邮箱用分号分隔；实际发送走「系统管理 · 邮件配置」SMTP"
             />
           </el-form-item>
-          <el-alert
-            type="info"
-            :closable="false"
-            show-icon
-            title="发送依赖系统邮箱"
-            description="请先在系统管理中启用 SMTP；质量异常时将向上述收件人推送库/表/字段/值明细。"
-          />
         </el-form>
       </div>
 

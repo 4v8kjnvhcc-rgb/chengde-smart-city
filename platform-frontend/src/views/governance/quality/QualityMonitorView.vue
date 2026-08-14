@@ -294,15 +294,6 @@ onBeforeUnmount(() => {
 
       <el-tab-pane label="数据质量监控" name="quality" lazy>
         <div v-loading="loading" class="qm-quality">
-          <el-alert
-            type="info"
-            :closable="false"
-            show-icon
-            class="qm-tip"
-            title="全流程质量监控"
-            description="「质量方案管理」发布后进入本页；支持库/表/字段/值定位，异常结果邮件/短信告警到责任人，并可查看校验与推送日志。"
-          />
-
           <div class="lineage">
             <div v-for="(n, i) in lineageNodes" :key="n.name" class="lineage__item">
               <div class="lineage__node">
@@ -477,10 +468,6 @@ onBeforeUnmount(() => {
   display: flex;
   flex-direction: column;
   gap: 4px;
-}
-.qm-tip {
-  margin-bottom: 12px;
-  border-radius: 8px;
 }
 .lineage {
   display: flex;

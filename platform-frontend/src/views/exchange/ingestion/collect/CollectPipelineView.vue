@@ -248,10 +248,10 @@ onMounted(() => {
     />
 
     <el-steps :active="step" finish-status="success" align-center style="margin-bottom:24px">
-      <el-step title="汇聚数据分类" description="维护并选用数据分类" @click="goStep(0)" />
-      <el-step title="探查配置" description="选择登记资产并配置探查项" @click="goStep(1)" />
-      <el-step title="定义规则" description="基于探查结果定义数据规则" @click="goStep(2)" />
-      <el-step title="运行与对账" description="执行接入任务并生成对账报告" @click="goStep(3)" />
+      <el-step title="汇聚数据分类" @click="goStep(0)" />
+      <el-step title="探查配置" @click="goStep(1)" />
+      <el-step title="定义规则" @click="goStep(2)" />
+      <el-step title="运行与对账" @click="goStep(3)" />
     </el-steps>
 
     <div v-show="step === 0">
@@ -371,11 +371,6 @@ onMounted(() => {
 </template>
 
 <style scoped>
-.hint {
-  color: var(--el-text-color-secondary);
-  margin: 0 0 16px;
-  line-height: 1.6;
-}
 .classify-actions {
   margin-top: 16px;
   display: flex;

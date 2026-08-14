@@ -1302,7 +1302,6 @@ onMounted(() => {
             <div class="uns-register-card">
               <div class="uns-register-card__header">
                 <span class="uns-register-card__title">登记本地文件</span>
-                <span class="uns-register-card__desc">选择本地文件上传登记；须绑定分类后才能发布，发布后可建立检索索引</span>
               </div>
               <el-form inline class="portal-inline-form">
                 <el-form-item label="标题" class="portal-field-lg">
@@ -1872,14 +1871,7 @@ onMounted(() => {
         </el-dialog>
 
         <el-drawer v-model="similarVisible" :title="`相似检索：${similarSeedTitle}`" size="520px">
-          <el-alert
-            type="info"
-            :closable="false"
-            show-icon
-            title="按标签、关键词、主题与分类相似度匹配相关文档"
-            class="uns-meta-flow"
-          />
-          <el-table v-loading="similarLoading" :data="similarHits" stripe size="small">
+<el-table v-loading="similarLoading" :data="similarHits" stripe size="small">
             <el-table-column prop="title" label="相似文档" min-width="160" show-overflow-tooltip />
             <el-table-column label="相似度" width="90">
               <template #default="{ row }">
@@ -2403,10 +2395,6 @@ onMounted(() => {
   font-size: 14px;
   font-weight: 600;
   color: var(--el-text-color-primary);
-}
-.uns-register-card__desc {
-  font-size: 12px;
-  color: var(--el-text-color-secondary);
 }
 .uns-toolbar {
   display: flex;

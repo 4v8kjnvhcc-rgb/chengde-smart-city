@@ -375,15 +375,6 @@ onBeforeUnmount(() => {
 <template>
   <div>
     <PageCard title="数据质量评估">
-      <el-alert
-        type="info"
-        :closable="false"
-        show-icon
-        class="assess-tip"
-        title="评估说明"
-        description="按完整性、一致性、准确性、及时性等规则，对质量规则配置中的任务进行评估。选择任务后点击「质量评估」，可查看维度得分、趋势、问题数据集中区与稽核执行明细。"
-      />
-
       <el-form inline class="portal-inline-form portal-inline-form--block">
         <el-form-item label="关键字" class="portal-field-xl">
           <el-input
@@ -613,9 +604,6 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
-.assess-tip {
-  margin-bottom: 12px;
-}
 .assess-report {
   min-height: 240px;
   display: flex;

@@ -184,15 +184,6 @@ onMounted(load)
 
 <template>
   <div class="qm-panel">
-    <el-alert
-      type="info"
-      :closable="false"
-      show-icon
-      class="qm-tip"
-      title="流程调度控制"
-      description="在 ETL 调度中注入稽核流程控制。当稽核出影响后续加工的关键问题时，数据加工流程自动停止；问题处理完毕后 ETL 自动继续。本页为演示数据。"
-    />
-
     <div class="qm-stats">
       <div class="qm-stat"><span>门禁流程</span><b>{{ rows.length }}</b></div>
       <div class="qm-stat tone-run"><span>加工中</span><b>{{ runningCount }}</b></div>
@@ -284,9 +275,6 @@ onMounted(load)
   display: flex;
   flex-direction: column;
   gap: 12px;
-}
-.qm-tip {
-  border-radius: 8px;
 }
 .qm-stats {
   display: grid;

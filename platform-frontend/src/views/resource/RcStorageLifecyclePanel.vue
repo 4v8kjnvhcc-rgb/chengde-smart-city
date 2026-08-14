@@ -191,30 +191,6 @@ onMounted(reload)
 <template>
   <div v-loading="loading">
     <el-alert
-      v-if="mode === 'backup'"
-      type="info"
-      :closable="false"
-      show-icon
-      title="数据备份：配置保存时间、存储策略，选择备份库与纳管表，按备份表规则执行逻辑备份。"
-      style="margin-bottom:12px"
-    />
-    <el-alert
-      v-if="mode === 'archive'"
-      type="info"
-      :closable="false"
-      show-icon
-      title="数据归档：配置保存时间与压缩方式；执行仅记台账并生成归档产物位置，不移动物理业务数据。"
-      style="margin-bottom:12px"
-    />
-    <el-alert
-      v-if="mode === 'destroy'"
-      type="warning"
-      :closable="false"
-      show-icon
-      title="数据销毁：可配置销毁规则以释放存储规划；禁止自动物理删除，执行将被拒绝并记运行日志。"
-      style="margin-bottom:12px"
-    />
-    <el-alert
       v-if="lastRun"
       :type="lastRun.status === 'LEDGER' ? 'warning' : 'success'"
       :closable="true"
