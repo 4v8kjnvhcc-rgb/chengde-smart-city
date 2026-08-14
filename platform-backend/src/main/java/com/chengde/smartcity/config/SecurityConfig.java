@@ -34,7 +34,8 @@ public class SecurityConfig {
                 .cors(c -> c.configurationSource(corsConfigurationSource()))
                 .sessionManagement(s -> s.sessionCreationPolicy(SessionCreationPolicy.STATELESS))
                 .authorizeHttpRequests(auth -> auth
-                        .requestMatchers("/api/v1/auth/login", "/api/v1/auth/refresh", "/api/v1/auth/captcha").permitAll()
+                        .requestMatchers("/api/v1/auth/login", "/api/v1/auth/refresh", "/api/v1/auth/captcha",
+                                "/api/v1/auth/crypto/public-key").permitAll()
                         .requestMatchers(HttpMethod.GET, "/api/v1/system/appearance/public").permitAll()
                         .requestMatchers(HttpMethod.GET, "/api/v1/system/appearance/files/**").permitAll()
                         .requestMatchers("/swagger-ui/**", "/api/v1/openapi/**", "/v3/api-docs/**").permitAll()

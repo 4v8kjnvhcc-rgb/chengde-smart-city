@@ -8,6 +8,7 @@ import PageHeader from '@/components/common/PageHeader.vue'
 import PageCard from '@/components/common/PageCard.vue'
 import { statusLabel } from '@/utils/status-label'
 import { leafKeysForTreeCheck } from '@/utils/menu-tree-check'
+import { encryptTransportPayload } from '@/utils/transport-crypto'
 
 interface Org {
   id: number
@@ -351,7 +352,15 @@ async function submitCreateUser() {
   }
   submitting.value = true
   try {
-    await api.post('/system/users', { ...userForm })
+    const passwordTransport = await encryptTransportPayload({ password: userForm.password })
+    await api.post('/system/users', {
+      username: userForm.username,
+      passwordTransport,
+      displayName: userForm.displayName,
+      phone: userForm.phone,
+      orgId: userForm.orgId,
+      roleIds: userForm.roleIds,
+    })
     ElMessage.success('用户已创建')
     userDialogVisible.value = false
     await loadUsers()
@@ -400,7 +409,8 @@ async function resetPassword(row: UserRow) {
       inputType: 'password',
       inputValue: 'Test@12345',
     })
-    await api.put(`/system/users/${row.id}/password`, { password: value })
+    const envelope = await encryptTransportPayload({ password: value })
+    await api.put(`/system/users/${row.id}/password`, envelope)
     ElMessage.success('密码已重置')
   } catch (e: unknown) {
     if (e !== 'cancel' && e !== 'close') {

@@ -190,7 +190,7 @@ function syncFromRoute() {
         ...route.query,
         system: 'collect',
         module: 'ingest.structured',
-        section: 'structured-local',
+        section: 'structured-upload',
         tab: undefined,
       },
     })

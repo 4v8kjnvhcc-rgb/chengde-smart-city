@@ -1,5 +1,6 @@
 package com.chengde.smartcity.system.service;
 
+import com.chengde.smartcity.auth.TransportCryptoService;
 import com.chengde.smartcity.common.exception.BusinessException;
 import com.chengde.smartcity.security.UserPrincipal;
 import com.chengde.smartcity.system.entity.SysMailConfig;
@@ -22,9 +23,11 @@ public class MailConfigService {
     private static final long ROW_ID = 1L;
 
     private final SysMailConfigMapper mapper;
+    private final TransportCryptoService transportCryptoService;
 
-    public MailConfigService(SysMailConfigMapper mapper) {
+    public MailConfigService(SysMailConfigMapper mapper, TransportCryptoService transportCryptoService) {
         this.mapper = mapper;
+        this.transportCryptoService = transportCryptoService;
     }
 
     public SysMailConfig requireRow() {
@@ -76,10 +79,10 @@ public class MailConfigService {
         if (body.containsKey("username")) {
             c.setUsername(asStr(body.get("username")));
         }
-        if (body.containsKey("password") && body.get("password") != null
-                && !String.valueOf(body.get("password")).isBlank()) {
-            // 简化：明文存库（生产可换密文）；前端回显不返回
-            c.setPasswordEnc(String.valueOf(body.get("password")));
+        transportCryptoService.rejectPlaintextPassword(body);
+        String transportPwd = transportCryptoService.resolveOptionalTransportPassword(body);
+        if (transportPwd != null && !transportPwd.isBlank()) {
+            c.setPasswordEnc(transportPwd);
         }
         if (body.containsKey("fromName")) {
             c.setFromName(asStr(body.get("fromName")));

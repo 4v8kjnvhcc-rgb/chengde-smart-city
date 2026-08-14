@@ -5,6 +5,7 @@ import { ElMessage } from 'element-plus'
 import { ArrowDown, User } from '@element-plus/icons-vue'
 import { useAuthStore } from '@/stores/auth'
 import api from '@/api/http'
+import { encryptTransportPayload } from '@/utils/transport-crypto'
 
 const props = withDefaults(
   defineProps<{
@@ -45,10 +46,11 @@ async function submitPwd() {
     return
   }
   try {
-    await api.put('/auth/password', {
+    const envelope = await encryptTransportPayload({
       oldPassword: pwdForm.oldPassword,
       newPassword: pwdForm.newPassword,
     })
+    await api.put('/auth/password', envelope)
     ElMessage.success('密码已修改')
     pwdVisible.value = false
     pwdForm.oldPassword = ''

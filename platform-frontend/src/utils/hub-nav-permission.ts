@@ -1,4 +1,5 @@
 import type { HubNavItem } from '@/components/common/HubSideLayout.vue'
+import type { MenuNode } from '@/stores/auth'
 
 /**
  * 按角色 permission 过滤 Hub 侧栏，使展示与「配置菜单」勾选一致。
@@ -46,6 +47,67 @@ export function filterHubNavByPermissions(
     return out
   }
 
+  return walk(items)
+}
+
+/**
+ * 按 sys_menu.visible 过滤 Hub 侧栏（对超管同样生效）。
+ * 叶子命中 path?tab=key 或 permission 映射；任一世系节点 visible=0 则隐藏。
+ */
+export function filterHubNavByMenuVisible(
+  items: HubNavItem[],
+  menus: MenuNode[] | undefined | null,
+  permissionByNavKey: Record<string, string | string[]>,
+): HubNavItem[] {
+  if (!menus?.length) return items
+
+  const flat: MenuNode[] = []
+  const byId = new Map<number, MenuNode>()
+  const walkMenu = (nodes: MenuNode[]) => {
+    for (const n of nodes) {
+      flat.push(n)
+      byId.set(n.id, n)
+      if (n.children?.length) walkMenu(n.children)
+    }
+  }
+  walkMenu(menus)
+
+  const lineageHidden = (node: MenuNode | undefined): boolean => {
+    let cur = node
+    while (cur) {
+      if (cur.visible === 0) return true
+      cur = cur.parentId ? byId.get(cur.parentId) : undefined
+    }
+    return false
+  }
+
+  const resolveMenu = (key: string): MenuNode | undefined => {
+    const tabHit = flat.find((m) => {
+      const p = m.path || ''
+      const q = `tab=${key}`
+      return p.includes(`?${q}`) || p.includes(`&${q}`)
+    })
+    if (tabHit) return tabHit
+    const mapped = permissionByNavKey[key]
+    if (mapped == null) return undefined
+    const codes = Array.isArray(mapped) ? mapped : [mapped]
+    return flat.find((m) => !!m.permission && codes.includes(m.permission))
+  }
+
+  const isHidden = (key: string): boolean => lineageHidden(resolveMenu(key))
+
+  const walk = (nodes: HubNavItem[]): HubNavItem[] => {
+    const out: HubNavItem[] = []
+    for (const n of nodes) {
+      if (n.children?.length) {
+        const children = walk(n.children)
+        if (children.length) out.push({ ...n, children })
+        continue
+      }
+      if (!isHidden(n.key)) out.push(n)
+    }
+    return out
+  }
   return walk(items)
 }
 

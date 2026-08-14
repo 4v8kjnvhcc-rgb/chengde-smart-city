@@ -238,19 +238,28 @@ public class AnalyticsDomainService {
     public List<Map<String, Object>> zoneCandidates(String domain, String zone) {
         String z = normalizeZone(zone);
         List<Map<String, Object>> out = new ArrayList<>();
-        if ("collect".equals(z) || "govern".equals(z)) {
+        if ("collect".equals(z) || "govern".equals(z) || "core".equals(z) || "internal".equals(z)) {
             LambdaQueryWrapper<GovMetadataRegistry> q = new LambdaQueryWrapper<GovMetadataRegistry>()
                     .eq(GovMetadataRegistry::getEntryType, "TABLE")
                     .orderByDesc(GovMetadataRegistry::getId)
-                    .last("LIMIT 80");
+                    .last("LIMIT 120");
             if ("collect".equals(z)) {
                 q.and(w -> w.eq(GovMetadataRegistry::getDataLayer, "ODS")
                         .or().eq(GovMetadataRegistry::getDataLayer, "SOURCE")
                         .or().isNull(GovMetadataRegistry::getDataLayer)
-                        .or().eq(GovMetadataRegistry::getDataLayer, ""));
-            } else {
+                        .or().eq(GovMetadataRegistry::getDataLayer, "")
+                        .or().like(GovMetadataRegistry::getPhysicalTableName, "ods_"));
+            } else if ("govern".equals(z)) {
                 q.and(w -> w.eq(GovMetadataRegistry::getDataLayer, "DWD")
                         .or().like(GovMetadataRegistry::getPhysicalTableName, "dwd_"));
+            } else if ("core".equals(z)) {
+                q.and(w -> w.eq(GovMetadataRegistry::getDataLayer, "DWS")
+                        .or().like(GovMetadataRegistry::getPhysicalTableName, "dws_"));
+            } else {
+                q.and(w -> w.eq(GovMetadataRegistry::getDataLayer, "DWS")
+                        .or().eq(GovMetadataRegistry::getDataLayer, "ADS")
+                        .or().like(GovMetadataRegistry::getPhysicalTableName, "dws_")
+                        .or().like(GovMetadataRegistry::getPhysicalTableName, "ads_"));
             }
             for (GovMetadataRegistry e : registryMapper.selectList(q)) {
                 Map<String, Object> m = new LinkedHashMap<>();
@@ -259,20 +268,27 @@ public class AnalyticsDomainService {
                 m.put("assetName", e.getEntryName());
                 m.put("physicalTable", e.getPhysicalTableName());
                 m.put("metaEntryCode", e.getEntryCode());
-                m.put("dataLayer", e.getDataLayer());
+                m.put("dataLayer", e.getDataLayer() != null && !e.getDataLayer().isBlank()
+                        ? e.getDataLayer()
+                        : inferLayerFromTable(e.getPhysicalTableName(), z));
                 out.add(m);
             }
-        } else if ("core".equals(z) || "internal".equals(z)) {
-            for (RcManagedTable mt : managedTableMapper.selectList(new LambdaQueryWrapper<RcManagedTable>()
-                    .eq(RcManagedTable::getStatus, "ACTIVE").orderByDesc(RcManagedTable::getId).last("LIMIT 80"))) {
-                Map<String, Object> m = new LinkedHashMap<>();
-                m.put("assetType", "MANAGED");
-                m.put("assetRef", mt.getPhysicalTable());
-                m.put("assetName", mt.getPhysicalTable());
-                m.put("physicalTable", mt.getPhysicalTable());
-                m.put("metaEntryCode", mt.getMetaEntryCode());
-                m.put("dataLayer", "DWS");
-                out.add(m);
+            if ("core".equals(z) || "internal".equals(z)) {
+                for (RcManagedTable mt : managedTableMapper.selectList(new LambdaQueryWrapper<RcManagedTable>()
+                        .eq(RcManagedTable::getStatus, "ACTIVE").orderByDesc(RcManagedTable::getId).last("LIMIT 80"))) {
+                    String table = mt.getPhysicalTable() == null ? "" : mt.getPhysicalTable();
+                    String layer = inferLayerFromTable(table, z);
+                    if ("core".equals(z) && !"DWS".equals(layer)) continue;
+                    if ("internal".equals(z) && !"DWS".equals(layer) && !"ADS".equals(layer)) continue;
+                    Map<String, Object> m = new LinkedHashMap<>();
+                    m.put("assetType", "MANAGED");
+                    m.put("assetRef", table);
+                    m.put("assetName", table);
+                    m.put("physicalTable", table);
+                    m.put("metaEntryCode", mt.getMetaEntryCode());
+                    m.put("dataLayer", layer);
+                    out.add(m);
+                }
             }
         } else {
             for (GovCatalogResource r : catalogResourceMapper.selectList(new LambdaQueryWrapper<GovCatalogResource>()
@@ -290,6 +306,18 @@ public class AnalyticsDomainService {
         return out;
     }
 
+    private static String inferLayerFromTable(String table, String zone) {
+        String t = table == null ? "" : table.toLowerCase(Locale.ROOT);
+        if (t.startsWith("ads_")) return "ADS";
+        if (t.startsWith("dws_")) return "DWS";
+        if (t.startsWith("dwd_")) return "DWD";
+        if (t.startsWith("ods_")) return "ODS";
+        if ("internal".equals(zone)) return "DWS";
+        if ("core".equals(zone)) return "DWS";
+        if ("govern".equals(zone)) return "DWD";
+        return "ODS";
+    }
+
     @Transactional
     public Long bindAsset(UserPrincipal operator, String domain, String zone, Map<String, Object> body) {
         String d = normalizeDomain(domain);
@@ -305,14 +333,41 @@ public class AnalyticsDomainService {
         if (exists != null && "ACTIVE".equalsIgnoreCase(exists.getStatus())) {
             throw new BusinessException(400, "该资产已挂载到本区");
         }
-        if ("govern".equals(z)) {
-            String layer = str(body.get("dataLayer"), "");
-            String table = str(body.get("physicalTable"), "");
+        String layer = str(body.get("dataLayer"), "");
+        String table = str(body.get("physicalTable"), "");
+        if (layer == null || layer.isBlank()) {
+            layer = inferLayerFromTable(table, z);
+        }
+        if ("collect".equals(z)) {
+            if ("STRUCT".equalsIgnoreCase(str(body.get("accessMode"), "STRUCT"))
+                    && ("DWD".equalsIgnoreCase(layer) || "DWS".equalsIgnoreCase(layer) || "ADS".equalsIgnoreCase(layer))) {
+                throw new BusinessException(400, "数据采集区请挂载 ODS/贴源层表");
+            }
+        } else if ("govern".equals(z)) {
             if ("DWS".equalsIgnoreCase(layer) || "ADS".equalsIgnoreCase(layer)) {
                 throw new BusinessException(400, "治理反馈区不宜挂载资源层表，请挂过程层或问题数据");
             }
             if (table.toLowerCase(Locale.ROOT).startsWith("ads_")) {
                 throw new BusinessException(400, "治理反馈区不宜挂载 ADS 表");
+            }
+            if ("STRUCT".equalsIgnoreCase(str(body.get("accessMode"), ""))
+                    && ("ODS".equalsIgnoreCase(layer) || table.toLowerCase(Locale.ROOT).startsWith("ods_"))) {
+                throw new BusinessException(400, "治理反馈区请挂载 DWD 过程层表");
+            }
+        } else if ("core".equals(z)) {
+            if ("STRUCT".equalsIgnoreCase(str(body.get("accessMode"), ""))
+                    && !"DWS".equalsIgnoreCase(layer)
+                    && !table.toLowerCase(Locale.ROOT).startsWith("dws_")) {
+                throw new BusinessException(400, "核心数据区请挂载 DWS 主题表");
+            }
+        } else if ("internal".equals(z)) {
+            if ("STRUCT".equalsIgnoreCase(str(body.get("accessMode"), ""))) {
+                boolean ok = "DWS".equalsIgnoreCase(layer) || "ADS".equalsIgnoreCase(layer)
+                        || table.toLowerCase(Locale.ROOT).startsWith("dws_")
+                        || table.toLowerCase(Locale.ROOT).startsWith("ads_");
+                if (!ok) {
+                    throw new BusinessException(400, "内部服务区请挂载 DWS/ADS 资源表");
+                }
             }
         }
         AnaZoneBinding b = exists != null ? exists : new AnaZoneBinding();
@@ -323,7 +378,7 @@ public class AnalyticsDomainService {
         b.setAssetName(str(body.get("assetName"), assetRef));
         b.setPhysicalTable(str(body.get("physicalTable"), null));
         b.setMetaEntryCode(str(body.get("metaEntryCode"), null));
-        b.setDataLayer(str(body.get("dataLayer"), null));
+        b.setDataLayer(layer);
         b.setDimGroup(normalizeDimGroup(body.get("dimGroup")));
         b.setAccessMode(normalizeAccessMode(body.get("accessMode")));
         b.setRemark(str(body.get("remark"), null));
@@ -350,13 +405,21 @@ public class AnalyticsDomainService {
     // ---------- indicator domains（指标域） ----------
 
     private static final Pattern IND_DB_NAME = Pattern.compile("^ind_[a-z0-9]+(?:_[a-z0-9]+)*$");
+    /** 业务支撑四系统；治理平台统一入口用 all/gov */
+    private static final Set<String> BIZ_OWNER_DOMAINS = Set.of("population", "legal", "macro", "key");
+
+    private static boolean isUnifiedIndicatorScope(String domain) {
+        return "all".equals(domain) || "gov".equals(domain);
+    }
 
     public List<AnaIndicatorDomain> listIndicatorDomains(String domain, String domainName, String domainDbName) {
         String d = normalizeDomain(domain);
         LambdaQueryWrapper<AnaIndicatorDomain> q = new LambdaQueryWrapper<AnaIndicatorDomain>()
-                .eq(AnaIndicatorDomain::getOwnerDomainCode, d)
                 .eq(AnaIndicatorDomain::getStatus, "ACTIVE")
                 .orderByDesc(AnaIndicatorDomain::getId);
+        if (!isUnifiedIndicatorScope(d)) {
+            q.eq(AnaIndicatorDomain::getOwnerDomainCode, d);
+        }
         if (domainName != null && !domainName.isBlank()) {
             q.like(AnaIndicatorDomain::getDomainName, domainName.trim());
         }
@@ -369,6 +432,13 @@ public class AnalyticsDomainService {
     @Transactional
     public Long createIndicatorDomain(UserPrincipal operator, String domain, Map<String, Object> body) {
         String d = normalizeDomain(domain);
+        if (isUnifiedIndicatorScope(d)) {
+            String owner = str(body.get("ownerDomainCode"), null);
+            if (owner == null || !BIZ_OWNER_DOMAINS.contains(owner.trim().toLowerCase(Locale.ROOT))) {
+                throw new BusinessException(400, "请选择所属业务支撑系统（population|legal|macro|key）");
+            }
+            d = owner.trim().toLowerCase(Locale.ROOT);
+        }
         String name = required(body.get("domainName"), "domainName").toString().trim();
         String dbName = required(body.get("domainDbName"), "domainDbName").toString().trim().toLowerCase(Locale.ROOT);
         validateIndDbName(dbName);
@@ -442,19 +512,33 @@ public class AnalyticsDomainService {
                 "ANA_IND_DOMAIN_DELETE", row.getOwnerDomainCode(), row.getDomainDbName(), "INACTIVE");
     }
 
-    /** 发布指标域下全部可发布的指标组（生成/刷新指标任务）。 */
+    /** 发布指标域下全部可发布的指标组（生成/刷新指标任务）。body 可含 taskName/execCycle/remark/executorAddress。 */
     @Transactional
-    public Map<String, Object> publishIndicatorDomain(UserPrincipal operator, Long domainId) {
+    public Map<String, Object> publishIndicatorDomain(UserPrincipal operator, Long domainId, Map<String, Object> body) {
         AnaIndicatorDomain domain = indicatorDomainMapper.selectById(domainId);
         if (domain == null || !"ACTIVE".equalsIgnoreCase(domain.getStatus())) {
             throw new BusinessException(404, "指标域不存在");
         }
+        Map<String, Object> opts = body != null ? body : Map.of();
+        String execCycle = str(opts.get("execCycle"), null);
+        String cronExpr = str(opts.get("cronExpr"), null);
+        if ((cronExpr == null || cronExpr.isBlank()) && (execCycle == null || execCycle.isBlank())) {
+            throw new BusinessException(400, "请选择执行周期");
+        }
+        String taskNameOverride = str(opts.get("taskName"), null);
+        String remark = str(opts.get("remark"), null);
+        String executorAddress = str(opts.get("executorAddress"), "DEFAULT");
+        String cycleName = str(opts.get("cycleName"), null);
+
         List<AnaIndicatorGroup> groups = indicatorGroupMapper.selectList(new LambdaQueryWrapper<AnaIndicatorGroup>()
                 .eq(AnaIndicatorGroup::getIndicatorDomainId, domainId)
                 .ne(AnaIndicatorGroup::getStatus, "INACTIVE"));
         int ok = 0;
         int skip = 0;
         List<String> messages = new ArrayList<>();
+        String cycleKey = (execCycle != null && !execCycle.isBlank())
+                ? execCycle.trim()
+                : (cycleName != null && !cycleName.isBlank() ? cycleName.trim() : "CUSTOM");
         for (AnaIndicatorGroup g : groups) {
             long cnt = indicatorMapper.selectCount(new LambdaQueryWrapper<AnaIndicator>()
                     .eq(AnaIndicator::getGroupId, g.getId())
@@ -464,7 +548,14 @@ public class AnalyticsDomainService {
                 messages.add(g.getGroupName() + "：无指标，已跳过");
                 continue;
             }
-            publishIndicatorGroup(operator, g.getId());
+            String taskName = (taskNameOverride != null && !taskNameOverride.isBlank() && groups.size() == 1)
+                    ? taskNameOverride.trim()
+                    : g.getGroupName();
+            if (taskNameOverride != null && !taskNameOverride.isBlank() && groups.size() > 1) {
+                taskName = taskNameOverride.trim() + "-" + g.getGroupName();
+            }
+            publishIndicatorGroup(operator, g.getId(), taskName, cycleKey,
+                    cronExpr, remark, executorAddress);
             ok++;
         }
         if (ok == 0 && groups.isEmpty()) {
@@ -478,6 +569,8 @@ public class AnalyticsDomainService {
         out.put("published", ok);
         out.put("skipped", skip);
         out.put("messages", messages);
+        out.put("execCycle", cycleKey);
+        out.put("cronExpr", cronExpr);
         return out;
     }
 
@@ -493,9 +586,11 @@ public class AnalyticsDomainService {
                                                        String groupName, String targetTable, String groupCategory) {
         String d = normalizeDomain(domain);
         LambdaQueryWrapper<AnaIndicatorGroup> q = new LambdaQueryWrapper<AnaIndicatorGroup>()
-                .eq(AnaIndicatorGroup::getOwnerDomainCode, d)
                 .ne(AnaIndicatorGroup::getStatus, "INACTIVE")
                 .orderByDesc(AnaIndicatorGroup::getId);
+        if (!isUnifiedIndicatorScope(d)) {
+            q.eq(AnaIndicatorGroup::getOwnerDomainCode, d);
+        }
         if (indicatorDomainId != null && indicatorDomainId > 0) {
             q.eq(AnaIndicatorGroup::getIndicatorDomainId, indicatorDomainId);
         }
@@ -527,6 +622,7 @@ public class AnalyticsDomainService {
         String d = normalizeDomain(domain);
         Long domainId = longVal(required(body.get("indicatorDomainId"), "indicatorDomainId"));
         AnaIndicatorDomain indDomain = requireActiveIndicatorDomain(domainId, d);
+        String owner = isUnifiedIndicatorScope(d) ? indDomain.getOwnerDomainCode() : d;
         String name = required(body.get("groupName"), "groupName").toString().trim();
         String table = required(body.get("targetTable"), "targetTable").toString().trim().toLowerCase(Locale.ROOT);
         validateIndDbName(table);
@@ -536,7 +632,7 @@ public class AnalyticsDomainService {
             throw new BusinessException(400, "groupCategory 须为 UNIT 或 COMPOSITE");
         }
         AnaIndicatorGroup g = new AnaIndicatorGroup();
-        g.setOwnerDomainCode(d);
+        g.setOwnerDomainCode(owner);
         g.setIndicatorDomainId(indDomain.getId());
         g.setGroupName(name);
         g.setTargetTable(table);
@@ -549,7 +645,7 @@ public class AnalyticsDomainService {
         g.setUpdatedAt(LocalDateTime.now());
         indicatorGroupMapper.insert(g);
         auditService.log(operator.getUserId(), operator.getUsername(), operator.getOrgId(),
-                "ANA_IND_GROUP_CREATE", d, table, name);
+                "ANA_IND_GROUP_CREATE", owner, table, name);
         return g.getId();
     }
 
@@ -608,6 +704,12 @@ public class AnalyticsDomainService {
 
     @Transactional
     public void publishIndicatorGroup(UserPrincipal operator, Long id) {
+        publishIndicatorGroup(operator, id, null, null, null, null, null);
+    }
+
+    @Transactional
+    public void publishIndicatorGroup(UserPrincipal operator, Long id, String taskName,
+                                      String execCycle, String cronExpr, String remark, String executorAddress) {
         AnaIndicatorGroup g = getIndicatorGroup(id);
         long cnt = indicatorMapper.selectCount(new LambdaQueryWrapper<AnaIndicator>()
                 .eq(AnaIndicator::getGroupId, id)
@@ -618,7 +720,7 @@ public class AnalyticsDomainService {
         g.setStatus("PUBLISHED");
         g.setUpdatedAt(LocalDateTime.now());
         indicatorGroupMapper.updateById(g);
-        indicatorTaskService.ensureFromPublishedGroup(operator, g);
+        indicatorTaskService.ensureFromPublishedGroup(operator, g, taskName, execCycle, cronExpr, remark, executorAddress);
         auditService.log(operator.getUserId(), operator.getUsername(), operator.getOrgId(),
                 "ANA_IND_GROUP_PUBLISH", g.getOwnerDomainCode(), g.getTargetTable(), g.getGroupName());
     }
@@ -684,7 +786,8 @@ public class AnalyticsDomainService {
         if (indDomain == null || !"ACTIVE".equalsIgnoreCase(indDomain.getStatus())) {
             throw new BusinessException(404, "指标域不存在");
         }
-        if (!ownerDomain.equalsIgnoreCase(indDomain.getOwnerDomainCode())) {
+        if (ownerDomain != null && !isUnifiedIndicatorScope(ownerDomain)
+                && !ownerDomain.equalsIgnoreCase(indDomain.getOwnerDomainCode())) {
             throw new BusinessException(400, "指标域不属于当前业务域");
         }
         return indDomain;
@@ -863,10 +966,15 @@ public class AnalyticsDomainService {
         AnaIndicatorGroup group = null;
         if (groupId != null) {
             group = getIndicatorGroup(groupId);
-            if (!d.equalsIgnoreCase(group.getOwnerDomainCode())) {
+            if (!isUnifiedIndicatorScope(d) && !d.equalsIgnoreCase(group.getOwnerDomainCode())) {
                 throw new BusinessException(400, "指标组不属于当前业务域");
             }
+            if (isUnifiedIndicatorScope(d)) {
+                d = group.getOwnerDomainCode();
+            }
             slug = group.getTargetTable().replaceFirst("^ind_", "");
+        } else if (isUnifiedIndicatorScope(d)) {
+            throw new BusinessException(400, "统一入口新增指标须指定 groupId");
         }
 
         long seq = indicatorQueryMapper.selectCount(new LambdaQueryWrapper<AnaIndicatorQuery>()
@@ -1008,11 +1116,24 @@ public class AnalyticsDomainService {
     }
 
     private static List<Map<String, Object>> extractSelectAliases(String sql) {
-        String cleaned = sql.replaceAll("(?is)/\\*.*?\\*/", " ").replaceAll("--.*?(\\r?\\n|$)", "\n");
-        Matcher m = Pattern.compile("(?is)^\\s*select\\s+(.*?)\\s+from\\s").matcher(cleaned);
-        if (!m.find()) return List.of();
-        String selectList = m.group(1).trim();
-        if ("*".equals(selectList)) return List.of();
+        String cleaned = sql.replaceAll("(?is)/\\*.*?\\*/", " ").replaceAll("--.*?(\\r?\\n|$)", "\n").trim();
+        // 支持有 FROM 的标准 SELECT，也支持无 FROM 的常量/函数 SELECT
+        Matcher withFrom = Pattern.compile("(?is)^\\s*select\\s+(.*?)\\s+from\\s").matcher(cleaned);
+        String selectList;
+        if (withFrom.find()) {
+            selectList = withFrom.group(1).trim();
+        } else {
+            Matcher noFrom = Pattern.compile("(?is)^\\s*select\\s+(.+?)\\s*(?:;\\s*)?$").matcher(cleaned);
+            if (!noFrom.find()) {
+                return List.of();
+            }
+            selectList = noFrom.group(1).trim();
+            // 去掉尾部 where/group/order/limit（极少见于无 FROM 语句）
+            selectList = selectList.replaceAll("(?is)\\s+(where|group\\s+by|order\\s+by|limit)\\b.*$", "").trim();
+        }
+        if ("*".equals(selectList) || selectList.isEmpty()) {
+            return List.of();
+        }
         List<String> parts = splitSelectItems(selectList);
         LinkedHashSet<String> names = new LinkedHashSet<>();
         List<Map<String, Object>> out = new ArrayList<>();
@@ -1121,9 +1242,11 @@ public class AnalyticsDomainService {
     public void updateModelDesign(UserPrincipal operator, Long modelId, Map<String, Object> body) {
         AnaAnalysisModel model = modelMapper.selectById(modelId);
         if (model == null) throw new BusinessException(404, "分析模型不存在");
-        boolean population = model.getDomainCode() != null
-                && "population".equalsIgnoreCase(model.getDomainCode().trim());
-        if (!population && body.containsKey("deDashboardId")) {
+        // 业务支撑域（人口/法人/宏观/重点）不维护 DataEase 看板标识；智能 BI Hub 另路
+        boolean selfBuilt = model.getDomainCode() != null
+                && Set.of("population", "legal", "macro", "key")
+                .contains(model.getDomainCode().trim().toLowerCase(Locale.ROOT));
+        if (!selfBuilt && body.containsKey("deDashboardId")) {
             model.setDeDashboardId(str(body.get("deDashboardId"), null));
         }
         if (body.containsKey("dimensionJson")) model.setDimensionJson(str(body.get("dimensionJson"), null));

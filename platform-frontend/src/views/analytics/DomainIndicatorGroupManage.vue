@@ -1,14 +1,24 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox, type FormInstance, type FormRules } from 'element-plus'
-import { Grid, Plus, RefreshRight, Search, VideoPlay } from '@element-plus/icons-vue'
+import { CircleClose, Grid, Plus, RefreshRight, Search, SwitchButton, VideoPlay } from '@element-plus/icons-vue'
 import api from '@/api/http'
 import { statusLabel } from '@/utils/status-label'
+import ExecCycleSelect, { type ExecCycleOption } from '@/views/system/ExecCycleSelect.vue'
+import MetaDataSourcePickerDialog from '@/components/common/MetaDataSourcePickerDialog.vue'
+import { connectionKeyOf, type MetaBindSource } from '@/utils/meta-datasource-conn'
 
 const props = defineProps<{
   domain: string
   /** 父级 Tab 是否当前展示；切回时重新拉取指标域，与「指标域管理」保持一致 */
   active?: boolean
+  /** 是否在指标组页内嵌执行/启动/停止（仅人口大数据指标库；治理平台仍用独立「指标任务」页） */
+  embedTaskActions?: boolean
+  /**
+   * 仅展示指定名称的指标域（人口大数据 Hub 传「人口大数据支撑系统」；
+   * 治理平台不传，仍看全部）。
+   */
+  scopeDomainName?: string
 }>()
 
 interface DomainRow {
@@ -16,6 +26,8 @@ interface DomainRow {
   domainName: string
   domainDbName: string
   remark?: string
+  /** 该域下是否已有指标组且全部已发布（左侧仅显示「查看」） */
+  allPublished?: boolean
 }
 
 interface GroupRow {
@@ -29,6 +41,18 @@ interface GroupRow {
   status: string
 }
 
+/** 发布后生成的指标任务（按 groupId 映射） */
+interface TaskRow {
+  id: number
+  groupId: number
+  taskName: string
+  scheduleStatus: string
+  execStatus: string
+  calcResult: string
+  publishStatus: string
+  lastLog?: string
+}
+
 interface IndicatorRow {
   id: number
   queryNo?: string
@@ -37,14 +61,6 @@ interface IndicatorRow {
   indicatorName: string
   fieldName?: string
   indicatorFlag?: string
-}
-
-interface DsRow {
-  key: string
-  name: string
-  category: string
-  version?: string
-  deptName?: string
 }
 
 interface ParsedField {
@@ -62,11 +78,18 @@ const domainKeyword = ref('')
 const selectedDomainId = ref<number | null>(null)
 
 const groups = ref<GroupRow[]>([])
+/** groupId → 指标任务 */
+const taskByGroupId = ref<Map<number, TaskRow>>(new Map())
 const query = reactive({
   groupName: '',
   targetTable: '',
   groupCategory: '',
 })
+
+const logDialog = ref(false)
+const logTitle = ref('')
+const logText = ref('')
+const logRuns = ref<Array<{ id: number; triggerType: string; execStatus: string; calcResult: string; message?: string; startedAt?: string }>>([])
 
 const detailSaving = ref(false)
 const detailFormRef = ref<FormInstance>()
@@ -81,33 +104,31 @@ const detail = reactive({
 const detailIndicators = ref<IndicatorRow[]>([])
 const detailLoading = ref(false)
 
-const domainEditVisible = ref(false)
-const domainEditSaving = ref(false)
-const domainEditRef = ref<FormInstance>()
-const domainEdit = reactive({
-  id: null as number | null,
-  domainName: '',
-  domainDbName: '',
+/** 左侧「修改/删除」：列出该指标域下全部指标组 */
+const groupsEditVisible = ref(false)
+const groupsEditMode = ref<'edit' | 'delete'>('edit')
+const groupsEditDomain = ref<DomainRow | null>(null)
+const groupsEditRows = ref<GroupRow[]>([])
+const groupsEditLoading = ref(false)
+
+/** 左侧「发布」：任务详情 */
+const publishVisible = ref(false)
+const publishSaving = ref(false)
+const publishFormRef = ref<FormInstance>()
+const publishTarget = ref<DomainRow | null>(null)
+const publishForm = reactive({
+  taskName: '',
+  cronExpr: '',
+  cycleCode: '',
+  cycleName: '',
   remark: '',
 })
+const publishRules: FormRules = {
+  taskName: [{ required: true, message: '请填写任务名称', trigger: 'blur' }],
+  cronExpr: [{ required: true, message: '请选择执行周期', trigger: 'change' }],
+}
 
 const tableNamePattern = /^ind_[a-z0-9]+(_[a-z0-9]+)*$/
-
-const domainEditRules: FormRules = {
-  domainName: [{ required: true, message: '请填写指标域名称', trigger: 'blur' }],
-  domainDbName: [
-    { required: true, message: '请填写指标域库名', trigger: 'blur' },
-    {
-      validator: (_r, v, cb) => {
-        const s = String(v || '').trim().toLowerCase()
-        if (!tableNamePattern.test(s)) {
-          cb(new Error('以 ind_ 开头，支持小写字母、数字、下划线，不能以下划线结尾'))
-        } else cb()
-      },
-      trigger: 'blur',
-    },
-  ],
-}
 
 /** 指标组信息弹窗（新增/编辑共用，对齐原型：表单 + 新增指标 + 指标表） */
 const groupDialogVisible = ref(false)
@@ -132,21 +153,6 @@ const detailRules: FormRules = {
 }
 
 const dsDialog = ref(false)
-const dsLoading = ref(false)
-const dsCategories = ['全部', '基础库', '治理库', '主题库', '原始库', '来源', '其他', '字典']
-const dsCategory = ref('全部')
-const dsCategoryKeyword = ref('')
-const dsNameKeyword = ref('')
-const dsRows = ref<DsRow[]>([])
-const dsPage = ref(1)
-const dsPageSize = ref(20)
-const selectedDsKey = ref('')
-const selectedDsName = ref('')
-
-const dsPagedRows = computed(() => {
-  const start = (dsPage.value - 1) * dsPageSize.value
-  return dsRows.value.slice(start, start + dsPageSize.value)
-})
 
 const sqlDialog = ref(false)
 const previewDialog = ref(false)
@@ -169,12 +175,6 @@ const filteredDomains = computed(() => {
   return domains.value.filter((d) => d.domainName.includes(kw) || d.domainDbName.includes(kw))
 })
 
-const filteredDsCategories = computed(() => {
-  const kw = dsCategoryKeyword.value.trim()
-  if (!kw) return dsCategories
-  return dsCategories.filter((c) => c.includes(kw))
-})
-
 function categoryLabel(code: string) {
   if (code === 'UNIT') return '单元指标组'
   if (code === 'COMPOSITE') return '复合指标组'
@@ -186,9 +186,33 @@ function modelLabel(code: string) {
   return code || '—'
 }
 
+async function refreshDomainPublishFlags() {
+  const res = await api.get(`/analytics/domain/${props.domain}/indicator-groups`)
+  const all: GroupRow[] = res.data || []
+  const byDomain = new Map<number, GroupRow[]>()
+  for (const g of all) {
+    const list = byDomain.get(g.indicatorDomainId) || []
+    list.push(g)
+    byDomain.set(g.indicatorDomainId, list)
+  }
+  domains.value = domains.value.map((d) => {
+    const list = byDomain.get(d.id) || []
+    return {
+      ...d,
+      allPublished: list.length > 0 && list.every((g) => String(g.status).toUpperCase() === 'PUBLISHED'),
+    }
+  })
+}
+
 async function loadDomains() {
   const res = await api.get(`/analytics/domain/${props.domain}/indicator-domains`)
-  domains.value = res.data || []
+  let list: DomainRow[] = res.data || []
+  const scope = props.scopeDomainName?.trim()
+  if (scope) {
+    list = list.filter((d) => String(d.domainName || '').includes(scope))
+  }
+  domains.value = list
+  await refreshDomainPublishFlags()
   const stillSelected = domains.value.some((d) => d.id === selectedDomainId.value)
   if (!stillSelected) {
     selectedDomainId.value = domains.value.length ? domains.value[0].id : null
@@ -198,11 +222,12 @@ async function loadDomains() {
 async function loadGroups() {
   if (selectedDomainId.value == null) {
     groups.value = []
+    taskByGroupId.value = new Map()
     return
   }
   loading.value = true
   try {
-    const res = await api.get(`/analytics/domain/${props.domain}/indicator-groups`, {
+    const groupReq = api.get(`/analytics/domain/${props.domain}/indicator-groups`, {
       params: {
         indicatorDomainId: selectedDomainId.value,
         groupName: query.groupName || undefined,
@@ -210,9 +235,75 @@ async function loadGroups() {
         groupCategory: query.groupCategory || undefined,
       },
     })
-    groups.value = res.data || []
+    if (props.embedTaskActions) {
+      const [gRes, tRes] = await Promise.all([
+        groupReq,
+        api.get(`/analytics/domain/${props.domain}/indicator-tasks`),
+      ])
+      groups.value = gRes.data || []
+      const map = new Map<number, TaskRow>()
+      for (const t of (tRes.data || []) as TaskRow[]) {
+        if (t.groupId != null) map.set(t.groupId, t)
+      }
+      taskByGroupId.value = map
+    } else {
+      const gRes = await groupReq
+      groups.value = gRes.data || []
+      taskByGroupId.value = new Map()
+    }
   } finally {
     loading.value = false
+  }
+}
+
+function taskOf(row: GroupRow): TaskRow | undefined {
+  return taskByGroupId.value.get(row.id)
+}
+
+async function batchTaskAction(action: 'EXECUTE' | 'START' | 'STOP') {
+  // 针对当前指标域下全部已发布组对应的任务，不按行勾选
+  const ids = groups.value
+    .map((g) => taskOf(g)?.id)
+    .filter((id): id is number => id != null)
+  if (!ids.length) {
+    ElMessage.warning('当前指标域下暂无已发布的指标任务，请先发布指标组')
+    return
+  }
+  const label = action === 'EXECUTE' ? '执行' : action === 'START' ? '启动' : '停止'
+  await ElMessageBox.confirm(
+    `确认对当前指标域下全部 ${ids.length} 个指标任务执行「${label}」？`,
+    '确认',
+    { type: 'warning' },
+  )
+  try {
+    const res = await api.post('/analytics/domain/indicator-tasks/batch', { action, ids })
+    const ok = res.data?.ok ?? 0
+    const fail = res.data?.fail ?? 0
+    if (fail > 0) {
+      ElMessage.warning(`${label}完成：成功 ${ok}，失败 ${fail}`)
+    } else {
+      ElMessage.success(`${label}成功（${ok}）`)
+    }
+    await loadGroups()
+  } catch (e: unknown) {
+    ElMessage.error((e as Error).message || `${label}失败`)
+  }
+}
+
+async function openTaskLog(row: GroupRow) {
+  const task = taskOf(row)
+  if (!task) {
+    ElMessage.warning('该指标组尚未发布，无任务日志')
+    return
+  }
+  logTitle.value = `日志 — ${task.taskName || row.groupName}`
+  try {
+    const res = await api.get(`/analytics/domain/indicator-tasks/${task.id}/log`)
+    logText.value = res.data?.lastLog || task.lastLog || '暂无日志'
+    logRuns.value = res.data?.runs || []
+    logDialog.value = true
+  } catch (e: unknown) {
+    ElMessage.error((e as Error).message || '加载日志失败')
   }
 }
 
@@ -228,72 +319,113 @@ function selectDomain(id: number) {
   loadGroups()
 }
 
-/** 数据管理：选中该指标域并展示其下指标组 */
-function domainDataManage(d: DomainRow) {
+/** 选中指标域并展示右侧指标组（查看同此） */
+function selectDomainAndShow(d: DomainRow) {
   selectDomain(d.id)
 }
 
-function openDomainEdit(d: DomainRow) {
-  domainEdit.id = d.id
-  domainEdit.domainName = d.domainName
-  domainEdit.domainDbName = d.domainDbName
-  domainEdit.remark = d.remark || ''
-  domainEditVisible.value = true
-}
-
-async function saveDomainEdit() {
-  if (!domainEditRef.value || domainEdit.id == null) return
-  await domainEditRef.value.validate()
-  domainEditSaving.value = true
+/** 左侧「修改/删除」：打开该域下全部指标组列表 */
+async function openDomainGroupsList(d: DomainRow, mode: 'edit' | 'delete') {
+  selectDomain(d.id)
+  groupsEditMode.value = mode
+  groupsEditDomain.value = d
+  groupsEditVisible.value = true
+  groupsEditLoading.value = true
   try {
-    await api.put(`/analytics/domain/indicator-domains/${domainEdit.id}`, {
-      domainName: domainEdit.domainName.trim(),
-      domainDbName: domainEdit.domainDbName.trim().toLowerCase(),
-      remark: domainEdit.remark?.trim() || null,
+    const res = await api.get(`/analytics/domain/${props.domain}/indicator-groups`, {
+      params: { indicatorDomainId: d.id },
     })
-    ElMessage.success('已修改指标域')
-    domainEditVisible.value = false
-    await loadDomains()
-  } catch (e: unknown) {
-    ElMessage.error((e as Error).message || '保存失败')
+    groupsEditRows.value = res.data || []
+    if (!groupsEditRows.value.length) {
+      ElMessage.warning('该指标域下暂无指标组')
+    }
   } finally {
-    domainEditSaving.value = false
+    groupsEditLoading.value = false
   }
 }
 
-async function publishDomain(d: DomainRow) {
-  await ElMessageBox.confirm(
-    `确认发布指标域「${d.domainName}」下全部可发布的指标组？将同步生成指标任务。`,
-    '发布确认',
-    { type: 'warning' },
-  )
+function openDomainGroupsEdit(d: DomainRow) {
+  return openDomainGroupsList(d, 'edit')
+}
+
+function openDomainGroupsDelete(d: DomainRow) {
+  return openDomainGroupsList(d, 'delete')
+}
+
+async function editGroupFromDomainList(row: GroupRow) {
+  await openDetail(row)
+}
+
+async function deleteGroupFromDomainList(row: GroupRow) {
+  await ElMessageBox.confirm(`确认删除指标组「${row.groupName}」？`, '删除确认', { type: 'warning' })
   try {
-    const res = await api.post(`/analytics/domain/indicator-domains/${d.id}/publish`)
+    await api.delete(`/analytics/domain/indicator-groups/${row.id}`)
+    ElMessage.success('已删除')
+    groupsEditRows.value = groupsEditRows.value.filter((g) => g.id !== row.id)
+    await loadGroups()
+    await refreshDomainPublishFlags()
+  } catch (e: unknown) {
+    ElMessage.error((e as Error).message || '删除失败')
+  }
+}
+
+function openPublishDialog(d: DomainRow) {
+  publishTarget.value = d
+  publishForm.taskName = d.domainName
+  publishForm.cronExpr = ''
+  publishForm.cycleCode = ''
+  publishForm.cycleName = ''
+  publishForm.remark = ''
+  publishVisible.value = true
+  // 若仅一组，任务名称默认用组名（对齐原型）
+  void (async () => {
+    try {
+      const res = await api.get(`/analytics/domain/${props.domain}/indicator-groups`, {
+        params: { indicatorDomainId: d.id },
+      })
+      const list: GroupRow[] = res.data || []
+      if (list.length === 1) {
+        publishForm.taskName = list[0].groupName
+      }
+    } catch {
+      /* ignore */
+    }
+  })()
+}
+
+function onPublishCycleChange(opt: ExecCycleOption | null) {
+  publishForm.cycleCode = opt?.cycleCode || ''
+  publishForm.cycleName = opt?.cycleName || ''
+}
+
+async function confirmPublish() {
+  if (!publishFormRef.value || !publishTarget.value) return
+  await publishFormRef.value.validate()
+  if (!publishForm.cronExpr.trim()) {
+    ElMessage.warning('请选择执行周期')
+    return
+  }
+  const d = publishTarget.value
+  publishSaving.value = true
+  try {
+    const res = await api.post(`/analytics/domain/indicator-domains/${d.id}/publish`, {
+      taskName: publishForm.taskName.trim(),
+      execCycle: publishForm.cycleCode || publishForm.cycleName || 'CUSTOM',
+      cronExpr: publishForm.cronExpr.trim(),
+      cycleName: publishForm.cycleName || null,
+      remark: publishForm.remark?.trim() || null,
+    })
     const published = res.data?.published ?? 0
     const skipped = res.data?.skipped ?? 0
     ElMessage.success(`已发布 ${published} 个指标组` + (skipped ? `，跳过 ${skipped} 个` : ''))
+    publishVisible.value = false
     selectDomain(d.id)
+    await loadDomains()
     await loadGroups()
   } catch (e: unknown) {
     ElMessage.error((e as Error).message || '发布失败')
-  }
-}
-
-async function removeDomain(d: DomainRow) {
-  await ElMessageBox.confirm(`确认删除指标域「${d.domainName}」？`, '删除确认', { type: 'warning' })
-  try {
-    await api.delete(`/analytics/domain/indicator-domains/${d.id}`)
-    ElMessage.success('已删除')
-    if (selectedDomainId.value === d.id) {
-      selectedDomainId.value = null
-    }
-    await loadDomains()
-    if (selectedDomainId.value == null && domains.value.length) {
-      selectedDomainId.value = domains.value[0].id
-    }
-    await loadGroups()
-  } catch (e: unknown) {
-    ElMessage.error((e as Error).message || '删除失败')
+  } finally {
+    publishSaving.value = false
   }
 }
 
@@ -336,9 +468,16 @@ async function openDetail(row: GroupRow) {
 async function closeGroupDialog() {
   groupDialogVisible.value = false
   await loadGroups()
+  await refreshDomainPublishFlags()
+  if (groupsEditVisible.value && groupsEditDomain.value) {
+    const res = await api.get(`/analytics/domain/${props.domain}/indicator-groups`, {
+      params: { indicatorDomainId: groupsEditDomain.value.id },
+    })
+    groupsEditRows.value = res.data || []
+  }
 }
 
-async function ensureGroupSaved(): Promise<number | null> {
+async function ensureGroupSaved(opts?: { silent?: boolean }): Promise<number | null> {
   if (!detailFormRef.value) return detail.id
   await detailFormRef.value.validate()
   detailSaving.value = true
@@ -354,10 +493,10 @@ async function ensureGroupSaved(): Promise<number | null> {
     if (detail.id == null) {
       const res = await api.post(`/analytics/domain/${props.domain}/indicator-groups`, body)
       detail.id = res.data as number
-      ElMessage.success('指标组已保存')
+      if (!opts?.silent) ElMessage.success('指标组已保存')
     } else {
       await api.put(`/analytics/domain/indicator-groups/${detail.id}`, body)
-      ElMessage.success('指标组已更新')
+      if (!opts?.silent) ElMessage.success('指标组已更新')
     }
     return detail.id
   } catch (e: unknown) {
@@ -368,79 +507,31 @@ async function ensureGroupSaved(): Promise<number | null> {
   }
 }
 
-async function saveDetail() {
-  await ensureGroupSaved()
-}
-
-async function openAddIndicator() {
-  const id = await ensureGroupSaved()
-  if (id == null) return
-  sqlForm.datasourceKey = 'ods_collect'
-  sqlForm.datasourceName = '原始归集库'
+/** 下一步：仅校验指标组信息，不落库；进入指标语句页后再保存 */
+async function goNextToSql() {
+  if (!detailFormRef.value) return
+  await detailFormRef.value.validate()
+  sqlForm.datasourceKey = ''
+  sqlForm.datasourceName = ''
   sqlForm.timeoutSec = 60
-  sqlForm.sqlText = props.domain === 'population'
-    ? 'select year(now()) as name, count(1) as num from cd_population'
-    : ''
+  sqlForm.sqlText = ''
   parsedFields.value = []
   previewMessage.value = ''
-  selectedDsKey.value = sqlForm.datasourceKey
-  selectedDsName.value = sqlForm.datasourceName
   sqlDialog.value = true
-  // 打开后自动解析字段，对齐「指标语句」原型展示
-  if (sqlForm.sqlText.trim()) {
-    await runParse(true)
-  }
 }
 
-async function openDsPicker() {
-  selectedDsKey.value = sqlForm.datasourceKey || ''
-  selectedDsName.value = sqlForm.datasourceName || ''
-  dsCategory.value = '全部'
-  dsNameKeyword.value = ''
-  dsCategoryKeyword.value = ''
-  dsPage.value = 1
+/** 执行：解析 SQL 结果字段，填充下方表格 */
+async function runExecute() {
+  await runParse(false)
+}
+
+function openDsPicker() {
   dsDialog.value = true
-  await loadDsCatalog()
 }
 
-function pickDsCategory(c: string) {
-  if (dsCategory.value === c) return
-  dsCategory.value = c
-  loadDsCatalog()
-}
-
-async function loadDsCatalog() {
-  if (!dsDialog.value) return
-  dsLoading.value = true
-  try {
-    const cat = dsCategory.value === '全部' ? undefined : (dsCategory.value || undefined)
-    const res = await api.get(`/analytics/domain/${props.domain}/indicator-datasource-catalog`, {
-      params: {
-        category: cat,
-        keyword: dsNameKeyword.value || undefined,
-      },
-    })
-    dsRows.value = res.data || []
-    dsPage.value = 1
-  } finally {
-    dsLoading.value = false
-  }
-}
-
-function selectDsRow(row: DsRow) {
-  selectedDsKey.value = row.key
-  selectedDsName.value = row.name
-}
-
-function confirmDs() {
-  if (!selectedDsKey.value) {
-    ElMessage.warning('请选择数据源')
-    return
-  }
-  const row = dsRows.value.find((r) => r.key === selectedDsKey.value)
-  sqlForm.datasourceKey = selectedDsKey.value
-  sqlForm.datasourceName = selectedDsName.value || row?.name || selectedDsKey.value
-  dsDialog.value = false
+function onMetaDsPicked(row: MetaBindSource) {
+  sqlForm.datasourceKey = connectionKeyOf(row)
+  sqlForm.datasourceName = row.sourceName
 }
 
 async function runParse(silent = false) {
@@ -486,10 +577,6 @@ async function openPreview() {
 }
 
 async function saveSql() {
-  if (!detail.id) {
-    ElMessage.warning('请先保存指标组')
-    return
-  }
   if (!sqlForm.datasourceKey) {
     ElMessage.warning('请选择数据源')
     return
@@ -499,9 +586,12 @@ async function saveSql() {
     return
   }
   if (!parsedFields.value.length) {
-    await runParse()
-    if (!parsedFields.value.length) return
+    ElMessage.warning('请先点击执行，解析结果字段后再保存')
+    return
   }
+  // 仅在指标语句「保存」时才创建/更新指标组，再写入指标
+  const id = await ensureGroupSaved({ silent: true })
+  if (id == null) return
   sqlSaving.value = true
   try {
     const fields = parsedFields.value.map((f, idx) => ({
@@ -513,7 +603,7 @@ async function saveSql() {
       fieldName: f.fieldName || `ind_${f.resultField}`,
     }))
     await api.post(`/analytics/domain/${props.domain}/indicators/sql`, {
-      groupId: detail.id,
+      groupId: id,
       datasourceKey: sqlForm.datasourceKey,
       datasourceName: sqlForm.datasourceName,
       timeoutSec: sqlForm.timeoutSec,
@@ -521,10 +611,18 @@ async function saveSql() {
       querySlug: detail.targetTable || 'query',
       fields,
     })
-    ElMessage.success('指标语句已保存')
+    ElMessage.success('指标组已生成')
     sqlDialog.value = false
-    const iRes = await api.get(`/analytics/domain/indicator-groups/${detail.id}/indicators`)
+    const iRes = await api.get(`/analytics/domain/indicator-groups/${id}/indicators`)
     detailIndicators.value = iRes.data || []
+    await loadGroups()
+    await refreshDomainPublishFlags()
+    if (groupsEditVisible.value && groupsEditDomain.value) {
+      const res = await api.get(`/analytics/domain/${props.domain}/indicator-groups`, {
+        params: { indicatorDomainId: groupsEditDomain.value.id },
+      })
+      groupsEditRows.value = res.data || []
+    }
   } catch (e: unknown) {
     ElMessage.error((e as Error).message || '保存失败')
   } finally {
@@ -609,14 +707,18 @@ onMounted(async () => {
             class="side-item"
             :class="{ active: selectedDomainId === d.id }"
           >
-            <button type="button" class="side-item-name" @click="domainDataManage(d)">
+            <button type="button" class="side-item-name" @click="selectDomainAndShow(d)">
               {{ d.domainName }}
             </button>
             <div class="side-item-ops">
-              <el-button link type="primary" size="small" @click.stop="domainDataManage(d)">数据管理</el-button>
-              <el-button link type="primary" size="small" @click.stop="publishDomain(d)">发布</el-button>
-              <el-button link type="primary" size="small" @click.stop="openDomainEdit(d)">修改</el-button>
-              <el-button link type="primary" size="small" @click.stop="removeDomain(d)">删除</el-button>
+              <template v-if="d.allPublished">
+                <el-button link type="primary" size="small" @click.stop="selectDomainAndShow(d)">查看</el-button>
+              </template>
+              <template v-else>
+                <el-button link type="primary" size="small" @click.stop="openPublishDialog(d)">发布</el-button>
+                <el-button link type="primary" size="small" @click.stop="openDomainGroupsEdit(d)">修改</el-button>
+                <el-button link type="primary" size="small" @click.stop="openDomainGroupsDelete(d)">删除</el-button>
+              </template>
             </div>
           </div>
           <el-empty v-if="!filteredDomains.length" description="暂无指标域" :image-size="64" />
@@ -644,7 +746,21 @@ onMounted(async () => {
           </el-form-item>
         </el-form>
 
-        <el-table class="portal-table" :data="groups" stripe size="small" empty-text="暂无数据">
+        <el-form v-if="embedTaskActions" inline class="portal-inline-form">
+          <el-form-item class="portal-form-actions">
+            <el-button type="primary" :icon="VideoPlay" @click="batchTaskAction('EXECUTE')">执行</el-button>
+            <el-button type="primary" :icon="SwitchButton" @click="batchTaskAction('START')">启动</el-button>
+            <el-button type="primary" :icon="CircleClose" @click="batchTaskAction('STOP')">停止</el-button>
+          </el-form-item>
+        </el-form>
+
+        <el-table
+          class="portal-table"
+          :data="groups"
+          stripe
+          size="small"
+          empty-text="暂无数据"
+        >
           <el-table-column label="组名称" min-width="160" show-overflow-tooltip>
             <template #default="{ row }">
               <el-button link type="primary" @click="openDetail(row)">{{ row.groupName }}</el-button>
@@ -660,29 +776,98 @@ onMounted(async () => {
           <el-table-column label="状态" width="90">
             <template #default="{ row }">{{ statusLabel(row.status) }}</template>
           </el-table-column>
+          <el-table-column v-if="embedTaskActions" label="调度状态" width="100">
+            <template #default="{ row }">{{ taskOf(row) ? statusLabel(taskOf(row)!.scheduleStatus) : '—' }}</template>
+          </el-table-column>
+          <el-table-column v-if="embedTaskActions" label="执行状态" width="100">
+            <template #default="{ row }">{{ taskOf(row) ? statusLabel(taskOf(row)!.execStatus) : '—' }}</template>
+          </el-table-column>
+          <el-table-column v-if="embedTaskActions" label="操作" width="90" fixed="right">
+            <template #default="{ row }">
+              <el-button
+                link
+                type="primary"
+                :disabled="!taskOf(row)"
+                @click="openTaskLog(row)"
+              >日志</el-button>
+            </template>
+          </el-table-column>
         </el-table>
         <div class="list-footer">共 {{ groups.length }} 条</div>
       </section>
     </div>
 
-    <el-dialog v-model="domainEditVisible" title="修改指标域" width="520px" destroy-on-close>
-      <el-form ref="domainEditRef" :model="domainEdit" :rules="domainEditRules" label-width="120px">
-        <el-form-item label="指标域名称" prop="domainName">
-          <el-input v-model="domainEdit.domainName" placeholder="请填写指标域名称" />
+    <!-- 左侧「修改/删除」：该指标域下全部指标组 -->
+    <el-dialog
+      v-model="groupsEditVisible"
+      :title="`${groupsEditMode === 'delete' ? '删除' : '修改'}指标组 — ${groupsEditDomain?.domainName || ''}`"
+      width="760px"
+      destroy-on-close
+    >
+      <el-table
+        v-loading="groupsEditLoading"
+        class="portal-table"
+        :data="groupsEditRows"
+        stripe
+        size="small"
+        empty-text="暂无指标组"
+        max-height="420"
+      >
+        <el-table-column prop="groupName" label="组名称" min-width="140" show-overflow-tooltip />
+        <el-table-column prop="targetTable" label="目标表" min-width="160" show-overflow-tooltip />
+        <el-table-column label="组分类" width="110">
+          <template #default="{ row }">{{ categoryLabel(row.groupCategory) }}</template>
+        </el-table-column>
+        <el-table-column label="状态" width="90">
+          <template #default="{ row }">{{ statusLabel(row.status) }}</template>
+        </el-table-column>
+        <el-table-column label="操作" width="90" fixed="right">
+          <template #default="{ row }">
+            <el-button
+              v-if="groupsEditMode === 'edit'"
+              link
+              type="primary"
+              @click="editGroupFromDomainList(row)"
+            >编辑</el-button>
+            <el-button
+              v-else
+              link
+              type="danger"
+              @click="deleteGroupFromDomainList(row)"
+            >删除</el-button>
+          </template>
+        </el-table-column>
+      </el-table>
+      <template #footer>
+        <el-button @click="groupsEditVisible = false">关闭</el-button>
+      </template>
+    </el-dialog>
+
+    <!-- 左侧「发布」：任务详情 -->
+    <el-dialog v-model="publishVisible" title="任务详情" width="480px" destroy-on-close>
+      <el-form
+        ref="publishFormRef"
+        :model="publishForm"
+        :rules="publishRules"
+        label-width="110px"
+      >
+        <el-form-item label="任务名称" prop="taskName" required>
+          <el-input v-model="publishForm.taskName" placeholder="请填写任务名称" />
         </el-form-item>
-        <el-form-item label="指标域库名" prop="domainDbName">
-          <el-input
-            v-model="domainEdit.domainDbName"
-            placeholder="以 ind_ 开头，支持小写字母、数字、下划线，不能以下划线结尾"
+        <el-form-item label="执行周期" prop="cronExpr" required>
+          <ExecCycleSelect
+            v-model="publishForm.cronExpr"
+            :allow-custom="false"
+            @change="onPublishCycleChange"
           />
         </el-form-item>
         <el-form-item label="备注">
-          <el-input v-model="domainEdit.remark" placeholder="请填写备注" />
+          <el-input v-model="publishForm.remark" type="textarea" :rows="3" placeholder="选填" />
         </el-form-item>
       </el-form>
       <template #footer>
-        <el-button @click="domainEditVisible = false">取消</el-button>
-        <el-button type="primary" :loading="domainEditSaving" @click="saveDomainEdit">确定</el-button>
+        <el-button @click="publishVisible = false">取消</el-button>
+        <el-button type="primary" :loading="publishSaving" @click="confirmPublish">确定</el-button>
       </template>
     </el-dialog>
 
@@ -734,10 +919,6 @@ onMounted(async () => {
           </el-row>
         </el-form>
 
-        <el-button type="primary" :icon="Plus" style="margin-bottom: 12px" @click="openAddIndicator">
-          新增指标
-        </el-button>
-
         <el-table
           class="portal-table detail-ind-table"
           :data="detailIndicators"
@@ -774,143 +955,99 @@ onMounted(async () => {
       <template #footer>
         <el-button @click="closeGroupDialog">取消</el-button>
         <el-button v-if="detail.id" type="danger" plain @click="removeCurrentGroup">删除</el-button>
-        <el-button type="primary" :loading="detailSaving" @click="saveDetail">保存</el-button>
+        <el-button type="primary" :loading="detailSaving" @click="goNextToSql">下一步</el-button>
       </template>
     </el-dialog>
 
-    <!-- 指标语句（新增指标先弹此窗） -->
-    <el-dialog v-model="sqlDialog" title="指标语句" width="860px" destroy-on-close top="6vh" append-to-body>
-      <el-form label-width="110px" inline class="sql-top-form portal-inline-form">
-        <el-form-item label="数据源" required class="portal-field-xl">
-          <el-input
-            :model-value="sqlForm.datasourceName"
-            readonly
-            placeholder="请选择数据源"
-            class="ds-picker-input"
-            @click="openDsPicker"
-          >
-            <template #suffix>
-              <el-icon class="ds-picker-icon" @click.stop="openDsPicker"><Search /></el-icon>
-            </template>
-          </el-input>
-        </el-form-item>
-        <el-form-item label="超时时间(秒)" required>
-          <el-input-number v-model="sqlForm.timeoutSec" :min="5" :max="600" controls-position="right" />
-        </el-form-item>
-      </el-form>
-      <el-form label-width="110px">
-        <el-form-item label="查询语句">
-          <div class="sql-toolbar">
-            <el-tooltip content="预览执行">
-              <el-button type="primary" size="small" class="sql-tool-btn" :icon="VideoPlay" @click="openPreview" />
-            </el-tooltip>
-            <el-tooltip content="解析结果字段">
-              <el-button
-                type="primary"
-                size="small"
-                class="sql-tool-btn"
-                :icon="Grid"
-                :loading="parsing"
-                @click="runParse()"
+    <!-- 指标语句（下一步进入；保存时才落库指标组+指标） -->
+    <el-dialog
+      v-model="sqlDialog"
+      title="指标语句"
+      width="920px"
+      destroy-on-close
+      top="5vh"
+      append-to-body
+      class="ind-sql-dialog"
+    >
+      <div class="sql-dialog-body">
+        <section class="sql-card sql-card--meta">
+          <el-form label-width="96px" inline class="portal-inline-form sql-meta-form">
+            <el-form-item label="数据源" required class="portal-field-xl">
+              <el-input
+                :model-value="sqlForm.datasourceName"
+                readonly
+                placeholder="请选择元数据数据源"
+                class="ds-picker-input"
+                @click="openDsPicker"
+              >
+                <template #suffix>
+                  <el-icon class="ds-picker-icon" @click.stop="openDsPicker"><Search /></el-icon>
+                </template>
+              </el-input>
+            </el-form-item>
+            <el-form-item label="超时(秒)" required>
+              <el-input-number
+                v-model="sqlForm.timeoutSec"
+                :min="5"
+                :max="600"
+                controls-position="right"
               />
-            </el-tooltip>
+            </el-form-item>
+          </el-form>
+        </section>
+
+        <section class="sql-card">
+          <div class="sql-card-head">
+            <div class="sql-card-title">查询语句</div>
+            <div class="sql-card-actions">
+              <el-button type="primary" size="small" :icon="VideoPlay" :loading="parsing" @click="runExecute">
+                执行
+              </el-button>
+              <el-button size="small" :icon="Grid" @click="openPreview">预览</el-button>
+            </div>
           </div>
           <el-input
             v-model="sqlForm.sqlText"
             type="textarea"
-            :rows="10"
+            :rows="11"
             class="sql-editor"
-            placeholder="请输入 SELECT 语句，并为结果列指定 AS 别名"
+            resize="vertical"
+            placeholder="请手动填写 SELECT 语句，并为结果列指定 AS 别名，例如：&#10;SELECT YEAR(NOW()) AS year_name FROM (SELECT 1) t"
           />
-        </el-form-item>
-      </el-form>
-      <el-table :data="parsedFields" stripe size="small" max-height="220" empty-text="暂无数据">
-        <el-table-column prop="resultField" label="结果字段名" min-width="140" />
-        <el-table-column prop="fieldType" label="字段类型" width="100" />
-        <el-table-column prop="fieldLength" label="字段长度" width="100" />
-        <el-table-column prop="fieldPrecision" label="字段精度" width="100" />
-      </el-table>
+          <p class="sql-hint">提示：每列需带 AS 别名；点「执行」解析下方字段，再点「保存」生成指标组。</p>
+        </section>
+
+        <section class="sql-card">
+          <div class="sql-card-head">
+            <div class="sql-card-title">
+              解析结果字段
+              <span v-if="parsedFields.length" class="sql-field-count">{{ parsedFields.length }}</span>
+            </div>
+          </div>
+          <el-table
+            class="portal-table sql-fields-table"
+            :data="parsedFields"
+            stripe
+            size="small"
+            max-height="240"
+            empty-text="暂无数据，请先填写 SQL 并点击执行"
+          >
+            <el-table-column type="index" label="#" width="48" />
+            <el-table-column prop="resultField" label="结果字段名" min-width="140" show-overflow-tooltip />
+            <el-table-column prop="fieldType" label="字段类型" width="100" />
+            <el-table-column prop="fieldLength" label="字段长度" width="100" />
+            <el-table-column prop="fieldPrecision" label="字段精度" width="100" />
+          </el-table>
+        </section>
+      </div>
       <template #footer>
         <el-button @click="sqlDialog = false">取消</el-button>
         <el-button type="primary" :loading="sqlSaving" @click="saveSql">保存</el-button>
       </template>
     </el-dialog>
 
-    <!-- 选择数据源（从指标语句·数据源字段点开） -->
-    <el-dialog v-model="dsDialog" title="选择数据源" width="960px" destroy-on-close top="5vh" append-to-body>
-      <div class="ds-picker">
-        <aside class="ds-side">
-          <div class="side-title">数据源分类</div>
-          <el-input
-            v-model="dsCategoryKeyword"
-            size="small"
-            clearable
-            placeholder="请输入名称"
-            class="ds-side-search"
-          />
-          <div class="ds-side-list">
-            <button
-              v-for="c in filteredDsCategories"
-              :key="c"
-              type="button"
-              class="side-item"
-              :class="{ active: dsCategory === c }"
-              @click="pickDsCategory(c)"
-            >
-              {{ c }}
-            </button>
-          </div>
-        </aside>
-        <section class="ds-main">
-          <el-form inline class="portal-inline-form" @submit.prevent="loadDsCatalog">
-            <el-form-item label="数据源名称" class="portal-field-lg">
-              <el-input v-model="dsNameKeyword" clearable placeholder="请输入名称" />
-            </el-form-item>
-            <el-form-item class="portal-form-actions">
-              <el-button type="primary" :icon="Search" @click="loadDsCatalog">查询</el-button>
-              <el-button type="primary" :icon="RefreshRight" @click="dsNameKeyword = ''; loadDsCatalog()">重置</el-button>
-            </el-form-item>
-          </el-form>
-          <el-table
-            v-loading="dsLoading"
-            :data="dsPagedRows"
-            stripe
-            border
-            size="small"
-            height="360"
-            highlight-current-row
-            empty-text="暂无数据"
-            :row-class-name="({ row }: { row: DsRow }) => (row.key === selectedDsKey ? 'ds-row-selected' : '')"
-            @row-click="selectDsRow"
-          >
-            <el-table-column prop="name" label="名称" min-width="160" show-overflow-tooltip />
-            <el-table-column prop="version" label="版本" width="80" />
-            <el-table-column prop="category" label="所属分类" width="100" />
-            <el-table-column prop="deptName" label="提供部门" min-width="160" show-overflow-tooltip />
-            <el-table-column label="操作" width="80" fixed="right">
-              <template #default="{ row }">
-                <el-button link type="primary" @click.stop="selectDsRow(row)">查看</el-button>
-              </template>
-            </el-table-column>
-          </el-table>
-          <div class="ds-pager">
-            <el-pagination
-              v-model:current-page="dsPage"
-              v-model:page-size="dsPageSize"
-              :total="dsRows.length"
-              :page-sizes="[10, 20, 50]"
-              layout="total, sizes, prev, pager, next, jumper"
-              background
-              small
-            />
-          </div>
-        </section>
-      </div>
-      <template #footer>
-        <el-button @click="dsDialog = false">取消</el-button>
-        <el-button type="primary" @click="confirmDs">确定</el-button>
-      </template>
-    </el-dialog>
+    <!-- 选择数据源：元数据管理 · 数据源管理 -->
+    <MetaDataSourcePickerDialog v-model="dsDialog" title="选择数据源" @confirm="onMetaDsPicked" />
 
     <el-dialog v-model="previewDialog" title="预览" width="860px" destroy-on-close append-to-body>
       <el-alert v-if="previewMessage" type="warning" :closable="false" :title="previewMessage" style="margin-bottom: 8px" />
@@ -927,6 +1064,24 @@ onMounted(async () => {
       <template #footer>
         <el-button @click="previewDialog = false">关闭</el-button>
         <el-button type="primary" @click="previewDialog = false">确定</el-button>
+      </template>
+    </el-dialog>
+
+    <el-dialog v-model="logDialog" :title="logTitle" width="720px" destroy-on-close>
+      <el-input v-model="logText" type="textarea" :rows="14" readonly class="log-box" />
+      <el-table v-if="logRuns.length" :data="logRuns" size="small" stripe style="margin-top: 12px" max-height="220">
+        <el-table-column prop="startedAt" label="时间" width="170" />
+        <el-table-column prop="triggerType" label="触发" width="110" />
+        <el-table-column label="执行" width="90">
+          <template #default="{ row }">{{ statusLabel(row.execStatus) }}</template>
+        </el-table-column>
+        <el-table-column label="结果" width="100">
+          <template #default="{ row }">{{ statusLabel(row.calcResult) }}</template>
+        </el-table-column>
+        <el-table-column prop="message" label="摘要" min-width="160" show-overflow-tooltip />
+      </el-table>
+      <template #footer>
+        <el-button type="primary" @click="logDialog = false">关闭</el-button>
       </template>
     </el-dialog>
   </div>
@@ -1003,6 +1158,11 @@ onMounted(async () => {
   color: var(--el-text-color-secondary);
   font-size: 13px;
 }
+.log-box :deep(textarea) {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+  line-height: 1.45;
+}
 .detail-toolbar {
   display: flex;
   gap: 8px;
@@ -1019,74 +1179,61 @@ onMounted(async () => {
 .detail-ind-table {
   margin-top: 12px;
 }
-.ds-picker {
+.sql-dialog-body {
   display: flex;
+  flex-direction: column;
   gap: 12px;
-  min-height: 420px;
 }
-.ds-side {
-  width: 200px;
-  flex-shrink: 0;
-  border: 1px solid var(--el-border-color);
-  border-radius: 4px;
-  padding: 10px;
-  background: #fff;
-}
-.ds-side-search {
-  margin-bottom: 8px;
-}
-.ds-side-list {
-  max-height: 420px;
-  overflow: auto;
+.sql-card {
   border: 1px solid var(--el-border-color-lighter);
-  border-radius: 2px;
-  padding: 4px;
+  border-radius: 8px;
+  background: #fff;
+  padding: 12px 14px;
 }
-.ds-side .side-item {
-  display: block;
-  width: 100%;
-  text-align: left;
-  border: none;
-  background: transparent;
-  padding: 8px 10px;
-  border-radius: 2px;
-  cursor: pointer;
-  color: var(--el-text-color-regular);
-  margin: 0;
+.sql-card--meta {
+  background: var(--el-fill-color-blank, #fafbfc);
 }
-.ds-side .side-item:hover {
-  background: var(--el-fill-color-light);
+.sql-card-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 10px;
 }
-.ds-side .side-item.active {
+.sql-card-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--el-text-color-primary);
+}
+.sql-field-count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 20px;
+  height: 20px;
+  padding: 0 6px;
+  border-radius: 10px;
   background: var(--el-color-primary-light-9);
   color: var(--el-color-primary);
+  font-size: 12px;
   font-weight: 600;
 }
-.ds-main {
-  flex: 1;
-  min-width: 0;
-}
-.ds-pager {
-  margin-top: 12px;
-  display: flex;
-  justify-content: flex-end;
-}
-:deep(.ds-row-selected) {
-  --el-table-tr-bg-color: var(--el-color-primary-light-9);
-}
-.sql-toolbar {
+.sql-card-actions {
   display: flex;
   align-items: center;
   gap: 8px;
-  margin-bottom: 8px;
 }
-.sql-tool-btn {
-  width: 28px;
-  height: 28px;
-  padding: 0;
+.sql-meta-form {
+  margin-bottom: 0;
 }
-.sql-top-form {
-  margin-bottom: 4px;
+.sql-hint {
+  margin: 8px 0 0;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--el-text-color-secondary);
 }
 .ds-picker-input {
   width: 280px;
@@ -1096,9 +1243,41 @@ onMounted(async () => {
   cursor: pointer;
   color: var(--el-color-primary);
 }
-.sql-editor :deep(textarea) {
-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+.sql-editor :deep(.el-textarea__inner) {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, 'Courier New', monospace;
   font-size: 13px;
-  line-height: 1.45;
+  line-height: 1.55;
+  letter-spacing: 0.01em;
+  color: #1f2a37;
+  background: #f7f8fa;
+  border-color: var(--el-border-color);
+  border-radius: 6px;
+  padding: 12px 14px;
+  box-shadow: none;
+}
+.sql-editor :deep(.el-textarea__inner:focus) {
+  background: #fff;
+  border-color: var(--el-color-primary-light-5);
+  box-shadow: 0 0 0 1px var(--el-color-primary-light-7);
+}
+.sql-fields-table {
+  border-radius: 6px;
+  overflow: hidden;
+}
+</style>
+
+<style>
+/* append-to-body 弹窗需非 scoped 才能作用到 dialog 外壳 */
+.ind-sql-dialog .el-dialog__header {
+  margin-right: 0;
+  padding: 16px 20px 12px;
+  border-bottom: 1px solid var(--el-border-color-lighter);
+}
+.ind-sql-dialog .el-dialog__body {
+  padding: 16px 20px;
+}
+.ind-sql-dialog .el-dialog__footer {
+  padding: 12px 20px 16px;
+  border-top: 1px solid var(--el-border-color-lighter);
 }
 </style>

@@ -582,6 +582,7 @@ export const ingestionApi = {
   channels: (channelType?: string) => api.get<Channel[]>('/exchange/ingestion/channels', { params: { channelType } }),
   createChannel: (body: Record<string, unknown>) => api.post<number>('/exchange/ingestion/channels', body),
   updateChannel: (id: number, body: Record<string, unknown>) => api.put<void>(`/exchange/ingestion/channels/${id}`, body),
+  deleteChannel: (id: number) => api.delete<void>(`/exchange/ingestion/channels/${id}`),
   runChannel: (id: number) => api.post<Record<string, unknown>>(`/exchange/ingestion/channels/${id}/run`),
   tasks: (channelId?: number) => api.get<IngestTask[]>('/exchange/ingestion/collect/tasks', { params: { channelId } }),
   createTask: (body: Record<string, unknown>) => api.post<number>('/exchange/ingestion/collect/tasks', body),
@@ -701,8 +702,28 @@ export const ingestionApi = {
     api.post<void>(`/exchange/ingestion/asset-catalog-regs/${id}/reject`, body || {}),
   assetCatalogArchive: (id: number) => api.post<void>(`/exchange/ingestion/asset-catalog-regs/${id}/archive`),
   assetCatalogUpload: (form: FormData) =>
-    api.post<{ fileName: string; filePath: string; kind: string }>(
+    api.post<{ fileName: string; filePath: string; kind: string; url?: string }>(
       '/exchange/ingestion/asset-catalog-regs/upload',
       form,
     ),
+  /** 带鉴权下载资产目录附件（blob） */
+  assetCatalogDownload: async (filePath: string, fileName?: string) => {
+    const stored = String(filePath || '').replace(/\\/g, '/').split('/').pop() || ''
+    if (!stored) throw new Error('附件路径无效')
+    const token = localStorage.getItem('accessToken') || ''
+    const res = await fetch(
+      `/api/v1/exchange/ingestion/asset-catalog-regs/attachments/${encodeURIComponent(stored)}`,
+      { headers: token ? { Authorization: `Bearer ${token}` } : {} },
+    )
+    if (!res.ok) {
+      throw new Error(`下载失败（HTTP ${res.status}）`)
+    }
+    const blob = await res.blob()
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = fileName || stored
+    a.click()
+    URL.revokeObjectURL(url)
+  },
 }

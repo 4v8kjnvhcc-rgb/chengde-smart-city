@@ -26,7 +26,7 @@ import BuiltinAttrManageView from '@/views/system/BuiltinAttrManageView.vue'
 import KettleView from '@/views/integration/KettleView.vue'
 import SchedulerView from '@/views/integration/SchedulerView.vue'
 import { useAuthStore } from '@/stores/auth'
-import { filterHubNavByPermissions, SUPPORT_NAV_PERMISSIONS } from '@/utils/hub-nav-permission'
+import { filterHubNavByPermissions, filterHubNavByMenuVisible, SUPPORT_NAV_PERMISSIONS } from '@/utils/hub-nav-permission'
 
 const auth = useAuthStore()
 
@@ -95,11 +95,12 @@ const NAV_BASE: HubNavItem[] = [
   },
 ]
 
-const navItems = computed(() =>
-  filterHubNavByPermissions(NAV_BASE, auth.permissions, SUPPORT_NAV_PERMISSIONS, {
+const navItems = computed(() => {
+  const byPerm = filterHubNavByPermissions(NAV_BASE, auth.permissions, SUPPORT_NAV_PERMISSIONS, {
     isSystemAdmin: auth.isSystemAdmin,
-  }),
-)
+  })
+  return filterHubNavByMenuVisible(byPerm, auth.menus, SUPPORT_NAV_PERMISSIONS)
+})
 
 const LEAF_KEYS = new Set<string>()
 function collectLeaves(items: HubNavItem[]) {

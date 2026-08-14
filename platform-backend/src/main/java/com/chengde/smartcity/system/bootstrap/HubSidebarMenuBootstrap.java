@@ -72,11 +72,11 @@ public class HubSidebarMenuBootstrap implements ApplicationRunner {
         jdbcTemplate.update(
                 "UPDATE sys_menu SET status = 1 WHERE id IN (12, 7880, 7881, 7882, 7883, 13, 14, 15, 16, 17, 18, 19, 6000, 6010)");
         jdbcTemplate.update(
-                "UPDATE sys_menu SET parent_id = 7880, sort_order = 3, status = 1, visible = 0, "
+                "UPDATE sys_menu SET parent_id = 7880, sort_order = 3, status = 1, visible = 1, "
                         + "menu_name = '任务管理', path = '/analytics/support?tab=tasks', "
                         + "permission = 'hub:analytics:support:tasks' WHERE id = 7882");
         jdbcTemplate.update(
-                "UPDATE sys_menu SET parent_id = 7880, sort_order = 4, status = 1, visible = 0, "
+                "UPDATE sys_menu SET parent_id = 7880, sort_order = 4, status = 1, visible = 1, "
                         + "menu_name = '集成运维', path = '/analytics/support?tab=ops.kettle', "
                         + "permission = 'hub:analytics:support:ops' WHERE id = 7883");
         // UUM 内不再保留重复配置项（侧栏仍按 permission 控制）

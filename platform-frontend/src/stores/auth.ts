@@ -1,5 +1,6 @@
 import { defineStore } from 'pinia'
 import api from '@/api/http'
+import { encryptTransportPayload } from '@/utils/transport-crypto'
 
 export interface MenuNode {
   id: number
@@ -80,9 +81,9 @@ export const useAuthStore = defineStore('auth', {
       captchaId?: string,
       captchaCode?: string,
     ) {
+      const envelope = await encryptTransportPayload({ username, password })
       const res = await api.post('/auth/login', {
-        username,
-        password,
+        ...envelope,
         totpCode,
         captchaId,
         captchaCode,

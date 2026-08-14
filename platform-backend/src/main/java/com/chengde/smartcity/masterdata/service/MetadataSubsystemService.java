@@ -15,6 +15,7 @@ import com.chengde.smartcity.integration.config.IntegrationProperties;
 import com.chengde.smartcity.integration.jdbc.CredentialCipher;
 import com.chengde.smartcity.integration.jdbc.JdbcProbeService;
 import com.chengde.smartcity.masterdata.support.DataLayerSupport;
+import com.chengde.smartcity.masterdata.support.LayerJdbcSupport;
 import com.chengde.smartcity.integration.openmetadata.OpenMetadataClient;
 import com.chengde.smartcity.masterdata.entity.GovMetaChangeNotice;
 import com.chengde.smartcity.masterdata.entity.GovMetaDataSource;
@@ -96,6 +97,7 @@ public class MetadataSubsystemService {
     private final IntegrationProperties integrationProperties;
     private final OpenMetadataClient openMetadataClient;
     private final DataSource dataSource;
+    private final LayerJdbcSupport layerJdbc;
     private final IngDataSourceMapper ingDataSourceMapper;
     private final IngDataTableMapper ingDataTableMapper;
     private final IngDataColumnMapper ingDataColumnMapper;
@@ -130,6 +132,7 @@ public class MetadataSubsystemService {
                                     MetaCollectDsService metaCollectDsService,
                                     MetaSourceCategoryService metaSourceCategoryService,
                                     GovMetaDataSourceMapper metaDataSourceMapper,
+                                    LayerJdbcSupport layerJdbc,
                                     @Lazy MetadataSubsystemService self,
                                     @Autowired(required = false) DataSource dataSource) {
         this.modelMapper = modelMapper;
@@ -154,6 +157,7 @@ public class MetadataSubsystemService {
         this.metaCollectDsService = metaCollectDsService;
         this.metaSourceCategoryService = metaSourceCategoryService;
         this.metaDataSourceMapper = metaDataSourceMapper;
+        this.layerJdbc = layerJdbc;
         this.self = self;
         this.dataSource = dataSource;
     }
@@ -236,7 +240,7 @@ public class MetadataSubsystemService {
         return out;
     }
 
-    /** 保存即生效：校验字段、同步物理库结构，并置为已发布。 */
+    /** 保存即生效：校验字段、同步物理库结构；状态由发布/下线单独控制。 */
     private void applyModelReadyOnSave(GovMetaModel m) {
         List<String> fields = extractFieldNames(m.getContentJson());
         if (fields.isEmpty()) {
@@ -246,12 +250,14 @@ public class MetadataSubsystemService {
         if (m.getModelNameEn() == null || m.getModelNameEn().isBlank()) {
             m.setModelNameEn(m.getModelCode());
         }
-        m.setStatus("PUBLISHED");
-        m.setPublishedAt(LocalDateTime.now());
+        String st = m.getStatus();
+        if (st == null || st.isBlank() || "OFFLINE".equalsIgnoreCase(st)) {
+            m.setStatus("DRAFT");
+        }
     }
 
     /**
-     * 元模型保存后落物理库：表模型建表/补列，字段模型新增或修改列。
+     * 元模型保存后落物理库：表模型建表/补列/改列，字段模型新增或修改列。
      */
     private void applyModelPhysicalDdl(GovMetaModel m) {
         if (m.getMetaDataSourceId() == null) {
@@ -291,12 +297,19 @@ public class MetadataSubsystemService {
         Set<String> existing = existingColumnNames(cfg, tableName);
         for (Map<String, Object> field : fieldDefs) {
             String code = fieldCode(field);
-            if (code == null || existing.contains(code.toLowerCase(Locale.ROOT))) {
+            if (code == null) {
                 continue;
             }
-            String ddl = "ALTER TABLE `" + tableName + "` ADD COLUMN `" + code + "` " + buildColumnDefinition(field);
-            jdbcProbeService.executeDdl(cfg, ddl);
-            log.info("元模型补列完成 db={} table={} column={}", cfg.database, tableName, code);
+            String colSql = buildColumnSql(field);
+            if (existing.contains(code.toLowerCase(Locale.ROOT))) {
+                String ddl = "ALTER TABLE `" + tableName + "` MODIFY COLUMN `" + code + "` " + colSql;
+                jdbcProbeService.executeDdl(cfg, ddl);
+                log.info("元模型改列完成 db={} table={} column={}", cfg.database, tableName, code);
+            } else {
+                String ddl = "ALTER TABLE `" + tableName + "` ADD COLUMN `" + code + "` " + colSql;
+                jdbcProbeService.executeDdl(cfg, ddl);
+                log.info("元模型补列完成 db={} table={} column={}", cfg.database, tableName, code);
+            }
         }
     }
 
@@ -322,9 +335,8 @@ public class MetadataSubsystemService {
             if (!existing.contains(colCode.toLowerCase(Locale.ROOT))) {
                 throw new BusinessException(400, "源字段 " + colCode + " 不存在，无法修改");
             }
-            String colDef = buildColumnDefinition(field);
             jdbcProbeService.executeDdl(cfg,
-                    "ALTER TABLE `" + tableName + "` MODIFY COLUMN `" + colCode + "` " + colDef);
+                    "ALTER TABLE `" + tableName + "` MODIFY COLUMN `" + colCode + "` " + buildColumnSql(field));
             log.info("元模型改列完成 db={} table={} column={}", cfg.database, tableName, colCode);
             return;
         }
@@ -349,9 +361,8 @@ public class MetadataSubsystemService {
             if (!pending.add(lower)) {
                 throw new BusinessException(400, "新增字段编码重复: " + colCode);
             }
-            String colDef = buildColumnDefinition(field);
             jdbcProbeService.executeDdl(cfg,
-                    "ALTER TABLE `" + tableName + "` ADD COLUMN `" + colCode + "` " + colDef);
+                    "ALTER TABLE `" + tableName + "` ADD COLUMN `" + colCode + "` " + buildColumnSql(field));
             log.info("元模型加列完成 db={} table={} column={}", cfg.database, tableName, colCode);
             added++;
         }
@@ -396,12 +407,7 @@ public class MetadataSubsystemService {
             if (code == null) {
                 continue;
             }
-            StringBuilder col = new StringBuilder("  `").append(code).append("` ")
-                    .append(buildColumnDefinition(field));
-            if (Boolean.TRUE.equals(field.get("required")) || Boolean.TRUE.equals(field.get("primaryKey"))) {
-                col.append(" NOT NULL");
-            }
-            colDefs.add(col.toString());
+            colDefs.add("  `" + code + "` " + buildColumnSql(field));
             if (Boolean.TRUE.equals(field.get("primaryKey"))) {
                 pkCols.add(code);
             }
@@ -421,6 +427,23 @@ public class MetadataSubsystemService {
             ddl.append(" COMMENT='").append(comment.replace("'", "''")).append("'");
         }
         return ddl.toString();
+    }
+
+    /** 列类型 + 可空 + 列注释（hint/中文名/description）。 */
+    private String buildColumnSql(Map<String, Object> field) {
+        StringBuilder col = new StringBuilder(mapModelFieldToSqlType(str(field.get("type"), "VARCHAR"), intOrNull(field.get("length"))));
+        if (Boolean.TRUE.equals(field.get("required")) || Boolean.TRUE.equals(field.get("primaryKey"))) {
+            col.append(" NOT NULL");
+        }
+        String colComment = firstNonBlank(
+                str(field.get("hint"), null),
+                str(field.get("name"), null),
+                str(field.get("description"), null),
+                str(field.get("comment"), null));
+        if (colComment != null && !colComment.isBlank()) {
+            col.append(" COMMENT '").append(colComment.replace("'", "''")).append("'");
+        }
+        return col.toString();
     }
 
     private String buildColumnDefinition(Map<String, Object> field) {
@@ -475,7 +498,12 @@ public class MetadataSubsystemService {
     @Transactional
     public void publishModel(UserPrincipal operator, Long id) {
         GovMetaModel m = requireModel(id);
-        applyModelReadyOnSave(m);
+        applyModelPhysicalDdl(m);
+        if (m.getModelNameEn() == null || m.getModelNameEn().isBlank()) {
+            m.setModelNameEn(m.getModelCode());
+        }
+        m.setStatus("PUBLISHED");
+        m.setPublishedAt(LocalDateTime.now());
         modelMapper.updateById(m);
         snapshotVersion(operator, "MODEL", m.getId(), toJson(m), "发布元模型");
         auditService.log(operator.getUserId(), operator.getUsername(), operator.getOrgId(),
@@ -490,6 +518,17 @@ public class MetadataSubsystemService {
         snapshotVersion(operator, "MODEL", m.getId(), toJson(m), "下线元模型");
         auditService.log(operator.getUserId(), operator.getUsername(), operator.getOrgId(),
                 "META_MODEL_OFFLINE", "gov_meta_model", String.valueOf(id), m.getModelCode());
+    }
+
+    @Transactional
+    public void deleteModel(UserPrincipal operator, Long id) {
+        GovMetaModel m = requireModel(id);
+        if ("PUBLISHED".equalsIgnoreCase(m.getStatus())) {
+            throw new BusinessException(400, "已发布元模型请先下线再删除");
+        }
+        modelMapper.deleteById(id);
+        auditService.log(operator.getUserId(), operator.getUsername(), operator.getOrgId(),
+                "META_MODEL_DELETE", "gov_meta_model", String.valueOf(id), m.getModelCode());
     }
 
     public Map<String, Object> compareModels(Long leftId, Long rightId) {
@@ -1406,9 +1445,12 @@ public class MetadataSubsystemService {
             throw new BusinessException(404, "元数据数据源不存在");
         }
         List<Map<String, Object>> tables = probeTablesForMetaDataSource(mds);
+        // 仅取 entry_code，避免全量实体加载拖慢选表接口
         Set<String> collected = registryMapper.selectList(new LambdaQueryWrapper<GovMetadataRegistry>()
+                        .select(GovMetadataRegistry::getEntryCode)
                         .eq(GovMetadataRegistry::getEntryType, "TABLE")
-                        .ne(GovMetadataRegistry::getStatus, "OFFLINE"))
+                        .ne(GovMetadataRegistry::getStatus, "OFFLINE")
+                        .isNotNull(GovMetadataRegistry::getEntryCode))
                 .stream()
                 .map(GovMetadataRegistry::getEntryCode)
                 .filter(Objects::nonNull)
@@ -1546,22 +1588,32 @@ public class MetadataSubsystemService {
         return "VARCHAR";
     }
 
-    /** 按 M088 元数据数据源配置探库：登记源 → 行内 JDBC → 关联连接器。 */
+    /**
+     * 按 M088 元数据数据源配置探库（仅表名+注释）。
+     * 采集选表 UI 不需要列结构与 COUNT(*)；生产 DWD 全量 listTables 易超时导致前端一直转圈。
+     */
     private List<Map<String, Object>> probeTablesForMetaDataSource(GovMetaDataSource mds) {
-        Long ingId = mds.getIngSourceId();
-        if (ingId != null && ingId > 0) {
-            return new ArrayList<>(listCollectDataSourceTables(ingId));
-        }
-        if (hasMetaDataSourceJdbcFields(mds)) {
-            return jdbcProbeService.listTables(toConnConfigFromMetaDataSource(mds));
-        }
-        if (mds.getConnectorId() != null) {
-            GovOmConnector c = connectorMapper.selectById(mds.getConnectorId());
-            if (c != null) {
-                return jdbcProbeService.listTables(toConnConfigFromConnector(c));
+        JdbcProbeService.ConnConfig cfg = resolveConnConfigForMetaDataSource(mds);
+        return toCollectTableNameRows(jdbcProbeService.listTableSummaries(cfg));
+    }
+
+    private List<Map<String, Object>> toCollectTableNameRows(List<Map<String, Object>> summaries) {
+        List<Map<String, Object>> out = new ArrayList<>();
+        for (Map<String, Object> s : summaries) {
+            Object name = s.get("tableName");
+            if (name == null || String.valueOf(name).isBlank()) {
+                continue;
             }
+            Map<String, Object> row = new LinkedHashMap<>();
+            row.put("sourceTable", name);
+            row.put("tableName", name);
+            Object remarks = s.get("remarks");
+            if (remarks != null && !String.valueOf(remarks).isBlank()) {
+                row.put("remarks", String.valueOf(remarks).trim());
+            }
+            out.add(row);
         }
-        throw new BusinessException(400, "数据源未配置连接信息，请在「数据源管理」中补全主机、库名与账号");
+        return out;
     }
 
     private boolean hasMetaDataSourceJdbcFields(GovMetaDataSource mds) {
@@ -4797,7 +4849,8 @@ public class MetadataSubsystemService {
             throw new BusinessException(400, "dataSourceId 必填");
         }
         if (isPlatformLayerId(dataSourceId)) {
-            return listPlatformLayerTables(platformLayerDatabase(dataSourceId));
+            // 选表 UI 只需表名；走 LayerJdbcSupport 以支持生产分机（S6/S7）
+            return listPlatformLayerTables(platformLayerDatabase(dataSourceId), false);
         }
         IngDataSource ds = ingDataSourceMapper.selectById(dataSourceId);
         if (ds == null) {
@@ -5153,10 +5206,19 @@ public class MetadataSubsystemService {
         c.setJdbcDatabase(database);
         c.setStatus("ACTIVE");
         c.setCreatedBy(operator == null ? "system" : operator.getUsername());
-        if (dataSource != null) {
-            try (Connection conn = dataSource.getConnection()) {
-                c.setJdbcUser(conn.getMetaData().getUserName());
-            } catch (Exception ignored) {
+        try {
+            LayerJdbcSupport.ResolvedEndpoint ep = layerJdbc.resolve(database);
+            c.setJdbcUser(ep.username());
+            if (ep.password() != null && !ep.password().isBlank()) {
+                c.setJdbcPassword(credentialCipher.encrypt(ep.password()));
+            }
+        } catch (Exception e) {
+            log.warn("填充平台分层连接器账号失败 db={}: {}", database, e.getMessage());
+            if (dataSource != null) {
+                try (Connection conn = dataSource.getConnection()) {
+                    c.setJdbcUser(conn.getMetaData().getUserName());
+                } catch (Exception ignored) {
+                }
             }
         }
         connectorMapper.insert(c);
@@ -5184,6 +5246,11 @@ public class MetadataSubsystemService {
     }
 
     private String buildPlatformJdbcUrl(String database) {
+        try {
+            return layerJdbc.resolve(database).jdbcUrl();
+        } catch (Exception e) {
+            log.warn("解析分层库 JDBC URL 失败 db={}，回落控制面改写: {}", database, e.getMessage());
+        }
         if (dataSource == null) {
             return "jdbc:mysql://localhost:3306/" + database;
         }
@@ -5404,30 +5471,42 @@ public class MetadataSubsystemService {
     }
 
     private List<Map<String, Object>> listPlatformLayerTables(String database) {
-        if (dataSource == null) {
-            return List.of();
-        }
+        return listPlatformLayerTables(database, true);
+    }
+
+    /**
+     * 探平台分层库表清单。须经 {@link LayerJdbcSupport} 解析真实主机（生产 ODS/DWD 在 S6，不可用控制面 spring.datasource）。
+     * @param withColumns false 时仅返回表名（治理/融合选表 UI）；true 时附带列结构（元数据采集）
+     */
+    private List<Map<String, Object>> listPlatformLayerTables(String database, boolean withColumns) {
         List<Map<String, Object>> out = new ArrayList<>();
-        try (Connection conn = dataSource.getConnection()) {
+        LayerJdbcSupport.ResolvedEndpoint ep = layerJdbc.resolve(database);
+        try (Connection conn = layerJdbc.open(database)) {
+            String schema = ep.database();
             String sql = "SELECT TABLE_NAME FROM information_schema.TABLES "
                     + "WHERE TABLE_SCHEMA = ? AND TABLE_TYPE = 'BASE TABLE' ORDER BY TABLE_NAME LIMIT ?";
             try (PreparedStatement ps = conn.prepareStatement(sql)) {
-                ps.setString(1, database);
+                ps.setString(1, schema);
                 ps.setInt(2, JDBC_TABLE_LIMIT);
                 try (ResultSet rs = ps.executeQuery()) {
                     while (rs.next()) {
                         String tableName = rs.getString("TABLE_NAME");
                         Map<String, Object> row = new LinkedHashMap<>();
                         row.put("sourceTable", tableName);
-                        row.put("columns", loadColumns(conn, database, tableName));
+                        row.put("columns", withColumns ? loadColumns(conn, schema, tableName) : List.of());
                         row.put("primaryKeys", List.of());
                         row.put("rowCount", -1L);
                         out.add(row);
                     }
                 }
             }
+        } catch (BusinessException e) {
+            log.warn("平台分层库探表失败 db={}@{}:{} — {}", database, ep.host(), ep.port(), e.getMessage());
+            throw e;
         } catch (Exception e) {
-            log.warn("平台分层库探表失败 db={}: {}", database, e.getMessage());
+            log.warn("平台分层库探表失败 db={}@{}:{} — {}", database, ep.host(), ep.port(), e.getMessage());
+            throw new BusinessException(502, "平台分层库探表失败 " + database + "@" + ep.host()
+                    + ":" + ep.port() + " — " + e.getMessage());
         }
         return out;
     }

@@ -24,6 +24,8 @@ app:
     secret: ${APP_JWT_SECRET:change-me-in-production-use-256bit-secret-key-here}
   security:
     credential-key: ${CREDENTIAL_KEY:chengde-smartcity-credential-key}
+  upload:
+    dir: ${APP_UPLOAD_DIR:/data/uploads}
   portal-sso:
     enabled: ${PORTAL_SSO_ENABLED:true}
     secret: ${PORTAL_SSO_SECRET:chengde-portal-assessment-sso-shared-secret-2026}

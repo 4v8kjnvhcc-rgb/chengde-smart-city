@@ -60,6 +60,13 @@ public class MetadataSubsystemController {
         return ApiResponse.ok(null);
     }
 
+    @DeleteMapping("/models/{id}")
+    @PreAuthorize("isAuthenticated()")
+    public ApiResponse<Void> deleteModel(@AuthenticationPrincipal UserPrincipal principal, @PathVariable Long id) {
+        service.deleteModel(principal, id);
+        return ApiResponse.ok(null);
+    }
+
     @PostMapping("/models/{id}/publish")
     @PreAuthorize("isAuthenticated()")
     public ApiResponse<Void> publishModel(@AuthenticationPrincipal UserPrincipal principal, @PathVariable Long id) {

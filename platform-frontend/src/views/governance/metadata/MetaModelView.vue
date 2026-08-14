@@ -1,7 +1,7 @@
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref, watch } from 'vue'
+import { computed, nextTick, onMounted, reactive, ref, watch } from 'vue'
 import api from '@/api/http'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import PageCard from '@/components/common/PageCard.vue'
 import PortalPagination from '@/components/common/PortalPagination.vue'
 import { useClientPager } from '@/composables/useClientPager'
@@ -92,7 +92,8 @@ interface FieldAttrDiffRow {
 
 const STATUS_FILTER_OPTIONS = [
   { label: '全部', value: '' },
-  { label: '已生效', value: 'PUBLISHED' },
+  { label: '草稿', value: 'DRAFT' },
+  { label: '已发布', value: 'PUBLISHED' },
   { label: '已下线', value: 'OFFLINE' },
 ]
 
@@ -140,12 +141,7 @@ const dialogBootstrapping = ref(false)
 const filteredModels = computed(() => {
   let rows = models.value
   if (statusFilter.value) {
-    rows = rows.filter(m => {
-      if (statusFilter.value === 'PUBLISHED') {
-        return m.status === 'PUBLISHED' || m.status === 'DRAFT'
-      }
-      return m.status === statusFilter.value
-    })
+    rows = rows.filter(m => m.status === statusFilter.value)
   }
   const kw = keyword.value.trim().toLowerCase()
   if (kw) {
@@ -220,7 +216,9 @@ function emptyField(): MetaFieldDef {
 }
 
 function modelStatusLabel(status: string) {
-  if (status === 'PUBLISHED' || status === 'DRAFT') return '已生效'
+  if (status === 'PUBLISHED') return '已发布'
+  if (status === 'OFFLINE') return '已下线'
+  if (status === 'DRAFT') return '草稿'
   return statusLabel(status)
 }
 
@@ -468,6 +466,7 @@ async function openCreateDialog() {
       await loadDialogMetaDataSources(form.categoryId)
     }
   } finally {
+    await nextTick()
     dialogBootstrapping.value = false
   }
 }
@@ -517,6 +516,8 @@ async function openEditDialog(row: MetaModel) {
       }
     }
   } finally {
+    // 等 watch 回调排空后再关闭引导标志，避免回填的表名被清空
+    await nextTick()
     dialogBootstrapping.value = false
   }
 }
@@ -750,7 +751,7 @@ async function saveDialog() {
     const payload = buildPayload()
     if (dialogMode.value === 'create') {
       await api.post('/governance/platform/metadata/models', payload)
-      ElMessage.success('元模型已保存，物理库表结构已同步')
+      ElMessage.success('元模型已保存为草稿，物理库表结构已同步；请发布后生效')
     } else if (editingId.value) {
       await api.put(`/governance/platform/metadata/models/${editingId.value}`, payload)
       ElMessage.success('元模型已保存，物理库表结构已同步')
@@ -774,6 +775,44 @@ async function syncPhysical() {
     ElMessage.error((e as Error).message || '同步物理库失败')
   } finally {
     syncingPhysical.value = false
+  }
+}
+
+async function publishModel(row: MetaModel) {
+  try {
+    await api.post(`/governance/platform/metadata/models/${row.id}/publish`)
+    ElMessage.success('元模型已发布')
+    await loadModels()
+  } catch (e) {
+    ElMessage.error((e as Error).message || '发布失败')
+  }
+}
+
+async function offlineModel(row: MetaModel) {
+  try {
+    await ElMessageBox.confirm(`确认下线元模型「${row.modelNameZh}」？`, '下线确认', { type: 'warning' })
+    await api.post(`/governance/platform/metadata/models/${row.id}/offline`)
+    ElMessage.success('元模型已下线')
+    await loadModels()
+  } catch (e: unknown) {
+    if (e === 'cancel' || e === 'close') return
+    ElMessage.error(e instanceof Error ? e.message : '下线失败')
+  }
+}
+
+async function deleteModel(row: MetaModel) {
+  try {
+    await ElMessageBox.confirm(
+      `确认删除元模型「${row.modelNameZh}」？仅删除登记记录，不会 DROP 物理表。`,
+      '删除确认',
+      { type: 'warning' },
+    )
+    await api.delete(`/governance/platform/metadata/models/${row.id}`)
+    ElMessage.success('元模型已删除')
+    await loadModels()
+  } catch (e: unknown) {
+    if (e === 'cancel' || e === 'close') return
+    ElMessage.error(e instanceof Error ? e.message : '删除失败')
   }
 }
 
@@ -900,8 +939,8 @@ async function doRecheck() {
       <el-form-item class="portal-form-actions">
         <el-button type="primary" @click="doQuery">查询</el-button>
         <el-button type="primary" @click="openCreateDialog">新建</el-button>
-        <el-button @click="doExport">导出 JSON</el-button>
-        <el-button @click="triggerImport">导入 JSON</el-button>
+        <el-button @click="doExport">导出</el-button>
+        <el-button @click="triggerImport">导入</el-button>
         <el-button @click="openFromEntryDialog">从目录条目生成</el-button>
       </el-form-item>
     </el-form>
@@ -930,15 +969,33 @@ async function doRecheck() {
       </el-table-column>
       <el-table-column label="状态" width="90">
         <template #default="{ row }">
-          <el-tag :type="$statusTagType(row.status === 'DRAFT' ? 'PUBLISHED' : row.status)" size="small">
+          <el-tag :type="$statusTagType(row.status)" size="small">
             {{ modelStatusLabel(row.status) }}
           </el-tag>
         </template>
       </el-table-column>
-      <el-table-column label="操作" width="140" fixed="right">
+      <el-table-column label="操作" width="260" fixed="right">
         <template #default="{ row }">
           <el-button link type="primary" @click="openEditDialog(row)">编辑</el-button>
+          <el-button
+            v-if="row.status === 'DRAFT' || row.status === 'OFFLINE'"
+            link
+            type="success"
+            @click="publishModel(row)"
+          >发布</el-button>
+          <el-button
+            v-if="row.status === 'PUBLISHED'"
+            link
+            type="warning"
+            @click="offlineModel(row)"
+          >下线</el-button>
           <el-button link type="primary" @click="openDetail(row)">详情</el-button>
+          <el-button
+            v-if="row.status !== 'PUBLISHED'"
+            link
+            type="danger"
+            @click="deleteModel(row)"
+          >删除</el-button>
         </template>
       </el-table-column>
     </el-table>
@@ -1075,7 +1132,7 @@ async function doRecheck() {
               <el-input
                 v-model="form.sourceTableName"
                 placeholder="在该数据源下新建表的物理表名"
-                :disabled="!form.metaDataSourceId"
+                :disabled="!form.metaDataSourceId || dialogMode === 'edit'"
               />
             </el-form-item>
           </el-col>

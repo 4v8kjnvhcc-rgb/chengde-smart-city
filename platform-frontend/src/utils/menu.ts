@@ -27,6 +27,12 @@ export function visibleMenuChildren(node: MenuNode): MenuNode[] {
   return (node.children || []).filter((c) => {
     if (c.menuType === 3) return false
     if (c.visible === 0) return false
+    // Hub 内页不进门户；visible 留给各 Hub 侧栏「是否隐藏」
+    if (c.integrationType === 'hub') {
+      const p = c.path || ''
+      if (p.includes('?tab=') || p.includes('&tab=')) return false
+      if (c.menuType === 1) return false
+    }
     return !isD05MenuExcluded(c)
   })
 }

@@ -131,8 +131,9 @@ public class AnalyticsDomainController {
     @PostMapping("/indicator-domains/{id}/publish")
     @PreAuthorize("isAuthenticated()")
     public ApiResponse<Map<String, Object>> publishIndicatorDomain(@AuthenticationPrincipal UserPrincipal principal,
-                                                                   @PathVariable Long id) {
-        return ApiResponse.ok(service.publishIndicatorDomain(principal, id));
+                                                                   @PathVariable Long id,
+                                                                   @RequestBody(required = false) Map<String, Object> body) {
+        return ApiResponse.ok(service.publishIndicatorDomain(principal, id, body));
     }
 
     @GetMapping("/{domain}/indicator-groups")

@@ -5,6 +5,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { useAuthStore } from '@/stores/auth'
 import PageHeader from '@/components/common/PageHeader.vue'
 import PageCard from '@/components/common/PageCard.vue'
+import { encryptTransportPayload } from '@/utils/transport-crypto'
 
 interface UserRow {
   id: number
@@ -123,9 +124,10 @@ async function submitCreate() {
   }
   submitting.value = true
   try {
+    const passwordTransport = await encryptTransportPayload({ password: form.password })
     await api.post('/system/users', {
       username: form.username,
-      password: form.password,
+      passwordTransport,
       displayName: form.displayName,
       phone: form.phone.trim(),
       orgId: form.orgId,
@@ -200,7 +202,7 @@ async function resetPassword(row: UserRow) {
       confirmButtonText: '确定',
       cancelButtonText: '取消',
     })
-    await api.put(`/system/users/${row.id}/password`, { password: value })
+    await api.put(`/system/users/${row.id}/password`, await encryptTransportPayload({ password: value }))
     ElMessage.success('密码已重置')
   } catch (e: unknown) {
     if (e !== 'cancel' && e !== 'close') {

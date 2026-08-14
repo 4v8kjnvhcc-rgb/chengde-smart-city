@@ -6,6 +6,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import PageCard from '@/components/common/PageCard.vue'
 import PortalPagination from '@/components/common/PortalPagination.vue'
 import { statusLabel, statusTagType } from '@/utils/status-label'
+import { formatDateTime } from '@/utils/datetime'
 import { useAuthStore } from '@/stores/auth'
 
 const props = withDefaults(defineProps<{ catalogOrigin?: 'INGEST' | 'GOVERNANCE' }>(), {
@@ -682,7 +683,9 @@ onActivated(() => {
           </template>
         </el-table-column>
         <el-table-column prop="submittedBy" label="提交人" width="120" show-overflow-tooltip sortable="custom" />
-        <el-table-column prop="submittedAt" label="提交时间" width="166" sortable="custom" />
+        <el-table-column label="提交时间" width="166" sortable="custom" prop="submittedAt">
+          <template #default="{ row }">{{ formatDateTime(row.submittedAt) }}</template>
+        </el-table-column>
         <el-table-column prop="reviewComment" label="审批意见" min-width="120" show-overflow-tooltip />
         <el-table-column label="操作" width="260" fixed="right" align="center">
           <template #default="{ row }">
@@ -786,7 +789,7 @@ onActivated(() => {
             <el-table-column prop="actor" label="处理人" width="110" show-overflow-tooltip />
             <el-table-column prop="contact" label="联系方式" width="120" show-overflow-tooltip />
             <el-table-column label="时间" width="160">
-              <template #default="{ row }">{{ row.time ? String(row.time).replace('T', ' ').slice(0, 19) : '—' }}</template>
+              <template #default="{ row }">{{ formatDateTime(row.time) }}</template>
             </el-table-column>
             <el-table-column prop="comment" label="结果/意见" min-width="120" show-overflow-tooltip />
           </el-table>

@@ -312,14 +312,60 @@ public class AssetCatalogRegService {
             file.transferTo(target);
             Map<String, Object> r = new HashMap<>();
             r.put("fileName", safeName);
-            r.put("filePath", target.toString());
+            // 存相对名，便于下载与多机部署；兼容旧库绝对路径见 resolveAttachment
+            r.put("filePath", stored);
+            r.put("url", "/api/v1/exchange/ingestion/asset-catalog-regs/attachments/" + stored);
             r.put("kind", prefix);
             r.put("uploadedBy", operator.getUsername());
+            // #region agent log
+            try {
+                java.nio.file.Path logFile = java.nio.file.Path.of("d:/codeHouse/changhe/chengde/chengde-smart-city/debug-a737a9.log");
+                java.nio.file.Files.writeString(
+                        logFile,
+                        "{\"sessionId\":\"a737a9\",\"runId\":\"pre-fix\",\"hypothesisId\":\"H4\",\"location\":\"AssetCatalogRegService.upload:ok\",\"message\":\"upload saved\",\"data\":{\"kind\":\""
+                                + prefix + "\",\"stored\":\"" + stored.replace("\\", "\\\\")
+                                + "\",\"bytes\":" + Files.size(target) + "},\"timestamp\":"
+                                + System.currentTimeMillis() + "}\n",
+                        java.nio.file.StandardOpenOption.CREATE, java.nio.file.StandardOpenOption.APPEND);
+            } catch (Exception ignore) { /* debug only */ }
+            // #endregion
             return r;
         } catch (IOException ex) {
             log.warn("upload asset catalog attachment failed: {}", ex.getMessage());
-            throw new BusinessException(500, "附件上传失败");
+            // #region agent log
+            try {
+                java.nio.file.Path logFile = java.nio.file.Path.of("d:/codeHouse/changhe/chengde/chengde-smart-city/debug-a737a9.log");
+                java.nio.file.Files.writeString(
+                        logFile,
+                        "{\"sessionId\":\"a737a9\",\"runId\":\"pre-fix\",\"hypothesisId\":\"H4\",\"location\":\"AssetCatalogRegService.upload:io\",\"message\":\"upload io fail\",\"data\":{\"err\":\""
+                                + String.valueOf(ex.getMessage()).replace("\"", "'")
+                                + "\",\"root\":\"" + uploadRoot.toString().replace("\\", "\\\\")
+                                + "\"},\"timestamp\":" + System.currentTimeMillis() + "}\n",
+                        java.nio.file.StandardOpenOption.CREATE, java.nio.file.StandardOpenOption.APPEND);
+            } catch (Exception ignore) { /* debug only */ }
+            // #endregion
+            throw new BusinessException(500, "附件上传失败：" + ex.getMessage());
         }
+    }
+
+    /** 解析附件：支持相对文件名，以及历史绝对路径（取末段）。 */
+    public Path resolveAttachment(String relativeOrAbs) {
+        if (relativeOrAbs == null || relativeOrAbs.isBlank()) {
+            throw new BusinessException(404, "附件不存在");
+        }
+        String name = relativeOrAbs.replace("\\", "/").trim();
+        int slash = name.lastIndexOf('/');
+        if (slash >= 0) {
+            name = name.substring(slash + 1);
+        }
+        if (name.isBlank() || name.contains("..")) {
+            throw new BusinessException(400, "非法文件路径");
+        }
+        Path target = uploadRoot.resolve(name).normalize();
+        if (!target.startsWith(uploadRoot) || !Files.isRegularFile(target)) {
+            throw new BusinessException(404, "附件不存在");
+        }
+        return target;
     }
 
     private void applyBody(IngAssetCatalogReg e, Map<String, Object> body, boolean creating) {

@@ -201,9 +201,9 @@ async function runRow(row: Channel) {
   if (isLocal.value) {
     try {
       await ElMessageBox.confirm(
-        '本地目录通道不会再返回演示行数。浏览器选文件写入 ODS 请用「手动上传数据 / 上传文件」。是否仍按已保存目录配置发起服务端执行？',
+        '本地目录通道不会再返回演示行数。浏览器选文件写入 ODS 请用「本地文件上传 / 上传文件」。是否仍按已保存目录配置发起服务端执行？',
         '执行确认',
-        { type: 'warning', confirmButtonText: '继续执行', cancelButtonText: '去手动上传' },
+        { type: 'warning', confirmButtonText: '继续执行', cancelButtonText: '去本地文件上传' },
       )
     } catch {
       emit('goManualUpload')
@@ -211,6 +211,29 @@ async function runRow(row: Channel) {
     }
   }
   await doRun(row.id)
+}
+
+async function removeRow(row: Channel) {
+  try {
+    await ElMessageBox.confirm(
+      `确定删除接入任务「${row.channelName}」？仅删除接入配置，不会删除已落库数据。`,
+      '删除确认',
+      { type: 'warning', confirmButtonText: '删除', cancelButtonText: '取消' },
+    )
+  } catch {
+    return
+  }
+  try {
+    await ingestionApi.deleteChannel(row.id)
+    ElMessage.success('已删除')
+    if (editingId.value === row.id) {
+      dialogVisible.value = false
+      editingId.value = undefined
+    }
+    await reload()
+  } catch (e: unknown) {
+    ElMessage.error(e instanceof Error ? e.message : '删除失败')
+  }
 }
 
 watch(
@@ -269,10 +292,11 @@ onMounted(reload)
           <template #default="{ row }">{{ row.lastRunAt || '—' }}</template>
         </el-table-column>
         <el-table-column prop="lastMessage" label="执行说明" min-width="200" show-overflow-tooltip />
-        <el-table-column label="操作" width="180" fixed="right">
+        <el-table-column label="操作" width="220" fixed="right">
           <template #default="{ row }">
             <el-button link type="primary" @click="openEdit(row)">编辑</el-button>
             <el-button link type="success" :loading="runBusy" @click="runRow(row)">执行</el-button>
+            <el-button link type="danger" @click="removeRow(row)">删除</el-button>
           </template>
         </el-table-column>
       </el-table>

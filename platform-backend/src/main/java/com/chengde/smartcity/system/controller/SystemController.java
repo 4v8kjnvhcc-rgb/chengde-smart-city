@@ -1,6 +1,8 @@
 package com.chengde.smartcity.system.controller;
 
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
+import com.chengde.smartcity.auth.TransportCryptoService;
+import com.chengde.smartcity.auth.dto.EncryptedTransportRequest;
 import com.chengde.smartcity.common.api.ApiResponse;
 import com.chengde.smartcity.security.UserPrincipal;
 import com.chengde.smartcity.system.dto.MenuTreeNode;
@@ -50,16 +52,19 @@ public class SystemController {
     private final OrgService orgService;
     private final AuditLogMapper auditLogMapper;
     private final SecurityConfigService securityConfigService;
+    private final TransportCryptoService transportCryptoService;
 
     public SystemController(MenuService menuService, UserService userService, RoleService roleService,
                             OrgService orgService, AuditLogMapper auditLogMapper,
-                            SecurityConfigService securityConfigService) {
+                            SecurityConfigService securityConfigService,
+                            TransportCryptoService transportCryptoService) {
         this.menuService = menuService;
         this.userService = userService;
         this.roleService = roleService;
         this.orgService = orgService;
         this.auditLogMapper = auditLogMapper;
         this.securityConfigService = securityConfigService;
+        this.transportCryptoService = transportCryptoService;
     }
 
     @GetMapping("/menus/me")
@@ -176,12 +181,9 @@ public class SystemController {
     @PreAuthorize("hasRole('SYSTEM_ADMIN') or hasAuthority('system:user:list')")
     public ApiResponse<Void> resetPassword(@AuthenticationPrincipal UserPrincipal principal,
                                            @PathVariable Long id,
-                                           @RequestBody Map<String, Object> body) {
-        Object pwd = body == null ? null : body.get("password");
-        if (pwd == null || String.valueOf(pwd).isBlank()) {
-            throw new com.chengde.smartcity.common.exception.BusinessException(400, "password required");
-        }
-        userService.resetPassword(principal, id, String.valueOf(pwd));
+                                           @Valid @RequestBody EncryptedTransportRequest request) {
+        String pwd = transportCryptoService.decryptPassword(request);
+        userService.resetPassword(principal, id, pwd);
         return ApiResponse.ok(null);
     }
 

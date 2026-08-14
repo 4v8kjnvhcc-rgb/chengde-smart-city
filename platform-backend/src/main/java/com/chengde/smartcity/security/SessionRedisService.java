@@ -82,4 +82,14 @@ public class SessionRedisService {
     public void deleteTemp(String key) {
         redis.delete("temp:" + key);
     }
+
+    /**
+     * 消费登录/改密防重放 nonce；同一 nonce 仅首次成功。
+     * @return true 表示首次使用并已写入；false 表示重复
+     */
+    public boolean tryConsumeAuthNonce(String nonce, long ttlSeconds) {
+        Boolean ok = redis.opsForValue().setIfAbsent(
+                "auth:nonce:" + nonce, "1", Duration.ofSeconds(Math.max(ttlSeconds, 60)));
+        return Boolean.TRUE.equals(ok);
+    }
 }

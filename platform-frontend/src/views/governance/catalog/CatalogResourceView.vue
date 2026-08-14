@@ -14,6 +14,7 @@ import {
   statusTagType,
 } from '@/utils/status-label'
 import { ingestionApi } from '@/views/exchange/ingestion/useIngestionHub'
+import { withPasswordTransport } from '@/utils/transport-crypto'
 
 const router = useRouter()
 const auth = useAuthStore()
@@ -1578,14 +1579,18 @@ async function testAddDsConnection() {
       )
       return
     }
-    const tr = await ingestionApi.testDataSourceConnection({
-      sourceType: addDsAdapter.value,
-      host: addDsForm.host.trim(),
-      port: addDsForm.port,
-      database: addDsForm.database,
-      username: addDsForm.username.trim(),
-      password: addDsForm.password,
-    })
+    const tr = await ingestionApi.testDataSourceConnection(
+      await withPasswordTransport(
+        {
+          sourceType: addDsAdapter.value,
+          host: addDsForm.host.trim(),
+          port: addDsForm.port,
+          database: addDsForm.database,
+          username: addDsForm.username.trim(),
+        },
+        addDsForm.password,
+      ),
+    )
     const ok = tr.data?.ok !== false
     ElMessage[ok ? 'success' : 'warning'](
       ok
@@ -1617,13 +1622,13 @@ async function submitAddDs() {
       username: addDsForm.username.trim(),
       remark: addDsForm.remark,
     }
-    if (addDsForm.password) body.password = addDsForm.password
+    const payload = await withPasswordTransport(body, addDsForm.password)
     let id = editingDsId.value
     if (isEdit && id != null) {
-      await ingestionApi.updateDataSource(id, body)
+      await ingestionApi.updateDataSource(id, payload)
       ElMessage.success('数据源已更新')
     } else {
-      id = (await ingestionApi.createDataSource(body)).data
+      id = (await ingestionApi.createDataSource(payload)).data
       ElMessage.success('数据源已创建')
     }
     addDsVisible.value = false

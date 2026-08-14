@@ -54,7 +54,6 @@ type ViewScope =
   | 'structured-table'
   | 'structured-upload'
   | 'structured-remote'
-  | 'structured-local'
   | string
 
 
@@ -130,7 +129,6 @@ const activeChannelType = computed(() => {
 
   if (mainTab.value === 'structured') {
     if (structuredSub.value === 'structured-remote') return 'FTP'
-    if (structuredSub.value === 'structured-local') return 'LOCAL'
     return 'TABLE'
   }
 
@@ -400,12 +398,12 @@ function applySectionFromRoute() {
   const mod = String(route.query.module || '').toLowerCase()
   const sec = String(route.query.section || '')
 
-  // 旧「文件上传 · 本地」→ 结构化 · 本地文件上传
-  if (mod === 'ingest.file' || sec === 'file-local' || sec === 'm056') {
-    structuredSub.value = 'structured-local'
+  // 旧「文件上传 · 本地 / 本地目录通道」→ 结构化 · 本地文件上传（原手动上传）
+  if (mod === 'ingest.file' || sec === 'file-local' || sec === 'm056' || sec === 'structured-local') {
+    structuredSub.value = 'structured-upload'
     mainTab.value = 'structured'
     router.replace({
-      query: { ...route.query, module: 'ingest.structured', section: 'structured-local' },
+      query: { ...route.query, module: 'ingest.structured', section: 'structured-upload' },
     })
     return
   }
@@ -1104,7 +1102,7 @@ onMounted(() => {
 
     <el-alert v-if="loadError" type="error" :title="loadError" show-icon :closable="false" style="margin-bottom:12px" />
 
-    <!-- 结构化：原有库表/手动上传 + 新增远程/本地文件两个 Tab -->
+    <!-- 结构化：库表 / 本地文件上传 / 远程文件 -->
 
     <template v-if="mainTab === 'structured'">
 
@@ -1112,11 +1110,9 @@ onMounted(() => {
 
         <el-radio-button value="structured-table">库表接入配置</el-radio-button>
 
-        <el-radio-button value="structured-upload">手动上传数据</el-radio-button>
+        <el-radio-button value="structured-upload">本地文件上传</el-radio-button>
 
         <el-radio-button value="structured-remote">远程文件接入</el-radio-button>
-
-        <el-radio-button value="structured-local">本地文件上传</el-radio-button>
 
       </el-radio-group>
 
@@ -1132,16 +1128,6 @@ onMounted(() => {
         title="远程文件接入"
         channel-type="FTP"
         :config-fields="configFields('FTP')"
-        @go-manual-upload="structuredSub = 'structured-upload'; syncSectionQuery()"
-      />
-
-      <ChannelTaskPanel
-        v-else
-        key="structured-local"
-        title="本地文件上传"
-        channel-type="LOCAL"
-        :config-fields="configFields('LOCAL')"
-        @go-manual-upload="structuredSub = 'structured-upload'; syncSectionQuery()"
       />
 
     </template>

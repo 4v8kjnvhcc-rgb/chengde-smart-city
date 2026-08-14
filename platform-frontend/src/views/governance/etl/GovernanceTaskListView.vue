@@ -342,8 +342,9 @@ async function loadPlatformTables(connection: string) {
     platformTables.value = (rows as Array<{ sourceTable?: string }>)
       .map(r => String(r.sourceTable || '').trim())
       .filter(Boolean)
-  } catch {
+  } catch (e: unknown) {
     platformTables.value = []
+    ElMessage.error(e instanceof Error ? e.message : '加载源表失败')
   } finally {
     platformTablesLoading.value = false
   }
@@ -518,11 +519,16 @@ async function runTask(row: TaskRow) {
       return
     }
     const res = await api.post(`/governance/kettle/tasks/${row.id}/execute`)
-    ElMessage.success(res.data?.message || '执行已启动')
+    const data = res.data as { status?: string; message?: string } | undefined
+    if (String(data?.status || '').toUpperCase() === 'FAILED') {
+      ElMessage.error(data?.message || '启动执行失败')
+      return
+    }
+    ElMessage.success(data?.message || '执行已启动')
     await load()
     openMonitor(row.id)
-  } catch {
-    ElMessage.error('启动执行失败')
+  } catch (e: unknown) {
+    ElMessage.error(e instanceof Error ? e.message : '启动执行失败')
   }
 }
 
@@ -536,14 +542,19 @@ async function confirmVarRun() {
   }
   try {
     const res = await api.post(`/governance/kettle/tasks/${runTargetId.value}/execute`, { ...varForm.value })
-    ElMessage.success(res.data?.message || '执行已启动')
+    const data = res.data as { status?: string; message?: string } | undefined
+    if (String(data?.status || '').toUpperCase() === 'FAILED') {
+      ElMessage.error(data?.message || '启动执行失败')
+      return
+    }
+    ElMessage.success(data?.message || '执行已启动')
     varDialogVisible.value = false
     const id = runTargetId.value
     runTargetId.value = null
     await load()
     openMonitor(id)
-  } catch {
-    ElMessage.error('启动执行失败')
+  } catch (e: unknown) {
+    ElMessage.error(e instanceof Error ? e.message : '启动执行失败')
   }
 }
 

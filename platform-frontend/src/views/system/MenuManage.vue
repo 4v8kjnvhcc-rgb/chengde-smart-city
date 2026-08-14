@@ -4,6 +4,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import { ArrowDown, ArrowUp } from '@element-plus/icons-vue'
 import api from '@/api/http'
 import PageHeader from '@/components/common/PageHeader.vue'
+import { useAuthStore } from '@/stores/auth'
 
 export interface MenuRow {
   id: number
@@ -28,6 +29,7 @@ const tableSelection = ref<MenuRow[]>([])
 const keyword = ref('')
 const page = ref(1)
 const pageSize = ref(10)
+const auth = useAuthStore()
 
 const dialogVisible = ref(false)
 const dialogTitle = ref('新增')
@@ -125,10 +127,6 @@ const parentOptions = computed(() => {
   return opts
 })
 
-function displayName(row: MenuRow) {
-  return row.routeName || row.mCode || row.permission || String(row.id)
-}
-
 function typeLabel(t: number) {
   if (t === 1) return '目录'
   if (t === 2) return '菜单项'
@@ -136,7 +134,7 @@ function typeLabel(t: number) {
 }
 
 function matchKeyword(row: MenuRow, q: string) {
-  const hay = `${displayName(row)} ${row.menuName || ''}`.toLowerCase()
+  const hay = `${row.menuName || ''} ${row.path || ''} ${row.permission || ''}`.toLowerCase()
   return hay.includes(q)
 }
 
@@ -273,6 +271,11 @@ async function submitForm() {
     }
     dialogVisible.value = false
     await load()
+    try {
+      await auth.fetchProfile()
+    } catch {
+      /* 刷新本人菜单失败不影响管理页保存结果 */
+    }
   } catch (e: unknown) {
     ElMessage.error((e as { message?: string })?.message || '保存失败')
   } finally {
@@ -343,7 +346,7 @@ onMounted(load)
           <el-input
             v-model="keyword"
             clearable
-            placeholder="搜索菜单名称/标题"
+            placeholder="搜索标题 / 路径 / 权限码"
             class="menu-mgmt__search"
           />
           <el-button type="primary" @click="openCreate">+ 新增</el-button>
@@ -358,12 +361,12 @@ onMounted(load)
           @selection-change="(v: MenuRow[]) => (tableSelection = v)"
         >
           <el-table-column type="selection" width="48" :selectable="(row: MenuRow) => canDelete(row)" />
-          <el-table-column label="名称" min-width="140" show-overflow-tooltip>
-            <template #default="{ row }">{{ displayName(row) }}</template>
-          </el-table-column>
           <el-table-column prop="menuName" label="标题" min-width="140" show-overflow-tooltip />
           <el-table-column label="类型" width="90">
             <template #default="{ row }">{{ typeLabel(row.menuType) }}</template>
+          </el-table-column>
+          <el-table-column label="是否隐藏" width="100">
+            <template #default="{ row }">{{ row.visible === 0 ? '是' : '否' }}</template>
           </el-table-column>
           <el-table-column label="访问地址" min-width="160" show-overflow-tooltip>
             <template #default="{ row }">{{ row.path || '—' }}</template>
@@ -424,12 +427,6 @@ onMounted(load)
           </el-form-item>
           <el-form-item label="标题" prop="menuName">
             <el-input v-model="form.menuName" placeholder="侧栏/页面显示标题" />
-          </el-form-item>
-          <el-form-item label="名称" prop="routeName">
-            <el-input
-              v-model="form.routeName"
-              placeholder="可选；空则按标题/权限码自动生成"
-            />
           </el-form-item>
           <el-form-item label="权限码">
             <el-input

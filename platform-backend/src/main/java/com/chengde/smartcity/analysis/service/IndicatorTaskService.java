@@ -41,6 +41,11 @@ public class IndicatorTaskService {
 
     private static final Logger log = LoggerFactory.getLogger(IndicatorTaskService.class);
     private static final String DEFAULT_CRON_MONTHLY = "0 0 2 1 * ?";
+    private static final String DEFAULT_CRON_HOURLY = "0 0 * * * ?";
+    private static final String DEFAULT_CRON_DAILY = "0 0 2 * * ?";
+    private static final String DEFAULT_CRON_WEEKLY = "0 0 2 ? * MON";
+    private static final String DEFAULT_CRON_QUARTERLY = "0 0 2 1 1,4,7,10 ?";
+    private static final String DEFAULT_CRON_YEARLY = "0 0 2 1 1 ?";
 
     private final AnaIndicatorTaskMapper taskMapper;
     private final AnaIndicatorTaskRunMapper runMapper;
@@ -82,9 +87,11 @@ public class IndicatorTaskService {
                                        String execStatus, String calcResult) {
         String d = normalizeDomain(domain);
         LambdaQueryWrapper<AnaIndicatorTask> q = new LambdaQueryWrapper<AnaIndicatorTask>()
-                .eq(AnaIndicatorTask::getOwnerDomainCode, d)
                 .eq(AnaIndicatorTask::getStatus, "ACTIVE")
                 .orderByDesc(AnaIndicatorTask::getId);
+        if (!"all".equals(d) && !"gov".equals(d)) {
+            q.eq(AnaIndicatorTask::getOwnerDomainCode, d);
+        }
         if (taskName != null && !taskName.isBlank()) {
             q.like(AnaIndicatorTask::getTaskName, taskName.trim());
         }
@@ -111,9 +118,25 @@ public class IndicatorTaskService {
     /** 指标组发布时：生成或刷新指标任务（默认定时停止，发布状态=已发布）。 */
     @Transactional
     public AnaIndicatorTask ensureFromPublishedGroup(UserPrincipal operator, AnaIndicatorGroup group) {
+        return ensureFromPublishedGroup(operator, group, null, null, null, null, null);
+    }
+
+    @Transactional
+    public AnaIndicatorTask ensureFromPublishedGroup(UserPrincipal operator, AnaIndicatorGroup group,
+                                                     String taskName, String execCycle, String cronExpr,
+                                                     String remark, String executorAddress) {
         if (group == null || group.getId() == null) {
             throw new BusinessException(400, "指标组无效");
         }
+        String cycle = (execCycle == null || execCycle.isBlank())
+                ? "MONTHLY"
+                : execCycle.trim();
+        String cron = (cronExpr != null && !cronExpr.isBlank())
+                ? cronExpr.trim()
+                : cronOfCycle(cycle.toUpperCase(Locale.ROOT));
+        String name = (taskName != null && !taskName.isBlank()) ? taskName.trim() : group.getGroupName();
+        String note = buildPublishNote(remark, executorAddress);
+
         AnaIndicatorTask existing = taskMapper.selectOne(new LambdaQueryWrapper<AnaIndicatorTask>()
                 .eq(AnaIndicatorTask::getGroupId, group.getId())
                 .eq(AnaIndicatorTask::getStatus, "ACTIVE")
@@ -123,15 +146,16 @@ public class IndicatorTaskService {
             AnaIndicatorTask t = new AnaIndicatorTask();
             t.setOwnerDomainCode(group.getOwnerDomainCode());
             t.setGroupId(group.getId());
-            t.setTaskName(group.getGroupName());
-            t.setExecCycle("MONTHLY");
-            t.setScheduleCron(DEFAULT_CRON_MONTHLY);
+            t.setTaskName(name);
+            t.setExecCycle(cycle);
+            t.setScheduleCron(cron);
             t.setScheduleStatus("STOPPED");
             t.setExecStatus("NONE");
             t.setCalcResult("NONE");
             t.setPublishStatus("PUBLISHED");
             t.setPublishedAt(now);
             t.setStatus("ACTIVE");
+            t.setLastRunMessage(note);
             t.setCreatedBy(operator != null ? operator.getUsername() : "system");
             t.setCreatedAt(now);
             t.setUpdatedAt(now);
@@ -143,12 +167,42 @@ public class IndicatorTaskService {
                     String.valueOf(t.getId()), t.getTaskName());
             return t;
         }
-        existing.setTaskName(group.getGroupName());
+        existing.setTaskName(name);
+        existing.setExecCycle(cycle);
+        existing.setScheduleCron(cron);
         existing.setPublishStatus("PUBLISHED");
         existing.setPublishedAt(now);
+        if (note != null) {
+            existing.setLastRunMessage(note);
+        }
         existing.setUpdatedAt(now);
         taskMapper.updateById(existing);
         return existing;
+    }
+
+    private static String cronOfCycle(String cycle) {
+        return switch (cycle) {
+            case "HOURLY" -> DEFAULT_CRON_HOURLY;
+            case "DAILY" -> DEFAULT_CRON_DAILY;
+            case "WEEKLY" -> DEFAULT_CRON_WEEKLY;
+            case "QUARTERLY", "QUARTER" -> DEFAULT_CRON_QUARTERLY;
+            case "YEARLY" -> DEFAULT_CRON_YEARLY;
+            default -> DEFAULT_CRON_MONTHLY;
+        };
+    }
+
+    private static String buildPublishNote(String remark, String executorAddress) {
+        StringBuilder sb = new StringBuilder();
+        if (executorAddress != null && !executorAddress.isBlank()) {
+            sb.append("executor=").append(executorAddress.trim());
+        }
+        if (remark != null && !remark.isBlank()) {
+            if (sb.length() > 0) {
+                sb.append("; ");
+            }
+            sb.append(remark.trim());
+        }
+        return sb.length() == 0 ? null : sb.toString();
     }
 
     @Transactional

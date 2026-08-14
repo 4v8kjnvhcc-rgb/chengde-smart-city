@@ -763,7 +763,7 @@ onMounted(async () => {
       <template #header>
         <div class="wiz-head">
           <div>
-            <div class="wiz-title">手动上传数据</div>
+            <div class="wiz-title">本地文件上传</div>
           </div>
           <div class="wiz-actions">
             <el-button @click="openCreateTemplate">新建模板</el-button>
@@ -988,7 +988,7 @@ onMounted(async () => {
     <!-- 上传数据弹窗 -->
     <el-dialog
       v-model="uploadDialog"
-      title="手动上传 · 写入 ODS"
+      title="本地文件上传 · 写入 ODS"
       width="900px"
       destroy-on-close
       append-to-body

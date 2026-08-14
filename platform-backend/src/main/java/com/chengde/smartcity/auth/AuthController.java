@@ -1,6 +1,7 @@
 package com.chengde.smartcity.auth;
 
 import com.chengde.smartcity.auth.dto.ChangePasswordRequest;
+import com.chengde.smartcity.auth.dto.EncryptedTransportRequest;
 import com.chengde.smartcity.auth.dto.LoginRequest;
 import com.chengde.smartcity.auth.dto.RefreshRequest;
 import com.chengde.smartcity.auth.dto.SsoTicketRequest;
@@ -9,6 +10,7 @@ import com.chengde.smartcity.auth.dto.TokenResponse;
 import com.chengde.smartcity.common.api.ApiResponse;
 import com.chengde.smartcity.security.UserPrincipal;
 import com.chengde.smartcity.system.service.CaptchaService;
+import com.fasterxml.jackson.databind.JsonNode;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.validation.Valid;
 import java.util.Map;
@@ -30,16 +32,33 @@ public class AuthController {
     private final AuthService authService;
     private final CaptchaService captchaService;
     private final SsoTicketService ssoTicketService;
+    private final TransportCryptoService transportCryptoService;
 
-    public AuthController(AuthService authService, CaptchaService captchaService, SsoTicketService ssoTicketService) {
+    public AuthController(AuthService authService, CaptchaService captchaService, SsoTicketService ssoTicketService,
+                          TransportCryptoService transportCryptoService) {
         this.authService = authService;
         this.captchaService = captchaService;
         this.ssoTicketService = ssoTicketService;
+        this.transportCryptoService = transportCryptoService;
+    }
+
+    @GetMapping("/crypto/public-key")
+    public ApiResponse<Map<String, Object>> publicKey() {
+        return ApiResponse.ok(transportCryptoService.publicKeyInfo());
     }
 
     @PostMapping("/login")
-    public ApiResponse<TokenResponse> login(@Valid @RequestBody LoginRequest request, HttpServletRequest httpRequest) {
-        return ApiResponse.ok(authService.login(request, httpRequest));
+    public ApiResponse<TokenResponse> login(@Valid @RequestBody EncryptedTransportRequest request,
+                                            HttpServletRequest httpRequest) {
+        JsonNode plain = transportCryptoService.decryptAndVerify(request);
+        LoginRequest login = new LoginRequest(
+                transportCryptoService.requireText(plain, "username"),
+                transportCryptoService.requireText(plain, "password"),
+                request.totpCode(),
+                request.captchaId(),
+                request.captchaCode()
+        );
+        return ApiResponse.ok(authService.login(login, httpRequest));
     }
 
     @GetMapping("/captcha")
@@ -63,8 +82,13 @@ public class AuthController {
 
     @PutMapping("/password")
     public ApiResponse<Void> changePassword(@AuthenticationPrincipal UserPrincipal principal,
-                                            @Valid @RequestBody ChangePasswordRequest request) {
-        authService.changePassword(principal, request);
+                                            @Valid @RequestBody EncryptedTransportRequest request) {
+        JsonNode plain = transportCryptoService.decryptAndVerify(request);
+        ChangePasswordRequest change = new ChangePasswordRequest(
+                transportCryptoService.requireText(plain, "oldPassword"),
+                transportCryptoService.requireText(plain, "newPassword")
+        );
+        authService.changePassword(principal, change);
         return ApiResponse.ok(null);
     }
 

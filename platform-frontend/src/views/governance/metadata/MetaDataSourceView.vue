@@ -13,6 +13,7 @@ import iconKingbase from '@/assets/db-adapters/kingbase.svg'
 import iconGbase from '@/assets/db-adapters/gbase.svg'
 import iconHbase from '@/assets/db-adapters/hbase.svg'
 import iconHive from '@/assets/db-adapters/hive.svg'
+import { withPasswordTransport } from '@/utils/transport-crypto'
 
 interface CategoryNode {
   id: number
@@ -549,13 +550,14 @@ function buildPayload(includePassword = true) {
     dbSchema: form.dbSchema.trim() || undefined,
     username: form.username.trim(),
   }
-  if (includePassword && form.password) {
-    body.password = form.password
-  }
   if (editingId.value) {
     body.id = editingId.value
   }
   return body
+}
+
+async function buildEncryptedPayload(includePassword = true) {
+  return withPasswordTransport(buildPayload(includePassword), includePassword ? form.password : null)
 }
 
 async function testConnection() {
@@ -569,7 +571,10 @@ async function testConnection() {
   }
   testing.value = true
   try {
-    await api.post('/governance/platform/metadata/data-sources/test-connection', buildPayload(true))
+    await api.post(
+      '/governance/platform/metadata/data-sources/test-connection',
+      await buildEncryptedPayload(true),
+    )
     ElMessage.success('连接成功')
   } catch (e: unknown) {
     ElMessage.error(e instanceof Error ? e.message : '连接失败')
@@ -593,11 +598,12 @@ async function submitForm() {
   }
   saving.value = true
   try {
+    const payload = await buildEncryptedPayload(true)
     if (editingId.value) {
-      await api.put(`/governance/platform/metadata/data-sources/${editingId.value}`, buildPayload(true))
+      await api.put(`/governance/platform/metadata/data-sources/${editingId.value}`, payload)
       ElMessage.success('已保存')
     } else {
-      await api.post('/governance/platform/metadata/data-sources', buildPayload(true))
+      await api.post('/governance/platform/metadata/data-sources', payload)
       ElMessage.success('已新增')
     }
     wizardVisible.value = false

@@ -2,6 +2,7 @@ package com.chengde.smartcity.masterdata.service;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.chengde.smartcity.audit.AuditService;
+import com.chengde.smartcity.auth.TransportCryptoService;
 import com.chengde.smartcity.common.exception.BusinessException;
 import com.chengde.smartcity.integration.jdbc.CredentialCipher;
 import com.chengde.smartcity.integration.jdbc.JdbcProbeService;
@@ -56,6 +57,7 @@ public class MetaDataSourceService {
     private final IngProjectMapper ingProjectMapper;
     private final IngBizSystemMapper ingBizSystemMapper;
     private final SysOrgMapper orgMapper;
+    private final TransportCryptoService transportCryptoService;
 
     public MetaDataSourceService(GovMetaDataSourceMapper dataSourceMapper,
                                  GovMetaSourceCategoryMapper categoryMapper,
@@ -68,7 +70,8 @@ public class MetaDataSourceService {
                                  IngDataSourceMapper ingDataSourceMapper,
                                  IngProjectMapper ingProjectMapper,
                                  IngBizSystemMapper ingBizSystemMapper,
-                                 SysOrgMapper orgMapper) {
+                                 SysOrgMapper orgMapper,
+                                 TransportCryptoService transportCryptoService) {
         this.dataSourceMapper = dataSourceMapper;
         this.categoryMapper = categoryMapper;
         this.connectorMapper = connectorMapper;
@@ -81,6 +84,7 @@ public class MetaDataSourceService {
         this.ingProjectMapper = ingProjectMapper;
         this.ingBizSystemMapper = ingBizSystemMapper;
         this.orgMapper = orgMapper;
+        this.transportCryptoService = transportCryptoService;
     }
 
     public List<Map<String, Object>> list(Long categoryId, String keyword) {
@@ -133,9 +137,8 @@ public class MetaDataSourceService {
         if (row.getReadOnlyFlag() == null) {
             row.setReadOnlyFlag(0);
         }
-        if (body.get("password") != null && !String.valueOf(body.get("password")).isBlank()) {
-            row.setPasswordCipher(credentialCipher.encrypt(String.valueOf(body.get("password"))));
-        }
+        String plainPwd = transportCryptoService.requireTransportPassword(body);
+        row.setPasswordCipher(credentialCipher.encrypt(plainPwd));
         categoryService.requireCategory(row.getCategoryId());
         if (row.getTagCategoryId() != null) {
             categoryService.requireCategory(row.getTagCategoryId());
@@ -150,8 +153,9 @@ public class MetaDataSourceService {
     public void update(UserPrincipal operator, Long id, Map<String, Object> body) {
         GovMetaDataSource row = require(id);
         applyBody(row, body);
-        if (body.containsKey("password") && !String.valueOf(body.get("password")).isBlank()) {
-            row.setPasswordCipher(credentialCipher.encrypt(String.valueOf(body.get("password"))));
+        String plainPwd = transportCryptoService.resolveOptionalTransportPassword(body);
+        if (plainPwd != null && !plainPwd.isBlank()) {
+            row.setPasswordCipher(credentialCipher.encrypt(plainPwd));
         }
         if (row.getTagCategoryId() != null) {
             categoryService.requireCategory(row.getTagCategoryId());
@@ -538,7 +542,8 @@ public class MetaDataSourceService {
         cfg.port = parseInt(body.get("dbPort"), 3306);
         cfg.database = str(body.get("dbName"), "");
         cfg.username = required(body.get("username"), "用户名").trim();
-        String pwd = str(body.get("password"), null);
+        transportCryptoService.rejectPlaintextPassword(body);
+        String pwd = transportCryptoService.resolveOptionalTransportPassword(body);
         if ((pwd == null || pwd.isBlank()) && body.get("id") != null) {
             GovMetaDataSource existing = require(Long.valueOf(String.valueOf(body.get("id"))));
             pwd = existing.getPasswordCipher() == null ? "" : credentialCipher.decrypt(existing.getPasswordCipher());

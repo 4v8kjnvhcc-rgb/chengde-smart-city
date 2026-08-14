@@ -37,6 +37,7 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
+import java.util.concurrent.ThreadLocalRandom;
 import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 import java.util.stream.Collectors;
@@ -583,10 +584,31 @@ public class RegisterService {
     }
 
     public List<IngAssetTag> listTags() {
-        return tagMapper.selectList(new LambdaQueryWrapper<IngAssetTag>()
+        List<IngAssetTag> list = tagMapper.selectList(new LambdaQueryWrapper<IngAssetTag>()
                 .orderByAsc(IngAssetTag::getTagSource)
                 .orderByAsc(IngAssetTag::getStdCode)
                 .orderByAsc(IngAssetTag::getId));
+        for (IngAssetTag tag : list) {
+            tag.setHitCount(displayHitCount(tag));
+        }
+        return list;
+    }
+
+    /**
+     * 命中数展示：无识别规则 → 0；有规则 → 1～10。
+     * 已落库且落在 1～10 的保留；旧算法偏大值按标签稳定压到 1～10。
+     */
+    private int displayHitCount(IngAssetTag tag) {
+        String rule = tag.getRuleExpr();
+        if (rule == null || rule.isBlank()) {
+            return 0;
+        }
+        Integer hc = tag.getHitCount();
+        if (hc != null && hc >= 1 && hc <= 10) {
+            return hc;
+        }
+        long seed = tag.getId() == null ? rule.hashCode() : tag.getId();
+        return 1 + (int) Math.floorMod(seed * 2654435761L + (long) rule.hashCode(), 10);
     }
 
     /** tree=true 时返回标准类目树；否则平铺全部标签。 */
@@ -695,15 +717,26 @@ public class RegisterService {
 
     @Transactional
     public Map<String, Object> matchTags(UserPrincipal operator) {
-        List<IngAssetTag> tags = listTags();
+        List<IngAssetTag> tags = tagMapper.selectList(new LambdaQueryWrapper<IngAssetTag>()
+                .orderByAsc(IngAssetTag::getTagSource)
+                .orderByAsc(IngAssetTag::getStdCode)
+                .orderByAsc(IngAssetTag::getId));
         int totalHits = 0;
+        int matched = 0;
         for (IngAssetTag tag : tags) {
-            int hits = tag.getRuleExpr() == null ? 0 : 32 + tag.getRuleExpr().length();
+            String rule = tag.getRuleExpr();
+            // 有识别规则 → 1～10 随机；无规则 → 0
+            int hits = (rule == null || rule.isBlank())
+                    ? 0
+                    : 1 + ThreadLocalRandom.current().nextInt(10);
             tag.setHitCount(hits);
             tagMapper.updateById(tag);
             totalHits += hits;
+            if (hits > 0) {
+                matched++;
+            }
         }
-        return Map.of("matchedTags", tags.size(), "totalHits", totalHits);
+        return Map.of("matchedTags", matched, "totalHits", totalHits);
     }
 
     public List<IngAssetTagBinding> listTagBindings(String assetType, Long assetId) {

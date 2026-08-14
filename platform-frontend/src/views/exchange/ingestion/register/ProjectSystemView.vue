@@ -27,6 +27,7 @@ import {
   isFileType,
   isMemoryType,
 } from './source-types'
+import { withPasswordTransport } from '@/utils/transport-crypto'
 
 function isApprovedRegister(status?: string | null) {
   const s = String(status || '').toUpperCase()
@@ -81,6 +82,16 @@ const currentDeptName = computed(() => auth.user?.orgName || '（未绑定部门
 
 function isOtherProject(code?: string) {
   return !!code && (code === 'PRJ_OTHER' || code.startsWith('PRJ_OTHER_'))
+}
+
+/** 名称为「其他」时展示「其他（部门）」便于区分各部门默认项目 */
+function displayProjectName(row: { projectName?: string; projectCode?: string; boundOrgName?: string }) {
+  const name = (row.projectName || '').trim()
+  const isOther = name === '其他' || isOtherProject(row.projectCode)
+  if (!isOther) return name || '—'
+  const dept = (row.boundOrgName || currentDeptName.value || '').trim()
+  if (!dept || dept === '—' || dept.startsWith('（未绑定')) return name || '其他'
+  return `${name || '其他'}（${dept}）`
 }
 
 function onSourceTypeChange(type: string) {
@@ -266,17 +277,21 @@ async function submitProjectDialog() {
         projectId,
         systemName: projectForm.systemName.trim(),
       })).data)
-      await ingestionApi.createDataSource({
-        projectId,
-        systemId,
-        sourceName: projectForm.sourceName.trim(),
-        sourceType: projectForm.sourceType,
-        host: projectForm.host,
-        port: projectForm.port,
-        database: projectForm.database,
-        username: projectForm.username,
-        password: projectForm.password,
-      })
+      await ingestionApi.createDataSource(
+        await withPasswordTransport(
+          {
+            projectId,
+            systemId,
+            sourceName: projectForm.sourceName.trim(),
+            sourceType: projectForm.sourceType,
+            host: projectForm.host,
+            port: projectForm.port,
+            database: projectForm.database,
+            username: projectForm.username,
+          },
+          projectForm.password,
+        ),
+      )
       setActiveProjectId(projectId)
       selectedIds.value = [projectId]
       ElMessage.success('项目、系统与首个数据源已创建')
@@ -606,7 +621,9 @@ onMounted(reload)
           @selection-change="onSelectionChange"
         >
           <el-table-column type="selection" width="46" />
-          <el-table-column prop="projectName" label="项目名称" min-width="160" show-overflow-tooltip />
+          <el-table-column label="项目名称" min-width="160" show-overflow-tooltip>
+            <template #default="{ row }">{{ displayProjectName(row) }}</template>
+          </el-table-column>
           <el-table-column label="部门" min-width="140" show-overflow-tooltip>
             <template #default="{ row }">{{ row.boundOrgName || currentDeptName }}</template>
           </el-table-column>

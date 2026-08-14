@@ -78,8 +78,14 @@ services:
       MONGO_URL: ${MONGO_URL:-mongodb://10.10.10.51:27017}
       CANAL_URL: ${CANAL_URL:-http://10.10.10.51:19090}
       JAVA_OPTS: ${BACKEND_JAVA_OPTS:--Xms1g -Xmx3g}
+      # 容器内路径；必须与下方宿主机绑定挂载目标一致
+      APP_UPLOAD_DIR: ${APP_UPLOAD_DIR:-/data/uploads}
     ports:
       - "${BACKEND_PUBLISH_PORT:-8080}:8080"
+    volumes:
+      # 宿主机磁盘永久落盘（勿用仅容器内路径；重建容器不丢文件）
+      # .57 上先: mkdir -p /data/smart-city/uploads && chmod 755 /data/smart-city/uploads
+      - ${UPLOAD_HOST_DIR:-/data/smart-city/uploads}:/data/uploads
     healthcheck:
       test: ["CMD-SHELL", "curl -sf http://127.0.0.1:8080/actuator/health || exit 1"]
       interval: 20s

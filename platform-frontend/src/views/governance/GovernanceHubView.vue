@@ -25,8 +25,8 @@ const DomainIndicatorDomainManage = defineAsyncComponent(() => import('@/views/a
 const DomainIndicatorGroupManage = defineAsyncComponent(() => import('@/views/analytics/DomainIndicatorGroupManage.vue'))
 const DomainIndicatorTaskPanel = defineAsyncComponent(() => import('@/views/analytics/DomainIndicatorTaskPanel.vue'))
 
-/** 与人口数据共享服务区「指标库」同一业务域 */
-const INDICATOR_DOMAIN = 'population'
+/** 治理平台统一入口：指标域/组/任务跨四类业务支撑系统 */
+const INDICATOR_DOMAIN = 'all'
 
 /** V3.0：数据融合处理下挂子能力，侧栏三级可见 */
 const FUSION_CAPS = ['script', 'clean', 'schedule', 'workflow', 'execute', 'version'] as const

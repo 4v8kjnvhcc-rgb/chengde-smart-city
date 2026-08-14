@@ -29,8 +29,20 @@ function pickIcon(node: MenuNode) {
   return null
 }
 
+/** Hub 内页（tab 叶子 / 内部分组）不进门户侧栏；visible=0 为显式隐藏 */
+function isPortalHidden(c: MenuNode): boolean {
+  if (c.menuType === 3) return true
+  if (c.visible === 0) return true
+  if (c.integrationType === 'hub') {
+    const p = c.path || ''
+    if (p.includes('?tab=') || p.includes('&tab=')) return true
+    if (c.menuType === 1) return true
+  }
+  return false
+}
+
 function visibleChildren(node: MenuNode): MenuNode[] {
-  return (node.children || []).filter((c) => c.menuType !== 3)
+  return (node.children || []).filter((c) => !isPortalHidden(c))
 }
 
 function isLeafMenu(node: MenuNode) {

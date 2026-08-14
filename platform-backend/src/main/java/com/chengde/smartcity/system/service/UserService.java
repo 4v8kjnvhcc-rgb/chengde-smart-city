@@ -3,6 +3,7 @@ package com.chengde.smartcity.system.service;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.chengde.smartcity.audit.AuditService;
+import com.chengde.smartcity.auth.TransportCryptoService;
 import com.chengde.smartcity.common.exception.BusinessException;
 import com.chengde.smartcity.security.UserPrincipal;
 import com.chengde.smartcity.system.dto.UserCreateRequest;
@@ -28,13 +29,16 @@ public class UserService {
     private final PasswordEncoder passwordEncoder;
     private final AuditService auditService;
     private final JdbcTemplate jdbcTemplate;
+    private final TransportCryptoService transportCryptoService;
 
     public UserService(SysUserMapper userMapper, PasswordEncoder passwordEncoder,
-                       AuditService auditService, JdbcTemplate jdbcTemplate) {
+                       AuditService auditService, JdbcTemplate jdbcTemplate,
+                       TransportCryptoService transportCryptoService) {
         this.userMapper = userMapper;
         this.passwordEncoder = passwordEncoder;
         this.auditService = auditService;
         this.jdbcTemplate = jdbcTemplate;
+        this.transportCryptoService = transportCryptoService;
     }
 
     public Page<SysUser> page(UserPrincipal operator, int page, int size, String keyword) {
@@ -103,7 +107,8 @@ public class UserService {
     @Transactional
     public Long create(UserPrincipal operator, UserCreateRequest req) {
         assertOrgAccess(operator, req.orgId());
-        validatePassword(req.password());
+        String plainPassword = transportCryptoService.decryptPassword(req.passwordTransport());
+        validatePassword(plainPassword);
         if (userMapper.selectCount(new LambdaQueryWrapper<SysUser>().eq(SysUser::getUsername, req.username())) > 0) {
             throw new BusinessException(400, "用户名已存在");
         }
@@ -112,7 +117,7 @@ public class UserService {
         }
         SysUser user = new SysUser();
         user.setUsername(req.username());
-        user.setPasswordHash(passwordEncoder.encode(req.password()));
+        user.setPasswordHash(passwordEncoder.encode(plainPassword));
         user.setDisplayName(req.displayName());
         user.setPhone(req.phone().trim());
         user.setOrgId(req.orgId());

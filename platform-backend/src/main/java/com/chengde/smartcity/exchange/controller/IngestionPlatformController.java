@@ -311,6 +311,14 @@ public class IngestionPlatformController {
         return ApiResponse.ok(null);
     }
 
+    @DeleteMapping("/channels/{id}")
+    @PreAuthorize("isAuthenticated()")
+    public ApiResponse<Void> deleteChannel(@AuthenticationPrincipal UserPrincipal principal,
+                                           @PathVariable Long id) {
+        service.deleteChannel(principal, id);
+        return ApiResponse.ok(null);
+    }
+
     @GetMapping("/pipeline-jobs")
     public ApiResponse<List<IngPipelineJob>> pipelineJobs(@RequestParam(required = false) String jobType) {
         return ApiResponse.ok(service.listPipelineJobs(jobType));

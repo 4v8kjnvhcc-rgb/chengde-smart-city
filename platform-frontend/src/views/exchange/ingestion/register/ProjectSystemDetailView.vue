@@ -21,6 +21,7 @@ import {
   isMemoryType,
   needsConnConfig,
 } from './source-types'
+import { withPasswordTransport } from '@/utils/transport-crypto'
 
 const props = defineProps<{
   project: Project
@@ -101,7 +102,14 @@ function connLabel(status?: string) {
 
 const title = computed(() => `系统列表 · ${projectOptionLabel(props.project)}`)
 
-const projectPathLabel = computed(() => props.project.projectName || '—')
+const projectPathLabel = computed(() => {
+  const name = (props.project.projectName || '').trim()
+  const code = String(props.project.projectCode || '').toUpperCase()
+  const isOther = name === '其他' || code === 'PRJ_OTHER' || code.startsWith('PRJ_OTHER_')
+  if (!isOther) return name || '—'
+  const dept = (props.project.boundOrgName || '').trim()
+  return dept ? `${name || '其他'}（${dept}）` : (name || '其他')
+})
 
 function sourcesOf(systemId: number): DataSource[] {
   return sourcesBySystem.value[systemId] || []
@@ -271,17 +279,21 @@ async function submitAddDs() {
   }
   addDsSaving.value = true
   try {
-    await ingestionApi.createDataSource({
-      systemId: addDsSystemId.value,
-      projectId: props.project.id,
-      sourceName: addDsForm.sourceName.trim(),
-      sourceType: addDsForm.sourceType,
-      host: addDsForm.host,
-      port: addDsForm.port,
-      database: addDsForm.database,
-      username: addDsForm.username,
-      password: addDsForm.password,
-    })
+    await ingestionApi.createDataSource(
+      await withPasswordTransport(
+        {
+          systemId: addDsSystemId.value,
+          projectId: props.project.id,
+          sourceName: addDsForm.sourceName.trim(),
+          sourceType: addDsForm.sourceType,
+          host: addDsForm.host,
+          port: addDsForm.port,
+          database: addDsForm.database,
+          username: addDsForm.username,
+        },
+        addDsForm.password,
+      ),
+    )
     ElMessage.success('数据源已创建')
     addDsDialog.value = false
     await ensureSourcesLoaded(addDsSystemId.value, true)
@@ -349,9 +361,9 @@ async function saveConn() {
     database: connForm.database,
     username: connForm.username,
   }
-  if (connForm.password) body.password = connForm.password
+  const payload = await withPasswordTransport(body, connForm.password)
   const systemId = editingDs.value.systemId
-  await ingestionApi.updateDataSource(editingDs.value.id, body)
+  await ingestionApi.updateDataSource(editingDs.value.id, payload)
   connDialog.value = false
   ElMessage.success('连接已保存')
   if (systemId) await ensureSourcesLoaded(systemId, true)
@@ -568,7 +580,7 @@ onMounted(() => {
 
     <PageCard v-if="isReadonly" title="审核记录" style="margin-top:12px">
       <el-descriptions :column="2" border size="small" style="margin-bottom:12px">
-        <el-descriptions-item label="项目名称">{{ project.projectName }}</el-descriptions-item>
+        <el-descriptions-item label="项目名称">{{ projectPathLabel }}</el-descriptions-item>
         <el-descriptions-item label="当前状态">{{ registerStatusZh(project.registerStatus) }}</el-descriptions-item>
         <el-descriptions-item v-if="project.rejectReason" label="驳回原因" :span="2">
           {{ project.rejectReason }}

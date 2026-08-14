@@ -4,8 +4,14 @@ import com.chengde.smartcity.common.api.ApiResponse;
 import com.chengde.smartcity.exchange.entity.IngAssetCatalogReg;
 import com.chengde.smartcity.exchange.service.AssetCatalogRegService;
 import com.chengde.smartcity.security.UserPrincipal;
+import java.nio.file.Path;
 import java.util.List;
 import java.util.Map;
+import org.springframework.core.io.FileSystemResource;
+import org.springframework.core.io.Resource;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.MediaType;
+import org.springframework.http.ResponseEntity;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
 import org.springframework.web.bind.annotation.DeleteMapping;
@@ -112,11 +118,23 @@ public class AssetCatalogRegController {
         return ApiResponse.ok(null);
     }
 
-    @PostMapping("/upload")
+    @PostMapping(value = "/upload", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
     @PreAuthorize("isAuthenticated()")
     public ApiResponse<Map<String, Object>> upload(@AuthenticationPrincipal UserPrincipal principal,
                                                    @RequestParam("file") MultipartFile file,
                                                    @RequestParam(defaultValue = "quality") String kind) {
         return ApiResponse.ok(service.upload(principal, file, kind));
+    }
+
+    @GetMapping("/attachments/{fileName}")
+    @PreAuthorize("isAuthenticated()")
+    public ResponseEntity<Resource> download(@PathVariable String fileName) {
+        Path path = service.resolveAttachment(fileName);
+        String downloadName = path.getFileName().toString();
+        Resource resource = new FileSystemResource(path);
+        return ResponseEntity.ok()
+                .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"" + downloadName + "\"")
+                .contentType(MediaType.APPLICATION_OCTET_STREAM)
+                .body(resource);
     }
 }

@@ -82,8 +82,11 @@ public class GovernanceLayerTableService {
             }
 
             if (!layerJdbc.tableExists(sourceDb, sourceTable)) {
+                LayerJdbcSupport.ResolvedEndpoint ep = layerJdbc.resolve(sourceDb);
                 throw new IllegalStateException("源表不存在: " + DataLayerSupport.qualify(sourceDb, sourceTable)
-                        + "，无法按源结构创建目标表");
+                        + "（已查 " + ep.host() + ":" + ep.port() + "/" + ep.database()
+                        + "）。请确认输入节点表名正确，且生产 LAYER_ODS/DWD_* 指向真实分层库；"
+                        + "无法按源结构创建目标表");
             }
 
             for (Map<String, String> target : targets) {
@@ -107,6 +110,8 @@ public class GovernanceLayerTableService {
             return created;
         } catch (IllegalStateException e) {
             throw e;
+        } catch (BusinessException e) {
+            throw new IllegalStateException(e.getMessage(), e);
         } catch (Exception e) {
             throw new IllegalStateException("自动创建目标表失败: " + e.getMessage(), e);
         }

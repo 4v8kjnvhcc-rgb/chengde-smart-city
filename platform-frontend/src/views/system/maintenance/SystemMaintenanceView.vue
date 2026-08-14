@@ -4,6 +4,7 @@ import api from '@/api/http'
 import { ElMessage } from 'element-plus'
 import PageCard from '@/components/common/PageCard.vue'
 import { applyBrowserChrome, applyThemeFromAppearance, type AppearancePublic } from '@/utils/appearance'
+import { encryptTransportPayload } from '@/utils/transport-crypto'
 
 const props = defineProps<{ embed?: boolean }>()
 
@@ -142,10 +143,11 @@ async function changePassword() {
     return
   }
   try {
-    await api.put('/auth/password', {
+    const envelope = await encryptTransportPayload({
       oldPassword: pwdForm.oldPassword,
       newPassword: pwdForm.newPassword,
     })
+    await api.put('/auth/password', envelope)
     ElMessage.success('密码已修改，请使用新密码重新登录')
     pwdForm.oldPassword = ''
     pwdForm.newPassword = ''

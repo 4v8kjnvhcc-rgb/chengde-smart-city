@@ -3,6 +3,7 @@ package com.chengde.smartcity.exchange.service;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.chengde.smartcity.audit.AuditService;
+import com.chengde.smartcity.auth.TransportCryptoService;
 import com.chengde.smartcity.common.exception.BusinessException;
 import com.chengde.smartcity.exchange.entity.BizDataAsset;
 import com.chengde.smartcity.exchange.entity.IngBizSystem;
@@ -84,6 +85,7 @@ public class IngestionPlatformService {
     private final SysClusterAccountMapper clusterAccountMapper;
     private final AccessControlService accessControlService;
     private final KettleCollectService kettleCollectService;
+    private final TransportCryptoService transportCryptoService;
     private final ObjectMapper objectMapper = new ObjectMapper();
 
     public IngestionPlatformService(IngStatsMetricMapper statsMapper, IngGuideStepMapper guideMapper,
@@ -98,7 +100,8 @@ public class IngestionPlatformService {
                                     CredentialCipher credentialCipher, JdbcProbeService jdbcProbeService,
                                     SysOrgMapper orgMapper, SysClusterAccountMapper clusterAccountMapper,
                                     AccessControlService accessControlService,
-                                    KettleCollectService kettleCollectService) {
+                                    KettleCollectService kettleCollectService,
+                                    TransportCryptoService transportCryptoService) {
         this.statsMapper = statsMapper;
         this.guideMapper = guideMapper;
         this.projectMapper = projectMapper;
@@ -122,6 +125,7 @@ public class IngestionPlatformService {
         this.clusterAccountMapper = clusterAccountMapper;
         this.accessControlService = accessControlService;
         this.kettleCollectService = kettleCollectService;
+        this.transportCryptoService = transportCryptoService;
     }
 
     public List<IngStatsMetric> baseStats() {
@@ -526,10 +530,7 @@ public class IngestionPlatformService {
         if (host == null || host.isBlank() || username == null || username.isBlank()) {
             throw new BusinessException(400, "请填写数据库连接地址与用户名后再测试");
         }
-        String password = body.get("password") == null ? "" : String.valueOf(body.get("password"));
-        if (password.isBlank()) {
-            throw new BusinessException(400, "测试连接须填写密码");
-        }
+        String password = transportCryptoService.requireTransportPassword(body);
         JdbcProbeService.ConnConfig conn = new JdbcProbeService.ConnConfig();
         conn.sourceType = sourceType;
         conn.host = host.trim();
@@ -780,7 +781,8 @@ public class IngestionPlatformService {
         if (body.get("port") != null) cfg.put("port", body.get("port"));
         if (body.get("database") != null) cfg.put("database", body.get("database"));
         if (body.get("username") != null) cfg.put("username", body.get("username"));
-        String password = body.get("password") == null ? null : String.valueOf(body.get("password"));
+        transportCryptoService.rejectPlaintextPassword(body);
+        String password = transportCryptoService.resolveOptionalTransportPassword(body);
         if (password != null && !password.isBlank()) {
             cfg.put("passwordCipher", credentialCipher.encrypt(password));
         } else if (existing != null && existing.getConnConfigJson() != null) {
@@ -1057,6 +1059,21 @@ public class IngestionPlatformService {
         channelMapper.updateById(ch);
         auditService.log(operator.getUserId(), operator.getUsername(), operator.getOrgId(),
                 "ING_CHANNEL_SAVE", "ing_ingest_channel", String.valueOf(id), ch.getChannelName());
+    }
+
+    @Transactional
+    public void deleteChannel(UserPrincipal operator, Long id) {
+        IngIngestChannel ch = channelMapper.selectById(id);
+        if (ch == null) {
+            throw new BusinessException(404, "接入通道不存在");
+        }
+        String name = ch.getChannelName();
+        pipelineMapper.update(null, new LambdaUpdateWrapper<IngPipelineJob>()
+                .eq(IngPipelineJob::getRefChannelId, id)
+                .set(IngPipelineJob::getRefChannelId, null));
+        channelMapper.deleteById(id);
+        auditService.log(operator.getUserId(), operator.getUsername(), operator.getOrgId(),
+                "ING_CHANNEL_DELETE", "ing_ingest_channel", String.valueOf(id), name);
     }
 
     public List<IngPipelineJob> listPipelineJobs(String jobType) {

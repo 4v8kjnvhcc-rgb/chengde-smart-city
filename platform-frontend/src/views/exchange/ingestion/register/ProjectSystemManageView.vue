@@ -31,6 +31,15 @@ const acting = ref(false)
 
 const currentDeptName = computed(() => auth.user?.orgName || '—')
 
+function displayProjectName(row: { projectName?: string; projectCode?: string; boundOrgName?: string }) {
+  const name = (row.projectName || '').trim()
+  const code = String(row.projectCode || '').toUpperCase()
+  const isOther = name === '其他' || code === 'OTHER' || code === 'PRJ_OTHER' || code.startsWith('PRJ_OTHER_')
+  if (!isOther) return name || '—'
+  const dept = (row.boundOrgName || currentDeptName.value || '').trim()
+  if (!dept || dept === '—') return name || '其他'
+  return `${name || '其他'}（${dept}）`
+}
 const detailProject = computed(
   () => projects.value.find((p) => p.id === detailProjectId.value) || null,
 )
@@ -195,7 +204,9 @@ onMounted(reload)
         </el-form>
 
         <el-table v-if="filtered.length" class="portal-table" :data="paged" stripe border size="small">
-          <el-table-column prop="projectName" label="项目名称" min-width="160" show-overflow-tooltip />
+          <el-table-column label="项目名称" min-width="160" show-overflow-tooltip>
+            <template #default="{ row }">{{ displayProjectName(row) }}</template>
+          </el-table-column>
           <el-table-column label="部门" min-width="160" show-overflow-tooltip>
             <template #default="{ row }">{{ row.boundOrgName || currentDeptName }}</template>
           </el-table-column>

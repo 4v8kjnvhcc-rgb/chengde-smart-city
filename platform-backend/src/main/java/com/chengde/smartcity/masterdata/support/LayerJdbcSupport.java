@@ -4,6 +4,7 @@ import com.chengde.smartcity.common.exception.BusinessException;
 import com.chengde.smartcity.integration.config.IntegrationProperties;
 import java.sql.Connection;
 import java.sql.DriverManager;
+import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
@@ -146,10 +147,36 @@ public class LayerJdbcSupport {
     }
 
     public boolean tableExists(String database, String table) {
-        try (Connection conn = open(database)) {
-            return tableExists(conn, normalizeDatabase(database), sanitizeIdent(table));
+        String db = normalizeDatabase(database);
+        String tbl = sanitizeIdent(table);
+        ResolvedEndpoint ep = resolve(db);
+        try (Connection conn = open(db);
+             PreparedStatement ps = conn.prepareStatement(
+                     "SELECT 1 FROM information_schema.TABLES "
+                             + "WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ? AND TABLE_TYPE = 'BASE TABLE' LIMIT 1")) {
+            ps.setString(1, db);
+            ps.setString(2, tbl);
+            try (ResultSet rs = ps.executeQuery()) {
+                return rs.next();
+            }
+        } catch (BusinessException e) {
+            throw e;
         } catch (Exception e) {
-            return false;
+            throw new BusinessException(502, "检查表是否存在失败 "
+                    + DataLayerSupport.qualify(db, tbl) + "@" + ep.host() + ":" + ep.port()
+                    + " — " + e.getMessage());
+        }
+    }
+
+    public static boolean tableExists(Connection conn, String db, String table) throws SQLException {
+        try (PreparedStatement ps = conn.prepareStatement(
+                "SELECT 1 FROM information_schema.TABLES "
+                        + "WHERE TABLE_SCHEMA = ? AND TABLE_NAME = ? AND TABLE_TYPE = 'BASE TABLE' LIMIT 1")) {
+            ps.setString(1, db);
+            ps.setString(2, table);
+            try (ResultSet rs = ps.executeQuery()) {
+                return rs.next();
+            }
         }
     }
 
@@ -200,7 +227,6 @@ public class LayerJdbcSupport {
                 String def = rs.getString("Default");
                 String extra = rs.getString("Extra");
                 if (name == null || type == null) continue;
-                // 跳过目标侧自带的 auto_increment，避免重复主键冲突；若目标已有同名列则上面会跳过
                 StringBuilder typeSql = new StringBuilder(type);
                 if ("NO".equalsIgnoreCase(nullable)) {
                     typeSql.append(" NOT NULL");
@@ -208,15 +234,12 @@ public class LayerJdbcSupport {
                     typeSql.append(" NULL");
                 }
                 if (def != null) {
-                    // 函数默认值（如 CURRENT_TIMESTAMP）不加引号
                     if (def.equalsIgnoreCase("CURRENT_TIMESTAMP")
                             || def.toUpperCase(Locale.ROOT).startsWith("CURRENT_TIMESTAMP")) {
                         typeSql.append(" DEFAULT ").append(def);
                     } else {
                         typeSql.append(" DEFAULT '").append(def.replace("'", "''")).append("'");
                     }
-                } else if ("YES".equalsIgnoreCase(nullable)) {
-                    // keep NULL
                 }
                 if (extra != null && !extra.isBlank()
                         && !extra.toLowerCase(Locale.ROOT).contains("auto_increment")) {
@@ -229,12 +252,6 @@ public class LayerJdbcSupport {
     }
 
     private record ColDef(String name, String typeSql) {}
-
-    public static boolean tableExists(Connection conn, String db, String table) throws SQLException {
-        try (ResultSet rs = conn.getMetaData().getTables(db, null, table, new String[]{"TABLE"})) {
-            return rs.next();
-        }
-    }
 
     public String normalizeDatabase(String databaseOrLayer) {
         if (databaseOrLayer == null || databaseOrLayer.isBlank()) {

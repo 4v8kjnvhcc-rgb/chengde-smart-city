@@ -270,8 +270,8 @@ async function executeScript() {
     ElMessage.success(execResult.value?.message || '执行完成')
     await Promise.all([loadScripts(), loadRuns()])
   } catch (e: unknown) {
-    const msg = (e as { response?: { data?: { message?: string } } })?.response?.data?.message
-    ElMessage.error(msg || '执行失败')
+    ElMessage.error(e instanceof Error ? e.message : '执行失败')
+    await Promise.all([loadScripts(), loadRuns()])
   }
 }
 

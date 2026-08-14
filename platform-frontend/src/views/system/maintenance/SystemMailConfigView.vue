@@ -3,6 +3,7 @@ import { onMounted, reactive, ref } from 'vue'
 import api from '@/api/http'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import PageCard from '@/components/common/PageCard.vue'
+import { withPasswordTransport } from '@/utils/transport-crypto'
 
 defineProps<{ embed?: boolean }>()
 
@@ -54,8 +55,7 @@ async function save() {
       fromName: form.fromName,
       fromAddress: form.fromAddress,
     }
-    if (form.password) body.password = form.password
-    await api.put('/system/mail-config', body)
+    await api.put('/system/mail-config', await withPasswordTransport(body, form.password))
     ElMessage.success('邮箱配置已保存')
     await load()
   } catch (e: unknown) {

@@ -50,10 +50,11 @@ async function load() {
 
 /**
  * 按表数量估算模拟存储(GB)：
- * <10 张 → 0.01–0.2；10–50 张 → 0.2–1；>50 张 → 1–2
+ * 0 张 → 0；<10 张 → 0.01–0.2；10–50 张 → 0.2–1；>50 张 → 1–2
  */
 function mockStorageByTableCount(tableCount: number, salt = 0): number {
   const n = Math.max(0, Number(tableCount) || 0)
+  if (n === 0) return 0
   const t = (Math.abs(Math.sin((n + 1) * 12.9898 + salt * 78.233)) % 1)
   if (n < 10) return Number((0.01 + t * 0.19).toFixed(2))
   if (n <= 50) return Number((0.2 + t * 0.8).toFixed(2))
@@ -84,7 +85,7 @@ function applyMockRedBox(real: Record<string, unknown>) {
   out.workflowScheduledCount = 9
   out.taskCount = 42
 
-  const totalGb = Number(out.storageGb) || 0.5
+  const totalGb = Number(out.storageGb) || 0
   const days = 14
   const today = new Date()
   out.storageTrend = Array.from({ length: days }, (_, i) => {
@@ -92,6 +93,9 @@ function applyMockRedBox(real: Record<string, unknown>) {
     d.setDate(d.getDate() - (days - 1 - i))
     const mm = String(d.getMonth() + 1).padStart(2, '0')
     const dd = String(d.getDate()).padStart(2, '0')
+    if (totalGb <= 0) {
+      return { date: `${mm}/${dd}`, month: `${mm}/${dd}`, value: 0, gb: 0 }
+    }
     // 自约 75% 缓升至当前总量，小幅波动
     const base = totalGb * (0.75 + (0.25 * i) / Math.max(1, days - 1))
     const wobble = totalGb * 0.03 * Math.sin(i * 1.3)

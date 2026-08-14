@@ -393,27 +393,64 @@ function formatColumnType(row: DataColumn) {
 }
 
 async function uploadFile(kind: 'quality' | 'risk', file: File) {
+  // #region agent log
+  fetch('http://127.0.0.1:7666/ingest/e1b48a9d-18e3-4b32-b09d-166b8326ca42',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'a737a9'},body:JSON.stringify({sessionId:'a737a9',runId:'pre-fix',hypothesisId:'H1',location:'AssetCatalogFormDialog.vue:uploadFile:entry',message:'upload start',data:{kind,name:file?.name,size:file?.size,type:file?.type,host:typeof location!=='undefined'?location.host:''},timestamp:Date.now()})}).catch(()=>{});
+  // #endregion
   const fd = new FormData()
   fd.append('file', file)
   fd.append('kind', kind)
-  const res = await ingestionApi.assetCatalogUpload(fd)
-  if (kind === 'quality') {
-    form.qualityFilePath = res.data.filePath
-    form.qualityFileName = res.data.fileName
-  } else {
-    form.riskFilePath = res.data.filePath
-    form.riskFileName = res.data.fileName
+  try {
+    const res = await ingestionApi.assetCatalogUpload(fd)
+    // #region agent log
+    fetch('http://127.0.0.1:7666/ingest/e1b48a9d-18e3-4b32-b09d-166b8326ca42',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'a737a9'},body:JSON.stringify({sessionId:'a737a9',runId:'pre-fix',hypothesisId:'H5',location:'AssetCatalogFormDialog.vue:uploadFile:ok',message:'upload api ok',data:{kind,fileName:(res as any)?.data?.fileName,filePath:(res as any)?.data?.filePath,hasData:!!(res as any)?.data},timestamp:Date.now()})}).catch(()=>{});
+    // #endregion
+    if (kind === 'quality') {
+      form.qualityFilePath = res.data.filePath
+      form.qualityFileName = res.data.fileName
+    } else {
+      form.riskFilePath = res.data.filePath
+      form.riskFileName = res.data.fileName
+    }
+    ElMessage.success('附件已上传')
+  } catch (e: unknown) {
+    const err = e as Error & { code?: number; response?: { status?: number } }
+    // #region agent log
+    fetch('http://127.0.0.1:7666/ingest/e1b48a9d-18e3-4b32-b09d-166b8326ca42',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'a737a9'},body:JSON.stringify({sessionId:'a737a9',runId:'pre-fix',hypothesisId:'H1',location:'AssetCatalogFormDialog.vue:uploadFile:err',message:'upload api failed',data:{kind,errMessage:err?.message,errCode:err?.code,httpStatus:err?.response?.status},timestamp:Date.now()})}).catch(()=>{});
+    // #endregion
+    ElMessage.error(err instanceof Error ? err.message : '附件上传失败')
   }
-  ElMessage.success('附件已上传')
 }
 
-function onQualityChange(uploadFileObj: { raw?: File } | undefined) {
+async function downloadAttach(kind: 'quality' | 'risk') {
+  const path = kind === 'quality' ? form.qualityFilePath : form.riskFilePath
+  const name = kind === 'quality' ? form.qualityFileName : form.riskFileName
+  if (!path) {
+    ElMessage.warning('尚未上传附件')
+    return
+  }
+  try {
+    // #region agent log
+    fetch('http://127.0.0.1:7666/ingest/e1b48a9d-18e3-4b32-b09d-166b8326ca42',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'a737a9'},body:JSON.stringify({sessionId:'a737a9',runId:'pre-fix',hypothesisId:'H6',location:'AssetCatalogFormDialog.vue:downloadAttach',message:'download start',data:{kind,path},timestamp:Date.now()})}).catch(()=>{});
+    // #endregion
+    await ingestionApi.assetCatalogDownload(path, name || undefined)
+  } catch (e: unknown) {
+    ElMessage.error(e instanceof Error ? e.message : '下载失败')
+  }
+}
+
+function onQualityChange(uploadFileObj: { raw?: File; name?: string } | undefined) {
+  // #region agent log
+  fetch('http://127.0.0.1:7666/ingest/e1b48a9d-18e3-4b32-b09d-166b8326ca42',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'a737a9'},body:JSON.stringify({sessionId:'a737a9',runId:'pre-fix',hypothesisId:'H2',location:'AssetCatalogFormDialog.vue:onQualityChange',message:'quality change',data:{readonly:readonly.value,hasRaw:!!uploadFileObj?.raw,name:uploadFileObj?.name||uploadFileObj?.raw?.name},timestamp:Date.now()})}).catch(()=>{});
+  // #endregion
   if (readonly.value) return
   const raw = uploadFileObj?.raw
   if (raw) void uploadFile('quality', raw)
 }
 
-function onRiskChange(uploadFileObj: { raw?: File } | undefined) {
+function onRiskChange(uploadFileObj: { raw?: File; name?: string } | undefined) {
+  // #region agent log
+  fetch('http://127.0.0.1:7666/ingest/e1b48a9d-18e3-4b32-b09d-166b8326ca42',{method:'POST',headers:{'Content-Type':'application/json','X-Debug-Session-Id':'a737a9'},body:JSON.stringify({sessionId:'a737a9',runId:'pre-fix',hypothesisId:'H2',location:'AssetCatalogFormDialog.vue:onRiskChange',message:'risk change',data:{readonly:readonly.value,hasRaw:!!uploadFileObj?.raw,name:uploadFileObj?.name||uploadFileObj?.raw?.name},timestamp:Date.now()})}).catch(()=>{});
+  // #endregion
   if (readonly.value) return
   const raw = uploadFileObj?.raw
   if (raw) void uploadFile('risk', raw)
@@ -775,7 +812,15 @@ async function save() {
                   >
                     <el-button size="small">上传附件</el-button>
                   </el-upload>
-                  <span v-if="form.qualityFileName" class="attach-name">{{ form.qualityFileName }}</span>
+                  <span
+                    v-if="form.qualityFileName"
+                    class="attach-name attach-link"
+                    role="button"
+                    tabindex="0"
+                    title="点击下载查看"
+                    @click="downloadAttach('quality')"
+                    @keydown.enter="downloadAttach('quality')"
+                  >{{ form.qualityFileName }}</span>
                   <span v-else class="attach-empty">未上传</span>
                 </div>
               </el-form-item>
@@ -791,7 +836,15 @@ async function save() {
                   >
                     <el-button size="small">上传附件</el-button>
                   </el-upload>
-                  <span v-if="form.riskFileName" class="attach-name">{{ form.riskFileName }}</span>
+                  <span
+                    v-if="form.riskFileName"
+                    class="attach-name attach-link"
+                    role="button"
+                    tabindex="0"
+                    title="点击下载查看"
+                    @click="downloadAttach('risk')"
+                    @keydown.enter="downloadAttach('risk')"
+                  >{{ form.riskFileName }}</span>
                   <span v-else class="attach-empty">未上传</span>
                 </div>
               </el-form-item>
@@ -961,6 +1014,13 @@ async function save() {
 .attach-name {
   color: #1d4f91;
   font-size: 13px;
+}
+.attach-link {
+  cursor: pointer;
+  text-decoration: underline;
+}
+.attach-link:hover {
+  color: #0958d9;
 }
 .attach-empty {
   color: #909399;

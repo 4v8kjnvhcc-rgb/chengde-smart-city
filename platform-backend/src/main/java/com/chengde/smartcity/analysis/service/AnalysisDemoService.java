@@ -81,16 +81,15 @@ public class AnalysisDemoService {
         AnaAnalysisModel model = getModel(modelId);
         long count = sampleMapper.selectCount(new LambdaQueryWrapper<AnaModelSample>().eq(AnaModelSample::getModelId, modelId));
         int need = model.getSampleRowCount() == null ? 100 : model.getSampleRowCount();
-        boolean population = model.getDomainCode() != null
-                && "population".equalsIgnoreCase(model.getDomainCode().trim());
         boolean stale = false;
-        if (population && count > 0) {
+        if (count > 0) {
             AnaModelSample first = sampleMapper.selectOne(new LambdaQueryWrapper<AnaModelSample>()
                     .eq(AnaModelSample::getModelId, modelId)
                     .orderByAsc(AnaModelSample::getRowNo)
                     .last("LIMIT 1"));
             String d1 = first == null || first.getDim1() == null ? "" : first.getDim1();
-            stale = d1.startsWith("Y202");
+            // 人口旧演示前缀 / 通用占位维度 → 按域重生成
+            stale = d1.startsWith("Y202") || d1.startsWith("维度A");
         }
         if (count < need || stale) {
             ensureSamples(modelId, need);
@@ -105,7 +104,8 @@ public class AnalysisDemoService {
         AnaAnalysisModel model = getModel(modelId);
         sampleMapper.delete(new LambdaQueryWrapper<AnaModelSample>().eq(AnaModelSample::getModelId, modelId));
         String mCode = model.getMCode() == null ? "" : model.getMCode().trim().toUpperCase();
-        String[] dims = populationDimLabels(mCode);
+        String domain = model.getDomainCode() == null ? "" : model.getDomainCode().trim().toLowerCase();
+        String[] dims = dimLabelsFor(domain, mCode);
         for (int i = 1; i <= need; i++) {
             AnaModelSample s = new AnaModelSample();
             s.setModelId(modelId);
@@ -116,6 +116,67 @@ public class AnalysisDemoService {
             s.setMetric2(BigDecimal.valueOf(50 + i * 0.8).setScale(2, RoundingMode.HALF_UP));
             sampleMapper.insert(s);
         }
+    }
+
+    private static String[] dimLabelsFor(String domain, String mCode) {
+        return switch (domain == null ? "" : domain) {
+            case "population" -> populationDimLabels(mCode);
+            case "legal" -> legalDimLabels(mCode);
+            case "macro" -> macroDimLabels(mCode);
+            case "key" -> keyDimLabels(mCode);
+            default -> new String[]{"维度A", "维度B"};
+        };
+    }
+
+    /** 法人分析模型样例维度（对齐 M184–M192 / LEG 演示模型） */
+    private static String[] legalDimLabels(String mCode) {
+        return switch (mCode) {
+            case "M184" -> new String[]{"区县", "年龄段"};
+            case "M185" -> new String[]{"区县", "学历"};
+            case "M186" -> new String[]{"区县", "税种"};
+            case "M187" -> new String[]{"区县", "年份"};
+            case "M188" -> new String[]{"区县", "险种"};
+            case "M189" -> new String[]{"规模档", "区县"};
+            case "M190" -> new String[]{"企业性质", "区县"};
+            case "M191" -> new String[]{"产业", "区县"};
+            case "M192" -> new String[]{"行业", "区县"};
+            case "M175" -> new String[]{"区县", "年份"};
+            case "M176" -> new String[]{"行业", "区县"};
+            case "M177" -> new String[]{"区县", "月份"};
+            case "M178" -> new String[]{"区县", "原因"};
+            default -> new String[]{"区县", "指标维"};
+        };
+    }
+
+    /** 宏观 M193–M203 */
+    private static String[] macroDimLabels(String mCode) {
+        return switch (mCode) {
+            case "M193" -> new String[]{"区县", "年份"};
+            case "M194" -> new String[]{"区县", "预算科目"};
+            case "M195" -> new String[]{"行业", "月份"};
+            case "M196" -> new String[]{"行业", "区县"};
+            case "M197" -> new String[]{"行业", "税种"};
+            case "M198" -> new String[]{"贸易方式", "月份"};
+            case "M199" -> new String[]{"区县", "月份"};
+            case "M200" -> new String[]{"行业", "规模"};
+            case "M201" -> new String[]{"产业", "年份"};
+            case "M202" -> new String[]{"区县", "同比期"};
+            case "M203" -> new String[]{"项目类型", "同比期"};
+            default -> new String[]{"区县", "时期"};
+        };
+    }
+
+    /** 重点领域 M204–M209 */
+    private static String[] keyDimLabels(String mCode) {
+        return switch (mCode) {
+            case "M204" -> new String[]{"行政区", "资源类型"};
+            case "M205" -> new String[]{"事件类型", "月份"};
+            case "M206" -> new String[]{"行政区", "事件类型"};
+            case "M207" -> new String[]{"事故类型", "月份"};
+            case "M208" -> new String[]{"行政区", "事故类型"};
+            case "M209" -> new String[]{"学段", "区县"};
+            default -> new String[]{"行政区", "类别"};
+        };
     }
 
     /** 人口十四模型样例维度标签（对齐规格设计卡）；非人口/未知 M 码回落通用标签 */

@@ -14,9 +14,8 @@ import com.chengde.smartcity.masterdata.mapper.GovFusionScriptRunMapper;
 import com.chengde.smartcity.masterdata.mapper.GovFusionScriptVersionMapper;
 import com.chengde.smartcity.masterdata.support.DataLayerSupport;
 import com.chengde.smartcity.masterdata.support.LayerJdbcSupport;
+import com.chengde.smartcity.masterdata.support.TaskConnectionResolver;
 import com.chengde.smartcity.security.UserPrincipal;
-import com.fasterxml.jackson.databind.JsonNode;
-import com.fasterxml.jackson.databind.ObjectMapper;
 import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.ResultSet;
@@ -44,7 +43,6 @@ public class FusionScriptService {
             Pattern.CASE_INSENSITIVE);
     private static final Pattern IDENT = Pattern.compile("^[A-Za-z_][A-Za-z0-9_]*$");
     private static final int SELECT_LIMIT = 100;
-    private static final ObjectMapper OM = new ObjectMapper();
     private static final long PLATFORM_ODS_ID = -1L;
     private static final long PLATFORM_DWD_ID = -2L;
     private static final long PLATFORM_DWS_ID = -3L;
@@ -56,6 +54,7 @@ public class FusionScriptService {
     private final GovFusionScriptRunMapper runMapper;
     private final IngDataSourceMapper dataSourceMapper;
     private final LayerJdbcSupport layerJdbc;
+    private final TaskConnectionResolver connectionResolver;
     private final DolphinSchedulerClient dsClient;
     private final IntegrationProperties integrationProperties;
 
@@ -64,6 +63,7 @@ public class FusionScriptService {
                                GovFusionScriptRunMapper runMapper,
                                IngDataSourceMapper dataSourceMapper,
                                LayerJdbcSupport layerJdbc,
+                               TaskConnectionResolver connectionResolver,
                                DolphinSchedulerClient dsClient,
                                IntegrationProperties integrationProperties) {
         this.scriptMapper = scriptMapper;
@@ -71,6 +71,7 @@ public class FusionScriptService {
         this.runMapper = runMapper;
         this.dataSourceMapper = dataSourceMapper;
         this.layerJdbc = layerJdbc;
+        this.connectionResolver = connectionResolver;
         this.dsClient = dsClient;
         this.integrationProperties = integrationProperties;
     }
@@ -532,22 +533,12 @@ public class FusionScriptService {
             return layerJdbc.open(platformLayerDatabase(datasourceId));
         }
         if (datasourceId != null) {
-            IngDataSource ds = dataSourceMapper.selectById(datasourceId);
-            if (ds == null) {
+            // 与连接测试/任务执行一致：走 JdbcProbeService 解密 passwordCipher，禁止读明文 password 字段
+            if (dataSourceMapper.selectById(datasourceId) == null) {
                 throw new BusinessException(400, "数据源不存在: " + datasourceId);
             }
-            JsonNode n = OM.readTree(ds.getConnConfigJson());
-            String host = text(n, "host");
-            String port = text(n, "port");
-            String database = text(n, "database");
-            String username = text(n, "username");
-            String password = text(n, "password");
-            if (host == null || database == null) {
-                throw new BusinessException(400, "数据源缺少 host/database");
-            }
-            String url = "jdbc:mysql://" + host + ":" + (port == null ? "3306" : port) + "/" + database
-                    + "?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai";
-            return DriverManager.getConnection(url, username == null ? "" : username, password == null ? "" : password);
+            LayerJdbcSupport.ResolvedEndpoint ep = connectionResolver.resolve("ds:" + datasourceId);
+            return DriverManager.getConnection(ep.jdbcUrl(), ep.username(), ep.password());
         }
         return layerJdbc.open(DataLayerSupport.ODS);
     }
@@ -618,12 +609,6 @@ public class FusionScriptService {
         if (v == null) return null;
         if (v instanceof Number n) return n.longValue();
         try { return Long.valueOf(String.valueOf(v)); } catch (Exception e) { return null; }
-    }
-
-    private static String text(JsonNode n, String field) {
-        if (n == null || !n.has(field) || n.get(field).isNull()) return null;
-        String s = n.get(field).asText();
-        return s == null || s.isBlank() ? null : s;
     }
 
     private static String truncate(String s, int max) {

@@ -1,16 +1,19 @@
 <script setup lang="ts">
-import { onMounted, reactive, ref, watch } from 'vue'
+import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { ElMessage, ElMessageBox, type FormInstance, type FormRules } from 'element-plus'
 import { Plus, RefreshRight, Search } from '@element-plus/icons-vue'
 import api from '@/api/http'
 
 const props = defineProps<{ domain: string }>()
 
+const isUnifiedEntry = computed(() => props.domain === 'all' || props.domain === 'gov')
+
 export interface IndicatorDomainRow {
   id: number
   domainName: string
   domainDbName: string
   remark?: string
+  ownerDomainCode?: string
 }
 
 const loading = ref(false)
@@ -25,6 +28,7 @@ const saving = ref(false)
 const editingId = ref<number | null>(null)
 const formRef = ref<FormInstance>()
 const form = reactive({
+  ownerDomainCode: 'population',
   domainName: '',
   domainDbName: '',
   remark: '',
@@ -33,6 +37,7 @@ const form = reactive({
 const dbNamePattern = /^ind_[a-z0-9]+(_[a-z0-9]+)*$/
 
 const rules: FormRules = {
+  ownerDomainCode: [{ required: true, message: '请选择所属业务支撑系统', trigger: 'change' }],
   domainName: [{ required: true, message: '请填写指标域名称', trigger: 'blur' }],
   domainDbName: [
     { required: true, message: '请填写指标域库名', trigger: 'blur' },
@@ -51,6 +56,16 @@ const rules: FormRules = {
 }
 
 const emit = defineEmits<{ changed: [] }>()
+
+function ownerLabel(code?: string) {
+  switch (String(code || '').toLowerCase()) {
+    case 'population': return '人口'
+    case 'legal': return '法人'
+    case 'macro': return '宏观'
+    case 'key': return '重点领域'
+    default: return code || '—'
+  }
+}
 
 async function load() {
   loading.value = true
@@ -75,6 +90,7 @@ function resetQuery() {
 
 function openCreate() {
   editingId.value = null
+  form.ownerDomainCode = 'population'
   form.domainName = ''
   form.domainDbName = ''
   form.remark = ''
@@ -83,6 +99,7 @@ function openCreate() {
 
 function openEdit(row: IndicatorDomainRow) {
   editingId.value = row.id
+  form.ownerDomainCode = row.ownerDomainCode || 'population'
   form.domainName = row.domainName
   form.domainDbName = row.domainDbName
   form.remark = row.remark || ''
@@ -94,10 +111,13 @@ async function submit() {
   await formRef.value.validate()
   saving.value = true
   try {
-    const body = {
+    const body: Record<string, unknown> = {
       domainName: form.domainName.trim(),
       domainDbName: form.domainDbName.trim().toLowerCase(),
       remark: form.remark?.trim() || null,
+    }
+    if (isUnifiedEntry.value && editingId.value == null) {
+      body.ownerDomainCode = form.ownerDomainCode
     }
     if (editingId.value == null) {
       await api.post(`/analytics/domain/${props.domain}/indicator-domains`, body)
@@ -154,6 +174,9 @@ onMounted(load)
     </el-form>
 
     <el-table class="portal-table" :data="rows" stripe size="small" empty-text="暂无数据">
+      <el-table-column v-if="isUnifiedEntry" label="所属系统" width="160" show-overflow-tooltip>
+        <template #default="{ row }">{{ ownerLabel(row.ownerDomainCode) }}</template>
+      </el-table-column>
       <el-table-column prop="domainName" label="指标域名称" min-width="200" show-overflow-tooltip />
       <el-table-column prop="domainDbName" label="指标域库名" min-width="260" show-overflow-tooltip />
       <el-table-column prop="remark" label="备注" min-width="120" show-overflow-tooltip>
@@ -174,7 +197,15 @@ onMounted(load)
       width="520px"
       destroy-on-close
     >
-      <el-form ref="formRef" :model="form" :rules="rules" label-width="120px">
+      <el-form ref="formRef" :model="form" :rules="rules" label-width="140px">
+        <el-form-item v-if="isUnifiedEntry && editingId == null" label="所属系统" prop="ownerDomainCode">
+          <el-select v-model="form.ownerDomainCode" placeholder="请选择业务支撑系统" style="width: 100%">
+            <el-option label="人口大数据支撑系统" value="population" />
+            <el-option label="法人大数据支撑系统" value="legal" />
+            <el-option label="宏观经济及工业运行大数据支撑系统" value="macro" />
+            <el-option label="重点领域示范应用支撑系统" value="key" />
+          </el-select>
+        </el-form-item>
         <el-form-item label="指标域名称" prop="domainName">
           <el-input v-model="form.domainName" placeholder="请填写指标域名称" />
         </el-form-item>

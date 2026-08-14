@@ -1557,14 +1557,19 @@ async function doRun(variables?: Record<string, string>) {
   running.value = true
   try {
     const res = await api.post(`/governance/gov-tasks/${props.taskId}/run`, variables ? { variables } : {})
-    ElMessage.success(res.data?.message || '执行完成')
-    const runId = res.data?.runId
+    const data = res.data as { status?: string; message?: string; runId?: number } | undefined
+    if (String(data?.status || '').toUpperCase() === 'FAILED') {
+      ElMessage.error(data?.message || '执行失败')
+      return
+    }
+    ElMessage.success(data?.message || '执行完成')
+    const runId = data?.runId
     if (runId) {
       runLogs.value = (await api.get(`/governance/gov-tasks/runs/${runId}/node-logs`)).data || []
     }
-    status.value = res.data?.status === 'SUCCESS' ? 'READY' : (res.data?.status || status.value)
-  } catch {
-    ElMessage.error('执行失败')
+    status.value = data?.status === 'SUCCESS' ? 'READY' : (data?.status || status.value)
+  } catch (e: unknown) {
+    ElMessage.error(e instanceof Error ? e.message : '执行失败')
   } finally {
     running.value = false
   }
