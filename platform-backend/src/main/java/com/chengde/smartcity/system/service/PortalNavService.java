@@ -286,23 +286,50 @@ public class PortalNavService {
     }
 
     /**
-     * 收集用户已授权菜单 path（含 Hub visible=0 项，否则门户配置无法匹配登记/采集入口）。
+     * 收集用户已授权且未隐藏的菜单 path，供门户飞出匹配。
+     * 自身或任一祖先 visible=0（菜单管理「是否隐藏」）则不参与匹配，避免目录隐藏后子项 path 仍撑出入口。
      */
     private Set<String> collectUserMenuPaths(UserPrincipal principal) {
+        List<SysMenu> allActive = menuMapper.selectList(new LambdaQueryWrapper<SysMenu>()
+                .eq(SysMenu::getStatus, 1));
+        Map<Long, SysMenu> byId = new HashMap<>();
+        for (SysMenu m : allActive) {
+            if (m.getId() != null) {
+                byId.put(m.getId(), m);
+            }
+        }
         List<SysMenu> menus;
         if (principal != null && principal.isSystemAdmin()) {
-            menus = menuMapper.selectList(new LambdaQueryWrapper<SysMenu>()
-                    .eq(SysMenu::getStatus, 1));
+            menus = allActive;
         } else {
             menus = menuMapper.findMenusByUserId(principal.getUserId());
         }
         Set<String> paths = new HashSet<>();
         for (SysMenu m : menus) {
+            if (isLineageHidden(m, byId)) {
+                continue;
+            }
             if (m.getPath() != null && !m.getPath().isBlank()) {
                 paths.add(m.getPath().trim());
             }
         }
         return paths;
+    }
+
+    private static boolean isLineageHidden(SysMenu m, Map<Long, SysMenu> byId) {
+        SysMenu cur = m;
+        int guard = 0;
+        while (cur != null && guard++ < 32) {
+            if (cur.getVisible() != null && cur.getVisible() == 0) {
+                return true;
+            }
+            Long pid = cur.getParentId();
+            if (pid == null || pid == 0L) {
+                break;
+            }
+            cur = byId.get(pid);
+        }
+        return false;
     }
 
     /**

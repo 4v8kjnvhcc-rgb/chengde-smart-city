@@ -2,6 +2,7 @@ package com.chengde.smartcity.auth;
 
 import com.chengde.smartcity.auth.dto.ChangePasswordRequest;
 import com.chengde.smartcity.auth.dto.EncryptedTransportRequest;
+import com.chengde.smartcity.auth.dto.EncryptedTransportResponse;
 import com.chengde.smartcity.auth.dto.LoginRequest;
 import com.chengde.smartcity.auth.dto.RefreshRequest;
 import com.chengde.smartcity.auth.dto.SsoTicketRequest;
@@ -48,17 +49,18 @@ public class AuthController {
     }
 
     @PostMapping("/login")
-    public ApiResponse<TokenResponse> login(@Valid @RequestBody EncryptedTransportRequest request,
-                                            HttpServletRequest httpRequest) {
-        JsonNode plain = transportCryptoService.decryptAndVerify(request);
+    public ApiResponse<EncryptedTransportResponse> login(@Valid @RequestBody EncryptedTransportRequest request,
+                                                         HttpServletRequest httpRequest) {
+        TransportCryptoService.OpenedEnvelope opened = transportCryptoService.openEnvelope(request);
         LoginRequest login = new LoginRequest(
-                transportCryptoService.requireText(plain, "username"),
-                transportCryptoService.requireText(plain, "password"),
+                transportCryptoService.requireText(opened.payload(), "username"),
+                transportCryptoService.requireText(opened.payload(), "password"),
                 request.totpCode(),
                 request.captchaId(),
                 request.captchaCode()
         );
-        return ApiResponse.ok(authService.login(login, httpRequest));
+        TokenResponse tokens = authService.login(login, httpRequest);
+        return ApiResponse.ok(transportCryptoService.encryptForClient(opened.aesKey(), tokens));
     }
 
     @GetMapping("/captcha")

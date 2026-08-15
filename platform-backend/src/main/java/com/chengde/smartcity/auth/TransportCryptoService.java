@@ -1,6 +1,7 @@
 package com.chengde.smartcity.auth;
 
 import com.chengde.smartcity.auth.dto.EncryptedTransportRequest;
+import com.chengde.smartcity.auth.dto.EncryptedTransportResponse;
 import com.chengde.smartcity.common.exception.BusinessException;
 import com.chengde.smartcity.config.TransportCryptoProperties;
 import com.chengde.smartcity.security.SessionRedisService;
@@ -13,6 +14,7 @@ import java.security.KeyPair;
 import java.security.KeyPairGenerator;
 import java.security.PrivateKey;
 import java.security.PublicKey;
+import java.security.SecureRandom;
 import java.security.spec.MGF1ParameterSpec;
 import java.security.spec.PKCS8EncodedKeySpec;
 import java.util.Base64;
@@ -82,8 +84,16 @@ public class TransportCryptoService {
         return m;
     }
 
+    /** 解密并校验 ts/nonce，同时保留 AES 密钥供加密回包。 */
+    public record OpenedEnvelope(JsonNode payload, byte[] aesKey) {
+    }
+
     /** 解密并校验 ts/nonce，返回明文 JSON。 */
     public JsonNode decryptAndVerify(EncryptedTransportRequest request) {
+        return openEnvelope(request).payload();
+    }
+
+    public OpenedEnvelope openEnvelope(EncryptedTransportRequest request) {
         if (request.kid() == null || !request.kid().equals(properties.kid())) {
             throw new BusinessException(400, "加密密钥版本不匹配，请刷新页面后重试");
         }
@@ -97,12 +107,32 @@ public class TransportCryptoService {
             byte[] plainBytes = aesGcmDecrypt(aesKey, iv, cipherBytes);
             JsonNode node = objectMapper.readTree(new String(plainBytes, StandardCharsets.UTF_8));
             verifyTsAndNonce(node);
-            return node;
+            return new OpenedEnvelope(node, aesKey);
         } catch (BusinessException e) {
             throw e;
         } catch (Exception e) {
             log.warn("Transport decrypt failed: {}", e.toString());
             throw new BusinessException(400, "凭证解密失败");
+        }
+    }
+
+    /** 用请求侧同一把 AES 密钥加密回包（新 IV）。 */
+    public EncryptedTransportResponse encryptForClient(byte[] aesKey, Object body) {
+        if (aesKey == null || (aesKey.length != 16 && aesKey.length != 32)) {
+            throw new BusinessException(500, "登录回包加密失败");
+        }
+        try {
+            byte[] iv = new byte[12];
+            new SecureRandom().nextBytes(iv);
+            byte[] plain = objectMapper.writeValueAsBytes(body);
+            byte[] cipher = aesGcmEncrypt(aesKey, iv, plain);
+            return new EncryptedTransportResponse(
+                    properties.kid(),
+                    Base64.getEncoder().encodeToString(iv),
+                    Base64.getEncoder().encodeToString(cipher));
+        } catch (Exception e) {
+            log.warn("Transport encrypt response failed: {}", e.toString());
+            throw new BusinessException(500, "登录回包加密失败");
         }
     }
 
@@ -200,6 +230,12 @@ public class TransportCryptoService {
         Cipher c = Cipher.getInstance("RSA/ECB/OAEPWithSHA-256AndMGF1Padding");
         c.init(Cipher.DECRYPT_MODE, privateKey, OAEP_SHA256);
         return c.doFinal(cipher);
+    }
+
+    private byte[] aesGcmEncrypt(byte[] key, byte[] iv, byte[] plain) throws Exception {
+        Cipher c = Cipher.getInstance("AES/GCM/NoPadding");
+        c.init(Cipher.ENCRYPT_MODE, new SecretKeySpec(key, "AES"), new GCMParameterSpec(128, iv));
+        return c.doFinal(plain);
     }
 
     private byte[] aesGcmDecrypt(byte[] key, byte[] iv, byte[] cipherAndTag) throws Exception {

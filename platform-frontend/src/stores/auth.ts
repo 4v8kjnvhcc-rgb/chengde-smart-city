@@ -1,6 +1,6 @@
 import { defineStore } from 'pinia'
 import api from '@/api/http'
-import { encryptTransportPayload } from '@/utils/transport-crypto'
+import { decryptTransportCipher, encryptTransportSession } from '@/utils/transport-crypto'
 
 export interface MenuNode {
   id: number
@@ -23,13 +23,29 @@ export interface UserInfo {
   displayName: string
   orgId: number
   orgName?: string
-  phone?: string
+}
+
+function stripPhone<T extends Record<string, unknown>>(user: T | null | undefined): UserInfo | null {
+  if (!user) {
+    return null
+  }
+  const next = { ...user } as T & { phone?: string }
+  delete next.phone
+  return next as unknown as UserInfo
 }
 
 function readStoredUser(): UserInfo | null {
   try {
     const raw = localStorage.getItem('user')
-    return raw ? (JSON.parse(raw) as UserInfo) : null
+    if (!raw) {
+      return null
+    }
+    const parsed = JSON.parse(raw) as UserInfo & { phone?: string }
+    if (parsed.phone != null) {
+      delete parsed.phone
+      localStorage.setItem('user', JSON.stringify(parsed))
+    }
+    return parsed
   } catch {
     return null
   }
@@ -81,27 +97,35 @@ export const useAuthStore = defineStore('auth', {
       captchaId?: string,
       captchaCode?: string,
     ) {
-      const envelope = await encryptTransportPayload({ username, password })
+      const session = await encryptTransportSession({ username, password })
       const res = await api.post('/auth/login', {
-        ...envelope,
+        ...session.envelope,
         totpCode,
         captchaId,
         captchaCode,
       })
-      this.accessToken = res.data.accessToken
-      this.refreshToken = res.data.refreshToken
-      this.user = res.data.user
+      const packed = res.data as { iv?: string; cipherText?: string }
+      const payload = await decryptTransportCipher(session.aesKey, packed?.iv || '', packed?.cipherText || '') as {
+        accessToken: string
+        refreshToken: string
+        user?: UserInfo & { phone?: string }
+        passwordWarn?: boolean
+        passwordWarnMessage?: string
+      }
+      this.accessToken = payload.accessToken
+      this.refreshToken = payload.refreshToken
+      this.user = stripPhone(payload.user)
       localStorage.setItem('accessToken', this.accessToken)
       localStorage.setItem('refreshToken', this.refreshToken)
-      if (res.data.user) {
-        localStorage.setItem('user', JSON.stringify(res.data.user))
-        if (res.data.user.username) {
-          localStorage.setItem('username', res.data.user.username)
+      if (this.user) {
+        localStorage.setItem('user', JSON.stringify(this.user))
+        if (this.user.username) {
+          localStorage.setItem('username', this.user.username)
         }
       }
-      if (res.data.passwordWarn && res.data.passwordWarnMessage) {
+      if (payload.passwordWarn && payload.passwordWarnMessage) {
         const { ElMessage } = await import('element-plus')
-        ElMessage.warning(res.data.passwordWarnMessage)
+        ElMessage.warning(payload.passwordWarnMessage)
       }
       await this.fetchProfile()
     },

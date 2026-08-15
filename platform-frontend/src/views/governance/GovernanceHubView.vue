@@ -5,7 +5,7 @@ import HubSideLayout, { type HubNavItem } from '@/components/common/HubSideLayou
 import { useAuthStore } from '@/stores/auth'
 import { metaSectionItems, resolveMetaSection } from './metadata/meta-nav'
 import GovernanceEtlPanel from './etl/GovernanceEtlPanel.vue'
-import { filterHubNavByPermissions, GOVERNANCE_NAV_PERMISSIONS } from '@/utils/hub-nav-permission'
+import { filterHubNavByPermissions, filterHubNavByMenuVisible, GOVERNANCE_NAV_PERMISSIONS } from '@/utils/hub-nav-permission'
 
 const auth = useAuthStore()
 
@@ -100,11 +100,12 @@ const NAV_BASE: HubNavItem[] = [
 ]
 
 /** 治理侧栏按角色菜单 permission 过滤（与「配置菜单」勾选一致） */
-const navItems = computed<HubNavItem[]>(() =>
-  filterHubNavByPermissions(NAV_BASE, auth.permissions, GOVERNANCE_NAV_PERMISSIONS, {
+const navItems = computed<HubNavItem[]>(() => {
+  const byPerm = filterHubNavByPermissions(NAV_BASE, auth.permissions, GOVERNANCE_NAV_PERMISSIONS, {
     isSystemAdmin: auth.isSystemAdmin,
-  }),
-)
+  })
+  return filterHubNavByMenuVisible(byPerm, auth.menus, GOVERNANCE_NAV_PERMISSIONS)
+})
 
 function firstAllowedNavKey(): string {
   const pick = (nodes: HubNavItem[]): string | null => {

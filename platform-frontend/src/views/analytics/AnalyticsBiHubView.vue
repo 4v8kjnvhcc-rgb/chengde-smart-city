@@ -7,7 +7,7 @@ import PageCard from '@/components/common/PageCard.vue'
 import HubSideLayout, { type HubNavItem } from '@/components/common/HubSideLayout.vue'
 import { statusLabel, statusTagType } from '@/utils/status-label'
 import { useAuthStore } from '@/stores/auth'
-import { filterHubNavByPermissions, BI_NAV_PERMISSIONS } from '@/utils/hub-nav-permission'
+import { filterHubNavByPermissions, filterHubNavByMenuVisible, BI_NAV_PERMISSIONS } from '@/utils/hub-nav-permission'
 
 const auth = useAuthStore()
 
@@ -21,11 +21,12 @@ const NAV_BASE: HubNavItem[] = [
   { key: 'self', label: '自助分析' },
 ]
 
-const navItems = computed(() =>
-  filterHubNavByPermissions(NAV_BASE, auth.permissions, BI_NAV_PERMISSIONS, {
+const navItems = computed(() => {
+  const byPerm = filterHubNavByPermissions(NAV_BASE, auth.permissions, BI_NAV_PERMISSIONS, {
     isSystemAdmin: auth.isSystemAdmin,
-  }),
-)
+  })
+  return filterHubNavByMenuVisible(byPerm, auth.menus, BI_NAV_PERMISSIONS)
+})
 
 interface Widget {
   id: number

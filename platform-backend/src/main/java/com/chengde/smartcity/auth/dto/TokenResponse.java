@@ -13,9 +13,7 @@ public record TokenResponse(
         this(accessToken, refreshToken, accessTokenExpiresInSeconds, user, null, null, null);
     }
 
-    public record UserInfo(Long id, String username, String displayName, Long orgId, String orgName, String phone) {
-        public UserInfo(Long id, String username, String displayName, Long orgId, String orgName) {
-            this(id, username, displayName, orgId, orgName, null);
-        }
+    /** 登录/刷新回包不含手机号，避免明文落在 Network 与 localStorage。 */
+    public record UserInfo(Long id, String username, String displayName, Long orgId, String orgName) {
     }
 }

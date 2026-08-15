@@ -213,7 +213,7 @@ function openDetail(row: SubRow, mode: 'mine' | 'pending' | 'reviewed') {
   reviewForm.note = ''
   if (mode === 'pending') {
     reviewForm.reviewerName = auth.user?.displayName || auth.user?.username || ''
-    reviewForm.reviewerContact = auth.user?.phone || ''
+    reviewForm.reviewerContact = ''
   }
 }
 

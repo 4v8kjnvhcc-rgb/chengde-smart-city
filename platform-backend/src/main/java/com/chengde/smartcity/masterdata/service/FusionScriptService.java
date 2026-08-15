@@ -38,15 +38,23 @@ import org.springframework.transaction.annotation.Transactional;
 public class FusionScriptService {
 
     private static final Logger log = LoggerFactory.getLogger(FusionScriptService.class);
+    /** 关键词两侧都要词界，避免 created_at / updated_at 等列名被误判为 CREATE。 */
     private static final Pattern FORBIDDEN = Pattern.compile(
-            "\\b(DROP|TRUNCATE|ALTER|CREATE|GRANT|REVOKE|DELETE\\s+FROM|INSERT\\s+INTO|REPLACE\\s+INTO|CALL\\s|EXEC\\s|EXECUTE\\s|--|;\\s*\\S)",
-            Pattern.CASE_INSENSITIVE);
+            "(?i)(?:\\b(?:DROP|TRUNCATE|ALTER|CREATE|GRANT|REVOKE)\\b"
+                    + "|\\bDELETE\\s+FROM\\b"
+                    + "|\\bINSERT\\s+INTO\\b"
+                    + "|\\bREPLACE\\s+INTO\\b"
+                    + "|\\b(?:CALL|EXEC|EXECUTE)\\s"
+                    + "|--"
+                    + "|;\\s*\\S)");
     private static final Pattern IDENT = Pattern.compile("^[A-Za-z_][A-Za-z0-9_]*$");
     private static final int SELECT_LIMIT = 100;
     private static final long PLATFORM_ODS_ID = -1L;
     private static final long PLATFORM_DWD_ID = -2L;
     private static final long PLATFORM_DWS_ID = -3L;
     private static final long PLATFORM_ADS_ID = -4L;
+    /** 与前端 FusionScriptView 约定：元数据数据源 id 编码为 BASE + metaDataSourceId，避免与登记源 id 冲突 */
+    private static final long META_DATASOURCE_ID_BASE = 1_000_000_000L;
     private static final String DS_PROD_PROJECT = "chengde_fusion_script_prod";
 
     private final GovFusionScriptMapper scriptMapper;
@@ -532,6 +540,11 @@ public class FusionScriptService {
         if (isPlatformLayerId(datasourceId)) {
             return layerJdbc.open(platformLayerDatabase(datasourceId));
         }
+        if (isEncodedMetaDataSourceId(datasourceId)) {
+            long metaId = datasourceId - META_DATASOURCE_ID_BASE;
+            LayerJdbcSupport.ResolvedEndpoint ep = connectionResolver.resolve("meta:" + metaId);
+            return DriverManager.getConnection(ep.jdbcUrl(), ep.username(), ep.password());
+        }
         if (datasourceId != null) {
             // 与连接测试/任务执行一致：走 JdbcProbeService 解密 passwordCipher，禁止读明文 password 字段
             if (dataSourceMapper.selectById(datasourceId) == null) {
@@ -541,6 +554,10 @@ public class FusionScriptService {
             return DriverManager.getConnection(ep.jdbcUrl(), ep.username(), ep.password());
         }
         return layerJdbc.open(DataLayerSupport.ODS);
+    }
+
+    private static boolean isEncodedMetaDataSourceId(Long id) {
+        return id != null && id >= META_DATASOURCE_ID_BASE;
     }
 
     private static boolean isPlatformLayerId(Long id) {

@@ -221,7 +221,7 @@ public class AuthService {
                 refresh,
                 jwtProperties.accessTokenMinutes() * 60,
                 new TokenResponse.UserInfo(user.getId(), user.getUsername(), user.getDisplayName(),
-                        user.getOrgId(), orgName, user.getPhone()),
+                        user.getOrgId(), orgName),
                 warn,
                 ageDays,
                 warnMsg

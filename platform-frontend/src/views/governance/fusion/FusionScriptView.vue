@@ -6,17 +6,29 @@ import PageCard from '@/components/common/PageCard.vue'
 import PortalPagination from '@/components/common/PortalPagination.vue'
 import { useClientPager } from '@/composables/useClientPager'
 import { statusLabel, statusTagType } from '@/utils/status-label'
+import MetaDataSourcePickerDialog from '@/components/common/MetaDataSourcePickerDialog.vue'
+import { connectionKeyOf, type MetaBindSource } from '@/utils/meta-datasource-conn'
 
 const props = withDefaults(defineProps<{
   /** 嵌在「数据融合处理」页内时不套外层 PageCard */
   embedded?: boolean
 }>(), { embedded: false })
 import {
+  extractColumnNames,
   loadQualitySourceOptions,
   loadQualityTables,
   type QualitySourceOption,
   type QualityTableMeta,
 } from '../quality/useQualityTargetPicker'
+
+/** 与 FusionScriptService 约定：元数据数据源 id 编码，避免与登记源 id 冲突 */
+const META_DATASOURCE_ID_BASE = 1_000_000_000
+
+interface ScriptSourceOption extends QualitySourceOption {
+  kind: 'platform' | 'external' | 'meta'
+  metaId?: number
+  group: string
+}
 
 interface ScriptRow {
   id: number
@@ -100,7 +112,7 @@ const loading = ref(false)
 const drawer = ref(false)
 const versionDrawer = ref(false)
 const activeTab = ref('list')
-const sources = ref<QualitySourceOption[]>([])
+const sources = ref<ScriptSourceOption[]>([])
 const tables = ref<QualityTableMeta[]>([])
 const tablesLoading = ref(false)
 const versions = ref<VersionRow[]>([])
@@ -114,6 +126,10 @@ const execResult = ref<{
 } | null>(null)
 const publishSummary = ref('')
 const assistTable = ref('')
+const dsPickerVisible = ref(false)
+const formHint = ref('')
+const saving = ref(false)
+const executing = ref(false)
 
 const form = reactive({
   id: null as number | null,
@@ -121,7 +137,8 @@ const form = reactive({
   scriptName: '',
   scriptType: 'SELECT',
   scriptContent: '',
-  datasourceId: -3 as number | undefined,
+  datasourceId: undefined as number | undefined,
+  sourceName: '',
 })
 
 const columnOptions = computed(() => {
@@ -158,8 +175,83 @@ async function searchRuns() {
   await loadRuns()
 }
 
+const selectedSource = computed(() => sources.value.find((s) => s.id === form.datasourceId))
+
+const sourceDisplayText = computed(() => {
+  if (form.sourceName.trim()) return form.sourceName
+  return selectedSource.value?.label || ''
+})
+
+const tableEmptyHint = computed(() => {
+  if (tablesLoading.value || tables.value.length > 0 || form.datasourceId == null) return ''
+  if (form.datasourceId === -3 || form.datasourceId === -4) {
+    return '该分层库当前没有表。DWS/ADS 需融合任务产出后才有表；要查业务库请点「选择」选元数据数据源。'
+  }
+  if (decodeMetaDatasourceId(form.datasourceId) != null) {
+    return '未探到表。请到「元数据管理 → 数据源管理」为该源填写数据库名称（db_name）并保存后再选。'
+  }
+  return '未探到表，请检查该数据源的连接配置。'
+})
+
+function encodeMetaDatasourceId(metaId: number) {
+  return META_DATASOURCE_ID_BASE + metaId
+}
+
+function decodeMetaDatasourceId(id: number | undefined | null): number | null {
+  if (id == null || id < META_DATASOURCE_ID_BASE) return null
+  return id - META_DATASOURCE_ID_BASE
+}
+
+function onMetaDsPicked(row: MetaBindSource) {
+  const key = connectionKeyOf(row)
+  const layerId: Record<string, number> = {
+    smart_city_ods: -1,
+    smart_city_dwd: -2,
+    smart_city_dws: -3,
+    smart_city_ads: -4,
+  }
+  if (layerId[key] != null) {
+    form.datasourceId = layerId[key]
+  } else {
+    form.datasourceId = encodeMetaDatasourceId(row.id)
+  }
+  const cat = (row.categoryName || '').trim()
+  const db = (row.databaseName || '').trim()
+  form.sourceName = `${cat ? `${cat} · ` : ''}${row.sourceName}${db ? `（${db}）` : ''}`
+}
+
 async function loadSources() {
-  sources.value = await loadQualitySourceOptions()
+  const base = await loadQualitySourceOptions()
+  const platforms: ScriptSourceOption[] = base
+    .filter((s) => s.kind === 'platform')
+    .map((s) => ({ ...s, kind: 'platform' as const, group: '平台分层库' }))
+  const external: ScriptSourceOption[] = base
+    .filter((s) => s.kind === 'external')
+    .map((s) => ({ ...s, kind: 'external' as const, group: '归集登记源' }))
+  let meta: ScriptSourceOption[] = []
+  try {
+    const rows = (await api.get('/governance/platform/metadata/data-sources')).data || []
+    meta = (rows as Array<Record<string, unknown>>).map((r) => {
+      const metaId = Number(r.id)
+      const cat = String(r.categoryName || '').trim()
+      const name = String(r.sourceName || `数据源#${metaId}`).trim()
+      const db = String(r.dbName || '').trim()
+      const suffix = db ? `（${db}）` : ''
+      return {
+        id: encodeMetaDatasourceId(metaId),
+        label: cat ? `${cat} · ${name}${suffix}` : `${name}${suffix}`,
+        kind: 'meta' as const,
+        role: 'SOURCE' as const,
+        roleLabel: '源层',
+        catalogHint: '元数据数据源管理中配置的 JDBC 库',
+        metaId,
+        group: '元数据数据源',
+      }
+    })
+  } catch {
+    meta = []
+  }
+  sources.value = [...platforms, ...meta, ...external]
 }
 
 async function reloadTables() {
@@ -169,9 +261,25 @@ async function reloadTables() {
   }
   tablesLoading.value = true
   try {
-    tables.value = await loadQualityTables(form.datasourceId)
-  } catch {
+    const metaId = decodeMetaDatasourceId(form.datasourceId)
+    if (metaId != null) {
+      const rows = (await api.get(
+        `/governance/platform/metadata/collect/meta-data-sources/${metaId}/tables`,
+      )).data || []
+      tables.value = (rows as Array<Record<string, unknown>>)
+        .map((r) => ({
+          sourceTable: String(r.sourceTable || r.tableName || r.name || '').trim(),
+          tableComment: String(r.tableComment || r.comment || r.remarks || '').trim() || undefined,
+          columns: extractColumnNames(r.columns),
+        }))
+        .filter((t) => !!t.sourceTable)
+    } else {
+      tables.value = await loadQualityTables(form.datasourceId)
+    }
+  } catch (e: unknown) {
     tables.value = []
+    const msg = (e as { response?: { data?: { message?: string } } })?.response?.data?.message
+    ElMessage.error(msg || '加载表列表失败，请检查数据源连接配置')
   } finally {
     tablesLoading.value = false
   }
@@ -184,16 +292,42 @@ watch(() => form.datasourceId, () => {
   }
 })
 
+watch(assistTable, async (tableName) => {
+  const metaId = decodeMetaDatasourceId(form.datasourceId)
+  if (!tableName || metaId == null) return
+  const row = tables.value.find((t) => t.sourceTable === tableName)
+  if (!row || row.columns.length) return
+  try {
+    const res = await api.get(
+      `/governance/platform/metadata/models/meta-data-sources/${metaId}/table-columns`,
+      { params: { tableName } },
+    )
+    const fields = (res.data?.fields || []) as Array<Record<string, unknown>>
+    row.columns = extractColumnNames(fields.length ? fields : res.data?.columns)
+  } catch {
+    /* 选表仍可用，生成 SELECT * */
+  }
+})
+
+function defaultScriptLabel() {
+  const d = new Date()
+  const pad = (n: number) => String(n).padStart(2, '0')
+  return `脚本${pad(d.getMonth() + 1)}${pad(d.getDate())}${pad(d.getHours())}${pad(d.getMinutes())}${pad(d.getSeconds())}`
+}
+
 function openCreate() {
+  const label = defaultScriptLabel()
   form.id = null
-  form.scriptCode = ''
-  form.scriptName = ''
+  form.scriptCode = label
+  form.scriptName = label
   form.scriptType = 'SELECT'
   form.scriptContent = ''
-  form.datasourceId = -3
+  form.datasourceId = undefined
+  form.sourceName = ''
   assistTable.value = ''
   execResult.value = null
   publishSummary.value = ''
+  formHint.value = ''
   drawer.value = true
   void loadSources().then(() => reloadTables())
 }
@@ -205,12 +339,15 @@ async function openEdit(row: ScriptRow) {
   form.scriptName = detail.scriptName
   form.scriptType = detail.scriptType || 'SELECT'
   form.scriptContent = detail.scriptContent || ''
-  form.datasourceId = detail.datasourceId ?? -3
+  form.datasourceId = detail.datasourceId ?? undefined
+  form.sourceName = ''
   assistTable.value = ''
   execResult.value = null
   publishSummary.value = ''
+  formHint.value = ''
   drawer.value = true
   await loadSources()
+  form.sourceName = sources.value.find((s) => s.id === form.datasourceId)?.label || ''
   await reloadTables()
 }
 
@@ -225,31 +362,57 @@ function fillSelectFromTable() {
   form.scriptContent = `SELECT ${list}\nFROM \`${assistTable.value}\``
 }
 
-async function saveScript() {
-  if (!form.scriptCode.trim() || !form.scriptName.trim() || !form.scriptContent.trim()) {
-    ElMessage.warning('请填写编码、名称与脚本内容')
-    return
+async function persistScript() {
+  formHint.value = ''
+  if (!form.scriptCode.trim() || !form.scriptName.trim()) {
+    const label = defaultScriptLabel()
+    if (!form.scriptCode.trim()) form.scriptCode = label
+    if (!form.scriptName.trim()) form.scriptName = label
+  }
+  if (!form.scriptContent.trim()) {
+    formHint.value = '请先生成或填写脚本 SQL'
+    ElMessage.warning(formHint.value)
+    return false
   }
   if (form.datasourceId == null) {
-    ElMessage.warning('请选择来源库')
-    return
+    formHint.value = '请选择来源库'
+    ElMessage.warning(formHint.value)
+    return false
   }
   const body = {
-    scriptCode: form.scriptCode,
-    scriptName: form.scriptName,
+    scriptCode: form.scriptCode.trim(),
+    scriptName: form.scriptName.trim(),
     scriptType: form.scriptType,
     scriptContent: form.scriptContent,
     datasourceId: form.datasourceId,
   }
-  if (form.id) {
-    await api.put(`/governance/fusion/scripts/${form.id}`, body)
-    ElMessage.success('脚本已更新')
-  } else {
-    const id = (await api.post('/governance/fusion/scripts', body)).data
-    form.id = id
-    ElMessage.success('脚本已创建')
+  try {
+    if (form.id) {
+      await api.put(`/governance/fusion/scripts/${form.id}`, body)
+    } else {
+      const id = (await api.post('/governance/fusion/scripts', body)).data
+      form.id = id
+    }
+    await loadScripts()
+    return true
+  } catch (e: unknown) {
+    const msg = e instanceof Error ? e.message : '保存失败'
+    formHint.value = msg
+    ElMessage.error(msg)
+    return false
   }
-  await loadScripts()
+}
+
+async function saveScript() {
+  saving.value = true
+  try {
+    if (await persistScript()) {
+      ElMessage.success(form.id ? '脚本已保存' : '脚本已创建')
+      drawer.value = false
+    }
+  } finally {
+    saving.value = false
+  }
 }
 
 async function removeScript(row: ScriptRow) {
@@ -260,18 +423,19 @@ async function removeScript(row: ScriptRow) {
 }
 
 async function executeScript() {
-  if (!form.id) {
-    ElMessage.warning('请先保存脚本')
-    return
-  }
-  await saveScript()
+  executing.value = true
   try {
+    if (!(await persistScript())) return
     execResult.value = (await api.post(`/governance/fusion/scripts/${form.id}/execute`)).data
     ElMessage.success(execResult.value?.message || '执行完成')
     await Promise.all([loadScripts(), loadRuns()])
   } catch (e: unknown) {
-    ElMessage.error(e instanceof Error ? e.message : '执行失败')
+    const msg = e instanceof Error ? e.message : '执行失败'
+    formHint.value = msg
+    ElMessage.error(msg)
     await Promise.all([loadScripts(), loadRuns()])
+  } finally {
+    executing.value = false
   }
 }
 
@@ -418,8 +582,13 @@ onMounted(() => {
 
     <el-drawer v-model="drawer" :title="form.id ? `编辑 · ${form.scriptName}` : '新建脚本'" size="560px">
       <el-form label-position="top" size="small">
-        <el-form-item label="编码"><el-input v-model="form.scriptCode" :disabled="!!form.id" /></el-form-item>
-        <el-form-item label="名称"><el-input v-model="form.scriptName" /></el-form-item>
+        <el-alert v-if="formHint" :title="formHint" type="error" show-icon :closable="false" style="margin-bottom:12px" />
+        <el-form-item label="编码" required>
+          <el-input v-model="form.scriptCode" :disabled="!!form.id" placeholder="自动生成，可改" />
+        </el-form-item>
+        <el-form-item label="名称" required>
+          <el-input v-model="form.scriptName" placeholder="自动生成，可改" />
+        </el-form-item>
         <el-form-item label="类型">
           <el-select v-model="form.scriptType" class="full-w">
             <el-option label="查询 SELECT" value="SELECT" />
@@ -427,9 +596,15 @@ onMounted(() => {
           </el-select>
         </el-form-item>
         <el-form-item label="来源库" required>
-          <el-select v-model="form.datasourceId" filterable class="full-w" placeholder="平台分层或登记源">
-            <el-option v-for="s in sources" :key="s.id" :label="s.label" :value="s.id" />
-          </el-select>
+          <div class="conn-pick">
+            <el-input
+              :model-value="sourceDisplayText"
+              readonly
+              placeholder="点击选择来源库"
+              @click="dsPickerVisible = true"
+            />
+            <el-button type="primary" @click="dsPickerVisible = true">选择</el-button>
+          </div>
         </el-form-item>
         <el-form-item label="辅助选表（生成 SELECT）">
           <div class="assist-row">
@@ -438,15 +613,22 @@ onMounted(() => {
               filterable
               clearable
               :loading="tablesLoading"
-              placeholder="选择表后点生成"
+              :disabled="form.datasourceId == null"
+              :placeholder="form.datasourceId == null ? '请先选择来源库' : '选择表后点生成'"
               class="full-w"
             >
-              <el-option v-for="t in tables" :key="t.sourceTable" :label="t.sourceTable" :value="t.sourceTable" />
+              <el-option
+                v-for="t in tables"
+                :key="t.sourceTable"
+                :label="t.tableComment ? `${t.sourceTable}（${t.tableComment}）` : t.sourceTable"
+                :value="t.sourceTable"
+              />
             </el-select>
-            <el-button @click="fillSelectFromTable">生成查询</el-button>
+            <el-button :disabled="!assistTable" @click="fillSelectFromTable">生成查询</el-button>
           </div>
+          <div v-if="tableEmptyHint" class="muted" style="margin-top:6px">{{ tableEmptyHint }}</div>
         </el-form-item>
-        <el-form-item label="脚本 SQL">
+        <el-form-item label="脚本 SQL" required>
           <el-input
             v-model="form.scriptContent"
             type="textarea"
@@ -454,10 +636,6 @@ onMounted(() => {
             placeholder="从上方选表生成，或手写 SELECT / UPDATE（禁止 DROP/INSERT/DELETE）"
           />
         </el-form-item>
-        <el-space>
-          <el-button type="primary" @click="saveScript">保存</el-button>
-          <el-button type="success" :disabled="!form.id" @click="executeScript">执行</el-button>
-        </el-space>
       </el-form>
 
       <template v-if="execResult">
@@ -473,6 +651,10 @@ onMounted(() => {
           style="margin-top:8px"
         />
         <div v-else-if="execResult.mode === 'UPDATE'" class="muted">影响行数：{{ execResult.affectedRows }}</div>
+      </template>
+      <template #footer>
+        <el-button type="primary" :loading="saving" @click="saveScript">保存</el-button>
+        <el-button type="success" :loading="executing" @click="executeScript">执行</el-button>
       </template>
     </el-drawer>
 
@@ -497,6 +679,8 @@ onMounted(() => {
         </el-table-column>
       </el-table>
     </el-drawer>
+
+    <MetaDataSourcePickerDialog v-model="dsPickerVisible" title="选择来源库" @confirm="onMetaDsPicked" />
   </component>
 </template>
 
@@ -521,6 +705,14 @@ onMounted(() => {
   align-items: center;
 }
 .assist-row .el-select {
+  flex: 1;
+}
+.conn-pick {
+  display: flex;
+  gap: 8px;
+  width: 100%;
+}
+.conn-pick .el-input {
   flex: 1;
 }
 </style>

@@ -257,12 +257,12 @@ async function applyDefaults() {
     }
     form.orgId = (d.orgId as number | null | undefined) ?? auth.user?.orgId ?? null
     form.orgName = String(d.orgName || auth.user?.orgName || '')
-    form.contactInfo = String(d.contactInfo || auth.user?.phone || '')
+    form.contactInfo = String(d.contactInfo || '')
     orgSelectValue.value = form.orgId
   } catch {
     form.orgId = auth.user?.orgId ?? null
     form.orgName = auth.user?.orgName || ''
-    form.contactInfo = auth.user?.phone || ''
+    form.contactInfo = ''
     orgSelectValue.value = form.orgId
   }
 }

@@ -102,7 +102,7 @@ const reviewForm = reactive({
 function resetReviewForm() {
   reviewForm.decision = 'APPROVE'
   reviewForm.reviewerName = auth.user?.displayName || auth.user?.username || ''
-  reviewForm.reviewerContact = auth.user?.phone || ''
+  reviewForm.reviewerContact = ''
   reviewForm.comment = DEFAULT_APPROVE_COMMENT
 }
 

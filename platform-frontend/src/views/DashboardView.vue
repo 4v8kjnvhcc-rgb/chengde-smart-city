@@ -321,9 +321,28 @@ function wantsPortalTicketSso(node: PortalNavNode): boolean {
   return (node.ssoMode || 'none') === 'portal_ticket'
 }
 
+const APP_BASE = ((import.meta.env.BASE_URL || '/bigdata-web/').replace(/\/$/, '') || '/bigdata-web')
+
+/** 去掉 url 中重复的 publicPath，供 vue-router 使用 */
+function stripAppBase(target: string): string {
+  const t = target.trim()
+  if (t.startsWith(`${APP_BASE}/`)) return t.slice(APP_BASE.length) || '/'
+  if (t === APP_BASE) return '/'
+  return t
+}
+
+/** 站内路径补 publicPath，供 window.open / 书签直达 */
+function withAppBase(target: string): string {
+  const t = target.trim()
+  if (t.startsWith('http://') || t.startsWith('https://')) return t
+  const p = t.startsWith('/') ? t : `/${t}`
+  if (p.startsWith(`${APP_BASE}/`) || p === APP_BASE) return p
+  return `${APP_BASE}${p}`
+}
+
 /** 站内地址拆成 path + query，保证 system=collect/register 生效 */
 function pushInternalTarget(target: string) {
-  const t = target.trim()
+  const t = stripAppBase(target.trim())
   if (t.startsWith('http://') || t.startsWith('https://')) {
     window.open(t, '_blank', 'noopener,noreferrer')
     return
@@ -382,7 +401,7 @@ async function enterNavNode(node: PortalNavNode) {
   if (!target) return
   const mode = node.openMode || 'route'
   if (mode === 'new_tab' || target.startsWith('http://') || target.startsWith('https://')) {
-    window.open(target, '_blank', 'noopener,noreferrer')
+    window.open(withAppBase(target), '_blank', 'noopener,noreferrer')
     return
   }
   pushInternalTarget(target)

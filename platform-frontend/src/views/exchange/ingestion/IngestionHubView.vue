@@ -21,6 +21,7 @@ import {
   type RegisterMenuMeta,
 } from './ingestion-nav'
 import api from '@/api/http'
+import { filterHubNavByMenuVisible, INGESTION_NAV_PERMISSIONS } from '@/utils/hub-nav-permission'
 
 const route = useRoute()
 const router = useRouter()
@@ -112,8 +113,11 @@ const allowedRegister = computed(() => filterIngestionModules(REGISTER_MODULES, 
 const allowedCollect = computed(() => filterIngestionModules(COLLECT_MODULES, permOpts.value))
 
 const navItems = computed(() => {
-  if (system.value === 'register') return buildRegisterNavItems(permOpts.value, registerMenuMeta.value)
-  return filterCollectNavItems(permOpts.value)
+  const raw =
+    system.value === 'register'
+      ? buildRegisterNavItems(permOpts.value, registerMenuMeta.value)
+      : filterCollectNavItems(permOpts.value)
+  return filterHubNavByMenuVisible(raw, auth.menus, INGESTION_NAV_PERMISSIONS)
 })
 const activeComponent = computed(() => {
   if (module.value.startsWith('custom-')) return CustomRegisterMenuView

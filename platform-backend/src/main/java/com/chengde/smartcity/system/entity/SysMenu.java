@@ -1,6 +1,8 @@
 package com.chengde.smartcity.system.entity;
 
+import com.baomidou.mybatisplus.annotation.FieldStrategy;
 import com.baomidou.mybatisplus.annotation.IdType;
+import com.baomidou.mybatisplus.annotation.TableField;
 import com.baomidou.mybatisplus.annotation.TableId;
 import com.baomidou.mybatisplus.annotation.TableName;
 import java.time.LocalDateTime;
@@ -20,6 +22,8 @@ public class SysMenu {
     private String permission;
     private String icon;
     private Integer sortOrder;
+    /** 0 须能更新进库；默认 NOT_NULL 策略会把整型 0 当成「未设」跳过 */
+    @TableField(updateStrategy = FieldStrategy.ALWAYS)
     private Integer visible;
     private Integer status;
     private String mCode;

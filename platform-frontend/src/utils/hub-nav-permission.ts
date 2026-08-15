@@ -53,6 +53,7 @@ export function filterHubNavByPermissions(
 /**
  * 按 sys_menu.visible 过滤 Hub 侧栏（对超管同样生效）。
  * 叶子命中 path?tab=key 或 permission 映射；任一世系节点 visible=0 则隐藏。
+ * Hub 页壳（id=13/14 等）visible=0 仅表示不进门户顶栏，不参与侧栏隐藏判定。
  */
 export function filterHubNavByMenuVisible(
   items: HubNavItem[],
@@ -72,20 +73,33 @@ export function filterHubNavByMenuVisible(
   }
   walkMenu(menus)
 
+  /** Hub 页壳（如 id=13 统一用户）：visible=0 表示不进门户顶栏，不应阻断 Hub 内页侧栏 */
+  const isHubPageShell = (node: MenuNode | undefined): boolean => {
+    if (!node || node.integrationType !== 'hub') return false
+    if (node.id === 13 || node.id === 14) return true
+    const base = (node.path || '').split('?')[0]?.split('#')[0] || ''
+    return /^\/analytics\/(support|bi|population|legal-entity|macro|key-domains)$/.test(base)
+  }
+
   const lineageHidden = (node: MenuNode | undefined): boolean => {
     let cur = node
     while (cur) {
-      if (cur.visible === 0) return true
+      if (cur.visible === 0 && !isHubPageShell(cur)) return true
       cur = cur.parentId ? byId.get(cur.parentId) : undefined
     }
     return false
   }
 
+  const queryVal = (path: string, name: string): string | null => {
+    const i = path.indexOf('?')
+    if (i < 0) return null
+    return new URLSearchParams(path.slice(i + 1)).get(name)
+  }
+
   const resolveMenu = (key: string): MenuNode | undefined => {
     const tabHit = flat.find((m) => {
       const p = m.path || ''
-      const q = `tab=${key}`
-      return p.includes(`?${q}`) || p.includes(`&${q}`)
+      return queryVal(p, 'tab') === key || queryVal(p, 'module') === key
     })
     if (tabHit) return tabHit
     const mapped = permissionByNavKey[key]
@@ -220,4 +234,48 @@ export const SUPPLY_NAV_PERMISSIONS: Record<string, string | string[]> = {
   system: 'hub:application:supply:system',
   'supply-config': 'hub:application:supply:config',
   'matter-manage': 'hub:application:supply:matter',
+}
+
+/** 归集 Hub：登记叶子 + 采集一级（子页走 path 的 module= 匹配） */
+export const INGESTION_NAV_PERMISSIONS: Record<string, string | string[]> = {
+  m039: 'hub:ingestion:register:m039',
+  m040: 'hub:ingestion:register:m040',
+  m041: 'hub:ingestion:register:m041',
+  m042: 'hub:ingestion:register:m042',
+  m043: 'hub:ingestion:register:m043',
+  'asset-catalog-reg': 'hub:ingestion:register:asset-catalog-reg',
+  'project-system-mgmt': 'hub:ingestion:register:project-system-mgmt',
+  m044: 'hub:ingestion:register:m044',
+  m045: 'hub:ingestion:register:m045',
+  'asset-catalog-mgmt': 'hub:ingestion:register:asset-catalog-mgmt',
+  m046: ['hub:ingestion:register:m046', 'hub:ingestion:register:m046:dept'],
+  m047: ['hub:ingestion:register:m047', 'hub:ingestion:register:m047:dept'],
+  m048: 'hub:ingestion:register:m048',
+  m049: 'hub:ingestion:register:m049',
+  m050: 'hub:ingestion:register:m050',
+  ingest: 'hub:ingestion:collect:ingest',
+  'ingest.structured': 'hub:ingestion:collect:ingest',
+  'ingest.unstruct': 'hub:ingestion:collect:ingest',
+  'ingest.semi': 'hub:ingestion:collect:ingest',
+  'ingest.api': 'hub:ingestion:collect:ingest',
+  'ingest.cdc': 'hub:ingestion:collect:ingest',
+  pipeline: 'hub:ingestion:collect:pipeline',
+  catalog: 'hub:ingestion:collect:catalog',
+  'catalog.resources': 'hub:ingestion:collect:catalog:resources',
+  'catalog.classify': 'hub:ingestion:collect:catalog:classify',
+  'catalog.publish': 'hub:ingestion:collect:catalog:publish',
+  'catalog.approvals': 'hub:ingestion:collect:catalog:approvals',
+  quality: 'hub:ingestion:collect:quality',
+  'quality.rule-config': 'hub:ingestion:collect:quality',
+  'quality.monitor': 'hub:ingestion:collect:quality',
+  'quality.assess': 'hub:ingestion:collect:quality',
+  asset: 'hub:ingestion:collect:asset',
+  'asset.classify': 'hub:ingestion:collect:asset',
+  'asset.mask': 'hub:ingestion:collect:asset',
+  'asset.tag': 'hub:ingestion:collect:asset',
+  'asset.search': 'hub:ingestion:collect:asset',
+  'asset.backup': 'hub:ingestion:collect:asset',
+  'asset.archive': 'hub:ingestion:collect:asset',
+  'asset.destroy': 'hub:ingestion:collect:asset',
+  'asset.global': 'hub:ingestion:collect:asset',
 }

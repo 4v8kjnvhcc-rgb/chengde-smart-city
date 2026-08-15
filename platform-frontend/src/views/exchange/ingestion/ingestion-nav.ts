@@ -283,7 +283,7 @@ export interface RegisterMenuMeta {
   visible?: number
 }
 
-/** 登记侧栏：静态模块始终保留入口（与权限过滤后）；库表仅覆盖标题/排序；自定义菜单追加在最下方 */
+/** 登记侧栏：库表覆盖标题/排序；visible=0 的内置与自定义项均不展示 */
 export function buildRegisterNavItems(
   opts: { isSystemAdmin: boolean; permissions: string[] },
   dbMenus?: RegisterMenuMeta[] | null,
@@ -291,6 +291,9 @@ export function buildRegisterNavItems(
   const base = filterIngestionModules(REGISTER_MODULES, opts)
   if (!dbMenus?.length) {
     return base.map(toNavItem)
+  }
+  if (dbMenus.some((m) => m.id === 7000 && Number(m.visible) === 0)) {
+    return []
   }
 
   const byPerm = new Map(
@@ -308,11 +311,12 @@ export function buildRegisterNavItems(
         byPerm.get(m.permission)
         || (m.key === 'm046' ? byPerm.get('hub:ingestion:register:m046:dept') : undefined)
         || (m.key === 'm047' ? byPerm.get('hub:ingestion:register:m047:dept') : undefined)
-      // 内置模块不因库表 visible=0 而丢掉 Hub 入口
+      if (db && Number(db.visible) === 0) return null
       const sort = db?.sortOrder ?? staticIndex.get(m.key) ?? 0
       const label = normalizeRegisterMenuLabel(db?.menuName || m.label)
       return { ...m, label, _sort: sort }
     })
+    .filter((m): m is NonNullable<typeof m> => m != null)
     .sort((a, b) => a._sort - b._sort || a.key.localeCompare(b.key))
 
   const items: HubNavItem[] = merged.map((m) => toNavItem(m))

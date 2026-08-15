@@ -219,7 +219,7 @@ async function submitForm() {
       path: form.path,
       component: form.component,
       menuType: form.menuType,
-      visible: form.visible,
+      visible: Number(form.visible) === 0 ? 0 : 1,
     }
     if (editingId.value == null) {
       await api.post('/system/menus/register-scope', body)

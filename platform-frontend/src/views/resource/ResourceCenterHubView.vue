@@ -11,7 +11,7 @@ import RcStatsAnalysisPanel from '@/views/resource/RcStatsAnalysisPanel.vue'
 import { statusLabel, statusTagType } from '@/utils/status-label'
 import ExecCycleSelect from '@/views/system/ExecCycleSelect.vue'
 import { useAuthStore } from '@/stores/auth'
-import { filterHubNavByPermissions, RESOURCE_NAV_PERMISSIONS } from '@/utils/hub-nav-permission'
+import { filterHubNavByPermissions, filterHubNavByMenuVisible, RESOURCE_NAV_PERMISSIONS } from '@/utils/hub-nav-permission'
 
 /** 侧栏对齐 V3：数据资产区单入口；资源中心管理为可展开父级，下挂六模块 */
 const NAV_BASE: HubNavItem[] = [
@@ -31,11 +31,12 @@ const NAV_BASE: HubNavItem[] = [
 ]
 
 const auth = useAuthStore()
-const navItems = computed(() =>
-  filterHubNavByPermissions(NAV_BASE, auth.permissions, RESOURCE_NAV_PERMISSIONS, {
+const navItems = computed(() => {
+  const byPerm = filterHubNavByPermissions(NAV_BASE, auth.permissions, RESOURCE_NAV_PERMISSIONS, {
     isSystemAdmin: auth.isSystemAdmin,
-  }),
-)
+  })
+  return filterHubNavByMenuVisible(byPerm, auth.menus, RESOURCE_NAV_PERMISSIONS)
+})
 
 interface Library {
   id: number

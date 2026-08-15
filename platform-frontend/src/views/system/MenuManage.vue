@@ -5,6 +5,7 @@ import { ArrowDown, ArrowUp } from '@element-plus/icons-vue'
 import api from '@/api/http'
 import PageHeader from '@/components/common/PageHeader.vue'
 import { useAuthStore } from '@/stores/auth'
+import { clearPortalNavCache } from '@/utils/portal-nav-cache'
 
 export interface MenuRow {
   id: number
@@ -260,7 +261,7 @@ async function submitForm() {
       component: form.component,
       permission: form.permission.trim() || undefined,
       menuType: form.menuType,
-      visible: form.visible,
+      visible: Number(form.visible) === 0 ? 0 : 1,
     }
     if (editingId.value == null) {
       await api.post('/system/menus', body)
@@ -272,6 +273,7 @@ async function submitForm() {
     dialogVisible.value = false
     await load()
     try {
+      clearPortalNavCache()
       await auth.fetchProfile()
     } catch {
       /* 刷新本人菜单失败不影响管理页保存结果 */

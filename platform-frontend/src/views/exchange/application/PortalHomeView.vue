@@ -334,7 +334,7 @@ function openSubDetail(row: Subscription, mode: 'mine' | 'pending' | 'reviewed')
   subDetail.visible = true
   if (mode === 'pending') {
     reviewForm.reviewerName = auth.user?.displayName || auth.user?.username || ''
-    reviewForm.reviewerContact = auth.user?.phone || ''
+    reviewForm.reviewerContact = ''
     reviewForm.note = ''
   }
 }
