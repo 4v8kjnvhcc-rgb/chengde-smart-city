@@ -324,8 +324,9 @@ async function loadRefs() {
     if (!form.requesterOrg) {
       form.requesterOrg = selfOrgName.value || '承德高新技术产业开发区管理委员会'
     }
-  } catch {
-    // ignore
+  } catch (e: unknown) {
+    orgFlat.value = []
+    ElMessage.error(e instanceof Error ? e.message : '加载机构/事项失败，请确认已登录且有权限')
   }
   await loadDeptPortalUrl()
 }

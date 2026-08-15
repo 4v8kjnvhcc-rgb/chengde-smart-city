@@ -239,8 +239,12 @@ public class SystemController {
         return ApiResponse.ok(roleService.menuIdsOfRole(id));
     }
 
+    /**
+     * 机构列表（只读）。需求申请「数据提供单位」、编目提供方等下拉均依赖本接口；
+     * 部门管理员通常无 system:org:list（机构管理权），故查询对已登录用户开放；增删改仍受写权限约束。
+     */
     @GetMapping("/orgs")
-    @PreAuthorize("hasRole('SYSTEM_ADMIN') or hasAuthority('system:org:list')")
+    @PreAuthorize("isAuthenticated()")
     public ApiResponse<List<SysOrg>> orgs() {
         return ApiResponse.ok(orgService.list());
     }
