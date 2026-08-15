@@ -2,7 +2,7 @@
 /**
  * V3.0「数据质量评估」
  * 展示质量规则/任务配置中的质量任务列表（含定时），关键字查询 + 分页；
- * 「生成报告」按完整性/一致性/准确性/及时性汇总该任务稽核结果，并下钻问题数据。
+ * 「生成报告」按完整性/规范性/准确性/唯一性/一致性/及时性汇总该任务稽核结果，并下钻问题数据。
  */
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import * as echarts from 'echarts'
@@ -65,21 +65,27 @@ interface DimRow {
 const CHECK_TO_DIM: Record<string, string> = {
   RECORD_COUNT: 'completeness',
   NULL_CHECK: 'completeness',
-  UNIQUENESS: 'completeness',
+  STANDARD: 'conformity',
+  STANDARD_INSPECTION: 'conformity',
+  REGEX: 'conformity',
   ACCURACY: 'accuracy',
   RANGE: 'accuracy',
   CUSTOM: 'accuracy',
+  UNIQUENESS: 'uniqueness',
   CONSISTENCY: 'consistency',
   LOGIC: 'consistency',
   VOLATILITY: 'timeliness',
   TIMELINESS: 'timeliness',
+  FLUCTUATION: 'timeliness',
 }
 
 const DIM_META: { key: string; label: string; desc: string }[] = [
   { key: 'completeness', label: '完整性', desc: '记录或字段是否缺失（空值、记录数等）' },
-  { key: 'consistency', label: '一致性', desc: '是否符合编码规范与逻辑关系' },
+  { key: 'conformity', label: '规范性', desc: '编码、格式、命名是否符合数据标准' },
   { key: 'accuracy', label: '准确性', desc: '是否存在异常值、乱码、量级错误' },
-  { key: 'timeliness', label: '及时性', desc: '数据产生到可查看的延时是否达标' },
+  { key: 'uniqueness', label: '唯一性', desc: '主键/业务键是否重复录入' },
+  { key: 'consistency', label: '一致性', desc: '跨表/跨源逻辑与口径是否一致' },
+  { key: 'timeliness', label: '及时性', desc: '数据产生到可查看的延时与波动是否达标' },
 ]
 
 const loading = ref(false)
@@ -336,7 +342,7 @@ async function generateReport(row: TaskRow) {
       try {
         const saved = await api.post('/governance/platform/quality/reports', {
           reportName: `${row.taskName}·质量评估报告`,
-          dimension: '完整性+一致性+准确性+及时性',
+          dimension: '完整性+规范性+准确性+唯一性+一致性+及时性',
         })
         persistedReportCode.value = saved.data?.reportCode || null
       } catch {
@@ -467,11 +473,11 @@ onBeforeUnmount(() => {
           </div>
         </section>
 
-        <!-- 四维卡片 -->
+        <!-- 六维卡片 -->
         <section class="rpt-block">
           <header class="rpt-block__hd">
-            <h3>四维评估</h3>
-            <span>完整性 · 一致性 · 准确性 · 及时性</span>
+            <h3>六维评估</h3>
+            <span>完整性 · 规范性 · 准确性 · 唯一性 · 一致性 · 及时性</span>
           </header>
           <div class="dim-grid">
             <article
@@ -583,7 +589,7 @@ onBeforeUnmount(() => {
                   <template #default="{ row }">{{ statusLabel(row.issueType) }}</template>
                 </el-table-column>
                 <el-table-column prop="issueValue" label="问题值" min-width="120" show-overflow-tooltip />
-                <el-table-column prop="sampleData" label="样例数据" min-width="140" show-overflow-tooltip />
+                <el-table-column prop="sampleData" label="问题数据" min-width="140" show-overflow-tooltip />
                 <el-table-column prop="issueCount" label="数量" width="70" />
                 <el-table-column label="级别" width="80">
                   <template #default="{ row }">{{ statusLabel(row.severity) }}</template>
@@ -742,7 +748,7 @@ onBeforeUnmount(() => {
 
 .dim-grid {
   display: grid;
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 12px;
 }
 .dim-card {

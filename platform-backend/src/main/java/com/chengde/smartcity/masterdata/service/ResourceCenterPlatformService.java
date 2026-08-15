@@ -1,5 +1,6 @@
 package com.chengde.smartcity.masterdata.service;
 
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.chengde.smartcity.audit.AuditService;
 import com.chengde.smartcity.common.exception.BusinessException;
@@ -76,6 +77,7 @@ import org.springframework.transaction.annotation.Transactional;
 public class ResourceCenterPlatformService {
 
     private static final Logger log = LoggerFactory.getLogger(ResourceCenterPlatformService.class);
+    private static final ObjectMapper JSON = new ObjectMapper();
     private static final Pattern IDENT = Pattern.compile("^[A-Za-z_][A-Za-z0-9_]*$");
     private static final Path BACKUP_ROOT = Path.of("data", "nas-demo", "backups");
     private static final Path ARCHIVE_ROOT = Path.of("data", "nas-demo", "archives");
@@ -1026,6 +1028,7 @@ public class ResourceCenterPlatformService {
         if (scheduleOn) {
             p.setNextRunAt(computeNextRun(cron, LocalDateTime.now()));
         }
+        p.setDsPublishStatus("DRAFT");
         p.setStatus("ACTIVE");
         policyMapper.insert(p);
         auditService.log(operator.getUserId(), operator.getUsername(), operator.getOrgId(),
@@ -1063,6 +1066,84 @@ public class ResourceCenterPlatformService {
     }
 
     @Transactional
+    public void updatePolicy(UserPrincipal operator, Long policyId, Map<String, Object> body) {
+        RcStoragePolicy p = policyMapper.selectById(policyId);
+        if (p == null) throw new BusinessException(404, "策略不存在");
+        if (body.containsKey("policyName")) {
+            p.setPolicyName(required(body.get("policyName"), "policyName").toString());
+        }
+        if (body.containsKey("retentionDays") && body.get("retentionDays") != null) {
+            p.setRetentionDays(Integer.valueOf(String.valueOf(body.get("retentionDays"))));
+        }
+        if (body.containsKey("managedTableId")) {
+            Long managedId = longVal(body.get("managedTableId"));
+            if (managedId == null) throw new BusinessException(400, "请选择纳管表");
+            RcManagedTable mt = managedTableMapper.selectById(managedId);
+            if (mt == null) throw new BusinessException(404, "纳管表不存在");
+            p.setManagedTableId(managedId);
+            p.setThemeId(mt.getThemeId());
+        }
+        if (body.containsKey("storageStrategy")) {
+            String strategy = str(body.get("storageStrategy"), p.getStorageStrategy());
+            if (strategy != null && !Set.of("LOCAL", "NAS", "OBJECT").contains(strategy)) {
+                throw new BusinessException(400, "storageStrategy 须为 LOCAL / NAS / OBJECT");
+            }
+            p.setStorageStrategy(strategy);
+        }
+        if (body.containsKey("backupLibraryId")) {
+            p.setBackupLibraryId(longVal(body.get("backupLibraryId")));
+        }
+        if (body.containsKey("tableRule")) {
+            p.setTableRule(str(body.get("tableRule"), null));
+        }
+        if (body.containsKey("compressEnabled") || body.containsKey("compressType")) {
+            String compressType = str(body.get("compressType"),
+                    boolVal(body.get("compressEnabled"), false) ? "GZIP" : "NONE").toUpperCase(Locale.ROOT);
+            p.setCompressEnabled(boolVal(body.get("compressEnabled"), "GZIP".equals(compressType)) ? 1 : 0);
+            p.setCompressType(compressType);
+        }
+        if (body.containsKey("destroyRule")) {
+            p.setDestroyRule(str(body.get("destroyRule"), null));
+        }
+        if (body.containsKey("scheduleEnabled") || body.containsKey("scheduleCron")) {
+            boolean scheduleOn = boolVal(body.get("scheduleEnabled"),
+                    p.getScheduleEnabled() != null && p.getScheduleEnabled() == 1);
+            String cron = str(body.get("scheduleCron"), p.getScheduleCron());
+            if (scheduleOn) {
+                validateCron(cron);
+                p.setScheduleEnabled(1);
+                p.setScheduleCron(cron);
+                p.setNextRunAt(computeNextRun(cron, LocalDateTime.now()));
+            } else {
+                p.setScheduleEnabled(0);
+                p.setNextRunAt(null);
+                if (cron != null) p.setScheduleCron(cron);
+            }
+        }
+        if (body.containsKey("status")) {
+            p.setStatus(str(body.get("status"), p.getStatus()));
+        }
+        policyMapper.updateById(p);
+        auditService.log(operator.getUserId(), operator.getUsername(), operator.getOrgId(),
+                "RC_POLICY_UPDATE", "rc_storage_policy", String.valueOf(policyId), p.getPolicyName());
+    }
+
+    @Transactional
+    public void deletePolicy(UserPrincipal operator, Long policyId) {
+        RcStoragePolicy p = policyMapper.selectById(policyId);
+        if (p == null) throw new BusinessException(404, "策略不存在");
+        policyMapper.deleteById(policyId);
+        auditService.log(operator.getUserId(), operator.getUsername(), operator.getOrgId(),
+                "RC_POLICY_DELETE", "rc_storage_policy", String.valueOf(policyId), p.getPolicyName());
+    }
+
+    public RcStoragePolicy getPolicy(Long policyId) {
+        RcStoragePolicy p = policyMapper.selectById(policyId);
+        if (p == null) throw new BusinessException(404, "策略不存在");
+        return p;
+    }
+
+    @Transactional
     public Map<String, Object> executePolicy(UserPrincipal operator, Long policyId) {
         RcStoragePolicy p = policyMapper.selectById(policyId);
         if (p == null) throw new BusinessException(404, "策略不存在");
@@ -1080,10 +1161,19 @@ public class ResourceCenterPlatformService {
             if ("BACKUP".equals(action)) {
                 Long managedId = p.getManagedTableId();
                 if (managedId == null) throw new BusinessException(400, "备份策略未绑定纳管表");
-                Map<String, Object> backup = runLogicalBackup(operator, managedId, p.getRetentionDays(),
-                        p.getStorageStrategy(), p.getTableRule(), p.getBackupLibraryId());
+                Map<String, Object> scopeMeta = parseBackupScope(p.getTableRule());
+                String scope = str(scopeMeta.get("backupScope"), "FULL").toUpperCase(Locale.ROOT);
+                Map<String, Object> backup;
+                if ("BY_TIME".equals(scope) || "BY_PARTITION".equals(scope) || "BY_BOTH".equals(scope)) {
+                    // 按时间/分区：台账假执行（有产物记录，不按条件真实导出）
+                    backup = runScopedBackupLedger(operator, p, scopeMeta);
+                    runStatus = "LEDGER";
+                } else {
+                    backup = runLogicalBackup(operator, managedId, p.getRetentionDays(),
+                            p.getStorageStrategy(), p.getTableRule(), p.getBackupLibraryId());
+                    runStatus = "SUCCESS";
+                }
                 out.putAll(backup);
-                runStatus = "SUCCESS";
                 message = str(backup.get("message"), "备份完成");
                 artifactId = longVal(backup.get("artifactId"));
                 rowCount = backup.get("rowCount") == null ? null : Long.valueOf(String.valueOf(backup.get("rowCount")));
@@ -1357,6 +1447,116 @@ public class ResourceCenterPlatformService {
         }
     }
 
+    /**
+     * 解析策略 tableRule 中的备份范围 JSON（含 backupScope）。非 JSON 视为整表备注。
+     */
+    @SuppressWarnings("unchecked")
+    private Map<String, Object> parseBackupScope(String tableRule) {
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("backupScope", "FULL");
+        if (tableRule == null || tableRule.isBlank()) {
+            return out;
+        }
+        String raw = tableRule.trim();
+        if (!raw.startsWith("{")) {
+            out.put("note", raw);
+            return out;
+        }
+        try {
+            Map<String, Object> parsed = JSON.readValue(raw, Map.class);
+            if (parsed != null) {
+                out.putAll(parsed);
+                if (!out.containsKey("backupScope") || str(out.get("backupScope"), "").isBlank()) {
+                    out.put("backupScope", "FULL");
+                }
+            }
+        } catch (Exception ignored) {
+            out.put("note", raw);
+        }
+        return out;
+    }
+
+    /**
+     * 按时间/按分区备份台账：写入产物记录与说明，不按条件真实 SELECT。
+     */
+    @Transactional
+    public Map<String, Object> runScopedBackupLedger(UserPrincipal operator, RcStoragePolicy policy,
+                                                     Map<String, Object> scopeMeta) {
+        Long managedId = policy.getManagedTableId();
+        if (managedId == null) throw new BusinessException(400, "备份策略未绑定纳管表");
+        RcManagedTable mt = managedTableMapper.selectById(managedId);
+        if (mt == null || !"ACTIVE".equalsIgnoreCase(mt.getStatus())) {
+            throw new BusinessException(404, "纳管表不存在");
+        }
+        String table = requireIdent(mt.getPhysicalTable(), "physicalTable");
+        String actor = operator != null ? operator.getUsername() : "scheduler";
+        String scope = str(scopeMeta.get("backupScope"), "BY_TIME").toUpperCase(Locale.ROOT);
+        String timeColumn = str(scopeMeta.get("timeColumn"), "");
+        String timeBeforeDays = str(scopeMeta.get("timeBeforeDays"),
+                policy.getRetentionDays() == null ? "" : String.valueOf(policy.getRetentionDays()));
+        String partitionName = str(scopeMeta.get("partitionName"), "");
+        String note = str(scopeMeta.get("note"), "");
+        String strategy = policy.getStorageStrategy() == null || policy.getStorageStrategy().isBlank()
+                ? "LOCAL" : policy.getStorageStrategy().toUpperCase(Locale.ROOT);
+        Path root = resolveStorageRoot(strategy);
+        try {
+            Files.createDirectories(root);
+            String fileName = table + "_ledger_" + System.currentTimeMillis() + ".cdbak.meta";
+            Path finalPath = root.resolve(fileName);
+            StringBuilder meta = new StringBuilder();
+            meta.append("# Chengde scoped backup ledger\n");
+            meta.append("# table=").append(table).append('\n');
+            meta.append("# backupScope=").append(scope).append('\n');
+            meta.append("# timeColumn=").append(timeColumn).append('\n');
+            meta.append("# timeBeforeDays=").append(timeBeforeDays).append('\n');
+            meta.append("# partitionName=").append(partitionName).append('\n');
+            meta.append("# note=").append(note).append('\n');
+            meta.append("# createdAt=").append(LocalDateTime.now()).append('\n');
+            meta.append("# note2=ledger only, rows not exported by scope filter\n");
+            Files.writeString(finalPath, meta.toString(), StandardCharsets.UTF_8);
+
+            String location = strategy + ":" + finalPath.toAbsolutePath();
+            String msg = "按" + ("BY_PARTITION".equals(scope) ? "分区" : "BY_BOTH".equals(scope) ? "时间+分区" : "时间")
+                    + "备份台账已记录（未按条件真实导出）"
+                    + (timeColumn.isBlank() ? "" : "；时间列=" + timeColumn)
+                    + (timeBeforeDays.isBlank() ? "" : "；早于" + timeBeforeDays + "天")
+                    + (partitionName.isBlank() ? "" : "；分区=" + partitionName);
+
+            RcBackupArtifact art = new RcBackupArtifact();
+            art.setArtifactType("BACKUP");
+            art.setJobId(0L);
+            art.setManagedTableId(mt.getId());
+            art.setPhysicalTable(table);
+            art.setFilePath(finalPath.toAbsolutePath().toString());
+            art.setStorageLocation(location);
+            art.setFileName(fileName);
+            art.setRowCount(0L);
+            art.setByteSize(Files.size(finalPath));
+            art.setSha256(sha256(finalPath));
+            art.setStatus("LEDGER");
+            art.setMessage(msg);
+            art.setCreatedBy(actor);
+            art.setCreatedAt(LocalDateTime.now());
+            backupArtifactMapper.insert(art);
+
+            Map<String, Object> out = new LinkedHashMap<>();
+            out.put("artifactId", art.getId());
+            out.put("fileName", fileName);
+            out.put("filePath", art.getFilePath());
+            out.put("storageLocation", location);
+            out.put("storageStrategy", strategy);
+            out.put("rowCount", 0);
+            out.put("backupScope", scope);
+            out.put("status", "LEDGER");
+            out.put("message", msg);
+            return out;
+        } catch (BusinessException ex) {
+            throw ex;
+        } catch (Exception ex) {
+            throw new BusinessException(500, "按范围备份台账失败: " + ex.getMessage());
+        }
+    }
+
     @Transactional
     public Map<String, Object> runArchiveLedger(UserPrincipal operator, RcStoragePolicy policy) {
         Long managedId = policy.getManagedTableId();
@@ -1451,7 +1651,50 @@ public class ResourceCenterPlatformService {
         LambdaQueryWrapper<RcBackupArtifact> q = new LambdaQueryWrapper<RcBackupArtifact>()
                 .orderByDesc(RcBackupArtifact::getId);
         if (managedTableId != null) q.eq(RcBackupArtifact::getManagedTableId, managedTableId);
-        return backupArtifactMapper.selectList(q.last("LIMIT 100"));
+        return backupArtifactMapper.selectList(q.last("LIMIT 500"));
+    }
+
+    @Transactional
+    public void updateArtifact(UserPrincipal operator, Long artifactId, Map<String, Object> body) {
+        RcBackupArtifact art = backupArtifactMapper.selectById(artifactId);
+        if (art == null) throw new BusinessException(404, "备份产物不存在");
+        if (body.containsKey("message")) {
+            art.setMessage(str(body.get("message"), null));
+        }
+        if (body.containsKey("storageLocation")) {
+            art.setStorageLocation(str(body.get("storageLocation"), art.getStorageLocation()));
+        }
+        if (body.containsKey("status")) {
+            String st = str(body.get("status"), art.getStatus());
+            if (st != null && !Set.of("SUCCESS", "FAILED", "PARTIAL", "DELETED").contains(st.toUpperCase(Locale.ROOT))) {
+                throw new BusinessException(400, "status 无效");
+            }
+            art.setStatus(st == null ? art.getStatus() : st.toUpperCase(Locale.ROOT));
+        }
+        backupArtifactMapper.updateById(art);
+        auditService.log(operator.getUserId(), operator.getUsername(), operator.getOrgId(),
+                "RC_ARTIFACT_UPDATE", "rc_backup_artifact", String.valueOf(artifactId), art.getFileName());
+    }
+
+    @Transactional
+    public void deleteArtifact(UserPrincipal operator, Long artifactId) {
+        RcBackupArtifact art = backupArtifactMapper.selectById(artifactId);
+        if (art == null) throw new BusinessException(404, "备份产物不存在");
+        // 尽量清理本地文件；失败不阻断台账删除
+        String path = art.getFilePath();
+        if (path != null && !path.isBlank()) {
+            try {
+                java.nio.file.Path p = java.nio.file.Paths.get(path);
+                if (java.nio.file.Files.exists(p)) {
+                    java.nio.file.Files.deleteIfExists(p);
+                }
+            } catch (Exception e) {
+                log.warn("delete artifact file skipped id={} path={}: {}", artifactId, path, e.getMessage());
+            }
+        }
+        backupArtifactMapper.deleteById(artifactId);
+        auditService.log(operator.getUserId(), operator.getUsername(), operator.getOrgId(),
+                "RC_ARTIFACT_DELETE", "rc_backup_artifact", String.valueOf(artifactId), art.getFileName());
     }
 
     @Transactional

@@ -6,6 +6,7 @@ import PageCard from '@/components/common/PageCard.vue'
 import { statusLabel } from '@/utils/status-label'
 import { useAuthStore } from '@/stores/auth'
 import api from '@/api/http'
+import { fetchDataSourceTableNames } from '@/utils/layer-tables'
 import { ingestionRegisterCache } from '../ingestion-register-cache'
 import {
   ingestionApi,
@@ -67,6 +68,8 @@ const tplHeaderRow = ref(1)
 const tplColumns = ref<string[]>([])
 const tplSelectedCols = ref<string[]>([])
 const tplTargetTable = ref('')
+const odsTableOptions = ref<string[]>([])
+const odsTablesLoading = ref(false)
 const addSysDialog = ref(false)
 const addSysBusy = ref(false)
 const addSysForm = reactive({ systemName: '', sourceName: '' })
@@ -301,8 +304,18 @@ async function loadRecentUploads() {
 async function openCreateTemplate() {
   resetTplWizard()
   tplDialog.value = true
-  await loadOrgs()
-  await loadAssetTargets()
+  await Promise.all([loadOrgs(), loadAssetTargets(), loadOdsTableOptions()])
+}
+
+async function loadOdsTableOptions() {
+  odsTablesLoading.value = true
+  try {
+    odsTableOptions.value = await fetchDataSourceTableNames(-1)
+  } catch {
+    odsTableOptions.value = []
+  } finally {
+    odsTablesLoading.value = false
+  }
 }
 
 async function openUploadDialog(preselect?: string) {
@@ -936,11 +949,19 @@ onMounted(async () => {
             <el-input v-model="tplForm.templateName" placeholder="同时作为资产名称" />
           </el-form-item>
           <el-form-item label="目标表" class="portal-field-xl">
-            <el-input
+            <el-select
               v-model="tplTargetTable"
-              placeholder="ods_up_拼音首字母，可手改"
-              @input="onTargetTableInput"
-            />
+              filterable
+              allow-create
+              default-first-option
+              clearable
+              :loading="odsTablesLoading"
+              placeholder="输入表名筛选，或新建如 ods_up_xxx"
+              style="width: 100%"
+              @change="onTargetTableInput"
+            >
+              <el-option v-for="t in odsTableOptions" :key="t" :label="t" :value="t" />
+            </el-select>
           </el-form-item>
           <el-form-item class="portal-form-actions">
             <el-button :loading="tplBusy" @click="loadTplHeader">读取表头</el-button>

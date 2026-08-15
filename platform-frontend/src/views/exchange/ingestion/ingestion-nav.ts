@@ -6,13 +6,27 @@ export type IngestionSystem = 'register' | 'collect'
 export type CollectModuleKey = 'ingest' | 'pipeline' | 'catalog' | 'quality' | 'asset'
 
 /** 汇聚数据质量管控侧栏叶子 key（与治理质量页同组件，双入口） */
-export const QUALITY_SUB_KEYS = ['quality.rule-config', 'quality.monitor', 'quality.assess'] as const
+export const QUALITY_SUB_KEYS = [
+  'quality.standards.file',
+  'quality.standards.element',
+  'quality.standards.code',
+  'quality.standards.naming',
+  'quality.rule-config',
+  'quality.monitor',
+  'quality.assess',
+  'quality.reports',
+] as const
 export type QualitySubKey = (typeof QUALITY_SUB_KEYS)[number]
 
 export const QUALITY_SUB_LABELS: Record<QualitySubKey, string> = {
+  'quality.standards.file': '标准文件管理',
+  'quality.standards.element': '信息数据元规范',
+  'quality.standards.code': '数据编码规范',
+  'quality.standards.naming': '命名规范',
   'quality.rule-config': '质量规则配置',
   'quality.monitor': '数据质量监控',
   'quality.assess': '数据质量评估',
+  'quality.reports': '数据质量分析报告',
 }
 
 /** 数据汇聚接入侧栏叶子（原「其他数据接入」已拆成四个独立菜单） */
@@ -113,7 +127,7 @@ export const REGISTER_MODULES: IngestionModuleMeta[] = [
   { key: 'm045', mCode: 'M045', label: '数据资产标签管理', subLabel: '标签体系', system: 'register', permission: 'hub:ingestion:register:m045' },
   { key: 'asset-catalog-mgmt', mCode: 'ACM', label: '资产目录管理', subLabel: '查看审核', system: 'register', permission: 'hub:ingestion:register:asset-catalog-mgmt' },
   { key: 'm046', mCode: 'M046', label: '数据资产报告', subLabel: '资产大屏', system: 'register', permission: 'hub:ingestion:register:m046' },
-  { key: 'm047', mCode: 'M047', label: '数据资产图谱分析', subLabel: '资产鱼骨图谱', system: 'register', permission: 'hub:ingestion:register:m047' },
+  { key: 'm047', mCode: 'M047', label: '数据资产图谱分析', subLabel: '表血缘 / 鱼骨图谱', system: 'register', permission: 'hub:ingestion:register:m047' },
   { key: 'm048', mCode: 'M048', label: '访问控制管理', subLabel: '功能/资源/数据权限', system: 'register', permission: 'hub:ingestion:register:m048' },
   { key: 'm049', mCode: 'M049', label: '系统维护管理', subLabel: '外观/邮箱/账号安全', system: 'register', permission: 'hub:ingestion:register:m049' },
   { key: 'm050', mCode: 'M050', label: '数据字典管理', subLabel: '字典管理', system: 'register', permission: 'hub:ingestion:register:m050' },
@@ -127,7 +141,7 @@ export const COLLECT_MODULES: IngestionModuleMeta[] = [
     key: 'quality',
     mCode: 'QCTL',
     label: '汇聚数据质量管控',
-    subLabel: '规则·监控·评估（复用质量管理系统）',
+    subLabel: '标准体系·规则·监控·评估·分析报告（复用质量管理系统）',
     system: 'collect',
     permission: 'hub:ingestion:collect:quality',
   },
@@ -200,9 +214,15 @@ export const LEGACY_TAB_MAP: Record<string, { system: IngestionSystem; module: s
   m075: { system: 'collect', module: 'asset.destroy' },
   m076: { system: 'collect', module: 'asset.global' },
   quality: { system: 'collect', module: 'quality.rule-config' },
+  'quality.standards': { system: 'collect', module: 'quality.standards.element' },
+  'quality.standards.file': { system: 'collect', module: 'quality.standards.file' },
+  'quality.standards.element': { system: 'collect', module: 'quality.standards.element' },
+  'quality.standards.code': { system: 'collect', module: 'quality.standards.code' },
+  'quality.standards.naming': { system: 'collect', module: 'quality.standards.naming' },
   'quality.rule-config': { system: 'collect', module: 'quality.rule-config' },
   'quality.monitor': { system: 'collect', module: 'quality.monitor' },
   'quality.assess': { system: 'collect', module: 'quality.assess' },
+  'quality.reports': { system: 'collect', module: 'quality.reports' },
 }
 for (let i = 39; i <= 50; i++) LEGACY_TAB_MAP[`m0${i}`] = { system: 'register', module: `m0${i}` }
 for (let i = 51; i <= 77; i++) {
@@ -388,7 +408,7 @@ export function isCollectModuleAllowed(
   if (isIngestSubKey(moduleKey) || moduleKey === 'ingest') {
     return allowed.some((m) => m.key === 'ingest')
   }
-  if (isQualitySubKey(moduleKey) || moduleKey === 'quality') {
+  if (isQualitySubKey(moduleKey) || moduleKey === 'quality' || moduleKey === 'quality.standards') {
     return allowed.some((m) => m.key === 'quality')
   }
   if (isAssetSubKey(moduleKey) || moduleKey === 'asset') {
@@ -440,6 +460,7 @@ export function normalizeCollectModuleKey(
 ): string {
   if (key === 'ingest') return 'ingest.structured'
   if (key === 'quality') return 'quality.rule-config'
+  if (key === 'quality.standards') return 'quality.standards.element'
   if (key === 'asset') return 'asset.classify'
   if (key === 'catalog') return opts ? firstAllowedCatalogModule(opts) : 'catalog.resources'
   return key
@@ -466,7 +487,22 @@ function toCollectNavItem(
       key: m.key,
       label: m.label,
       subLabel: m.subLabel,
-      children: QUALITY_SUB_KEYS.map((k) => ({ key: k, label: QUALITY_SUB_LABELS[k] })),
+      children: [
+        {
+          key: 'quality.standards',
+          label: '数据标准体系',
+          children: [
+            { key: 'quality.standards.file', label: QUALITY_SUB_LABELS['quality.standards.file'] },
+            { key: 'quality.standards.element', label: QUALITY_SUB_LABELS['quality.standards.element'] },
+            { key: 'quality.standards.code', label: QUALITY_SUB_LABELS['quality.standards.code'] },
+            { key: 'quality.standards.naming', label: QUALITY_SUB_LABELS['quality.standards.naming'] },
+          ],
+        },
+        { key: 'quality.rule-config', label: QUALITY_SUB_LABELS['quality.rule-config'] },
+        { key: 'quality.monitor', label: QUALITY_SUB_LABELS['quality.monitor'] },
+        { key: 'quality.assess', label: QUALITY_SUB_LABELS['quality.assess'] },
+        { key: 'quality.reports', label: QUALITY_SUB_LABELS['quality.reports'] },
+      ],
     }
   }
   if (m.key === 'asset') {
@@ -502,6 +538,7 @@ function resolveCollectModule(mod: string): string | undefined {
   if (mod === 'ingest') return 'ingest.structured'
   if (isQualitySubKey(mod)) return mod
   if (mod === 'quality') return 'quality.rule-config'
+  if (mod === 'quality.standards') return 'quality.standards.element'
   if (isAssetSubKey(mod)) return mod
   if (mod === 'asset') return 'asset.classify'
   if (isCatalogSubKey(mod)) return mod

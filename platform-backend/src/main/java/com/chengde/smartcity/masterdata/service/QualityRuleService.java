@@ -1,16 +1,22 @@
 package com.chengde.smartcity.masterdata.service;
 
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.chengde.smartcity.common.exception.BusinessException;
+import com.chengde.smartcity.masterdata.entity.GovQualityModelRule;
 import com.chengde.smartcity.masterdata.entity.GovQualityRule;
 import com.chengde.smartcity.masterdata.entity.GovQualityRuleConfig;
+import com.chengde.smartcity.masterdata.entity.GovQualityTaskDetail;
+import com.chengde.smartcity.masterdata.mapper.GovQualityModelRuleMapper;
 import com.chengde.smartcity.masterdata.mapper.GovQualityRuleConfigMapper;
 import com.chengde.smartcity.masterdata.mapper.GovQualityRuleMapper;
+import com.chengde.smartcity.masterdata.mapper.GovQualityTaskDetailMapper;
 import com.chengde.smartcity.security.UserPrincipal;
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
+import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
@@ -26,15 +32,45 @@ public class QualityRuleService {
     private static final Logger log = LoggerFactory.getLogger(QualityRuleService.class);
     private static final Set<String> CHECK_TYPES = Set.of("NULL_CHECK", "UNIQUENESS", "ACCURACY", "RECORD_COUNT");
 
+    /** 与旧系统/目标截图对齐的 11 类校验规则类型（排序 1～11） */
+    private static final List<StandardRule> STANDARD_RULES = List.of(
+            new StandardRule("NullValueCheck", "空值检查", "COMPLETENESS", "用于检查字段是否为空"),
+            new StandardRule("RangeCheck", "值域检查", "ACCURACY", "用于检查关键指标取值范围"),
+            new StandardRule("StandardInspection", "规范检查", "ACCURACY", "用于检查字符型字段的格式是否规范"),
+            new StandardRule("JavaScript", "Java脚本", "ACCURACY", "用于执行Java脚本检查数据"),
+            new StandardRule("RecordCount", "记录数", "COMPLETENESS", "核查数据总量，校验条数完整性与缺失、冗余情况"),
+            new StandardRule("Uniqueness", "唯一性", "UNIQUENESS", "校验关键字段，排查重复数据与重复录入问题"),
+            new StandardRule("Accuracy", "准确性", "ACCURACY", "核对数据内容，确保数值、文本符合真实业务"),
+            new StandardRule("DataFluctuation", "波动", "TIMELINESS", "监控数据变化，识别异常增减、突发等不合理情况"),
+            new StandardRule("Consistency", "一致性", "CONSISTENCY", "比对关联数据，保障多表多源口径、格式统一"),
+            new StandardRule("LogicCheck", "逻辑性", "ACCURACY", "校验业务规则，判断数据间关联关系是否合理"),
+            new StandardRule("CustomRule", "自定义", "ACCURACY", "适配业务场景，按需配置专项精度校验规则")
+    );
+
     private final GovQualityRuleMapper ruleMapper;
     private final GovQualityRuleConfigMapper configMapper;
+    private final GovQualityModelRuleMapper modelRuleMapper;
+    private final GovQualityTaskDetailMapper taskDetailMapper;
 
-    public QualityRuleService(GovQualityRuleMapper ruleMapper, GovQualityRuleConfigMapper configMapper) {
+    public QualityRuleService(GovQualityRuleMapper ruleMapper,
+                              GovQualityRuleConfigMapper configMapper,
+                              GovQualityModelRuleMapper modelRuleMapper,
+                              GovQualityTaskDetailMapper taskDetailMapper) {
         this.ruleMapper = ruleMapper;
         this.configMapper = configMapper;
+        this.modelRuleMapper = modelRuleMapper;
+        this.taskDetailMapper = taskDetailMapper;
     }
 
+    @Transactional
     public List<Map<String, Object>> listWithConfig() {
+        if (catalogNeedsRepair()) {
+            try {
+                repairCatalogQuietly();
+            } catch (Exception e) {
+                log.warn("auto repair quality rule catalog skipped: {}", e.getMessage());
+            }
+        }
         List<GovQualityRule> rules = ruleMapper.selectList(new LambdaQueryWrapper<GovQualityRule>()
                 .orderByAsc(GovQualityRule::getSortNo)
                 .orderByAsc(GovQualityRule::getId));
@@ -47,6 +83,155 @@ public class QualityRuleService {
 
     public Map<String, Object> get(Long id) {
         return toRow(requireRule(id));
+    }
+
+    /**
+     * 仅在「有垃圾数据 / 排序异常」时静默修复。
+     * 故意不因「标准项被用户删除」触发，避免删完又被自动补回。
+     */
+    private boolean catalogNeedsRepair() {
+        Set<String> standardCodes = standardCodeSet();
+        List<GovQualityRule> all = ruleMapper.selectList(null);
+        for (GovQualityRule rule : all) {
+            String code = rule.getRuleCode();
+            if (code == null || !standardCodes.contains(code) || isTempRule(rule)) {
+                return true;
+            }
+            if (rule.getSortNo() == null || rule.getSortNo() <= 0) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    /** 清理非标准/临时规则，并修正已存在标准项的排序与文案；不补回已删除的标准项 */
+    private void repairCatalogQuietly() {
+        purgeNonStandardRules();
+        Set<String> standardCodes = standardCodeSet();
+        List<GovQualityRule> remain = ruleMapper.selectList(new LambdaQueryWrapper<GovQualityRule>()
+                .in(GovQualityRule::getRuleCode, standardCodes)
+                .orderByAsc(GovQualityRule::getSortNo)
+                .orderByAsc(GovQualityRule::getId));
+        // 按标准清单顺序重排已存在项
+        int sort = 1;
+        for (StandardRule std : STANDARD_RULES) {
+            GovQualityRule existing = null;
+            for (GovQualityRule r : remain) {
+                if (std.code().equals(r.getRuleCode())) {
+                    existing = r;
+                    break;
+                }
+            }
+            if (existing == null) {
+                continue;
+            }
+            existing.setRuleName(std.name());
+            existing.setRuleType(std.ruleType());
+            existing.setDescription(std.description());
+            existing.setSortNo(sort++);
+            existing.setUpdatedAt(LocalDateTime.now());
+            ruleMapper.updateById(existing);
+        }
+    }
+
+    private static Set<String> standardCodeSet() {
+        Set<String> standardCodes = new LinkedHashSet<>();
+        for (StandardRule std : STANDARD_RULES) {
+            standardCodes.add(std.code());
+        }
+        return standardCodes;
+    }
+
+    /**
+     * 对齐标准规则目录：重置为截图中的 11 类（会补回已删标准项），清理旧 QR_* / 临时规则，sort_no=1..11。
+     * 仅「对齐标准目录」按钮调用，列表加载不会调用。
+     */
+    @Transactional
+    public Map<String, Object> alignStandardCatalog(UserPrincipal operator) {
+        int purged = purgeNonStandardRules();
+        int upserted = 0;
+        int sort = 1;
+        for (StandardRule std : STANDARD_RULES) {
+            GovQualityRule existing = ruleMapper.selectOne(new LambdaQueryWrapper<GovQualityRule>()
+                    .eq(GovQualityRule::getRuleCode, std.code())
+                    .last("LIMIT 1"));
+            if (existing == null) {
+                GovQualityRule rule = new GovQualityRule();
+                rule.setRuleCode(std.code());
+                rule.setRuleName(std.name());
+                rule.setRuleType(std.ruleType());
+                rule.setSortNo(sort);
+                rule.setDescription(std.description());
+                rule.setStatus("ENABLED");
+                if (operator != null) {
+                    rule.setOrgId(operator.getOrgId());
+                    rule.setCreatedBy(operator.getUsername());
+                } else {
+                    rule.setCreatedBy("system");
+                }
+                rule.setCreatedAt(LocalDateTime.now());
+                rule.setUpdatedAt(LocalDateTime.now());
+                ruleMapper.insert(rule);
+                upserted++;
+            } else {
+                existing.setRuleName(std.name());
+                existing.setRuleType(std.ruleType());
+                existing.setDescription(std.description());
+                existing.setSortNo(sort);
+                existing.setStatus(existing.getStatus() != null ? existing.getStatus() : "ENABLED");
+                existing.setUpdatedAt(LocalDateTime.now());
+                ruleMapper.updateById(existing);
+                upserted++;
+            }
+            sort++;
+        }
+        Map<String, Object> result = new LinkedHashMap<>();
+        result.put("purgedTemp", purged);
+        result.put("purgedNonStandard", purged);
+        result.put("alignedStandard", upserted);
+        result.put("total", ruleMapper.selectCount(null));
+        log.info("quality rule catalog aligned purged={} standard={} by={}",
+                purged, upserted, operator != null ? operator.getUsername() : "system");
+        return result;
+    }
+
+    /** 删除非标准目录项（含临时压测、旧 QR_COMPLETE_* 等），只留 11 类标准编码 */
+    private int purgeNonStandardRules() {
+        Set<String> standardCodes = standardCodeSet();
+        List<GovQualityRule> all = ruleMapper.selectList(null);
+        int purged = 0;
+        for (GovQualityRule rule : all) {
+            String code = rule.getRuleCode();
+            if (code != null && standardCodes.contains(code) && !isTempRule(rule)) {
+                continue;
+            }
+            Long id = rule.getId();
+            clearRuleReferences(id);
+            configMapper.delete(new LambdaQueryWrapper<GovQualityRuleConfig>()
+                    .eq(GovQualityRuleConfig::getRuleId, id));
+            ruleMapper.deleteById(id);
+            purged++;
+        }
+        return purged;
+    }
+
+    /** 临时/压测类规则：空值率/阈值*_*、带长数字后缀等 */
+    private static boolean isTempRule(GovQualityRule rule) {
+        String name = rule.getRuleName() != null ? rule.getRuleName() : "";
+        String code = rule.getRuleCode() != null ? rule.getRuleCode() : "";
+        if (name.startsWith("空值率规则_") || name.startsWith("临时规则")) {
+            return true;
+        }
+        if (name.startsWith("阈值") && name.contains("_")) {
+            return true;
+        }
+        if (name.matches(".*_\\d{8,}$")) {
+            return true;
+        }
+        if (code.startsWith("QR_") && (name.contains("阈值") || name.contains("空值率") || name.contains("临时"))) {
+            return true;
+        }
+        return false;
     }
 
     private Map<String, Object> toRow(GovQualityRule rule) {
@@ -197,9 +382,34 @@ public class QualityRuleService {
     @Transactional
     public void delete(UserPrincipal operator, Long id) {
         requireRule(id);
+        clearRuleReferences(id);
         configMapper.delete(new LambdaQueryWrapper<GovQualityRuleConfig>()
                 .eq(GovQualityRuleConfig::getRuleId, id));
         ruleMapper.deleteById(id);
+        // 删除后重排剩余项排序，避免空洞；绝不自动补回已删标准项
+        List<GovQualityRule> remain = ruleMapper.selectList(new LambdaQueryWrapper<GovQualityRule>()
+                .orderByAsc(GovQualityRule::getSortNo)
+                .orderByAsc(GovQualityRule::getId));
+        int sort = 1;
+        for (GovQualityRule r : remain) {
+            if (r.getSortNo() == null || r.getSortNo() != sort) {
+                r.setSortNo(sort);
+                r.setUpdatedAt(LocalDateTime.now());
+                ruleMapper.updateById(r);
+            }
+            sort++;
+        }
+        log.info("quality rule deleted id={} by={} remain={}", id,
+                operator != null ? operator.getUsername() : null, remain.size());
+    }
+
+    /** 解除模型规则 / 任务明细引用，避免外键或业务约束导致删除失败 */
+    private void clearRuleReferences(Long ruleId) {
+        modelRuleMapper.update(null, new LambdaUpdateWrapper<GovQualityModelRule>()
+                .eq(GovQualityModelRule::getRuleCatalogId, ruleId)
+                .set(GovQualityModelRule::getRuleCatalogId, null));
+        taskDetailMapper.delete(new LambdaQueryWrapper<GovQualityTaskDetail>()
+                .eq(GovQualityTaskDetail::getRuleId, ruleId));
     }
 
     private GovQualityRule requireRule(Long id) {
@@ -245,4 +455,6 @@ public class QualityRuleService {
             throw new BusinessException(400, "排序须为整数");
         }
     }
+
+    private record StandardRule(String code, String name, String ruleType, String description) {}
 }

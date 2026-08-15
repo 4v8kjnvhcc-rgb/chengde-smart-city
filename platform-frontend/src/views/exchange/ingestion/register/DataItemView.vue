@@ -405,7 +405,7 @@ onMounted(reload)
             :model-value="selectedTableId"
             :disabled="!selectedSourceId"
             filterable
-            placeholder="选择数据表"
+            placeholder="输入表名筛选"
             style="width:100%"
             @change="onTableChange"
           >

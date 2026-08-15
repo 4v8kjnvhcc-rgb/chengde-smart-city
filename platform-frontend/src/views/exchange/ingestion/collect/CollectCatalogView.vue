@@ -209,7 +209,7 @@ onMounted(() => reload())
 
         <el-form-item label="关联登记表">
 
-          <el-select v-model="registryForm.refTableId" clearable filterable style="min-width:280px">
+          <el-select v-model="registryForm.refTableId" clearable filterable placeholder="输入表名筛选" style="min-width:280px">
 
             <el-option v-for="t in tables" :key="t.id" :label="`${t.tableName}（${t.tableCode}）`" :value="t.id" />
 

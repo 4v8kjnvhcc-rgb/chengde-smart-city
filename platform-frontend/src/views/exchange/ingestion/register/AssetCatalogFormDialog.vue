@@ -670,7 +670,7 @@ async function save() {
                   v-model="form.tableId"
                   :disabled="readonly || !form.sourceId"
                   filterable
-                  placeholder="选择已登记表"
+                  placeholder="输入表名筛选"
                   style="width: 100%"
                   @change="onTableChange"
                 >

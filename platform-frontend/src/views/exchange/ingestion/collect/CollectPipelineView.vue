@@ -276,7 +276,7 @@ onMounted(() => {
       <el-tag v-if="selectedClassLabel" type="info" style="margin-bottom:12px">当前分类：{{ selectedClassLabel }}</el-tag>
       <el-form label-width="120px">
         <el-form-item label="登记源表">
-          <el-select v-model="probeForm.sourceTableId" filterable style="min-width:320px">
+          <el-select v-model="probeForm.sourceTableId" filterable placeholder="输入表名筛选" style="min-width:320px">
             <el-option v-for="t in tables" :key="t.id" :label="`${t.tableName}（${t.tableCode}）`" :value="t.id" />
           </el-select>
         </el-form-item>
@@ -309,7 +309,7 @@ onMounted(() => {
       <el-form inline class="portal-inline-form portal-inline-form--block">
         <el-form-item label="定义名称" class="portal-field-md"><el-input v-model="defForm.defName" /></el-form-item>
         <el-form-item label="关联登记表" class="portal-field-default">
-          <el-select v-model="defForm.refTableId" clearable>
+          <el-select v-model="defForm.refTableId" clearable filterable placeholder="输入表名筛选">
             <el-option v-for="t in tables" :key="t.id" :label="t.tableName" :value="t.id" />
           </el-select>
         </el-form-item>

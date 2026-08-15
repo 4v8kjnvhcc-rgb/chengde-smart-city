@@ -29,19 +29,50 @@ interface RuleKind {
   checkType: string
 }
 
-/** 对照旧页固定规则类型（共 10 条） */
-const RULE_KINDS: RuleKind[] = [
-  { code: 'NullValueCheck', name: '空值检查', desc: '用于检查字段是否非空', form: 'null', checkType: 'NULL_CHECK' },
+/** 对照旧页固定规则类型（共 11 条，含自定义）；展示优先以目录 API 为准 */
+const RULE_KIND_META: RuleKind[] = [
+  { code: 'NullValueCheck', name: '空值检查', desc: '用于检查字段是否为空', form: 'null', checkType: 'NULL_CHECK' },
   { code: 'RangeCheck', name: '值域检查', desc: '用于检查关键指标取值范围', form: 'range', checkType: 'ACCURACY' },
   { code: 'StandardInspection', name: '规范检查', desc: '用于检查字符型字段的格式是否规范', form: 'regex', checkType: 'ACCURACY' },
   { code: 'JavaScript', name: 'Java脚本', desc: '用于执行Java脚本检查数据', form: 'script', checkType: 'ACCURACY' },
   { code: 'RecordCount', name: '记录数', desc: '核查数据总量，校验条数完整性与缺失、冗余情况', form: 'count', checkType: 'RECORD_COUNT' },
   { code: 'Uniqueness', name: '唯一性', desc: '校验关键字段，排查重复数据与重复录入问题', form: 'unique', checkType: 'UNIQUENESS' },
   { code: 'Accuracy', name: '准确性', desc: '核对数据内容，确保数值、文本符合真实业务', form: 'accuracy', checkType: 'ACCURACY' },
-  { code: 'DataFluctuation', name: '波动', desc: '监控数据变化，识别异常增减、突变等不合理情况', form: 'fluctuation', checkType: 'RECORD_COUNT' },
-  { code: 'Consistency', name: '一致性', desc: '比对相关数据源格式是否统一', form: 'generic', checkType: 'ACCURACY' },
-  { code: 'LogicCheck', name: '逻辑性', desc: '检查业务规则逻辑是否成立', form: 'generic', checkType: 'ACCURACY' },
+  { code: 'DataFluctuation', name: '波动', desc: '监控数据变化，识别异常增减、突发等不合理情况', form: 'fluctuation', checkType: 'RECORD_COUNT' },
+  { code: 'Consistency', name: '一致性', desc: '比对关联数据，保障多表多源口径、格式统一', form: 'generic', checkType: 'ACCURACY' },
+  { code: 'LogicCheck', name: '逻辑性', desc: '校验业务规则，判断数据间关联关系是否合理', form: 'generic', checkType: 'ACCURACY' },
+  { code: 'CustomRule', name: '自定义', desc: '适配业务场景，按需配置专项精度校验规则', form: 'generic', checkType: 'ACCURACY' },
 ]
+
+const catalogKinds = ref<RuleKind[]>([...RULE_KIND_META])
+
+async function loadCatalogKinds() {
+  try {
+    const rows = ((await api.get('/governance/quality/rule-mgmt')).data || []) as Array<{
+      ruleCode?: string
+      ruleName?: string
+      description?: string | null
+      config?: { checkType?: string } | null
+    }>
+    if (!rows.length) {
+      catalogKinds.value = [...RULE_KIND_META]
+      return
+    }
+    catalogKinds.value = rows.map((r) => {
+      const code = String(r.ruleCode || '')
+      const base = RULE_KIND_META.find((k) => k.code === code || k.name === r.ruleName)
+      return {
+        code: code || base?.code || 'CustomRule',
+        name: r.ruleName || base?.name || code,
+        desc: (r.description || '').trim() || base?.desc || '',
+        form: base?.form || 'generic',
+        checkType: r.config?.checkType || base?.checkType || 'ACCURACY',
+      }
+    })
+  } catch {
+    catalogKinds.value = [...RULE_KIND_META]
+  }
+}
 
 const REGEX_PRESETS = [
   {
@@ -121,17 +152,32 @@ const selected = ref<{
 const rules = ref<ModelRuleRow[]>([])
 const loading = ref(false)
 const queryName = ref('')
+const queryTable = ref('')
+const queryField = ref('')
 const keyword = ref('')
+const tableKeyword = ref('')
+const fieldKeyword = ref('')
 
 const filtered = computed(() => {
+  let list = rules.value
   const kw = keyword.value.trim().toLowerCase()
-  if (!kw) return rules.value
-  return rules.value.filter(
-    (r) =>
-      r.ruleName?.toLowerCase().includes(kw)
-      || r.ruleTypeName?.toLowerCase().includes(kw)
-      || (r.remark || '').toLowerCase().includes(kw),
-  )
+  if (kw) {
+    list = list.filter(
+      (r) =>
+        r.ruleName?.toLowerCase().includes(kw)
+        || r.ruleTypeName?.toLowerCase().includes(kw)
+        || (r.remark || '').toLowerCase().includes(kw),
+    )
+  }
+  const tk = tableKeyword.value.trim().toLowerCase()
+  if (tk) {
+    list = list.filter((r) => (r.tableName || '').toLowerCase().includes(tk))
+  }
+  const fk = fieldKeyword.value.trim().toLowerCase()
+  if (fk) {
+    list = list.filter((r) => (r.fieldNames || '').toLowerCase().includes(fk))
+  }
+  return list
 })
 
 const { page, pageSize, paged, total, resetPage } = useClientPager(filtered)
@@ -145,7 +191,7 @@ const kindPage = ref(1)
 const kindPageSize = ref(10)
 const pagedKinds = computed(() => {
   const start = (kindPage.value - 1) * kindPageSize.value
-  return RULE_KINDS.slice(start, start + kindPageSize.value)
+  return catalogKinds.value.slice(start, start + kindPageSize.value)
 })
 
 const form = reactive({
@@ -159,6 +205,10 @@ const form = reactive({
   expression: '',
   script: '',
   threshold: undefined as number | undefined,
+  dateColumn: '',
+  bizDate: '',
+  comparePeriod: '上一周期',
+  calcMethod: '环比',
   errorDesc: '',
 })
 
@@ -278,12 +328,20 @@ async function loadRules() {
 
 function doQuery() {
   keyword.value = queryName.value
+  tableKeyword.value = queryTable.value
+  fieldKeyword.value = queryField.value
+  resetPage()
   void loadRules()
 }
 
 function doReset() {
   queryName.value = ''
+  queryTable.value = ''
+  queryField.value = ''
   keyword.value = ''
+  tableKeyword.value = ''
+  fieldKeyword.value = ''
+  resetPage()
   void loadRules()
 }
 
@@ -298,6 +356,10 @@ function resetForm() {
   form.expression = ''
   form.script = ''
   form.threshold = undefined
+  form.dateColumn = ''
+  form.bizDate = ''
+  form.comparePeriod = '上一周期'
+  form.calcMethod = '环比'
   form.errorDesc = ''
   fieldError.value = false
 }
@@ -312,6 +374,7 @@ function openAdd() {
   selectedKind.value = null
   kindPage.value = 1
   resetForm()
+  void loadCatalogKinds()
   wizardVisible.value = true
 }
 
@@ -327,9 +390,10 @@ function parseConfig(raw?: string | null): Record<string, unknown> {
 async function openEdit(row: ModelRuleRow) {
   if (selected.value.modelId == null) return
   editRuleId.value = row.id
-  const kind = RULE_KINDS.find((k) => k.code === row.ruleTypeCode || k.name === row.ruleTypeName)
-    || RULE_KINDS.find((k) => k.checkType === row.checkType)
-    || RULE_KINDS[0]
+  const kind = catalogKinds.value.find((k) => k.code === row.ruleTypeCode || k.name === row.ruleTypeName)
+    || catalogKinds.value.find((k) => k.checkType === row.checkType)
+    || catalogKinds.value[0]
+    || RULE_KIND_META[0]
   selectedKind.value = kind
   wizardStep.value = 2
   resetForm()
@@ -442,6 +506,10 @@ function buildConfigJson(): string {
     expression: form.expression || null,
     script: form.script || null,
     threshold: form.threshold ?? null,
+    dateColumn: form.dateColumn || null,
+    bizDate: form.bizDate || null,
+    comparePeriod: form.comparePeriod || null,
+    calcMethod: form.calcMethod || null,
   })
 }
 
@@ -513,6 +581,25 @@ async function removeRule(row: ModelRuleRow) {
   await loadRules()
 }
 
+async function clearFieldRules() {
+  if (selected.value.modelId == null || selected.value.modelTableId == null) {
+    ElMessage.warning('请先选择表')
+    return
+  }
+  const field = queryField.value.trim() || fieldKeyword.value.trim()
+  if (!field) {
+    ElMessage.warning('请先在「字段」筛选框填写要清除的字段名')
+    return
+  }
+  await ElMessageBox.confirm(`确认清除字段「${field}」下的全部规则？不可恢复。`, '一键清除', { type: 'warning' })
+  const res = await api.post(`/governance/quality/models/${selected.value.modelId}/rules/clear-by-field`, {
+    modelTableId: selected.value.modelTableId,
+    fieldName: field,
+  })
+  ElMessage.success(String(res.data?.message || '已清除'))
+  await loadRules()
+}
+
 watch(
   () => wizardVisible.value,
   (v) => {
@@ -525,6 +612,7 @@ watch(
 )
 
 onMounted(() => {
+  void loadCatalogKinds()
   void loadTree()
 })
 
@@ -550,13 +638,20 @@ defineExpose({ reload: () => loadTree(selected.value.modelTableId) })
 
     <section class="rule-pane">
       <el-form inline class="portal-inline-form portal-inline-form--block" @submit.prevent="doQuery">
-        <el-form-item label="名称" class="portal-field-lg">
-          <el-input v-model="queryName" clearable placeholder="请输入名称" @keyup.enter="doQuery" />
+        <el-form-item label="名称" class="portal-field-md">
+          <el-input v-model="queryName" clearable placeholder="规则名称" @keyup.enter="doQuery" />
+        </el-form-item>
+        <el-form-item label="表名" class="portal-field-md">
+          <el-input v-model="queryTable" clearable placeholder="表名模糊" @keyup.enter="doQuery" />
+        </el-form-item>
+        <el-form-item label="字段" class="portal-field-md">
+          <el-input v-model="queryField" clearable placeholder="字段名（清除用）" @keyup.enter="doQuery" />
         </el-form-item>
         <el-form-item class="portal-form-actions">
           <el-button type="primary" @click="doQuery">查询</el-button>
           <el-button @click="doReset">重置</el-button>
           <el-button type="primary" @click="openAdd">+ 新增</el-button>
+          <el-button type="danger" plain @click="clearFieldRules">一键清除字段规则</el-button>
         </el-form-item>
       </el-form>
 
@@ -619,7 +714,7 @@ defineExpose({ reload: () => loadTree(selected.value.modelTableId) })
         <PortalPagination
           v-model:page="kindPage"
           v-model:page-size="kindPageSize"
-          :total="RULE_KINDS.length"
+          :total="catalogKinds.length"
         />
       </template>
 
@@ -743,7 +838,30 @@ defineExpose({ reload: () => loadTree(selected.value.modelTableId) })
               <el-option v-for="c in columns" :key="c.name" :label="c.name" :value="c.name" />
             </el-select>
           </el-form-item>
-          <el-form-item label="阈值">
+          <el-form-item v-if="currentForm === 'fluctuation'" label="日期字段">
+            <el-select v-model="form.dateColumn" filterable clearable placeholder="业务日期字段" style="width: 100%">
+              <el-option v-for="c in columns" :key="c.name" :label="c.name" :value="c.name" />
+            </el-select>
+          </el-form-item>
+          <el-form-item v-if="currentForm === 'fluctuation'" label="业务日期">
+            <el-input v-model="form.bizDate" placeholder="如 ${biz_date} 或 2026-01-01" />
+          </el-form-item>
+          <el-form-item v-if="currentForm === 'fluctuation'" label="对比周期">
+            <el-select v-model="form.comparePeriod" style="width: 100%">
+              <el-option label="上一周期" value="上一周期" />
+              <el-option label="上周" value="上周" />
+              <el-option label="上月" value="上月" />
+              <el-option label="上年同期" value="上年同期" />
+            </el-select>
+          </el-form-item>
+          <el-form-item v-if="currentForm === 'fluctuation'" label="计算方式">
+            <el-select v-model="form.calcMethod" style="width: 100%">
+              <el-option label="环比" value="环比" />
+              <el-option label="同比" value="同比" />
+              <el-option label="差值" value="差值" />
+            </el-select>
+          </el-form-item>
+          <el-form-item :label="currentForm === 'fluctuation' ? '波动范围' : '阈值'">
             <el-input-number v-model="form.threshold" :min="0" :precision="2" />
           </el-form-item>
         </template>

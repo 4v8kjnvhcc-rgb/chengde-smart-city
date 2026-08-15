@@ -9,6 +9,7 @@ import DomainIndicatorSqlLibrary from '@/views/analytics/DomainIndicatorSqlLibra
 import DomainIndicatorGroupManage from '@/views/analytics/DomainIndicatorGroupManage.vue'
 import { statusLabel, statusTagType } from '@/utils/status-label'
 import { ingestionApi } from '@/views/exchange/ingestion/useIngestionHub'
+import { fetchDataSourceTableNames } from '@/utils/layer-tables'
 
 interface ZoneDef {
   key: string
@@ -447,6 +448,27 @@ const batchForm = ref({
   rowLimit: 1000,
   message: '',
 })
+const batchTableOptions = ref<string[]>([])
+const batchTablesLoading = ref(false)
+
+watch(batchDialog, (v) => {
+  if (v) void loadBatchTables()
+})
+
+async function loadBatchTables() {
+  batchTablesLoading.value = true
+  try {
+    const [dws, ads] = await Promise.all([
+      fetchDataSourceTableNames(-3),
+      fetchDataSourceTableNames(-4),
+    ])
+    batchTableOptions.value = Array.from(new Set([...dws, ...ads])).sort((a, b) => a.localeCompare(b))
+  } catch {
+    batchTableOptions.value = []
+  } finally {
+    batchTablesLoading.value = false
+  }
+}
 
 const bindDialog = ref(false)
 const selectedCandidate = ref<Candidate | null>(null)
@@ -1807,7 +1829,20 @@ onMounted(async () => {
     <el-dialog v-model="batchDialog" title="登记批量交换台账" width="520px" destroy-on-close>
       <el-form label-width="100px">
         <el-form-item label="批次号"><el-input v-model="batchForm.batchCode" placeholder="可空，自动生成" /></el-form-item>
-        <el-form-item label="物理表"><el-input v-model="batchForm.tableName" /></el-form-item>
+        <el-form-item label="物理表">
+          <el-select
+            v-model="batchForm.tableName"
+            filterable
+            allow-create
+            default-first-option
+            clearable
+            :loading="batchTablesLoading"
+            placeholder="输入表名筛选，或选择/新建"
+            style="width:100%"
+          >
+            <el-option v-for="t in batchTableOptions" :key="t" :label="t" :value="t" />
+          </el-select>
+        </el-form-item>
         <el-form-item label="行上限"><el-input-number v-model="batchForm.rowLimit" :min="1" :max="1000000" /></el-form-item>
         <el-form-item label="说明"><el-input v-model="batchForm.message" type="textarea" :rows="2" /></el-form-item>
       </el-form>

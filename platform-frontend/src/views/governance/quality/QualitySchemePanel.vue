@@ -372,9 +372,13 @@ async function batchPublish() {
 async function batchExecute() {
   const list = selectedRows()
   if (!list.length) return ElMessage.warning('请先勾选记录')
+  const ok = await openVarDialog()
+  if (!ok) return
   for (const row of list) {
     try {
-      const res = await api.post(`/governance/quality/schemes/${row.id}/execute`)
+      const res = await api.post(`/governance/quality/schemes/${row.id}/execute`, {
+        variables: execVariables.value.filter((v) => v.name.trim()),
+      })
       ElMessage.success(`「${row.schemeName}」执行完成 · 评分 ${res.data?.score ?? '—'}`)
     } catch (e: unknown) {
       const msg = (e as { response?: { data?: { message?: string } } })?.response?.data?.message
@@ -387,9 +391,13 @@ async function batchExecute() {
 async function batchStart() {
   const list = selectedRows()
   if (!list.length) return ElMessage.warning('请先勾选记录')
+  const ok = await openVarDialog()
+  if (!ok) return
   for (const row of list) {
     try {
-      await api.post(`/governance/quality/schemes/${row.id}/start`)
+      await api.post(`/governance/quality/schemes/${row.id}/start`, {
+        variables: execVariables.value.filter((v) => v.name.trim()),
+      })
       ElMessage.success(`「${row.schemeName}」已启动`)
     } catch (e: unknown) {
       const msg = (e as { response?: { data?: { message?: string } } })?.response?.data?.message
@@ -397,6 +405,42 @@ async function batchStart() {
     }
   }
   await loadList()
+}
+
+const varDialogVisible = ref(false)
+const execVariables = ref<Array<{ name: string; value: string }>>([{ name: '', value: '' }])
+let varDialogResolve: ((ok: boolean) => void) | null = null
+
+function openVarDialog(): Promise<boolean> {
+  execVariables.value = [{ name: '', value: '' }]
+  varDialogVisible.value = true
+  return new Promise((resolve) => {
+    varDialogResolve = resolve
+  })
+}
+
+function confirmVarDialog() {
+  varDialogVisible.value = false
+  varDialogResolve?.(true)
+  varDialogResolve = null
+}
+
+function cancelVarDialog() {
+  varDialogVisible.value = false
+  varDialogResolve?.(false)
+  varDialogResolve = null
+}
+
+function addVarRow() {
+  execVariables.value.push({ name: '', value: '' })
+}
+
+function removeVarRow(i: number) {
+  if (execVariables.value.length <= 1) {
+    execVariables.value[0] = { name: '', value: '' }
+    return
+  }
+  execVariables.value.splice(i, 1)
 }
 
 async function batchStop() {
@@ -686,7 +730,7 @@ onMounted(loadList)
           <div class="transfer__hd">所有规则</div>
           <el-form inline class="portal-inline-form portal-inline-form--sm" size="small">
             <el-form-item label="表名" class="portal-field-md">
-              <el-select v-model="leftTableFilter" clearable placeholder="全部">
+              <el-select v-model="leftTableFilter" clearable filterable placeholder="输入表名筛选">
                 <el-option v-for="t in tableNameOptions" :key="t" :label="t" :value="t" />
               </el-select>
             </el-form-item>
@@ -712,7 +756,7 @@ onMounted(loadList)
           <div class="transfer__hd">已选规则</div>
           <el-form inline class="portal-inline-form portal-inline-form--sm" size="small">
             <el-form-item label="表名" class="portal-field-md">
-              <el-select v-model="rightTableFilter" clearable placeholder="全部">
+              <el-select v-model="rightTableFilter" clearable filterable placeholder="输入表名筛选">
                 <el-option v-for="t in tableNameOptions" :key="`r-${t}`" :label="t" :value="t" />
               </el-select>
             </el-form-item>
@@ -800,6 +844,32 @@ onMounted(loadList)
         <el-button @click="logVisible = false">关闭</el-button>
       </template>
     </el-dialog>
+
+    <el-dialog
+      v-model="varDialogVisible"
+      title="启动变量（可选）"
+      width="520px"
+      destroy-on-close
+      @close="cancelVarDialog"
+    >
+      <el-alert
+        type="info"
+        :closable="false"
+        show-icon
+        title="自定义/波动等规则若配置了变量，可在此填写变量名与常量值；无变量可直接确定。"
+        style="margin-bottom: 12px"
+      />
+      <div v-for="(row, idx) in execVariables" :key="idx" class="var-row">
+        <el-input v-model="row.name" placeholder="变量名" style="width: 40%" />
+        <el-input v-model="row.value" placeholder="变量值" style="width: 40%" />
+        <el-button link type="danger" @click="removeVarRow(idx)">删</el-button>
+      </div>
+      <el-button link type="primary" @click="addVarRow">+ 添加变量</el-button>
+      <template #footer>
+        <el-button @click="cancelVarDialog">取消</el-button>
+        <el-button type="primary" @click="confirmVarDialog">确定</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
@@ -808,6 +878,12 @@ onMounted(loadList)
   display: flex;
   flex-direction: column;
   gap: 12px;
+}
+.var-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
 }
 .toolbar {
   display: flex;

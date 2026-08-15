@@ -10,6 +10,7 @@ import api from '@/api/http'
 import MetaDataSourcePickerDialog from '@/components/common/MetaDataSourcePickerDialog.vue'
 import type { MetaBindSource } from '@/utils/meta-datasource-conn'
 import { connectionKeyOf } from '@/utils/meta-datasource-conn'
+import { fetchConnectionTableNames } from '@/utils/layer-tables'
 import {
   ingestionApi,
   type IngestTask,
@@ -214,6 +215,8 @@ const selectedIds = ref<number[]>([])
 /** 元数据源下 JDBC 探到的全表（不论是否采集元数据） */
 const metaTables = ref<string[]>([])
 const metaTablesLoading = ref(false)
+const targetTables = ref<string[]>([])
+const targetTablesLoading = ref(false)
 
 const versionVisible = ref(false)
 const versionRows = ref<IngestTaskVersion[]>([])
@@ -281,6 +284,18 @@ function openSourceDsPicker() {
 function onTargetDsPicked(row: MetaBindSource) {
   form.targetConnection = connectionKeyOf(row)
   form.targetConnectionLabel = `${row.sourceName}${row.databaseName ? `（${row.databaseName}）` : ''}`
+  void loadTargetTables()
+}
+
+async function loadTargetTables() {
+  targetTablesLoading.value = true
+  try {
+    targetTables.value = await fetchConnectionTableNames(form.targetConnection || 'smart_city_ods')
+  } catch {
+    targetTables.value = []
+  } finally {
+    targetTablesLoading.value = false
+  }
 }
 
 async function onSourceDsPicked(row: MetaBindSource) {
@@ -910,6 +925,9 @@ function nextStep() {
   if (leaving === 3) {
     void refreshTaskName()
   }
+  if (step.value === 3) {
+    void loadTargetTables()
+  }
   if (step.value === 4 && form.accessMode !== 'MULTI' && !form.pairs.length) {
     loadMapping('NAME')
   }
@@ -1107,9 +1125,11 @@ onMounted(() => {
               <el-select
                 v-model="form.sourceTable"
                 filterable
+                allow-create
+                default-first-option
                 :loading="metaTablesLoading"
                 :disabled="!form.metaDataSourceId"
-                :placeholder="form.metaDataSourceId ? '选择数据源下的表' : '请先选择数据源'"
+                :placeholder="form.metaDataSourceId ? '输入表名筛选，或选择/新建' : '请先选择数据源'"
                 @change="onSingleTableChange"
               >
                 <el-option
@@ -1147,7 +1167,7 @@ onMounted(() => {
                 collapse-tags
                 :loading="metaTablesLoading"
                 :disabled="!form.metaDataSourceId"
-                placeholder="多选数据源下的表"
+                placeholder="输入表名筛选，可多选"
                 @change="refreshTaskName"
               >
                 <el-option
@@ -1214,12 +1234,34 @@ onMounted(() => {
           </template>
           <template v-else-if="form.accessMode === 'SQL'">
             <el-form-item label="目标表" class="portal-field-xl">
-              <el-input v-model="form.sqlTargetTable" placeholder="ods_xxx" />
+              <el-select
+                v-model="form.sqlTargetTable"
+                filterable
+                allow-create
+                default-first-option
+                clearable
+                :loading="targetTablesLoading"
+                placeholder="输入表名筛选，或新建如 ods_xxx"
+                style="width: 100%"
+              >
+                <el-option v-for="t in targetTables" :key="t" :label="t" :value="t" />
+              </el-select>
             </el-form-item>
           </template>
           <template v-else>
             <el-form-item label="目标表" class="portal-field-xl">
-              <el-input v-model="form.targetTable" placeholder="默认 ods_源表名" />
+              <el-select
+                v-model="form.targetTable"
+                filterable
+                allow-create
+                default-first-option
+                clearable
+                :loading="targetTablesLoading"
+                placeholder="输入表名筛选，或新建（默认 ods_源表名）"
+                style="width: 100%"
+              >
+                <el-option v-for="t in targetTables" :key="t" :label="t" :value="t" />
+              </el-select>
             </el-form-item>
           </template>
         </template>

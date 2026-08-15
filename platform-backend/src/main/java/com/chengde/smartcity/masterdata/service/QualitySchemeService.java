@@ -289,6 +289,11 @@ public class QualitySchemeService {
 
     @Transactional
     public Map<String, Object> start(UserPrincipal operator, Long id) {
+        return start(operator, id, null);
+    }
+
+    @Transactional
+    public Map<String, Object> start(UserPrincipal operator, Long id, Map<String, Object> body) {
         GovQualityScheme s = require(id);
         if (!"SUCCESS".equals(s.getGenerateStatus())
                 || s.getDsProjectCode() == null
@@ -303,11 +308,18 @@ public class QualitySchemeService {
         }
         dsClient.onlineSchedule(s.getDsProjectCode(), s.getDsScheduleId());
         s.setScheduleStatus("RUNNING");
-        s.setLastMessage("定时调度已启动");
+        String varNote = formatVariablesNote(body);
+        s.setLastMessage("定时调度已启动" + varNote);
         s.setUpdatedAt(LocalDateTime.now());
         schemeMapper.updateById(s);
-        audit(operator, "QUALITY_SCHEME_START", id, "schedule=" + s.getDsScheduleId());
-        return Map.of("id", id, "scheduleStatus", "RUNNING");
+        audit(operator, "QUALITY_SCHEME_START", id, "schedule=" + s.getDsScheduleId() + varNote);
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("id", id);
+        out.put("scheduleStatus", "RUNNING");
+        if (body != null && body.get("variables") != null) {
+            out.put("variables", body.get("variables"));
+        }
+        return out;
     }
 
     @Transactional
@@ -331,12 +343,18 @@ public class QualitySchemeService {
     /** 立即执行：走本地质量稽核引擎（不等待 DS 实例）。 */
     @Transactional
     public Map<String, Object> execute(UserPrincipal operator, Long id) {
+        return execute(operator, id, null);
+    }
+
+    @Transactional
+    public Map<String, Object> execute(UserPrincipal operator, Long id, Map<String, Object> body) {
         GovQualityScheme s = require(id);
         syncQualityTask(s);
         s = require(id);
         if (s.getQualityTaskId() == null) {
             throw new BusinessException(400, "方案未同步稽核任务");
         }
+        String varNote = formatVariablesNote(body);
         s.setExecStatus("RUNNING");
         s.setUpdatedAt(LocalDateTime.now());
         schemeMapper.updateById(s);
@@ -345,7 +363,7 @@ public class QualitySchemeService {
             s.setExecStatus("SUCCESS");
             s.setLastExecAt(LocalDateTime.now());
             Object score = run.get("score");
-            s.setLastMessage("执行完成" + (score != null ? " · 评分 " + score : ""));
+            s.setLastMessage("执行完成" + (score != null ? " · 评分 " + score : "") + varNote);
             s.setUpdatedAt(LocalDateTime.now());
             schemeMapper.updateById(s);
             audit(operator, "QUALITY_SCHEME_EXECUTE", id, s.getLastMessage());
@@ -363,6 +381,9 @@ public class QualitySchemeService {
             Map<String, Object> out = new LinkedHashMap<>(run);
             out.put("schemeId", id);
             out.put("execStatus", "SUCCESS");
+            if (body != null && body.get("variables") != null) {
+                out.put("variables", body.get("variables"));
+            }
             return out;
         } catch (RuntimeException e) {
             s.setExecStatus("FAILED");
@@ -372,6 +393,33 @@ public class QualitySchemeService {
             schemeMapper.updateById(s);
             throw e;
         }
+    }
+
+    private String formatVariablesNote(Map<String, Object> body) {
+        if (body == null || body.get("variables") == null) {
+            return "";
+        }
+        Object raw = body.get("variables");
+        if (!(raw instanceof List<?> list) || list.isEmpty()) {
+            return "";
+        }
+        StringBuilder sb = new StringBuilder("；变量=");
+        int n = 0;
+        for (Object o : list) {
+            if (!(o instanceof Map<?, ?> m)) {
+                continue;
+            }
+            Object name = m.get("name");
+            if (name == null || String.valueOf(name).isBlank()) {
+                continue;
+            }
+            if (n > 0) {
+                sb.append(',');
+            }
+            sb.append(name).append('=').append(m.get("value") == null ? "" : m.get("value"));
+            n++;
+        }
+        return n == 0 ? "" : sb.toString();
     }
 
     /** DS Shell 回调：定时触发时执行方案稽核。 */

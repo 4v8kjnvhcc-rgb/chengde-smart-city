@@ -799,7 +799,22 @@ onMounted(async () => {
       <div v-show="workflowStep === 1 && isForward">
         <el-form inline class="portal-inline-form">
           <el-form-item label="表名" class="portal-field-lg">
-            <el-input v-model="tableForm.tableName" placeholder="按业务需求定义物理表" />
+            <el-select
+              v-model="tableForm.tableName"
+              filterable
+              allow-create
+              default-first-option
+              clearable
+              placeholder="输入表名筛选，或新建物理表名"
+              style="width: 100%"
+            >
+              <el-option
+                v-for="t in tables"
+                :key="t.id"
+                :label="t.physicalTableName || t.tableName"
+                :value="t.physicalTableName || t.tableName"
+              />
+            </el-select>
           </el-form-item>
           <el-form-item class="portal-form-actions">
             <el-button @click="workflowStep = 0">上一步</el-button>

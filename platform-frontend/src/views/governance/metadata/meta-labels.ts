@@ -35,6 +35,10 @@ export interface MetaFieldDef {
   length?: number
   required?: boolean
   primaryKey?: boolean
+  /** 分区字段 */
+  partitionKey?: boolean
+  /** 沉淀为数据标准候选 */
+  promoteFlag?: boolean
   /** 必填项提示说明 */
   hint?: string
   /** 字段模型：ADD 新增 / MODIFY 修改 */
@@ -53,6 +57,8 @@ export function parseFieldDefs(contentJson?: string | null): MetaFieldDef[] {
       length: item.length == null && item.dataLength == null ? undefined : Number(item.length ?? item.dataLength),
       required: Boolean(item.required ?? item.requiredFlag),
       primaryKey: Boolean(item.primaryKey ?? item.pk),
+      partitionKey: Boolean(item.partitionKey ?? item.partition),
+      promoteFlag: Boolean(item.promoteFlag ?? item.promote),
       hint: item.hint != null ? String(item.hint) : (item.description != null ? String(item.description) : undefined),
       action: item.action === 'ADD' || item.action === 'MODIFY' ? item.action : undefined,
     })).filter((f: MetaFieldDef) => f.code)
@@ -69,6 +75,8 @@ export function stringifyFieldDefs(fields: MetaFieldDef[]): string {
     length: f.length ?? null,
     required: !!f.required,
     primaryKey: !!f.primaryKey,
+    partitionKey: !!f.partitionKey,
+    promoteFlag: !!f.promoteFlag,
     hint: f.hint?.trim() || null,
     action: f.action || null,
   })))

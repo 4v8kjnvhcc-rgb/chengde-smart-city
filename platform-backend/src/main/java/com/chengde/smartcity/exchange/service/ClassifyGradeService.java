@@ -105,6 +105,21 @@ public class ClassifyGradeService {
         return row.getId();
     }
 
+    @Transactional
+    public void deleteLevel(Long id) {
+        IngClsLevel row = levelMapper.selectById(id);
+        if (row == null) {
+            throw new BusinessException(404, "级别不存在");
+        }
+        long used = markMapper.selectCount(new LambdaQueryWrapper<IngClsAssetMark>()
+                .eq(IngClsAssetMark::getLevelCode, row.getLevelCode())
+                .eq(IngClsAssetMark::getStatus, "ACTIVE"));
+        if (used > 0) {
+            throw new BusinessException(400, "级别已被资产标注引用，请先删除相关标注");
+        }
+        levelMapper.deleteById(id);
+    }
+
     public List<IngClsCategory> listCategories(String dimType) {
         LambdaQueryWrapper<IngClsCategory> q = new LambdaQueryWrapper<IngClsCategory>().orderByAsc(IngClsCategory::getSortNo);
         if (dimType != null && !dimType.isBlank()) q.eq(IngClsCategory::getDimType, dimType);
@@ -203,6 +218,17 @@ public class ClassifyGradeService {
 
         writeAudit(user, mark, isNew ? "CREATE" : "UPDATE", beforeJson, markSnapshot(mark));
         return mark.getId();
+    }
+
+    @Transactional
+    public void deleteMark(UserPrincipal user, Long id) {
+        IngClsAssetMark mark = markMapper.selectById(id);
+        if (mark == null) {
+            throw new BusinessException(404, "标注不存在");
+        }
+        String before = markSnapshot(mark);
+        markMapper.deleteById(id);
+        writeAudit(user, mark, "DELETE", before, null);
     }
 
     @Transactional

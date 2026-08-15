@@ -78,6 +78,7 @@ const markKw = ref('')
 const markLevel = ref('')
 const markDialog = ref(false)
 const markForm = reactive({
+  id: undefined as number | undefined,
   assetType: 'TABLE',
   assetId: undefined as number | undefined,
   assetName: '',
@@ -217,6 +218,7 @@ async function loadCandidates() {
 }
 
 function openMark() {
+  markForm.id = undefined
   markForm.assetType = 'TABLE'
   markForm.assetId = undefined
   markForm.assetName = ''
@@ -229,6 +231,31 @@ function openMark() {
   markForm.leakImpactScore = 1
   markDialog.value = true
   void loadCandidates()
+}
+
+function openEditMark(row: MarkRow) {
+  markForm.id = row.id
+  markForm.assetType = row.assetType || 'TABLE'
+  markForm.assetId = row.assetId
+  markForm.assetName = row.assetName || ''
+  markForm.categoryId = row.categoryId
+  markForm.levelCode = row.levelCode || 'GENERAL'
+  markForm.gradeBasis = row.gradeBasis || 'REVIEWED'
+  markForm.gradeReason = row.gradeReason || ''
+  markForm.personalInfoScore = 1
+  markForm.businessCriticalScore = 1
+  markForm.leakImpactScore = 1
+  markDialog.value = true
+  void loadCandidates()
+}
+
+async function removeMark(row: MarkRow) {
+  await ElMessageBox.confirm(`确认物理删除标注「${row.assetName || row.assetCode || row.id}」？`, '删除确认', {
+    type: 'warning',
+  })
+  await api.delete(`/exchange/ingestion/classify-grade/marks/${row.id}`)
+  ElMessage.success('已删除')
+  await loadMarks()
 }
 
 async function suggestLevel() {
@@ -278,6 +305,13 @@ async function saveLevel() {
   await api.post('/exchange/ingestion/classify-grade/levels', { ...levelForm })
   ElMessage.success('级别已保存')
   levelDialog.value = false
+  await loadLevels()
+}
+
+async function removeLevel(row: LevelRow) {
+  await ElMessageBox.confirm(`确认物理删除级别「${row.levelName}」？`, '删除确认', { type: 'warning' })
+  await api.delete(`/exchange/ingestion/classify-grade/levels/${row.id}`)
+  ElMessage.success('已删除')
   await loadLevels()
 }
 
@@ -404,6 +438,12 @@ onMounted(reloadAll)
         </el-table-column>
         <el-table-column prop="gradedBy" label="定级人" width="100" />
         <el-table-column prop="versionNo" label="版本" width="70" />
+        <el-table-column label="操作" width="140" fixed="right">
+          <template #default="{ row }">
+            <el-button link type="primary" @click="openEditMark(row)">编辑</el-button>
+            <el-button link type="danger" @click="removeMark(row)">删除</el-button>
+          </template>
+        </el-table-column>
       </el-table>
       <PortalPagination
         v-if="marks.length"
@@ -433,9 +473,10 @@ onMounted(reloadAll)
         </el-table-column>
         <el-table-column prop="approvalLevel" label="审批等级" width="100" />
         <el-table-column prop="description" label="说明" min-width="180" show-overflow-tooltip />
-        <el-table-column label="操作" width="90" fixed="right">
+        <el-table-column label="操作" width="140" fixed="right">
           <template #default="{ row }">
             <el-button link type="primary" @click="openLevel(row)">编辑</el-button>
+            <el-button link type="danger" @click="removeLevel(row)">删除</el-button>
           </template>
         </el-table-column>
       </el-table>

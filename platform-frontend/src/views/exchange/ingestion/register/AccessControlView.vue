@@ -330,7 +330,7 @@ onMounted(async () => {
               </el-select>
             </el-form-item>
             <el-form-item label="对象表" class="portal-field-xl">
-              <el-select v-model="dataGrantForm.scopeId" filterable placeholder="选择表">
+              <el-select v-model="dataGrantForm.scopeId" filterable placeholder="输入表名筛选">
                 <el-option v-for="t in tables" :key="t.id" :label="`${t.tableName} (${t.tableCode})`" :value="t.id" />
               </el-select>
             </el-form-item>

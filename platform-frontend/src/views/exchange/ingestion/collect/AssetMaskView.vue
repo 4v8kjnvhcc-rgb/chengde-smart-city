@@ -1,12 +1,10 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from 'vue'
-import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import PageCard from '@/components/common/PageCard.vue'
 import api from '@/api/http'
 import { statusLabel } from '@/utils/status-label'
 
-const router = useRouter()
 const tab = ref('rules')
 const loading = ref(false)
 const overview = ref<Record<string, unknown> | null>(null)
@@ -375,7 +373,6 @@ onMounted(reload)
       <el-form inline class="portal-inline-form portal-inline-form--block">
         <el-form-item class="portal-form-actions">
           <el-button type="primary" @click="openRule()">新建规则</el-button>
-          <el-button @click="router.push('/governance?tab=etl')">治理 ETL · MASK 组件</el-button>
         </el-form-item>
       </el-form>
       <el-table :data="rules" stripe border>

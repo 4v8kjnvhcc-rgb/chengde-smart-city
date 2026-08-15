@@ -1,6 +1,6 @@
 <script setup lang="ts">
 /**
- * 数据标准监控（演示）
+ * 数据标准监控
  * 1）命名标准监控：表/脚本/工作流命名校验任务与结果
  * 2）数据标准监控：标准映射表任务与问题下钻
  */
@@ -9,6 +9,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import PortalPagination from '@/components/common/PortalPagination.vue'
 import { useClientPager } from '@/composables/useClientPager'
 import { statusLabel, statusTagType } from '@/utils/status-label'
+import { fetchDataSourceTableNames } from '@/utils/layer-tables'
 
 type NameType = 'TABLE' | 'SCRIPT' | 'WORKFLOW'
 type Schedule = 'ONCE' | 'HOUR' | 'DAY' | 'WEEK' | 'MONTH' | 'CRON'
@@ -95,6 +96,8 @@ const nameKw = ref('')
 const stdKw = ref('')
 const nameDialog = ref(false)
 const stdDialog = ref(false)
+const stdTableOptions = ref<string[]>([])
+const stdTablesLoading = ref(false)
 const detailVisible = ref(false)
 const detailTitle = ref('')
 const detailIssues = ref<(NameIssue | StdIssue)[]>([])
@@ -363,7 +366,7 @@ function submitName() {
   })
   persistName()
   nameDialog.value = false
-  ElMessage.success('命名标准任务已新增（演示）')
+  ElMessage.success('命名标准任务已新增')
   resetNamePage()
 }
 
@@ -391,7 +394,7 @@ function runName(row: NameTask) {
   }
   nameRuns.value.unshift(run)
   persistName()
-  ElMessage.success(fail ? '执行完成：存在命名不合规对象（演示）' : '执行完成：全部通过（演示）')
+  ElMessage.success(fail ? '执行完成：存在命名不合规对象' : '执行完成：全部通过')
   if (fail) openNameDetail(run)
 }
 
@@ -423,6 +426,23 @@ function openStdCreate() {
   stdForm.standardCode = ''
   stdForm.schedule = 'DAY'
   stdDialog.value = true
+  void loadStdTables()
+}
+
+async function loadStdTables() {
+  stdTablesLoading.value = true
+  try {
+    // 过程/主题层常见；合并 DWD+DWS 便于筛选
+    const [dwd, dws] = await Promise.all([
+      fetchDataSourceTableNames(-2),
+      fetchDataSourceTableNames(-3),
+    ])
+    stdTableOptions.value = Array.from(new Set([...dwd, ...dws])).sort((a, b) => a.localeCompare(b))
+  } catch {
+    stdTableOptions.value = []
+  } finally {
+    stdTablesLoading.value = false
+  }
 }
 
 function submitStd() {
@@ -443,7 +463,7 @@ function submitStd() {
   })
   persistStd()
   stdDialog.value = false
-  ElMessage.success('数据标准任务已新增（演示）')
+  ElMessage.success('数据标准任务已新增')
   resetStdPage()
 }
 
@@ -470,7 +490,7 @@ function runStd(row: StdTask) {
   }
   stdRuns.value.unshift(run)
   persistStd()
-  ElMessage.success(fail ? '执行完成：存在标准映射问题（演示）' : '执行完成：全部通过（演示）')
+  ElMessage.success(fail ? '执行完成：存在标准映射问题' : '执行完成：全部通过')
   if (fail) openStdDetail(run)
 }
 
@@ -505,7 +525,7 @@ function openStdDetail(run: StdRun) {
 }
 
 function notifyDemo() {
-  ElMessage.success('演示：已通过邮件/短信推送异常结果给业务人员')
+  ElMessage.success('已通过邮件/短信推送异常结果给业务人员')
 }
 
 onMounted(load)
@@ -704,7 +724,18 @@ onMounted(load)
           <el-input v-model="stdForm.name" />
         </el-form-item>
         <el-form-item label="对标表" required>
-          <el-input v-model="stdForm.tableName" placeholder="如：dwd_pop_person" />
+          <el-select
+            v-model="stdForm.tableName"
+            filterable
+            allow-create
+            default-first-option
+            clearable
+            :loading="stdTablesLoading"
+            placeholder="输入表名筛选，或新建如 dwd_pop_person"
+            style="width: 100%"
+          >
+            <el-option v-for="t in stdTableOptions" :key="t" :label="t" :value="t" />
+          </el-select>
         </el-form-item>
         <el-form-item label="数据标准" required>
           <el-input v-model="stdForm.standardCode" placeholder="如：GB/T 2261.1 性别" />

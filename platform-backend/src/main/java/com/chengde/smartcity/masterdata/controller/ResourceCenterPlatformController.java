@@ -7,6 +7,7 @@ import com.chengde.smartcity.masterdata.entity.RcMonitorMetric;
 import com.chengde.smartcity.masterdata.entity.RcPartitionOp;
 import com.chengde.smartcity.masterdata.entity.RcPolicyRunLog;
 import com.chengde.smartcity.masterdata.entity.RcStoragePolicy;
+import com.chengde.smartcity.masterdata.service.BackupDsScheduleService;
 import com.chengde.smartcity.masterdata.service.ResourceCenterPlatformService;
 import com.chengde.smartcity.masterdata.service.ResourceCenterStatsService;
 import com.chengde.smartcity.security.UserPrincipal;
@@ -20,6 +21,7 @@ import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
+import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
@@ -30,11 +32,14 @@ public class ResourceCenterPlatformController {
 
     private final ResourceCenterPlatformService service;
     private final ResourceCenterStatsService statsService;
+    private final BackupDsScheduleService backupDsScheduleService;
 
     public ResourceCenterPlatformController(ResourceCenterPlatformService service,
-                                            ResourceCenterStatsService statsService) {
+                                            ResourceCenterStatsService statsService,
+                                            BackupDsScheduleService backupDsScheduleService) {
         this.service = service;
         this.statsService = statsService;
+        this.backupDsScheduleService = backupDsScheduleService;
     }
 
     @GetMapping("/libraries/overview")
@@ -209,11 +214,59 @@ public class ResourceCenterPlatformController {
         return ApiResponse.ok(service.createPolicy(principal, body));
     }
 
+    @GetMapping("/policies/{id}")
+    @PreAuthorize("isAuthenticated()")
+    public ApiResponse<RcStoragePolicy> getPolicy(@PathVariable Long id) {
+        return ApiResponse.ok(service.getPolicy(id));
+    }
+
+    @PutMapping("/policies/{id}")
+    @PreAuthorize("isAuthenticated()")
+    public ApiResponse<Void> updatePolicy(@AuthenticationPrincipal UserPrincipal principal,
+                                          @PathVariable Long id,
+                                          @RequestBody Map<String, Object> body) {
+        service.updatePolicy(principal, id, body);
+        return ApiResponse.ok(null);
+    }
+
+    @DeleteMapping("/policies/{id}")
+    @PreAuthorize("isAuthenticated()")
+    public ApiResponse<Void> deletePolicy(@AuthenticationPrincipal UserPrincipal principal,
+                                          @PathVariable Long id) {
+        service.deletePolicy(principal, id);
+        return ApiResponse.ok(null);
+    }
+
     @PostMapping("/policies/{id}/execute")
     @PreAuthorize("isAuthenticated()")
     public ApiResponse<Map<String, Object>> executePolicy(@AuthenticationPrincipal UserPrincipal principal,
                                                           @PathVariable Long id) {
         return ApiResponse.ok(service.executePolicy(principal, id));
+    }
+
+    @PostMapping("/policies/{id}/schedule/start")
+    @PreAuthorize("isAuthenticated()")
+    public ApiResponse<Map<String, Object>> startSchedule(@AuthenticationPrincipal UserPrincipal principal,
+                                                          @PathVariable Long id) {
+        return ApiResponse.ok(backupDsScheduleService.startSchedule(principal, id));
+    }
+
+    @PostMapping("/policies/{id}/schedule/stop")
+    @PreAuthorize("isAuthenticated()")
+    public ApiResponse<Map<String, Object>> stopSchedule(@AuthenticationPrincipal UserPrincipal principal,
+                                                         @PathVariable Long id) {
+        return ApiResponse.ok(backupDsScheduleService.stopSchedule(principal, id));
+    }
+
+    @PostMapping("/policies/{id}/ds-trigger")
+    public ApiResponse<Map<String, Object>> dsTriggerPolicy(@PathVariable Long id,
+                                                            @RequestHeader(value = "X-Ds-Callback-Token", required = false) String token,
+                                                            @RequestBody(required = false) Map<String, Object> body) {
+        Long dsInstanceId = null;
+        if (body != null && body.get("dsInstanceId") != null) {
+            dsInstanceId = Long.valueOf(String.valueOf(body.get("dsInstanceId")));
+        }
+        return ApiResponse.ok(backupDsScheduleService.runFromDsCallback(id, token, dsInstanceId));
     }
 
     @PutMapping("/policies/{id}/schedule")
@@ -234,6 +287,23 @@ public class ResourceCenterPlatformController {
     @PreAuthorize("isAuthenticated()")
     public ApiResponse<List<RcBackupArtifact>> artifacts(@RequestParam(required = false) Long managedTableId) {
         return ApiResponse.ok(service.listArtifacts(managedTableId));
+    }
+
+    @PutMapping("/backups/artifacts/{id}")
+    @PreAuthorize("isAuthenticated()")
+    public ApiResponse<Void> updateArtifact(@AuthenticationPrincipal UserPrincipal principal,
+                                            @PathVariable Long id,
+                                            @RequestBody Map<String, Object> body) {
+        service.updateArtifact(principal, id, body);
+        return ApiResponse.ok(null);
+    }
+
+    @DeleteMapping("/backups/artifacts/{id}")
+    @PreAuthorize("isAuthenticated()")
+    public ApiResponse<Void> deleteArtifact(@AuthenticationPrincipal UserPrincipal principal,
+                                            @PathVariable Long id) {
+        service.deleteArtifact(principal, id);
+        return ApiResponse.ok(null);
     }
 
     @GetMapping("/backups/artifacts/{id}/verify")

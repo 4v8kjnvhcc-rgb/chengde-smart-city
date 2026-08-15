@@ -46,7 +46,8 @@ public class SecurityConfig {
                                 "/api/v1/governance/gov-tasks/*/ds-trigger",
                                 "/api/v1/governance/fusion/scripts/*/ds-trigger",
                                 "/api/v1/analytics/domain/indicator-tasks/*/ds-trigger",
-                                "/api/v1/governance/quality/schemes/*/run-callback").permitAll()
+                                "/api/v1/governance/quality/schemes/*/run-callback",
+                                "/api/v1/resource-center/platform/policies/*/ds-trigger").permitAll()
                         .anyRequest().authenticated())
                 .exceptionHandling(ex -> ex
                         .authenticationEntryPoint((request, response, authException) -> {

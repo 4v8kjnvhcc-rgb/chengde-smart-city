@@ -900,8 +900,10 @@ onMounted(async () => {
           <el-select
             v-model="physicalForm.tableName"
             filterable
+            allow-create
+            default-first-option
             :loading="tablesLoading"
-            placeholder="从分层库/登记源选择"
+            placeholder="输入表名筛选，或选择/新建"
             style="width: 100%"
             @change="onPhysicalTablePick"
           >

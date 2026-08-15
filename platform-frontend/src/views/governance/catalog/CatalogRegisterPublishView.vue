@@ -42,6 +42,7 @@ interface CatalogRes {
   resourceCode: string
   resourceName: string
   resourceType: string
+  resourceFormat?: string
   categoryId?: number
   categoryPath?: string
   publishStatus: string
@@ -49,6 +50,18 @@ interface CatalogRes {
   sourcePathType?: string
   metadataEntryCode?: string
   providerOrg?: string
+}
+
+const FORMAT_ZH: Record<string, string> = {
+  DATABASE: '库表',
+  API: '接口',
+  FILE: '文件',
+  OTHER: '其他',
+}
+
+function formatLabel(fmt?: string) {
+  if (!fmt) return '—'
+  return FORMAT_ZH[fmt] || statusLabel(fmt) || fmt
 }
 
 const categoryOptions = ref<{ id: number; label: string }[]>([])
@@ -526,6 +539,9 @@ onActivated(() => {
         <el-table-column prop="categoryPath" label="分类路径" min-width="140" show-overflow-tooltip>
           <template #default="{ row }">{{ row.categoryPath || '—' }}</template>
         </el-table-column>
+        <el-table-column label="数据资源格式" width="110">
+          <template #default="{ row }">{{ formatLabel(row.resourceFormat) }}</template>
+        </el-table-column>
         <el-table-column prop="providerOrg" label="提供方" width="110" show-overflow-tooltip />
         <el-table-column prop="metadataEntryCode" label="元数据" width="140" show-overflow-tooltip>
           <template #default="{ row }">{{ row.metadataEntryCode || '—' }}</template>
@@ -588,6 +604,9 @@ onActivated(() => {
         <el-table-column type="selection" width="42" />
         <el-table-column prop="resourceCode" label="编码" width="130" />
         <el-table-column prop="resourceName" label="名称" min-width="140" />
+        <el-table-column label="数据资源格式" width="110">
+          <template #default="{ row }">{{ formatLabel(row.resourceFormat) }}</template>
+        </el-table-column>
         <el-table-column prop="providerOrg" label="提供方" width="110" show-overflow-tooltip />
         <el-table-column prop="metadataEntryCode" label="元数据" width="140" show-overflow-tooltip>
           <template #default="{ row }">{{ row.metadataEntryCode || '—' }}</template>
@@ -641,6 +660,7 @@ onActivated(() => {
       <el-descriptions v-if="viewRow" :column="1" border size="small">
         <el-descriptions-item label="编码">{{ viewRow.resourceCode }}</el-descriptions-item>
         <el-descriptions-item label="名称">{{ viewRow.resourceName }}</el-descriptions-item>
+        <el-descriptions-item label="数据资源格式">{{ formatLabel(viewRow.resourceFormat) }}</el-descriptions-item>
         <el-descriptions-item label="分类路径">{{ viewRow.categoryPath || '—' }}</el-descriptions-item>
         <el-descriptions-item label="提供方">{{ viewRow.providerOrg || '—' }}</el-descriptions-item>
         <el-descriptions-item label="状态">

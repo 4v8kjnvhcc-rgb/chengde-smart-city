@@ -611,10 +611,12 @@ onMounted(() => {
             <el-select
               v-model="assistTable"
               filterable
+              allow-create
+              default-first-option
               clearable
               :loading="tablesLoading"
               :disabled="form.datasourceId == null"
-              :placeholder="form.datasourceId == null ? '请先选择来源库' : '选择表后点生成'"
+              :placeholder="form.datasourceId == null ? '请先选择来源库' : '输入表名筛选，或选择后点生成'"
               class="full-w"
             >
               <el-option

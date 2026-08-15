@@ -91,6 +91,15 @@ const {
 const pickTableVisible = ref(false)
 const availableTables = ref<BindTable[]>([])
 const tablesLoading = ref(false)
+const pickTableKw = ref('')
+
+const filteredAvailableTables = computed(() => {
+  const kw = pickTableKw.value.trim().toLowerCase()
+  if (!kw) return availableTables.value
+  return availableTables.value.filter((t) =>
+    `${t.tableName} ${t.tableComment || ''}`.toLowerCase().includes(kw),
+  )
+})
 const pickedTables = ref<string[]>([])
 
 async function load() {
@@ -235,6 +244,7 @@ async function openPickTables() {
   }
   tablesLoading.value = true
   pickTableVisible.value = true
+  pickTableKw.value = ''
   pickedTables.value = form.tables.map((t) => t.tableName)
   try {
     const res = await api.get(`/governance/catalog/resources-mgmt/bind-sources/${form.datasourceId}/tables`, {
@@ -474,9 +484,14 @@ onMounted(() => {
     </el-dialog>
 
     <el-dialog v-model="pickTableVisible" title="选择表" width="520px" destroy-on-close append-to-body>
+      <el-form inline class="portal-inline-form portal-inline-form--block" size="small">
+        <el-form-item label="表名" class="portal-field-xl">
+          <el-input v-model="pickTableKw" clearable placeholder="输入表名筛选" />
+        </el-form-item>
+      </el-form>
       <el-checkbox-group v-loading="tablesLoading" v-model="pickedTables" class="pick-list">
         <el-checkbox
-          v-for="t in availableTables"
+          v-for="t in filteredAvailableTables"
           :key="t.tableName"
           :value="t.tableName"
         >
@@ -484,7 +499,7 @@ onMounted(() => {
           <span v-if="t.tableComment" class="muted">（{{ t.tableComment }}）</span>
         </el-checkbox>
       </el-checkbox-group>
-      <el-empty v-if="!tablesLoading && !availableTables.length" description="该数据源暂无可选表" />
+      <el-empty v-if="!tablesLoading && !filteredAvailableTables.length" description="该数据源暂无可选表" />
       <template #footer>
         <el-button @click="pickTableVisible = false">取消</el-button>
         <el-button type="primary" @click="confirmPickTables">确定</el-button>

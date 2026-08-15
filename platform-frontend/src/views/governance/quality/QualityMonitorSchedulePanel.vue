@@ -1,6 +1,6 @@
 <script setup lang="ts">
 /**
- * 流程调度控制（演示）：ETL 调度中注入稽核门禁，关键问题自动停流，处理后继续。
+ * 流程调度控制：ETL 调度中注入稽核门禁，关键问题自动停流，处理后继续。
  */
 import { computed, onMounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
@@ -151,16 +151,16 @@ function submit() {
   })
   persist()
   dialogVisible.value = false
-  ElMessage.success('已注入稽核门禁（演示）')
+  ElMessage.success('已注入稽核门禁')
   resetPage()
 }
 
 async function simulateCritical(row: GateRow) {
   row.status = 'PAUSED'
-  row.criticalIssue = '演示：检出关键质量问题，加工流程已自动停止'
+  row.criticalIssue = '检出关键质量问题，加工流程已自动停止'
   row.pausedAt = nowStr()
   persist()
-  ElMessage.warning(`流程「${row.flowName}」已停流，已模拟推送 ${row.notify}`)
+  ElMessage.warning(`流程「${row.flowName}」已停流，已推送通知 ${row.notify}`)
 }
 
 async function resume(row: GateRow) {
@@ -169,7 +169,7 @@ async function resume(row: GateRow) {
   row.criticalIssue = '—'
   row.pausedAt = undefined
   persist()
-  ElMessage.success('ETL 流程已继续执行（演示）')
+  ElMessage.success('ETL 流程已继续执行')
 }
 
 async function removeRow(row: GateRow) {
@@ -228,7 +228,7 @@ onMounted(load)
             type="warning"
             @click="simulateCritical(row)"
           >
-            模拟关键停流
+            触发关键停流
           </el-button>
           <el-button v-if="row.status === 'PAUSED'" link type="primary" @click="resume(row)">
             问题已处理·继续

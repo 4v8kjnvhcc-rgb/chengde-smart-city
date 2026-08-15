@@ -303,6 +303,49 @@ public class QualityModelService {
         log.info("quality model rule deleted id={} by={}", ruleId, operator != null ? operator.getUsername() : null);
     }
 
+    /**
+     * 清除指定表下、fieldNames 中包含该字段的全部模型规则。
+     */
+    @Transactional
+    public Map<String, Object> clearRulesByField(UserPrincipal operator, Long modelId, Long modelTableId, String fieldName) {
+        requireModel(modelId);
+        if (modelTableId == null) {
+            throw new BusinessException(400, "请指定模型表");
+        }
+        if (fieldName == null || fieldName.isBlank()) {
+            throw new BusinessException(400, "请指定字段名");
+        }
+        String field = fieldName.trim();
+        List<GovQualityModelRule> rules = modelRuleMapper.selectList(new LambdaQueryWrapper<GovQualityModelRule>()
+                .eq(GovQualityModelRule::getModelId, modelId)
+                .eq(GovQualityModelRule::getModelTableId, modelTableId));
+        int deleted = 0;
+        for (GovQualityModelRule r : rules) {
+            String fn = r.getFieldNames();
+            if (fn == null || fn.isBlank()) {
+                continue;
+            }
+            boolean hit = false;
+            for (String part : fn.split("[,，;；\\s]+")) {
+                if (field.equalsIgnoreCase(part.trim())) {
+                    hit = true;
+                    break;
+                }
+            }
+            if (hit) {
+                modelRuleMapper.deleteById(r.getId());
+                deleted++;
+            }
+        }
+        log.info("quality clearRulesByField modelId={} tableId={} field={} deleted={} by={}",
+                modelId, modelTableId, field, deleted, operator != null ? operator.getUsername() : null);
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("deleted", deleted);
+        out.put("fieldName", field);
+        out.put("message", "已清除字段「" + field + "」下 " + deleted + " 条规则");
+        return out;
+    }
+
     private void replaceTables(Long modelId, Object tablesRaw) {
         if (!(tablesRaw instanceof List<?> list) || list.isEmpty()) {
             throw new BusinessException(400, "请至少添加一张表");

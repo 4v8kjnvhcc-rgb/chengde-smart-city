@@ -27,6 +27,10 @@ public class RcStoragePolicy {
     private LocalDateTime lastRunAt;
     private String lastRunStatus;
     private String lastRunMessage;
+    private Long dsProjectCode;
+    private Long dsDefinitionCode;
+    private Integer dsScheduleId;
+    private String dsPublishStatus;
     private String status;
 
     public Long getId() { return id; }
@@ -67,6 +71,14 @@ public class RcStoragePolicy {
     public void setLastRunStatus(String lastRunStatus) { this.lastRunStatus = lastRunStatus; }
     public String getLastRunMessage() { return lastRunMessage; }
     public void setLastRunMessage(String lastRunMessage) { this.lastRunMessage = lastRunMessage; }
+    public Long getDsProjectCode() { return dsProjectCode; }
+    public void setDsProjectCode(Long dsProjectCode) { this.dsProjectCode = dsProjectCode; }
+    public Long getDsDefinitionCode() { return dsDefinitionCode; }
+    public void setDsDefinitionCode(Long dsDefinitionCode) { this.dsDefinitionCode = dsDefinitionCode; }
+    public Integer getDsScheduleId() { return dsScheduleId; }
+    public void setDsScheduleId(Integer dsScheduleId) { this.dsScheduleId = dsScheduleId; }
+    public String getDsPublishStatus() { return dsPublishStatus; }
+    public void setDsPublishStatus(String dsPublishStatus) { this.dsPublishStatus = dsPublishStatus; }
     public String getStatus() { return status; }
     public void setStatus(String status) { this.status = status; }
 }

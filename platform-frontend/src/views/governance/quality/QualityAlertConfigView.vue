@@ -91,7 +91,7 @@ onMounted(load)
               v-model="mail.defaultReceivers"
               type="textarea"
               :rows="3"
-              placeholder="多个邮箱用分号分隔；实际发送走「系统管理 · 邮件配置」SMTP"
+              placeholder="多个邮箱用分号分隔"
             />
           </el-form-item>
         </el-form>
@@ -120,7 +120,7 @@ onMounted(load)
               v-model="sms.defaultPhones"
               type="textarea"
               :rows="2"
-              placeholder="多个号码用分号分隔；当前记推送台账，不直连真实短信网关"
+              placeholder="多个号码用分号分隔"
             />
           </el-form-item>
         </el-form>

@@ -136,6 +136,8 @@ const sourceOptions = ref<DsOption[]>([...PLATFORM_SOURCES_GOV])
 const allTables = ref<TableOption[]>([])
 const platformTables = ref<string[]>([])
 const platformTablesLoading = ref(false)
+const targetPlatformTables = ref<string[]>([])
+const targetTablesLoading = ref(false)
 
 const form = reactive({
   taskName: '',
@@ -186,6 +188,8 @@ function onDsPicked(row: MetaBindSource) {
   } else {
     form.targetConnection = key
     form.targetConnectionLabel = label
+    form.targetTable = ''
+    void loadTargetPlatformTables(key)
   }
 }
 
@@ -318,36 +322,56 @@ const sourceTableSelectOptions = computed(() => {
   }))
 })
 
+/** 目标库已有表：输入时可实时筛选；allow-create 仍可写新表名 */
+const targetTableSelectOptions = computed(() =>
+  targetPlatformTables.value.map(name => ({ value: name, label: name })),
+)
+
 async function loadPlatformTables(connection: string) {
   platformTables.value = []
   if (!connection) return
   platformTablesLoading.value = true
   try {
-    if (connection.startsWith('meta:')) {
-      const metaId = Number(connection.slice(5))
-      if (!Number.isFinite(metaId) || metaId <= 0) {
-        platformTables.value = []
-        return
-      }
-      const rows = (await api.get(`/governance/platform/metadata/collect/meta-data-sources/${metaId}/tables`)).data || []
-      platformTables.value = (rows as Array<{ sourceTable?: string; tableName?: string }>)
-        .map(r => String(r.sourceTable || r.tableName || '').trim())
-        .filter(Boolean)
-        .sort((a, b) => a.localeCompare(b))
-      return
-    }
-    const layerId = PLATFORM_LAYER_IDS[connection]
-    if (layerId == null) return
-    const rows = (await api.get(`/governance/platform/metadata/collect/data-sources/${layerId}/tables`)).data || []
-    platformTables.value = (rows as Array<{ sourceTable?: string }>)
-      .map(r => String(r.sourceTable || '').trim())
-      .filter(Boolean)
+    platformTables.value = await fetchConnectionTables(connection)
   } catch (e: unknown) {
     platformTables.value = []
     ElMessage.error(e instanceof Error ? e.message : '加载源表失败')
   } finally {
     platformTablesLoading.value = false
   }
+}
+
+async function loadTargetPlatformTables(connection: string) {
+  targetPlatformTables.value = []
+  if (!connection) return
+  targetTablesLoading.value = true
+  try {
+    targetPlatformTables.value = await fetchConnectionTables(connection)
+  } catch (e: unknown) {
+    targetPlatformTables.value = []
+    ElMessage.error(e instanceof Error ? e.message : '加载目标表失败')
+  } finally {
+    targetTablesLoading.value = false
+  }
+}
+
+async function fetchConnectionTables(connection: string): Promise<string[]> {
+  if (connection.startsWith('meta:')) {
+    const metaId = Number(connection.slice(5))
+    if (!Number.isFinite(metaId) || metaId <= 0) return []
+    const rows = (await api.get(`/governance/platform/metadata/collect/meta-data-sources/${metaId}/tables`)).data || []
+    return (rows as Array<{ sourceTable?: string; tableName?: string }>)
+      .map(r => String(r.sourceTable || r.tableName || '').trim())
+      .filter(Boolean)
+      .sort((a, b) => a.localeCompare(b))
+  }
+  const layerId = PLATFORM_LAYER_IDS[connection]
+  if (layerId == null) return []
+  const rows = (await api.get(`/governance/platform/metadata/collect/data-sources/${layerId}/tables`)).data || []
+  return (rows as Array<{ sourceTable?: string }>)
+    .map(r => String(r.sourceTable || '').trim())
+    .filter(Boolean)
+    .sort((a, b) => a.localeCompare(b))
 }
 
 watch(() => form.sourceConnection, (conn) => {
@@ -358,9 +382,35 @@ watch(() => form.sourceConnection, (conn) => {
   }
 })
 
+watch(() => form.targetConnection, (conn) => {
+  form.targetTable = ''
+  targetPlatformTables.value = []
+  if (conn && (PLATFORM_LAYER_IDS[conn] != null || conn.startsWith('meta:'))) {
+    void loadTargetPlatformTables(conn)
+  }
+})
+
 function goEtlSub(sub: string, taskId?: number) {
   if (isFusion.value) {
-    if (taskId != null) emit('monitor', taskId)
+    if (taskId != null) {
+      emit('monitor', taskId)
+      return
+    }
+    // 融合域：侧栏在「数据融合处理」下，不能写 tab=etl（会跳到数据治理）
+    const q: Record<string, unknown> = { ...route.query, tab: 'model' }
+    delete q.etlView
+    delete q.taskId
+    if (sub === 'task-run') {
+      q.mSub = 'execute'
+      q.execTab = 'run'
+    } else if (sub === 'task-schedule') {
+      q.mSub = 'schedule'
+      delete q.execTab
+    } else {
+      q.mSub = 'clean'
+      delete q.execTab
+    }
+    router.replace({ query: q as Record<string, string> })
     return
   }
   const q: Record<string, unknown> = { ...route.query, tab: 'etl', etlSub: sub }
@@ -415,6 +465,7 @@ function openCreate() {
   createVisible.value = true
   void loadCreateOptions()
   if (isFusion.value) void loadPlatformTables('smart_city_dwd')
+  void loadTargetPlatformTables(form.targetConnection)
 }
 
 async function submitCreate() {
@@ -855,8 +906,9 @@ defineExpose({ reload: load })
             clearable
             filterable
             allow-create
+            default-first-option
             :loading="platformTablesLoading"
-            placeholder="选择表"
+            placeholder="输入表名筛选，或选择/新建"
             style="width:100%"
           >
             <el-option
@@ -874,7 +926,9 @@ defineExpose({ reload: load })
             clearable
             filterable
             allow-create
-            placeholder="选第二张表则生成横连接"
+            default-first-option
+            :loading="platformTablesLoading"
+            placeholder="输入表名筛选；选第二张表则生成横连接"
             style="width:100%"
           >
             <el-option
@@ -902,7 +956,25 @@ defineExpose({ reload: load })
           </div>
         </el-form-item>
         <el-form-item label="目标表">
-          <el-input v-model="form.targetTable" :placeholder="isFusion ? '如 dws_xxx' : '如 dwd_xxx'" />
+          <el-select
+            v-if="form.targetConnection"
+            v-model="form.targetTable"
+            clearable
+            filterable
+            allow-create
+            default-first-option
+            :loading="targetTablesLoading"
+            :placeholder="isFusion ? '输入表名筛选，或新建如 dws_xxx' : '输入表名筛选，或新建如 dwd_xxx'"
+            style="width:100%"
+          >
+            <el-option
+              v-for="t in targetTableSelectOptions"
+              :key="t.value"
+              :label="t.label"
+              :value="t.value"
+            />
+          </el-select>
+          <el-input v-else v-model="form.targetTable" placeholder="请先选择目标库" disabled />
         </el-form-item>
         <el-form-item :label="isFusion ? '清洗规则' : '治理规则'">
           <el-checkbox-group v-model="form.rules">
@@ -965,13 +1037,6 @@ defineExpose({ reload: load })
     </el-dialog>
 
     <el-dialog v-model="scheduleVisible" title="添加定时计划" width="520px">
-      <el-alert
-        type="info"
-        :closable="false"
-        show-icon
-        style="margin-bottom:12px"
-        title="启用后将发布到 DolphinScheduler；到期由 DS 回调平台再调 Kettle Carte。手动「运行」仍直调 Carte。"
-      />
       <el-form label-width="100px">
         <el-form-item label="启用定时">
           <el-switch v-model="scheduleForm.scheduleEnabled" />
@@ -1047,7 +1112,8 @@ defineExpose({ reload: load })
           <el-form-item v-if="previewTargets.length > 1" label="治理输出表" class="portal-field-xl">
             <el-select
               :model-value="previewSelectedTable"
-              placeholder="选择 DWD/DWS/ADS 表"
+              filterable
+              placeholder="输入表名筛选"
               @change="onPreviewTableChange"
             >
               <el-option

@@ -66,7 +66,7 @@ const moduleComponents: Record<string, ReturnType<typeof defineAsyncComponent>> 
   m044: defineAsyncComponent(() => import('./register/DataItemView.vue')),
   m045: defineAsyncComponent(() => import('./register/TagManageView.vue')),
   m046: defineAsyncComponent(() => import('./register/AssetReportView.vue')),
-  m047: defineAsyncComponent(() => import('./register/AssetFishboneView.vue')),
+  m047: defineAsyncComponent(() => import('./register/AssetLineageHubView.vue')),
   m048: defineAsyncComponent(() => import('./register/AccessControlView.vue')),
   m049: defineAsyncComponent(() => import('./register/SystemLinkView.vue')),
   m050: defineAsyncComponent(() => import('./register/DictRegisterView.vue')),
@@ -87,9 +87,14 @@ const moduleComponents: Record<string, ReturnType<typeof defineAsyncComponent>> 
   'catalog.classify': defineAsyncComponent(() => import('./collect/catalog/CatalogClassifyView.vue')),
   'catalog.publish': defineAsyncComponent(() => import('./collect/catalog/CatalogPublishView.vue')),
   'catalog.approvals': defineAsyncComponent(() => import('./collect/catalog/CatalogApprovalsView.vue')),
+  'quality.standards.file': defineAsyncComponent(() => import('@/views/governance/quality/StandardsView.vue')),
+  'quality.standards.element': defineAsyncComponent(() => import('@/views/governance/quality/StandardsView.vue')),
+  'quality.standards.code': defineAsyncComponent(() => import('@/views/governance/quality/StandardsView.vue')),
+  'quality.standards.naming': defineAsyncComponent(() => import('@/views/governance/quality/StandardsView.vue')),
   'quality.rule-config': defineAsyncComponent(() => import('@/views/governance/quality/QualityRuleConfigView.vue')),
   'quality.monitor': defineAsyncComponent(() => import('@/views/governance/quality/QualityMonitorView.vue')),
   'quality.assess': defineAsyncComponent(() => import('@/views/governance/quality/QualityAssessView.vue')),
+  'quality.reports': defineAsyncComponent(() => import('@/views/governance/quality/QualityReportView.vue')),
   'asset.classify': defineAsyncComponent(() => import('./collect/AssetClassifyView.vue')),
   'asset.mask': defineAsyncComponent(() => import('./collect/AssetMaskView.vue')),
   'asset.tag': defineAsyncComponent(() => import('./collect/AssetTagManageView.vue')),
@@ -122,6 +127,15 @@ const navItems = computed(() => {
 const activeComponent = computed(() => {
   if (module.value.startsWith('custom-')) return CustomRegisterMenuView
   return moduleComponents[module.value]
+})
+const standardsInitialTab = computed(() => {
+  const map: Record<string, string> = {
+    'quality.standards.file': 'file',
+    'quality.standards.element': 'element',
+    'quality.standards.code': 'code',
+    'quality.standards.naming': 'naming',
+  }
+  return map[module.value] || 'element'
 })
 const pageTitle = computed(() => `大数据归集平台 · ${systemTitle(system.value)} · ${moduleTitle(module.value)}`)
 const pageDesc = computed(() => '')
@@ -282,6 +296,7 @@ onUnmounted(() => {
           :is="activeComponent"
           :key="`${system}:${module}`"
           :module="module"
+          :initial-tab="module.startsWith('quality.standards') ? standardsInitialTab : undefined"
           :catalog-origin="module.startsWith('catalog') ? 'INGEST' : undefined"
         />
       </keep-alive>

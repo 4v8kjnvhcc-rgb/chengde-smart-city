@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, reactive, ref } from 'vue'
+import { onActivated, onMounted, reactive, ref } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import PageCard from '@/components/common/PageCard.vue'
 import api from '@/api/http'
@@ -8,7 +8,16 @@ import { statusLabel } from '@/utils/status-label'
 const BASE = '/exchange/ingestion/asset-search'
 const tab = ref('portal')
 const loading = ref(false)
-const overview = ref<Record<string, unknown> | null>(null)
+const overview = ref<Record<string, unknown>>({
+  docCount: 0,
+  syncPolicies: 0,
+  knowledgeCount: 0,
+  engine: '—',
+  globalFields: 0,
+  globalBindings: 0,
+  identities: 0,
+  lastSuccessAt: '',
+})
 
 const mode = ref('FUZZY')
 const q = ref('')
@@ -76,7 +85,14 @@ const MODE_OPTS = [
 ]
 
 async function loadOverview() {
-  overview.value = (await api.get(`${BASE}/overview`)).data
+  try {
+    overview.value = {
+      ...overview.value,
+      ...((await api.get(`${BASE}/overview`)).data || {}),
+    }
+  } catch {
+    /* 保留默认概览，避免整页空白 */
+  }
 }
 
 async function loadPortalDeps() {
@@ -308,12 +324,15 @@ function applySaved(row: Record<string, unknown>) {
 }
 
 onMounted(reload)
+onActivated(() => {
+  void reload()
+})
 </script>
 
 <template>
-  <div v-loading="loading">
-    <PageCard title="数据搜索">
-      <el-descriptions v-if="overview" :column="4" border size="small" class="mb">
+  <div>
+    <PageCard title="数据搜索" v-loading="loading">
+      <el-descriptions :column="4" border size="small" class="mb">
         <el-descriptions-item label="索引文档">{{ overview.docCount }}</el-descriptions-item>
         <el-descriptions-item label="同步策略">{{ overview.syncPolicies }}</el-descriptions-item>
         <el-descriptions-item label="业务知识">{{ overview.knowledgeCount }}</el-descriptions-item>
@@ -352,7 +371,7 @@ onMounted(reload)
             <el-input v-model="dataItem" clearable placeholder="字段名/注释" />
           </el-form-item>
           <el-form-item v-if="mode === 'COMBO'" label="目标表" class="portal-field-xl">
-            <el-select v-model="tableId" filterable clearable placeholder="可选，锁定后带出全局条件">
+            <el-select v-model="tableId" filterable clearable placeholder="输入表名筛选（可选）">
               <el-option v-for="t in tables" :key="String(t.id)" :label="`${t.tableName || t.tableCode}`" :value="t.id as number" />
             </el-select>
           </el-form-item>

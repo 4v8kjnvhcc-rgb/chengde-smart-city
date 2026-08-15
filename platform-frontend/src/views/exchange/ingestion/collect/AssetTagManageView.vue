@@ -753,7 +753,7 @@ onMounted(reload)
           </el-radio-group>
         </el-form-item>
         <el-form-item v-if="bindForm.assetType === 'TABLE'" label="数据表">
-          <el-select v-model="bindForm.assetId" filterable style="width:100%">
+          <el-select v-model="bindForm.assetId" filterable placeholder="输入表名筛选" style="width:100%">
             <el-option v-for="t in tables" :key="String(t.id)" :label="`${t.tableName || t.tableCode} (#${t.id})`" :value="t.id as number" />
           </el-select>
         </el-form-item>

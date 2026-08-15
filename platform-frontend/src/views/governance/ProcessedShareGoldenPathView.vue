@@ -30,6 +30,8 @@ const runningStep = ref(0)
 const previewSql = ref('')
 const filterColumn = ref('')
 const targetTable = ref('')
+const targetTableOptions = ref<string[]>([])
+const targetTablesLoading = ref(false)
 
 const steps = computed(() => overview.value?.steps || [])
 const activeStep = computed(() => {
@@ -52,6 +54,21 @@ async function loadEligible() {
   if (!tableId.value && eligible.value.length) {
     const enterprise = eligible.value.find((t) => t.physicalTableName === 'ods_enterprise_base')
     tableId.value = enterprise?.tableId || eligible.value[0].tableId
+  }
+}
+
+async function loadTargetTableOptions() {
+  targetTablesLoading.value = true
+  try {
+    const rows = (await api.get('/governance/platform/metadata/collect/data-sources/-3/tables')).data || []
+    targetTableOptions.value = (rows as Array<{ sourceTable?: string }>)
+      .map((r) => String(r.sourceTable || '').trim())
+      .filter(Boolean)
+      .sort((a, b) => a.localeCompare(b))
+  } catch {
+    targetTableOptions.value = []
+  } finally {
+    targetTablesLoading.value = false
   }
 }
 
@@ -155,7 +172,7 @@ watch(tableId, () => {
   loadOverview()
 })
 onMounted(async () => {
-  await loadEligible()
+  await Promise.all([loadEligible(), loadTargetTableOptions()])
   await loadOverview()
 })
 </script>
@@ -165,7 +182,7 @@ onMounted(async () => {
     <PageCard title="加工共享黄金路径（多表）">
       <el-form inline class="portal-inline-form portal-inline-form--block">
         <el-form-item label="源表" class="portal-field-xl">
-          <el-select v-model="tableId" filterable>
+          <el-select v-model="tableId" filterable placeholder="输入表名筛选">
             <el-option
               v-for="t in eligible"
               :key="t.tableId"
@@ -175,10 +192,21 @@ onMounted(async () => {
           </el-select>
         </el-form-item>
         <el-form-item label="目标表" class="portal-field-lg">
-          <el-input v-model="targetTable" placeholder="如 dws_xxx" />
+          <el-select
+            v-model="targetTable"
+            filterable
+            allow-create
+            default-first-option
+            clearable
+            :loading="targetTablesLoading"
+            placeholder="输入表名筛选，或新建如 dws_xxx"
+            style="width: 100%"
+          >
+            <el-option v-for="t in targetTableOptions" :key="t" :label="t" :value="t" />
+          </el-select>
         </el-form-item>
         <el-form-item label="过滤非空列" class="portal-field-md">
-          <el-select v-model="filterColumn" clearable>
+          <el-select v-model="filterColumn" clearable filterable placeholder="输入字段名筛选">
             <el-option v-for="c in sourceColumns" :key="c.name" :label="c.name" :value="c.name" />
           </el-select>
         </el-form-item>

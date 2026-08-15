@@ -249,6 +249,7 @@ const loading = ref(false)
 const selectedRows = ref<CatalogRes[]>([])
 const query = reactive({
   resourceName: '',
+  resourceType: '',
   approvalStatus: '',
   shareType: '',
   resourceFormat: '',
@@ -329,6 +330,16 @@ const tablePickerVisible = ref(false)
 const tablePickerLoading = ref(false)
 const tablePickerRows = ref<BindTable[]>([])
 const tablePickerSelected = ref<string>('')
+const tablePickerKw = ref('')
+const filteredTablePickerRows = computed(() => {
+  const kw = tablePickerKw.value.trim().toLowerCase()
+  if (!kw) return tablePickerRows.value
+  return tablePickerRows.value.filter((t) =>
+    `${t.tableName} ${t.chineseName || ''} ${t.tableComment || ''} ${t.entryName || ''} ${t.metadataEntryCode || ''}`
+      .toLowerCase()
+      .includes(kw),
+  )
+})
 const columnsLoading = ref(false)
 
 const addDsVisible = ref(false)
@@ -660,6 +671,7 @@ async function loadResources() {
     const res = await api.get('/governance/catalog/resources-mgmt', {
       params: {
         keyword: query.resourceName || undefined,
+        resourceType: query.resourceType || undefined,
         approvalStatus: st && st !== 'OFFLINE' ? st : undefined,
         publishStatus: st === 'OFFLINE' ? 'OFFLINE' : undefined,
         shareType: query.shareType || undefined,
@@ -679,6 +691,7 @@ async function loadResources() {
 
 function resetQuery() {
   query.resourceName = ''
+  query.resourceType = ''
   query.approvalStatus = ''
   query.shareType = ''
   query.resourceFormat = ''
@@ -1344,6 +1357,7 @@ async function openTablePicker() {
   }
   tablePickerVisible.value = true
   tablePickerSelected.value = bindTableName.value || ''
+  tablePickerKw.value = ''
   tablePickerLoading.value = true
   try {
     const res = await api.get(`/governance/catalog/resources-mgmt/bind-sources/${bindSourceId.value}/tables`, {
@@ -1948,6 +1962,11 @@ onActivated(async () => {
           @keyup.enter="loadResources"
         />
       </el-form-item>
+      <el-form-item label="资源类型" class="portal-field-md">
+        <el-select v-model="query.resourceType" clearable placeholder="全部">
+          <el-option v-for="(lab, val) in TYPE_ZH" :key="val" :label="lab" :value="val" />
+        </el-select>
+      </el-form-item>
       <el-form-item label="所属分类" class="portal-field-xl">
         <el-select
           v-model="query.categoryId"
@@ -2234,7 +2253,7 @@ onActivated(async () => {
                 <el-input
                   :model-value="bindTableName"
                   readonly
-                  placeholder="选择数据表"
+                  placeholder="输入表名筛选"
                   style="flex: 1"
                   @click="openTablePicker"
                 />
@@ -2593,9 +2612,14 @@ onActivated(async () => {
         title="选择数据表后将自动带出字段清单，可维护敏感级别与共享属性。"
         style="margin-bottom: 12px"
       />
+      <el-form inline class="portal-inline-form portal-inline-form--block" size="small">
+        <el-form-item label="表名" class="portal-field-xl">
+          <el-input v-model="tablePickerKw" clearable placeholder="输入表名筛选" />
+        </el-form-item>
+      </el-form>
       <el-table
         v-loading="tablePickerLoading"
-        :data="tablePickerRows"
+        :data="filteredTablePickerRows"
         size="small"
         stripe
         highlight-current-row

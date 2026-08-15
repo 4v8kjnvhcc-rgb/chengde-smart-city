@@ -333,9 +333,18 @@ function onNodeContextMenu(row: NodeLog, _col: unknown, _e: Event) {
 }
 
 function backToList() {
-  const q: Record<string, any> = { ...route.query, tab: 'etl' }
+  const q: Record<string, any> = { ...route.query }
   delete q.etlView
   delete q.taskId
+  const isFusion = props.taskDomain === 'FUSION' || String(route.query.tab || '') === 'model'
+  if (isFusion) {
+    q.tab = 'model'
+    // 监控多从「任务执行」进入；保留当前 mSub，缺省回清洗列表
+    if (!q.mSub || q.mSub === 'warehouse') q.mSub = 'clean'
+  } else {
+    q.tab = 'etl'
+    if (!q.etlSub) q.etlSub = 'task-mgmt'
+  }
   router.replace({ query: q })
 }
 

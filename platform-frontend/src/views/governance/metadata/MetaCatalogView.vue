@@ -53,6 +53,12 @@ const treeLoading = ref(false)
 
 const treeData = ref<CatalogTreeNode[]>([])
 const selectedNode = ref<CatalogTreeNode | null>(null)
+/** 右侧面板：空 | 数据源下表列表 | 表字段详情 */
+const rightView = ref<'empty' | 'tables' | 'columns'>('empty')
+const sourceTables = ref<CatalogTreeNode[]>([])
+const sourceTablesLoading = ref(false)
+const tableKeyword = ref('')
+const detailTable = ref<CatalogTreeNode | null>(null)
 
 const columnsLoading = ref(false)
 const columnFields = ref<ColumnField[]>([])
@@ -78,14 +84,35 @@ const inventoryBar = computed(() => {
   return `分类 ${kpi.value.categoryCount} ｜ 数据源 ${kpi.value.sourceCount} ｜ 数据表 ${kpi.value.tableCount} ｜ ${layers}`
 })
 
+const filteredSourceTables = computed(() => {
+  const kw = tableKeyword.value.trim().toLowerCase()
+  if (!kw) return sourceTables.value
+  return sourceTables.value.filter(t => {
+    const name = (t.tableName || t.label || '').toLowerCase()
+    return name.includes(kw)
+  })
+})
+
 const selectedTitle = computed(() => {
+  if (rightView.value === 'columns' && detailTable.value) {
+    return detailTable.value.tableName || detailTable.value.label
+  }
   const n = selectedNode.value
-  if (!n) return '请选择左侧数据表'
+  if (!n) return '请选择左侧数据源'
   if (n.nodeType === 'TABLE') return n.tableName || n.label
   return n.label
 })
 
 const selectedSubtitle = computed(() => {
+  if (rightView.value === 'columns' && detailTable.value) {
+    const t = detailTable.value
+    return [t.sourceName, t.dbName, t.layerCode].filter(Boolean).join(' · ')
+  }
+  if (rightView.value === 'tables' && selectedNode.value?.nodeType === 'SOURCE') {
+    const n = selectedNode.value
+    const parts = [n.dbName, n.adapterType, layerLabel(n.layerCode)].filter(Boolean)
+    return `${parts.join(' · ')} ｜ 共 ${sourceTables.value.length} 张表`
+  }
   const n = selectedNode.value
   if (!n || n.nodeType !== 'TABLE') return ''
   const parts = [n.sourceName, n.dbName, n.layerCode].filter(Boolean)
@@ -120,6 +147,7 @@ async function enrichCategoryNode(node: CategoryNode, layerCode: string): Promis
   } catch {
     sources = []
   }
+  // 数据源为叶子：表不在左侧树展示，点击后在右侧列表查看
   const sourceChildren: CatalogTreeNode[] = sources.map(s => ({
     code: `mds:${s.id}`,
     label: s.sourceName,
@@ -130,7 +158,7 @@ async function enrichCategoryNode(node: CategoryNode, layerCode: string): Promis
     sourceName: s.sourceName,
     adapterType: s.adapterType,
     dbName: s.dbName,
-    isLeaf: false,
+    isLeaf: true,
   }))
   return {
     code: `cat:${node.id}`,
@@ -182,10 +210,19 @@ function countCategories(nodes: CatalogTreeNode[]): number {
   return n
 }
 
+function resetRightPanel() {
+  rightView.value = 'empty'
+  selectedNode.value = null
+  detailTable.value = null
+  sourceTables.value = []
+  tableKeyword.value = ''
+  columnFields.value = []
+  tableMeta.value = {}
+}
+
 async function loadCatalogTree() {
   treeLoading.value = true
-  selectedNode.value = null
-  columnFields.value = []
+  resetRightPanel()
   try {
     const res = await api.get('/governance/platform/metadata/source-categories/tree', {
       params: { keyword: keyword.value.trim() || undefined },
@@ -207,40 +244,47 @@ async function loadCatalogTree() {
   }
 }
 
-async function onTreeLazyLoad(node: { data: CatalogTreeNode }, resolve: (data: CatalogTreeNode[]) => void) {
-  await loadTreeChildren(node.data, resolve)
+function mapTablesToNodes(
+  source: CatalogTreeNode,
+  tables: Array<{ tableName?: string; sourceTable?: string }>,
+): CatalogTreeNode[] {
+  return tables
+    .map(t => String(t.tableName || t.sourceTable || ''))
+    .filter(Boolean)
+    .map(name => ({
+      code: `tbl:${source.metaDataSourceId}:${name}`,
+      label: name,
+      nodeType: 'TABLE' as const,
+      metaDataSourceId: source.metaDataSourceId,
+      tableName: name,
+      sourceName: source.sourceName,
+      adapterType: source.adapterType,
+      dbName: source.dbName,
+      layerCode: source.layerCode,
+      isLeaf: true,
+    }))
 }
 
-async function loadTreeChildren(node: CatalogTreeNode, resolve: (data: CatalogTreeNode[]) => void) {
-  if (node.nodeType !== 'SOURCE' || !node.metaDataSourceId) {
-    resolve(node.children || [])
-    return
-  }
+async function loadSourceTables(node: CatalogTreeNode) {
+  if (node.nodeType !== 'SOURCE' || !node.metaDataSourceId) return
+  sourceTablesLoading.value = true
+  sourceTables.value = []
+  tableKeyword.value = ''
   try {
     const tables = (await api.get(
       `/governance/platform/metadata/collect/meta-data-sources/${node.metaDataSourceId}/tables`,
     )).data || []
-    const kw = keyword.value.trim().toLowerCase()
-    const rows = (tables as Array<{ tableName?: string; sourceTable?: string }>)
-      .map(t => String(t.tableName || t.sourceTable || ''))
-      .filter(Boolean)
-      .filter(name => !kw || name.toLowerCase().includes(kw))
-      .map(name => ({
-        code: `tbl:${node.metaDataSourceId}:${name}`,
-        label: name,
-        nodeType: 'TABLE' as const,
-        metaDataSourceId: node.metaDataSourceId,
-        tableName: name,
-        sourceName: node.sourceName,
-        adapterType: node.adapterType,
-        dbName: node.dbName,
-        layerCode: node.layerCode,
-        isLeaf: true,
-      }))
-    resolve(rows)
+    sourceTables.value = mapTablesToNodes(
+      node,
+      tables as Array<{ tableName?: string; sourceTable?: string }>,
+    )
+    rightView.value = 'tables'
   } catch {
     ElMessage.warning(`数据源「${node.label}」探表失败，请检查连接配置`)
-    resolve([])
+    sourceTables.value = []
+    rightView.value = 'tables'
+  } finally {
+    sourceTablesLoading.value = false
   }
 }
 
@@ -275,12 +319,29 @@ async function loadTableColumns(node: CatalogTreeNode) {
   }
 }
 
+function openTableDetail(row: CatalogTreeNode) {
+  detailTable.value = row
+  rightView.value = 'columns'
+  loadTableColumns(row)
+}
+
+function backToTableList() {
+  detailTable.value = null
+  columnFields.value = []
+  tableMeta.value = {}
+  rightView.value = 'tables'
+}
+
 function onTreeClick(node: CatalogTreeNode) {
   selectedNode.value = node
-  if (node.nodeType === 'TABLE') {
-    loadTableColumns(node)
+  detailTable.value = null
+  columnFields.value = []
+  tableMeta.value = {}
+  if (node.nodeType === 'SOURCE') {
+    loadSourceTables(node)
   } else {
-    columnFields.value = []
+    sourceTables.value = []
+    rightView.value = 'empty'
   }
 }
 
@@ -343,16 +404,15 @@ onMounted(() => loadCatalogTree())
         <aside class="mcatalog-tree-panel" v-loading="treeLoading">
           <div class="mcatalog-panel-head">
             <span class="mcatalog-panel-head__title">目录检索</span>
-            <span class="mcatalog-panel-head__sub">分类 · 数据源 · 表</span>
+            <span class="mcatalog-panel-head__sub">分类 · 数据源</span>
           </div>
           <el-tree
             v-if="treeData.length"
             :data="treeData"
             node-key="code"
             highlight-current
+            default-expand-all
             :props="{ label: 'label', children: 'children', isLeaf: 'isLeaf' }"
-            lazy
-            :load="onTreeLazyLoad"
             class="mcatalog-tree"
             @node-click="onTreeClick"
           >
@@ -382,16 +442,58 @@ onMounted(() => loadCatalogTree())
               <span class="mcatalog-panel-head__title">{{ selectedTitle }}</span>
               <div v-if="selectedSubtitle" class="mcatalog-panel-head__sub">{{ selectedSubtitle }}</div>
             </div>
-            <div v-if="selectedNode?.nodeType === 'TABLE'" class="mcatalog-panel-head__meta">
-              <el-tag v-if="selectedNode.layerCode" size="small">{{ layerLabel(selectedNode.layerCode) }}</el-tag>
-              <el-tag v-if="tableMeta.rowCount != null" size="small" type="info">约 {{ tableMeta.rowCount }} 行</el-tag>
-              <el-tag v-if="tableMeta.primaryKeys?.length" size="small" type="warning">
-                主键 {{ tableMeta.primaryKeys.join(', ') }}
-              </el-tag>
+            <div class="mcatalog-panel-head__meta">
+              <el-button
+                v-if="rightView === 'columns'"
+                size="small"
+                @click="backToTableList"
+              >
+                返回表列表
+              </el-button>
+              <template v-if="rightView === 'columns' && detailTable">
+                <el-tag v-if="detailTable.layerCode" size="small">{{ layerLabel(detailTable.layerCode) }}</el-tag>
+                <el-tag v-if="tableMeta.rowCount != null" size="small" type="info">约 {{ tableMeta.rowCount }} 行</el-tag>
+                <el-tag v-if="tableMeta.primaryKeys?.length" size="small" type="warning">
+                  主键 {{ tableMeta.primaryKeys.join(', ') }}
+                </el-tag>
+              </template>
             </div>
           </div>
 
-          <div v-if="selectedNode?.nodeType === 'TABLE'" v-loading="columnsLoading" class="mcatalog-field-body">
+          <!-- 数据源下：表列表 -->
+          <div v-if="rightView === 'tables'" v-loading="sourceTablesLoading" class="mcatalog-field-body">
+            <el-form inline class="portal-inline-form portal-inline-form--sm mcatalog-table-filter">
+              <el-form-item label="表名" class="portal-field-lg">
+                <el-input
+                  v-model="tableKeyword"
+                  clearable
+                  placeholder="搜索表名"
+                  size="small"
+                />
+              </el-form-item>
+            </el-form>
+            <el-table :data="filteredSourceTables" stripe class="mcatalog-field-table" empty-text="该数据源下暂无数据表">
+              <el-table-column type="index" label="序号" width="64" align="center" />
+              <el-table-column prop="tableName" label="表名" min-width="200" show-overflow-tooltip />
+              <el-table-column label="数据源" min-width="140" show-overflow-tooltip>
+                <template #default="{ row }">{{ row.sourceName || '—' }}</template>
+              </el-table-column>
+              <el-table-column label="库名" min-width="120" show-overflow-tooltip>
+                <template #default="{ row }">{{ row.dbName || '—' }}</template>
+              </el-table-column>
+              <el-table-column label="分层" width="100" align="center">
+                <template #default="{ row }">{{ layerLabel(row.layerCode) }}</template>
+              </el-table-column>
+              <el-table-column label="操作" width="100" align="center" fixed="right">
+                <template #default="{ row }">
+                  <el-button type="primary" link @click="openTableDetail(row)">详情</el-button>
+                </template>
+              </el-table-column>
+            </el-table>
+          </div>
+
+          <!-- 表字段详情 -->
+          <div v-else-if="rightView === 'columns'" v-loading="columnsLoading" class="mcatalog-field-body">
             <el-table :data="columnFields" stripe class="mcatalog-field-table" empty-text="暂无字段">
               <el-table-column prop="code" label="字段编码" min-width="140" show-overflow-tooltip />
               <el-table-column prop="name" label="字段名称" min-width="140" show-overflow-tooltip />
@@ -415,7 +517,7 @@ onMounted(() => loadCatalogTree())
           </div>
 
           <div v-else class="mcatalog-field-empty">
-            <el-empty description="在左侧展开数据源并选择数据表，此处展示字段结构" :image-size="96" />
+            <el-empty description="在左侧选择数据源，此处展示该源下的数据表列表" :image-size="96" />
           </div>
         </section>
       </div>
@@ -556,6 +658,11 @@ onMounted(() => loadCatalogTree())
 .mcatalog-field-body {
   flex: 1;
   padding: 12px 16px 16px;
+  overflow: auto;
+}
+
+.mcatalog-table-filter {
+  margin-bottom: 8px;
 }
 
 .mcatalog-field-table {

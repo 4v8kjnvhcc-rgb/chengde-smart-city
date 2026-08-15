@@ -86,8 +86,9 @@ public class QualitySchemeController {
     @PostMapping("/{id}/start")
     @PreAuthorize("isAuthenticated()")
     public ApiResponse<Map<String, Object>> start(@AuthenticationPrincipal UserPrincipal principal,
-                                                  @PathVariable Long id) {
-        return ApiResponse.ok(service.start(principal, id));
+                                                  @PathVariable Long id,
+                                                  @RequestBody(required = false) Map<String, Object> body) {
+        return ApiResponse.ok(service.start(principal, id, body));
     }
 
     @PostMapping("/{id}/stop")
@@ -100,8 +101,9 @@ public class QualitySchemeController {
     @PostMapping("/{id}/execute")
     @PreAuthorize("isAuthenticated()")
     public ApiResponse<Map<String, Object>> execute(@AuthenticationPrincipal UserPrincipal principal,
-                                                    @PathVariable Long id) {
-        return ApiResponse.ok(service.execute(principal, id));
+                                                    @PathVariable Long id,
+                                                    @RequestBody(required = false) Map<String, Object> body) {
+        return ApiResponse.ok(service.execute(principal, id, body));
     }
 
     @GetMapping("/{id}/logs")

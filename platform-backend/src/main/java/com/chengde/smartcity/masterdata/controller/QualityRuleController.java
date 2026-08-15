@@ -81,4 +81,11 @@ public class QualityRuleController {
         service.delete(principal, id);
         return ApiResponse.ok(null);
     }
+
+    /** 对齐标准规则目录（补齐 11 类、清理临时规则、重排排序） */
+    @PostMapping("/align-standard")
+    @PreAuthorize("isAuthenticated()")
+    public ApiResponse<Map<String, Object>> alignStandard(@AuthenticationPrincipal UserPrincipal principal) {
+        return ApiResponse.ok(service.alignStandardCatalog(principal));
+    }
 }

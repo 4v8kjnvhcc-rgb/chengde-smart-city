@@ -7,6 +7,7 @@ import { statusLabel } from '@/utils/status-label'
 import ExecCycleSelect, { type ExecCycleOption } from '@/views/system/ExecCycleSelect.vue'
 import MetaDataSourcePickerDialog from '@/components/common/MetaDataSourcePickerDialog.vue'
 import { connectionKeyOf, type MetaBindSource } from '@/utils/meta-datasource-conn'
+import { fetchDataSourceTableNames } from '@/utils/layer-tables'
 
 const props = defineProps<{
   domain: string
@@ -132,6 +133,23 @@ const tableNamePattern = /^ind_[a-z0-9]+(_[a-z0-9]+)*$/
 
 /** 指标组信息弹窗（新增/编辑共用，对齐原型：表单 + 新增指标 + 指标表） */
 const groupDialogVisible = ref(false)
+const indTableOptions = ref<string[]>([])
+const indTablesLoading = ref(false)
+
+async function loadIndTableOptions() {
+  indTablesLoading.value = true
+  try {
+    const [dws, ads] = await Promise.all([
+      fetchDataSourceTableNames(-3),
+      fetchDataSourceTableNames(-4),
+    ])
+    indTableOptions.value = Array.from(new Set([...dws, ...ads])).sort((a, b) => a.localeCompare(b))
+  } catch {
+    indTableOptions.value = []
+  } finally {
+    indTablesLoading.value = false
+  }
+}
 
 const detailRules: FormRules = {
   groupName: [{ required: true, message: '请输入指标组名称', trigger: 'blur' }],
@@ -442,11 +460,13 @@ async function openCreate() {
   detail.description = ''
   detailIndicators.value = []
   groupDialogVisible.value = true
+  void loadIndTableOptions()
 }
 
 async function openDetail(row: GroupRow) {
   detailLoading.value = true
   groupDialogVisible.value = true
+  void loadIndTableOptions()
   try {
     const [gRes, iRes] = await Promise.all([
       api.get(`/analytics/domain/indicator-groups/${row.id}`),
@@ -897,10 +917,18 @@ onMounted(async () => {
             </el-col>
             <el-col :span="12">
               <el-form-item label="指标组结果表名" prop="targetTable" required>
-                <el-input
+                <el-select
                   v-model="detail.targetTable"
-                  placeholder="以 ind_ 开头，支持小写字母、数字、下划线，不能以数字结尾"
-                />
+                  filterable
+                  allow-create
+                  default-first-option
+                  clearable
+                  :loading="indTablesLoading"
+                  placeholder="输入表名筛选，或以 ind_ 开头新建"
+                  style="width: 100%"
+                >
+                  <el-option v-for="t in indTableOptions" :key="t" :label="t" :value="t" />
+                </el-select>
               </el-form-item>
             </el-col>
             <el-col :span="12">

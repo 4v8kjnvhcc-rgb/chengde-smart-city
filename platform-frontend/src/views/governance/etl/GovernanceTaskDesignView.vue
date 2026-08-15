@@ -221,6 +221,8 @@ const inputTableMeta = ref<Array<{ sourceTable: string; columns: string[] }>>([]
 const inputTableOptions = computed(() => inputTableMeta.value.map((t) => t.sourceTable))
 const loadingInputTables = ref(false)
 const probedConnection = ref('')
+const outputTableOptions = ref<string[]>([])
+const loadingOutputTables = ref(false)
 
 const PLATFORM_LAYER_IDS: Record<string, number> = {
   smart_city_ods: -1,
@@ -285,6 +287,47 @@ async function loadInputTables(connection?: string) {
     probedConnection.value = conn
   } finally {
     loadingInputTables.value = false
+  }
+}
+
+async function fetchTableNamesForConnection(conn: string): Promise<string[]> {
+  const c = String(conn || '').trim()
+  if (!c) return []
+  if (c.startsWith('meta:')) {
+    const metaId = Number(c.slice(5))
+    if (!Number.isFinite(metaId) || metaId <= 0) return []
+    const rows = (await api.get(`/governance/platform/metadata/collect/meta-data-sources/${metaId}/tables`)).data || []
+    return (rows as Array<Record<string, unknown>>)
+      .map((r) => String(r.sourceTable || r.tableName || r.name || '').trim())
+      .filter(Boolean)
+      .sort((a, b) => a.localeCompare(b))
+  }
+  let sourceId: number | null = PLATFORM_LAYER_IDS[c] ?? null
+  if (sourceId == null && c.startsWith('ds:')) {
+    const n = Number(c.slice(3))
+    sourceId = Number.isFinite(n) ? n : null
+  }
+  if (sourceId == null) return []
+  const rows = (await api.get(`/governance/platform/metadata/collect/data-sources/${sourceId}/tables`)).data || []
+  return (rows as Array<Record<string, unknown>>)
+    .map((r) => String(r.sourceTable || r.tableName || r.name || '').trim())
+    .filter(Boolean)
+    .sort((a, b) => a.localeCompare(b))
+}
+
+async function loadOutputTables(connection?: string) {
+  const conn = String(connection || propForm.outputConnection || defaultOutputConnection()).trim()
+  if (!conn) {
+    outputTableOptions.value = []
+    return
+  }
+  loadingOutputTables.value = true
+  try {
+    outputTableOptions.value = await fetchTableNamesForConnection(conn)
+  } catch {
+    outputTableOptions.value = []
+  } finally {
+    loadingOutputTables.value = false
   }
 }
 
@@ -838,6 +881,7 @@ function onOutputConnectionChange() {
   if (!propForm.outputTable || /^(ods_|dwd_|dws_|ads_)/i.test(propForm.outputTable)) {
     suggestOutputTable(upstreamSourceTableName.value)
   }
+  void loadOutputTables(propForm.outputConnection)
 }
 
 let syncingFromNode = false
@@ -982,6 +1026,12 @@ function syncPropFromNode(n: Node | null) {
       }
     })
   }
+  if (type === 'DB_LOOKUP' && propForm.connection) {
+    void loadInputTables(propForm.connection)
+  }
+  if ((type === 'OUTPUT' || type === 'INSERT_UPDATE') && (propForm.outputConnection || defaultOutputConnection())) {
+    void loadOutputTables(propForm.outputConnection || defaultOutputConnection())
+  }
 }
 
 watch(selectedNode, (n) => {
@@ -991,13 +1041,19 @@ watch(selectedNode, (n) => {
 })
 
 watch(
-  () => [selectedNodeType.value, propForm.inputMode] as const,
-  ([type, mode]) => {
-    if (type === 'INPUT' && (mode === 'TABLE' || mode === 'SQL') && propForm.connection) {
-      void loadInputTables(propForm.connection)
+  () => [selectedNodeType.value, propForm.inputMode, propForm.connection, propForm.outputConnection] as const,
+  ([type, mode, conn, outConn]) => {
+    if (type === 'INPUT' && (mode === 'TABLE' || mode === 'SQL') && conn) {
+      void loadInputTables(conn)
     }
     if (type === 'INPUT' && mode === 'SAMPLE') {
       void resolveUpstreamFields()
+    }
+    if (type === 'DB_LOOKUP' && conn) {
+      void loadInputTables(conn)
+    }
+    if ((type === 'OUTPUT' || type === 'INSERT_UPDATE') && outConn) {
+      void loadOutputTables(outConn)
     }
   },
 )
@@ -1587,6 +1643,14 @@ async function confirmVarRun() {
 }
 
 function goEtlSub(sub: string) {
+  if (isFusionTask.value || String(route.query.tab || '') === 'model') {
+    const q: Record<string, unknown> = { ...route.query, tab: 'model', mSub: 'components' }
+    delete q.etlView
+    delete q.taskId
+    delete q.execTab
+    router.replace({ query: q as Record<string, string> })
+    return
+  }
   const q: Record<string, unknown> = { ...route.query, tab: 'etl', etlSub: sub }
   delete q.etlView
   delete q.taskId
@@ -1594,10 +1658,17 @@ function goEtlSub(sub: string) {
 }
 
 function backToList() {
-  const q: Record<string, any> = { ...route.query, tab: 'etl' }
+  const q: Record<string, any> = { ...route.query }
   delete q.etlView
   delete q.taskId
-  if (!q.etlSub) q.etlSub = 'task-mgmt'
+  if (isFusionTask.value || String(route.query.tab || '') === 'model') {
+    // 融合「数据清洗」画布：回到融合清洗列表，而非数据治理任务列表
+    q.tab = 'model'
+    if (!q.mSub || q.mSub === 'warehouse') q.mSub = 'clean'
+  } else {
+    q.tab = 'etl'
+    if (!q.etlSub) q.etlSub = 'task-mgmt'
+  }
   router.replace({ query: q })
 }
 
@@ -1792,7 +1863,7 @@ onMounted(async () => {
                     clearable
                     :disabled="!propForm.connection"
                     :loading="loadingInputTables"
-                    :placeholder="propForm.connection ? (loadingInputTables ? '正在加载表…' : '搜索或选择表名') : '请先选择数据源'"
+                    :placeholder="propForm.connection ? (loadingInputTables ? '正在加载表…' : '输入表名筛选，或选择/新建') : '请先选择数据源'"
                     style="width:100%"
                     @change="onInputTableChange"
                   >
@@ -2279,7 +2350,21 @@ onMounted(async () => {
                   />
                 </el-select>
               </el-form-item>
-              <el-form-item label="表名"><el-input v-model="propForm.table" /></el-form-item>
+              <el-form-item label="表名">
+                <el-select
+                  v-model="propForm.table"
+                  filterable
+                  allow-create
+                  default-first-option
+                  clearable
+                  :disabled="!propForm.connection"
+                  :loading="loadingInputTables"
+                  :placeholder="propForm.connection ? (loadingInputTables ? '正在加载表…' : '输入表名筛选，或选择/新建') : '请先选择数据源'"
+                  style="width:100%"
+                >
+                  <el-option v-for="t in inputTableOptions" :key="t" :label="t" :value="t" />
+                </el-select>
+              </el-form-item>
               <el-form-item label="流字段(键)">
                 <GovFieldSelect v-model="propForm.keyField" :fields="upstreamFields" :allow-custom="allowCustomField" />
               </el-form-item>
@@ -2331,7 +2416,18 @@ onMounted(async () => {
               </el-form-item>
               <el-form-item label="目标表名">
                 <div class="output-table-row">
-                  <el-input v-model="propForm.outputTable" placeholder="dwd_源表名" />
+                  <el-select
+                    v-model="propForm.outputTable"
+                    filterable
+                    allow-create
+                    default-first-option
+                    clearable
+                    :loading="loadingOutputTables"
+                    :placeholder="loadingOutputTables ? '正在加载表…' : '输入表名筛选，或选择/新建'"
+                    style="flex:1;min-width:0"
+                  >
+                    <el-option v-for="t in outputTableOptions" :key="t" :label="t" :value="t" />
+                  </el-select>
                   <el-button size="small" @click="suggestOutputTable(upstreamSourceTableName)">建议表名</el-button>
                 </div>
               </el-form-item>
@@ -2472,8 +2568,10 @@ onMounted(async () => {
   width: 100%;
   align-items: center;
 }
-.output-table-row .el-input {
+.output-table-row .el-input,
+.output-table-row .el-select {
   flex: 1;
+  min-width: 0;
 }
 .conn-pick {
   display: flex;

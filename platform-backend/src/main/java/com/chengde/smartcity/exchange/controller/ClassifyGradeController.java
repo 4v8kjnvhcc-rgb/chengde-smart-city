@@ -47,6 +47,13 @@ public class ClassifyGradeController {
         return ApiResponse.ok(service.saveLevel(body));
     }
 
+    @DeleteMapping("/levels/{id}")
+    @PreAuthorize("hasRole('SYSTEM_ADMIN') or hasAuthority('hub:ingestion:collect:asset')")
+    public ApiResponse<Void> deleteLevel(@PathVariable Long id) {
+        service.deleteLevel(id);
+        return ApiResponse.ok(null);
+    }
+
     @GetMapping("/categories")
     @PreAuthorize("isAuthenticated()")
     public ApiResponse<List<IngClsCategory>> categories(@RequestParam(required = false) String dimType) {
@@ -80,6 +87,14 @@ public class ClassifyGradeController {
     public ApiResponse<Long> saveMark(@AuthenticationPrincipal UserPrincipal principal,
                                       @RequestBody Map<String, Object> body) {
         return ApiResponse.ok(service.saveMark(principal, body));
+    }
+
+    @DeleteMapping("/marks/{id}")
+    @PreAuthorize("hasRole('SYSTEM_ADMIN') or hasAuthority('hub:ingestion:collect:asset')")
+    public ApiResponse<Void> deleteMark(@AuthenticationPrincipal UserPrincipal principal,
+                                        @PathVariable Long id) {
+        service.deleteMark(principal, id);
+        return ApiResponse.ok(null);
     }
 
     @PostMapping("/marks/batch")

@@ -530,7 +530,7 @@ onMounted(reload)
           </el-select>
         </el-form-item>
         <el-form-item label="数据表">
-          <el-select v-model="linkForm.tableId" filterable clearable style="width:100%" @change="onLinkTableChange">
+          <el-select v-model="linkForm.tableId" filterable clearable placeholder="输入表名筛选" style="width:100%" @change="onLinkTableChange">
             <el-option v-for="t in linkTables" :key="t.id" :label="t.tableName" :value="t.id" />
           </el-select>
         </el-form-item>

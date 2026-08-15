@@ -479,15 +479,7 @@ onUnmounted(() => {
           </el-form-item>
         </el-form>
         <div class="mm-toolbar__right">
-          <el-tag :type="omHealthy ? 'success' : 'info'" size="small">
-            OpenMetadata {{ $statusLabel(omHealthy ? 'UP' : 'DOWN') }}
-          </el-tag>
-          <el-tag :type="dsHealthy ? 'success' : 'info'" size="small">
-            DolphinScheduler {{ $statusLabel(dsHealthy ? 'UP' : 'DOWN') }}
-          </el-tag>
-          <el-switch v-model="autoRefresh" inline-prompt active-text="实时" inactive-text="暂停" />
           <el-button size="small" @click="onSearch">刷新</el-button>
-          <span v-if="refreshedAt" class="mm-refreshed">更新于 {{ formatTime(refreshedAt) }}</span>
         </div>
       </div>
 

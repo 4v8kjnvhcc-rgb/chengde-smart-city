@@ -8,6 +8,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import PageCard from '@/components/common/PageCard.vue'
 import { statusLabel, statusTagType } from '@/utils/status-label'
 import { ingestionApi, type Channel } from '../useIngestionHub'
+import { fetchDataSourceTableNames } from '@/utils/layer-tables'
 
 export interface ConfigField {
   key: string
@@ -38,6 +39,8 @@ const editingId = ref<number | undefined>()
 const channelName = ref('')
 const channelForm = reactive<Record<string, string>>({})
 const queryKeyword = ref('')
+const tableOptions = ref<string[]>([])
+const tablesLoading = ref(false)
 
 const isFtp = computed(() => props.channelType === 'FTP')
 const isLocal = computed(() => props.channelType === 'LOCAL')
@@ -122,11 +125,25 @@ function openCreate() {
   resetForm()
   channelName.value = `${props.title}-${new Date().toISOString().slice(0, 10)}`
   dialogVisible.value = true
+  void loadTableOptionsIfNeeded()
 }
 
 function openEdit(row: Channel) {
   resetForm(row)
   dialogVisible.value = true
+  void loadTableOptionsIfNeeded()
+}
+
+async function loadTableOptionsIfNeeded() {
+  if (!props.configFields.some((f) => f.key === 'targetTable' || f.key === 'sourceTable')) return
+  tablesLoading.value = true
+  try {
+    tableOptions.value = await fetchDataSourceTableNames(-1)
+  } catch {
+    tableOptions.value = []
+  } finally {
+    tablesLoading.value = false
+  }
 }
 
 function validateForm(): boolean {
@@ -323,7 +340,21 @@ onMounted(reload)
           :label="f.label"
           :required="!!f.required || (isFtp && f.key === 'host') || (isLocal && f.key === 'localPath')"
         >
+          <el-select
+            v-if="f.key === 'targetTable' || f.key === 'sourceTable'"
+            v-model="channelForm[f.key]"
+            filterable
+            allow-create
+            default-first-option
+            clearable
+            :loading="tablesLoading"
+            :placeholder="f.hint || '输入表名筛选，或选择/新建'"
+            style="width: 100%"
+          >
+            <el-option v-for="t in tableOptions" :key="t" :label="t" :value="t" />
+          </el-select>
           <el-input
+            v-else
             v-model="channelForm[f.key]"
             :type="f.secret ? 'password' : 'text'"
             :show-password="!!f.secret"

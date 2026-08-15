@@ -106,4 +106,15 @@ public class QualityModelController {
         service.deleteRule(principal, id, ruleId);
         return ApiResponse.ok(null);
     }
+
+    /** 一键清除某字段下绑定的全部模型规则 */
+    @PostMapping("/{id}/rules/clear-by-field")
+    @PreAuthorize("isAuthenticated()")
+    public ApiResponse<Map<String, Object>> clearRulesByField(@AuthenticationPrincipal UserPrincipal principal,
+                                                              @PathVariable Long id,
+                                                              @RequestBody Map<String, Object> body) {
+        Long modelTableId = body.get("modelTableId") == null ? null : Long.valueOf(String.valueOf(body.get("modelTableId")));
+        String fieldName = body.get("fieldName") == null ? null : String.valueOf(body.get("fieldName"));
+        return ApiResponse.ok(service.clearRulesByField(principal, id, modelTableId, fieldName));
+    }
 }

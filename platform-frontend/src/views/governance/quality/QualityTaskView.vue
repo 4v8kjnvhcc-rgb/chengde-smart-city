@@ -387,7 +387,7 @@ onMounted(loadTasks)
             allow-create
             default-first-option
             :loading="tablesLoading"
-            placeholder="从当前来源库选择"
+            placeholder="输入表名筛选，或选择/新建"
             style="width: 100%"
             @change="onTablePick"
           >

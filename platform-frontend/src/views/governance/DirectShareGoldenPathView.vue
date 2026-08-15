@@ -118,7 +118,7 @@ onMounted(async () => {
     <PageCard title="直通共享黄金路径（多表）">
       <el-form inline class="portal-inline-form portal-inline-form--block">
         <el-form-item label="汇聚表" class="portal-field-xl">
-          <el-select v-model="tableId" filterable placeholder="选择已汇聚表">
+          <el-select v-model="tableId" filterable placeholder="输入表名筛选">
             <el-option
               v-for="t in eligible"
               :key="t.tableId"

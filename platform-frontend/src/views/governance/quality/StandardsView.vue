@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import { onMounted, reactive, ref, watch } from 'vue'
+import { useRoute, useRouter } from 'vue-router'
 import api from '@/api/http'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import PageCard from '@/components/common/PageCard.vue'
@@ -7,6 +8,17 @@ import PortalPagination from '@/components/common/PortalPagination.vue'
 import { useClientPager } from '@/composables/useClientPager'
 import { statusLabel, statusTagType } from '@/utils/status-label'
 import { ingestionApi, type DataSource } from '@/views/exchange/ingestion/useIngestionHub'
+import { fetchDataSourceTableNames } from '@/utils/layer-tables'
+
+const props = withDefaults(defineProps<{
+  /** 侧栏深链：file / element / code / naming */
+  initialTab?: string
+}>(), {
+  initialTab: 'element',
+})
+
+const route = useRoute()
+const router = useRouter()
 
 interface StandardItem {
   id: number
@@ -25,6 +37,7 @@ interface StandardItem {
   versionNo?: number
   publishedBy?: string
   publishedAt?: string
+  standardRef?: string
 }
 
 interface VersionRow {
@@ -67,7 +80,36 @@ interface MappingRow {
   remark?: string
 }
 
-const activeTab = ref('element')
+const TAB_META: Record<string, { title: string; desc: string }> = {
+  file: {
+    title: '标准文件管理',
+    desc: '管理基础信息编码、库表设计、接口与共享等规范文件，形成可追溯的标准基线。',
+  },
+  element: {
+    title: '信息数据元规范',
+    desc: '一处定义、多处复用：维护数据类型、格式、值域与业务定义，支持发布定版与字段对标。',
+  },
+  code: {
+    title: '数据编码规范',
+    desc: '统一国家/行业码表，支持手工维护、JSON 导入导出与从业务字典在线拉取。',
+  },
+  naming: {
+    title: '命名规范',
+    desc: '表、脚本、工作流与任务命名规则校验，保障分层库与任务命名体系一致。',
+  },
+}
+
+const FILE_CATEGORIES = [
+  '基础信息编码规范',
+  '数据库设计与运行管理规范',
+  '信息接口管理规范',
+  '数据共享接口规范',
+  '信息数据元规范',
+  '数据仓库设计规范',
+  '其它',
+]
+
+const activeTab = ref(normalizeTab(props.initialTab))
 const items = ref<StandardItem[]>([])
 const {
   page: itemPage,
@@ -101,6 +143,26 @@ const versionDetail = ref('')
 const currentItemId = ref<number | null>(null)
 const currentItemName = ref('')
 
+// ---- file ----
+const fileRows = ref<StandardItem[]>([])
+const {
+  page: filePage,
+  pageSize: filePageSize,
+  paged: pagedFileRows,
+  total: fileTotal,
+  resetPage: resetFilePage,
+} = useClientPager(fileRows)
+const fileLoading = ref(false)
+const fileQuery = reactive({ keyword: '', category: '', publishStatus: '' })
+const fileForm = reactive({
+  itemCode: '',
+  itemName: '',
+  category: '基础信息编码规范',
+  referenceStandard: '',
+  businessDefinition: '',
+})
+const fileEditId = ref<number | null>(null)
+
 // ---- codebook ----
 const codeItems = ref<StandardItem[]>([])
 const selectedCodeItemId = ref<number | undefined>()
@@ -119,6 +181,10 @@ const importJson = ref('[{"codeValue":"01","codeName":"示例"}]')
 const dictForm = reactive({ datasourceId: undefined as number | undefined, table: '', codeColumn: 'code', nameColumn: 'name', descColumn: '' })
 const dataSources = ref<DataSource[]>([])
 const fromDictVisible = ref(false)
+const dictTableOptions = ref<string[]>([])
+const dictTablesLoading = ref(false)
+const mappingTableOptions = ref<string[]>([])
+const mappingTablesLoading = ref(false)
 
 // ---- naming ----
 const namingRows = ref<NamingRow[]>([])
@@ -152,6 +218,37 @@ const mappingForm = reactive({
   remark: '',
 })
 
+function normalizeTab(t?: string) {
+  const s = String(t || 'element')
+  return ['file', 'element', 'code', 'naming'].includes(s) ? s : 'element'
+}
+
+function syncTabToRoute(tab: string) {
+  // 汇聚入口：用 module=quality.standards.*；治理入口：用 qSub=standards.*
+  const onIngestion = String(route.path || '').includes('/ingestion')
+    || String(route.query.system || '') === 'collect'
+  if (onIngestion) {
+    const q: Record<string, string> = {}
+    for (const [k, v] of Object.entries(route.query)) {
+      if (v == null || k === 'module' || k === 'tab' || k === 'qSub') continue
+      q[k] = Array.isArray(v) ? String(v[0]) : String(v)
+    }
+    q.system = 'collect'
+    q.module = `quality.standards.${tab}`
+    router.replace({ query: q })
+    return
+  }
+  const leaf = `standards.${tab}`
+  const q: Record<string, string> = {}
+  for (const [k, v] of Object.entries(route.query)) {
+    if (v == null || k === 'qSub') continue
+    q[k] = Array.isArray(v) ? String(v[0]) : String(v)
+  }
+  q.tab = 'quality'
+  q.qSub = leaf
+  router.replace({ query: q })
+}
+
 async function load() {
   loading.value = true
   try {
@@ -169,6 +266,94 @@ async function load() {
   } finally {
     loading.value = false
   }
+}
+
+async function loadFiles() {
+  fileLoading.value = true
+  try {
+    const res = await api.get('/governance/standards', {
+      params: {
+        itemType: 'FILE',
+        keyword: fileQuery.keyword || undefined,
+        publishStatus: fileQuery.publishStatus || undefined,
+      },
+    })
+    let rows: StandardItem[] = res.data || []
+    if (fileQuery.category) {
+      rows = rows.filter((r) => (r.category || '') === fileQuery.category)
+    }
+    fileRows.value = rows
+    resetFilePage()
+  } catch {
+    ElMessage.error('加载标准文件失败')
+  } finally {
+    fileLoading.value = false
+  }
+}
+
+function resetFileForm() {
+  fileEditId.value = null
+  fileForm.itemCode = ''
+  fileForm.itemName = ''
+  fileForm.category = '基础信息编码规范'
+  fileForm.referenceStandard = ''
+  fileForm.businessDefinition = ''
+}
+
+function startFileEdit(row: StandardItem) {
+  if (row.publishStatus === 'PUBLISHED') {
+    ElMessage.warning('已发布不可编辑，请先下线')
+    return
+  }
+  fileEditId.value = row.id
+  fileForm.itemCode = row.itemCode
+  fileForm.itemName = row.itemName
+  fileForm.category = row.category || '其它'
+  fileForm.referenceStandard = row.referenceStandard || row.standardRef || ''
+  fileForm.businessDefinition = row.businessDefinition || ''
+}
+
+async function saveFile() {
+  if (!fileForm.itemName.trim()) {
+    ElMessage.warning('请填写标准文件名称')
+    return
+  }
+  const body = {
+    itemType: 'FILE',
+    itemCode: fileForm.itemCode || undefined,
+    itemName: fileForm.itemName.trim(),
+    category: fileForm.category,
+    referenceStandard: fileForm.referenceStandard,
+    businessDefinition: fileForm.businessDefinition,
+  }
+  if (fileEditId.value) {
+    await api.put(`/governance/standards/${fileEditId.value}`, body)
+    ElMessage.success('已保存')
+  } else {
+    await api.post('/governance/standards', body)
+    ElMessage.success('已新建标准文件')
+  }
+  resetFileForm()
+  await loadFiles()
+}
+
+async function publishFile(id: number) {
+  await api.post(`/governance/standards/${id}/publish`)
+  ElMessage.success('已发布定版')
+  await loadFiles()
+}
+
+async function offlineFile(id: number) {
+  await api.post(`/governance/standards/${id}/offline`)
+  ElMessage.success('已下线')
+  await loadFiles()
+}
+
+async function removeFile(id: number) {
+  await ElMessageBox.confirm('确认删除该标准文件？', '提示', { type: 'warning' })
+  await api.delete(`/governance/standards/${id}`)
+  ElMessage.success('已删除')
+  await loadFiles()
 }
 
 function onReset() {
@@ -350,7 +535,40 @@ async function openFromDict() {
     } catch { /* ignore */ }
   }
   fromDictVisible.value = true
+  void loadDictTables()
 }
+
+async function loadDictTables() {
+  dictTablesLoading.value = true
+  try {
+    const sid = dictForm.datasourceId != null ? Number(dictForm.datasourceId) : -1
+    dictTableOptions.value = await fetchDataSourceTableNames(sid)
+  } catch {
+    dictTableOptions.value = []
+  } finally {
+    dictTablesLoading.value = false
+  }
+}
+
+async function loadMappingTables() {
+  mappingTablesLoading.value = true
+  try {
+    mappingTableOptions.value = await fetchDataSourceTableNames(-1)
+  } catch {
+    mappingTableOptions.value = []
+  } finally {
+    mappingTablesLoading.value = false
+  }
+}
+
+watch(() => dictForm.datasourceId, () => {
+  dictForm.table = ''
+  if (fromDictVisible.value) void loadDictTables()
+})
+
+watch(() => mappingDialog.value, (v) => {
+  if (v) void loadMappingTables()
+})
 
 async function doFromDict() {
   if (!selectedCodeItemId.value || !dictForm.table) return
@@ -437,18 +655,114 @@ async function removeMapping(id: number) {
 
 watch(selectedCodeItemId, () => { loadCodebook() })
 watch(activeTab, (t) => {
+  if (t === 'element') void load()
+  if (t === 'file') void loadFiles()
   if (t === 'code') loadCodeItems().then(loadCodebook)
   if (t === 'naming') loadNaming()
 })
+watch(
+  () => props.initialTab,
+  (t) => {
+    const next = normalizeTab(t)
+    if (next !== activeTab.value) activeTab.value = next
+  },
+)
 
-onMounted(load)
+function onTabChange(name: string | number) {
+  const tab = normalizeTab(String(name))
+  activeTab.value = tab
+  syncTabToRoute(tab)
+}
+
+onMounted(() => {
+  activeTab.value = normalizeTab(props.initialTab)
+  if (activeTab.value === 'file') void loadFiles()
+  else if (activeTab.value === 'code') loadCodeItems().then(loadCodebook)
+  else if (activeTab.value === 'naming') loadNaming()
+  else void load()
+})
 </script>
 
 <template>
-  <div>
-    <el-tabs v-model="activeTab">
-      <el-tab-pane label="数据元" name="element">
-        <PageCard title="数据元标准">
+  <div class="std-page">
+    <PageCard :title="TAB_META[activeTab]?.title || '数据标准体系'">
+    <el-tabs :model-value="activeTab" class="std-tabs" @tab-change="onTabChange">
+      <el-tab-pane label="标准文件管理" name="file" lazy>
+        <div class="std-pane">
+          <el-form inline class="portal-inline-form portal-inline-form--block">
+            <el-form-item label="关键词" class="portal-field-md">
+              <el-input v-model="fileQuery.keyword" clearable placeholder="编码/名称" @keyup.enter="loadFiles" />
+            </el-form-item>
+            <el-form-item label="规范分类" class="portal-field-lg">
+              <el-select v-model="fileQuery.category" clearable placeholder="全部">
+                <el-option v-for="c in FILE_CATEGORIES" :key="c" :label="c" :value="c" />
+              </el-select>
+            </el-form-item>
+            <el-form-item label="发布状态" class="portal-field-sm">
+              <el-select v-model="fileQuery.publishStatus" clearable placeholder="全部">
+                <el-option label="草稿" value="DRAFT" />
+                <el-option label="已发布" value="PUBLISHED" />
+                <el-option label="已下线" value="OFFLINE" />
+              </el-select>
+            </el-form-item>
+            <el-form-item class="portal-form-actions">
+              <el-button type="primary" @click="loadFiles">查询</el-button>
+            </el-form-item>
+          </el-form>
+
+          <el-form inline class="portal-inline-form portal-inline-form--block">
+            <el-form-item label="编码" class="portal-field-md">
+              <el-input v-model="fileForm.itemCode" :disabled="!!fileEditId" placeholder="可空自动生成" />
+            </el-form-item>
+            <el-form-item label="名称" class="portal-field-lg">
+              <el-input v-model="fileForm.itemName" placeholder="规范文件名称" />
+            </el-form-item>
+            <el-form-item label="分类" class="portal-field-lg">
+              <el-select v-model="fileForm.category">
+                <el-option v-for="c in FILE_CATEGORIES" :key="c" :label="c" :value="c" />
+              </el-select>
+            </el-form-item>
+            <el-form-item label="引用标准" class="portal-field-md">
+              <el-input v-model="fileForm.referenceStandard" placeholder="国标/行标/企标" />
+            </el-form-item>
+            <el-form-item label="说明" class="portal-field-xl">
+              <el-input v-model="fileForm.businessDefinition" placeholder="适用范围与要点" />
+            </el-form-item>
+            <el-form-item class="portal-form-actions">
+              <el-button type="primary" @click="saveFile">{{ fileEditId ? '保存' : '新建' }}</el-button>
+              <el-button v-if="fileEditId" @click="resetFileForm">取消</el-button>
+            </el-form-item>
+          </el-form>
+
+          <el-table v-loading="fileLoading" :data="pagedFileRows" stripe size="small">
+            <el-table-column prop="itemCode" label="编码" width="140" />
+            <el-table-column prop="itemName" label="名称" min-width="160" />
+            <el-table-column prop="category" label="规范分类" min-width="160" show-overflow-tooltip />
+            <el-table-column label="引用标准" min-width="120" show-overflow-tooltip>
+              <template #default="{ row }">{{ row.referenceStandard || row.standardRef || '—' }}</template>
+            </el-table-column>
+            <el-table-column label="发布状态" width="100">
+              <template #default="{ row }">
+                <el-tag :type="statusTagType(row.publishStatus)" size="small">{{ statusLabel(row.publishStatus) }}</el-tag>
+              </template>
+            </el-table-column>
+            <el-table-column prop="versionNo" label="版本" width="70" />
+            <el-table-column label="操作" width="240" fixed="right">
+              <template #default="{ row }">
+                <el-button link type="primary" @click="startFileEdit(row)">编辑</el-button>
+                <el-button v-if="row.publishStatus !== 'PUBLISHED'" link type="success" @click="publishFile(row.id)">发布</el-button>
+                <el-button v-if="row.publishStatus === 'PUBLISHED'" link @click="offlineFile(row.id)">下线</el-button>
+                <el-button link @click="openVersions(row)">版本</el-button>
+                <el-button v-if="row.publishStatus === 'DRAFT'" link type="danger" @click="removeFile(row.id)">删除</el-button>
+              </template>
+            </el-table-column>
+          </el-table>
+          <PortalPagination v-model:page="filePage" v-model:page-size="filePageSize" :total="fileTotal" />
+        </div>
+      </el-tab-pane>
+
+      <el-tab-pane label="信息数据元规范" name="element">
+        <div class="std-pane">
           <el-form inline class="portal-inline-form portal-inline-form--block">
             <el-form-item label="关键词" class="portal-field-md">
               <el-input v-model="query.keyword" clearable placeholder="编码/名称" @keyup.enter="load" />
@@ -475,6 +789,8 @@ onMounted(load)
                 <el-option label="INT" value="INT" />
                 <el-option label="DATE" value="DATE" />
                 <el-option label="DECIMAL" value="DECIMAL" />
+                <el-option label="DATETIME" value="DATETIME" />
+                <el-option label="BOOLEAN" value="BOOLEAN" />
               </el-select>
             </el-form-item>
             <el-form-item label="格式" class="portal-field-sm"><el-input v-model="form.dataFormat" /></el-form-item>
@@ -515,11 +831,11 @@ onMounted(load)
             v-model:page-size="itemPageSize"
             :total="itemTotal"
           />
-        </PageCard>
+        </div>
       </el-tab-pane>
 
-      <el-tab-pane label="编码标准" name="code" lazy>
-        <PageCard title="编码标准（码表）">
+      <el-tab-pane label="数据编码规范" name="code" lazy>
+        <div class="std-pane">
           <el-form inline class="portal-inline-form portal-inline-form--block">
             <el-form-item label="编码" class="portal-field-md"><el-input v-model="codeForm.itemCode" placeholder="可空" /></el-form-item>
             <el-form-item label="名称" class="portal-field-lg"><el-input v-model="codeForm.itemName" /></el-form-item>
@@ -569,16 +885,19 @@ onMounted(load)
             v-model:page-size="codebookPageSize"
             :total="codebookTotal"
           />
-        </PageCard>
+        </div>
       </el-tab-pane>
 
       <el-tab-pane label="命名规范" name="naming" lazy>
-        <PageCard title="命名规范">
+        <div class="std-pane">
           <el-form inline class="portal-inline-form portal-inline-form--block">
             <el-form-item label="类型" class="portal-field-sm">
               <el-select v-model="namingForm.namingType">
                 <el-option label="表" value="TABLE" />
                 <el-option label="字段" value="COLUMN" />
+                <el-option label="脚本" value="SCRIPT" />
+                <el-option label="工作流" value="WORKFLOW" />
+                <el-option label="任务" value="TASK" />
                 <el-option label="API" value="API" />
                 <el-option label="其它" value="OTHER" />
               </el-select>
@@ -626,15 +945,10 @@ onMounted(load)
             v-model:page-size="namingPageSize"
             :total="namingTotal"
           />
-        </PageCard>
-      </el-tab-pane>
-
-      <el-tab-pane label="标准文件" name="file">
-        <PageCard title="标准文件">
-          <el-empty description="标准文件管理后续迭代开放" />
-        </PageCard>
+        </div>
       </el-tab-pane>
     </el-tabs>
+    </PageCard>
 
     <el-drawer v-model="versionDrawer" :title="`版本历史 · ${currentItemName}`" size="480px">
       <el-table :data="versionRows" stripe size="small" @row-click="showVersion">
@@ -650,11 +964,31 @@ onMounted(load)
     <el-dialog v-model="fromDictVisible" title="从数据字典导入" width="520px">
       <el-form label-width="100px">
         <el-form-item label="数据源">
-          <el-select v-model="dictForm.datasourceId" clearable placeholder="空则用平台库" style="width:100%">
+          <el-select
+            v-model="dictForm.datasourceId"
+            clearable
+            filterable
+            placeholder="空则用平台库"
+            style="width:100%"
+            @change="loadDictTables"
+          >
             <el-option v-for="d in dataSources" :key="d.id" :label="d.sourceName" :value="d.id" />
           </el-select>
         </el-form-item>
-        <el-form-item label="表名"><el-input v-model="dictForm.table" /></el-form-item>
+        <el-form-item label="表名">
+          <el-select
+            v-model="dictForm.table"
+            filterable
+            allow-create
+            default-first-option
+            clearable
+            :loading="dictTablesLoading"
+            placeholder="输入表名筛选，或选择/新建"
+            style="width:100%"
+          >
+            <el-option v-for="t in dictTableOptions" :key="t" :label="t" :value="t" />
+          </el-select>
+        </el-form-item>
         <el-form-item label="码值列"><el-input v-model="dictForm.codeColumn" /></el-form-item>
         <el-form-item label="名称列"><el-input v-model="dictForm.nameColumn" /></el-form-item>
         <el-form-item label="说明列"><el-input v-model="dictForm.descColumn" placeholder="可选" /></el-form-item>
@@ -668,7 +1002,20 @@ onMounted(load)
     <el-dialog v-model="mappingDialog" :title="`对标 · ${mappingItem?.itemName || ''}`" width="720px">
       <el-form inline class="portal-inline-form portal-inline-form--block">
         <el-form-item label="来源系统" class="portal-field-md"><el-input v-model="mappingForm.sourceSystem" /></el-form-item>
-        <el-form-item label="表" class="portal-field-md"><el-input v-model="mappingForm.sourceTable" /></el-form-item>
+        <el-form-item label="表" class="portal-field-md">
+          <el-select
+            v-model="mappingForm.sourceTable"
+            filterable
+            allow-create
+            default-first-option
+            clearable
+            :loading="mappingTablesLoading"
+            placeholder="输入表名筛选"
+            style="width:100%"
+          >
+            <el-option v-for="t in mappingTableOptions" :key="t" :label="t" :value="t" />
+          </el-select>
+        </el-form-item>
         <el-form-item label="字段" class="portal-field-md"><el-input v-model="mappingForm.sourceColumn" /></el-form-item>
         <el-form-item label="状态" class="portal-field-sm">
           <el-select v-model="mappingForm.mappingStatus">
@@ -700,3 +1047,21 @@ onMounted(load)
     </el-dialog>
   </div>
 </template>
+
+<style scoped>
+.std-page {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  min-height: 0;
+}
+.std-tabs :deep(.el-tabs__header) {
+  margin-bottom: 12px;
+}
+.std-tabs :deep(.el-tabs__item.is-active) {
+  font-weight: 600;
+}
+.std-pane {
+  min-height: 0;
+}
+</style>

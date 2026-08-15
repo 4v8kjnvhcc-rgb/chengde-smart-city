@@ -1704,7 +1704,7 @@ onMounted(() => {
               <el-form-item label="目标表" class="portal-field-lg">
                 <el-select
                   v-model="partitionForm.tableName"
-                  placeholder="选择已纳管表"
+                  placeholder="输入表名筛选"
                   filterable
                   @change="onPartitionTableChange"
                 >
@@ -1779,7 +1779,7 @@ onMounted(() => {
           <el-tab-pane label="分区监控" name="monitor">
             <el-form inline class="portal-inline-form portal-inline-form--block">
               <el-form-item label="纳管表" class="portal-field-xl">
-                <el-select v-model="monitorTableId" placeholder="选择已纳管表查看分区状态" filterable>
+                <el-select v-model="monitorTableId" placeholder="输入表名筛选" filterable>
                   <el-option v-for="t in managedTables" :key="t.id" :label="t.physicalTable" :value="t.id" />
                 </el-select>
               </el-form-item>
@@ -1856,7 +1856,7 @@ onMounted(() => {
                 </el-select>
               </el-form-item>
               <el-form-item label="纳管表" class="portal-field-lg">
-                <el-select v-model="maintainForm.managedTableId" clearable filterable placeholder="未选策略时必填">
+                <el-select v-model="maintainForm.managedTableId" clearable filterable placeholder="输入表名筛选">
                   <el-option v-for="t in managedTables" :key="t.id" :label="t.physicalTable" :value="t.id" />
                 </el-select>
               </el-form-item>
@@ -1932,7 +1932,7 @@ onMounted(() => {
           <el-tab-pane label="备份恢复" name="backup">
 <el-form inline class="portal-inline-form portal-inline-form--block">
               <el-form-item label="纳管表" class="portal-field-xl">
-                <el-select v-model="backupPartitionForm.managedTableId" filterable placeholder="选择已纳管表">
+                <el-select v-model="backupPartitionForm.managedTableId" filterable placeholder="输入表名筛选">
                   <el-option v-for="t in managedTables" :key="t.id" :label="t.physicalTable" :value="t.id" />
                 </el-select>
               </el-form-item>
@@ -2029,7 +2029,7 @@ onMounted(() => {
                 </el-select>
               </el-form-item>
               <el-form-item label="纳管表" class="portal-field-lg">
-                <el-select v-model="policyForm.managedTableId" filterable clearable placeholder="关联表">
+                <el-select v-model="policyForm.managedTableId" filterable clearable placeholder="输入表名筛选">
                   <el-option v-for="t in managedTables" :key="t.id" :label="t.physicalTable" :value="t.id" />
                 </el-select>
               </el-form-item>
@@ -2302,7 +2302,7 @@ onMounted(() => {
           <el-tab-pane label="资源编目" name="register">
             <el-form inline class="portal-inline-form portal-inline-form--block">
               <el-form-item label="纳管表" class="portal-field-xl">
-                <el-select v-model="catalogForm.managedTableId" placeholder="选择已纳管表" filterable>
+                <el-select v-model="catalogForm.managedTableId" placeholder="输入表名筛选" filterable>
                   <el-option
                     v-for="t in managedTables"
                     :key="t.id"
@@ -2537,7 +2537,7 @@ onMounted(() => {
           <el-tab-pane label="数据查询与下载" name="query">
 <el-form inline class="portal-inline-form portal-inline-form--block">
               <el-form-item label="纳管表" class="portal-field-xl">
-                <el-select v-model="queryTableId" placeholder="选择已纳管表" filterable clearable>
+                <el-select v-model="queryTableId" placeholder="输入表名筛选" filterable clearable>
                   <el-option
                     v-for="t in managedTables"
                     :key="t.id"

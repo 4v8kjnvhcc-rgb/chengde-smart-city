@@ -109,7 +109,9 @@ public class LayerJdbcSupport {
     }
 
     /**
-     * 在目标库创建与源表同结构的表。同机可用 LIKE；跨机则 SHOW CREATE 后改写。
+     * 在目标库创建与源表同结构的表。
+     * 统一走 SHOW CREATE + 改写：跨机可用，并剥离 MySQL 8 专有校对序（如 utf8mb4_0900_ai_ci），
+     * 避免目标为 5.7 / 部分环境时报 Unknown collation。
      */
     public void createTableLike(String sourceDb, String sourceTable, String targetDb, String targetTable)
             throws SQLException {
@@ -117,17 +119,6 @@ public class LayerJdbcSupport {
         String tgtT = sanitizeIdent(targetTable);
         String srcD = normalizeDatabase(sourceDb);
         String tgtD = normalizeDatabase(targetDb);
-
-        if (sameInstance(srcD, tgtD)) {
-            try (Connection conn = open(tgtD); Statement st = conn.createStatement()) {
-                st.execute("CREATE DATABASE IF NOT EXISTS `" + tgtD + "`");
-                if (!tableExists(conn, tgtD, tgtT)) {
-                    st.execute("CREATE TABLE IF NOT EXISTS " + DataLayerSupport.qualify(tgtD, tgtT)
-                            + " LIKE " + DataLayerSupport.qualify(srcD, srcT));
-                }
-            }
-            return;
-        }
 
         String createSql;
         try (Connection src = open(srcD); Statement st = src.createStatement();
@@ -139,7 +130,8 @@ public class LayerJdbcSupport {
         }
         String rewritten = rewriteCreateTable(createSql, tgtT);
         try (Connection tgt = open(tgtD); Statement st = tgt.createStatement()) {
-            st.execute("CREATE DATABASE IF NOT EXISTS `" + tgtD + "`");
+            st.execute("CREATE DATABASE IF NOT EXISTS `" + tgtD
+                    + "` DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci");
             if (!tableExists(tgt, tgtD, tgtT)) {
                 st.execute(rewritten);
             }
@@ -304,6 +296,15 @@ public class LayerJdbcSupport {
                 "CREATE TABLE IF NOT EXISTS `" + newTable + "`");
         // 去掉 AUTO_INCREMENT=n 避免跨机拷贝序号冲突噪音（可选）
         sql = sql.replaceAll("(?i)\\sAUTO_INCREMENT=\\d+", "");
+        // 生产常见：源在 MySQL 8（.16 ODS/DWD），目标在 5.7/不支持 0900 的实例（.15 DWS/ADS）
+        // SHOW CREATE 会带 utf8mb4_0900_*，目标执行即 Unknown collation
+        sql = sql.replaceAll("(?i)utf8mb4_0900_ai_ci", "utf8mb4_unicode_ci");
+        sql = sql.replaceAll("(?i)utf8mb4_0900_as_ci", "utf8mb4_unicode_ci");
+        sql = sql.replaceAll("(?i)utf8mb4_0900_as_cs", "utf8mb4_bin");
+        sql = sql.replaceAll("(?i)utf8mb4_0900_bin", "utf8mb4_bin");
+        // 兜底：其它 0900 变体一律落到 unicode_ci，避免再漏一种校对序名
+        sql = sql.replaceAll("(?i)utf8mb4_0900_[a-z0-9_]+", "utf8mb4_unicode_ci");
+        sql = sql.replaceAll("(?i)utf8mb3_0900_[a-z0-9_]+", "utf8mb4_unicode_ci");
         return sql;
     }
 

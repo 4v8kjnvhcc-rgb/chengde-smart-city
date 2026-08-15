@@ -10,9 +10,11 @@ import { filterHubNavByPermissions, filterHubNavByMenuVisible, GOVERNANCE_NAV_PE
 const auth = useAuthStore()
 
 const MetadataSubsystemView = defineAsyncComponent(() => import('./metadata/MetadataSubsystemView.vue'))
+const StandardsView = defineAsyncComponent(() => import('./quality/StandardsView.vue'))
 const QualityRuleConfigView = defineAsyncComponent(() => import('./quality/QualityRuleConfigView.vue'))
 const QualityMonitorView = defineAsyncComponent(() => import('./quality/QualityMonitorView.vue'))
 const QualityAssessView = defineAsyncComponent(() => import('./quality/QualityAssessView.vue'))
+const QualityReportView = defineAsyncComponent(() => import('./quality/QualityReportView.vue'))
 const CatalogResourceView = defineAsyncComponent(() => import('./catalog/CatalogResourceView.vue'))
 const CatalogRegisterPublishView = defineAsyncComponent(() => import('./catalog/CatalogRegisterPublishView.vue'))
 const CatalogApprovalView = defineAsyncComponent(() => import('./catalog/CatalogApprovalView.vue'))
@@ -52,9 +54,20 @@ const NAV_BASE: HubNavItem[] = [
     key: 'quality',
     label: '数据质量管理系统',
     children: [
+      {
+        key: 'quality.standards',
+        label: '数据标准体系',
+        children: [
+          { key: 'quality.standards.file', label: '标准文件管理' },
+          { key: 'quality.standards.element', label: '信息数据元规范' },
+          { key: 'quality.standards.code', label: '数据编码规范' },
+          { key: 'quality.standards.naming', label: '命名规范' },
+        ],
+      },
       { key: 'quality.rule-config', label: '质量规则配置' },
       { key: 'quality.monitor', label: '数据质量监控' },
       { key: 'quality.assess', label: '数据质量评估' },
+      { key: 'quality.reports', label: '数据质量分析报告' },
     ],
   },
   {
@@ -158,14 +171,24 @@ const tab = computed(() => {
   return tabMap[mod] || mod || 'metadata'
 })
 
-const QUALITY_SUBS = ['rule-config', 'monitor', 'assess'] as const
+const QUALITY_SUBS = [
+  'standards',
+  'standards.file',
+  'standards.element',
+  'standards.code',
+  'standards.naming',
+  'rule-config',
+  'monitor',
+  'assess',
+  'reports',
+] as const
 
 function normalizeQualitySub(raw: string): string {
   const s = String(raw || 'rule-config')
-  // 旧入口兼容：标准体系/任务/报告已从侧栏移除
-  if (s === 'standards' || s === 'tasks' || s === 'task-mgmt') return 'rule-config'
-  if (s === 'reports') return 'assess'
-  if ((QUALITY_SUBS as readonly string[]).includes(s)) return s
+  // 旧任务页并入规则配置；标准体系父节点落到数据元
+  if (s === 'tasks' || s === 'task-mgmt') return 'rule-config'
+  if (s === 'standards') return 'standards.element'
+  if ((QUALITY_SUBS as readonly string[]).includes(s as typeof QUALITY_SUBS[number])) return s
   return 'rule-config'
 }
 
@@ -174,6 +197,17 @@ const qualitySub = computed(() =>
     ? normalizeQualitySub(activeNav.value.slice('quality.'.length))
     : 'rule-config',
 )
+
+const isQualityStandards = computed(() => String(qualitySub.value).startsWith('standards'))
+const standardsInitialTab = computed(() => {
+  const map: Record<string, string> = {
+    'standards.file': 'file',
+    'standards.element': 'element',
+    'standards.code': 'code',
+    'standards.naming': 'naming',
+  }
+  return map[qualitySub.value] || 'element'
+})
 const metaSection = computed(() => {
   if (!activeNav.value.startsWith('metadata.')) return 'model'
   return resolveMetaSection(activeNav.value.slice('metadata.'.length))
@@ -405,9 +439,14 @@ onMounted(() => { resolveFromRoute() })
           @monitor="openEtlMonitor"
         />
 
+        <StandardsView
+          v-else-if="tab === 'quality' && isQualityStandards"
+          :initial-tab="standardsInitialTab"
+        />
         <QualityRuleConfigView v-else-if="tab === 'quality' && qualitySub === 'rule-config'" />
         <QualityMonitorView v-else-if="tab === 'quality' && qualitySub === 'monitor'" />
         <QualityAssessView v-else-if="tab === 'quality' && qualitySub === 'assess'" />
+        <QualityReportView v-else-if="tab === 'quality' && qualitySub === 'reports'" />
 
         <FusionModelView v-else-if="tab === 'model' && modelSub === 'warehouse'" />
         <FusionCapabilityHost

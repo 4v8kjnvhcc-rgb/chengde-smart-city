@@ -81,7 +81,7 @@ const dlgTableNames = ref<string[]>([])
 const dlgCategoryKw = ref('')
 const dlgSourceKw = ref('')
 const dlgTableKw = ref('')
-const dlgCollectFilter = ref('')
+const dlgCollectFilter = ref('NOT_COLLECTED')
 const dlgMetaSources = ref<MetaDataSource[]>([])
 const dlgSourceTables = ref<SourceTable[]>([])
 const dlgTablesLoading = ref(false)
@@ -128,7 +128,7 @@ const schedTableNames = ref<string[]>([])
 const schedCategoryKw = ref('')
 const schedSourceKw = ref('')
 const schedTableKw = ref('')
-const schedCollectFilter = ref('')
+const schedCollectFilter = ref('NOT_COLLECTED')
 const schedMetaSources = ref<MetaDataSource[]>([])
 const schedSourceTables = ref<SourceTable[]>([])
 const schedTablesLoading = ref(false)
@@ -154,7 +154,27 @@ const schedFilteredTables = computed(() => {
 
 const tasks = ref<Task[]>([])
 const taskExtraMap = ref<Record<number, TaskExtra>>({})
-const taskFilter = reactive({ keyword: '', scheduleType: 'SCHEDULED' })
+const taskFilter = reactive({
+  keyword: '',
+  sourceType: '',
+  metaDataSourceId: undefined as number | undefined,
+  scheduleType: 'SCHEDULED',
+})
+
+const sourceTypeOptions = computed(() => {
+  const set = new Set<string>()
+  for (const s of allMetaSources.value) {
+    const t = (s.adapterType || '').trim()
+    if (t) set.add(t.toUpperCase())
+  }
+  return Array.from(set).sort()
+})
+
+const scheduledSourceOptions = computed(() => {
+  const st = taskFilter.sourceType.trim().toUpperCase()
+  if (!st) return allMetaSources.value
+  return allMetaSources.value.filter((s) => (s.adapterType || '').toUpperCase() === st)
+})
 const selectedTaskIds = ref<number[]>([])
 const runningTaskId = ref<number | null>(null)
 const {
@@ -184,6 +204,26 @@ function flattenTree(nodes: CategoryNode[], out: CategoryNode[] = []): CategoryN
 
 function tableNameOf(t: SourceTable) {
   return t.sourceTable || t.tableName || ''
+}
+
+function selectAllDlgTables() {
+  const names = dlgFilteredTables.value.map(tableNameOf).filter(Boolean)
+  dlgTableNames.value = Array.from(new Set([...dlgTableNames.value, ...names]))
+}
+
+function clearDlgTables() {
+  const visible = new Set(dlgFilteredTables.value.map(tableNameOf))
+  dlgTableNames.value = dlgTableNames.value.filter((n) => !visible.has(n))
+}
+
+function selectAllSchedTables() {
+  const names = schedFilteredTables.value.map(tableNameOf).filter(Boolean)
+  schedTableNames.value = Array.from(new Set([...schedTableNames.value, ...names]))
+}
+
+function clearSchedTables() {
+  const visible = new Set(schedFilteredTables.value.map(tableNameOf))
+  schedTableNames.value = schedTableNames.value.filter((n) => !visible.has(n))
 }
 
 function parseTableList(raw?: string | null): string[] {
@@ -274,7 +314,7 @@ async function loadManualTasks() {
 }
 
 async function loadScheduledTasks() {
-  const rows = (await api.get('/governance/platform/metadata/collect/tasks', {
+  let rows = (await api.get('/governance/platform/metadata/collect/tasks', {
     params: {
       scheduleType: 'SCHEDULED',
       keyword: taskFilter.keyword || undefined,
@@ -282,7 +322,7 @@ async function loadScheduledTasks() {
     },
   })).data || []
   const extra: Record<number, TaskExtra> = {}
-  tasks.value = rows.map((r: { task: Task; pendingChangeCount?: number; needMetadataPublish?: boolean; schedulePaused?: boolean; versionCount?: number }) => {
+  let tasksMapped = rows.map((r: { task: Task; pendingChangeCount?: number; needMetadataPublish?: boolean; schedulePaused?: boolean; versionCount?: number }) => {
     extra[r.task.id] = {
       pendingChangeCount: r.pendingChangeCount,
       needMetadataPublish: r.needMetadataPublish,
@@ -291,6 +331,19 @@ async function loadScheduledTasks() {
     }
     return r.task
   })
+  const st = taskFilter.sourceType.trim().toUpperCase()
+  if (st) {
+    const allowed = new Set(
+      allMetaSources.value
+        .filter((s) => (s.adapterType || '').toUpperCase() === st)
+        .map((s) => s.id),
+    )
+    tasksMapped = tasksMapped.filter((t) => t.metaDataSourceId != null && allowed.has(t.metaDataSourceId))
+  }
+  if (taskFilter.metaDataSourceId) {
+    tasksMapped = tasksMapped.filter((t) => t.metaDataSourceId === taskFilter.metaDataSourceId)
+  }
+  tasks.value = tasksMapped
   taskExtraMap.value = extra
   resetTaskPage()
 }
@@ -687,11 +740,30 @@ onMounted(async () => {
         <el-form inline class="portal-inline-form portal-inline-form--block">
           <el-form-item class="portal-form-actions">
             <el-button type="primary" @click="openCreateTaskDialog">+ 新增</el-button>
-            <el-button type="primary" plain :disabled="!selectedTaskIds.length" @click="publishTasks">发布定版</el-button>
             <el-button type="danger" plain :disabled="!selectedTaskIds.length" @click="deleteScheduledTasks">删除</el-button>
           </el-form-item>
           <el-form-item label="关键字" class="portal-field-md">
             <el-input v-model="taskFilter.keyword" placeholder="任务名称" clearable @keyup.enter="loadScheduledTasks" />
+          </el-form-item>
+          <el-form-item label="数据源类型" class="portal-field-md">
+            <el-select
+              v-model="taskFilter.sourceType"
+              clearable
+              placeholder="全部"
+              @change="taskFilter.metaDataSourceId = undefined"
+            >
+              <el-option v-for="t in sourceTypeOptions" :key="t" :label="t" :value="t" />
+            </el-select>
+          </el-form-item>
+          <el-form-item label="数据源" class="portal-field-lg">
+            <el-select v-model="taskFilter.metaDataSourceId" clearable filterable placeholder="全部">
+              <el-option
+                v-for="s in scheduledSourceOptions"
+                :key="s.id"
+                :label="s.sourceName"
+                :value="s.id"
+              />
+            </el-select>
           </el-form-item>
           <el-form-item class="portal-form-actions">
             <el-button @click="loadScheduledTasks">查询</el-button>
@@ -815,6 +887,8 @@ onMounted(async () => {
               <el-option label="已采集" value="COLLECTED" />
               <el-option label="未采集" value="NOT_COLLECTED" />
             </el-select>
+            <el-button size="small" @click="selectAllDlgTables">全选</el-button>
+            <el-button size="small" @click="clearDlgTables">取消</el-button>
           </div>
           <el-scrollbar v-loading="dlgTablesLoading" class="meta-picker-list">
             <el-empty v-if="!dlgFilteredTables.length && !dlgTablesLoading" description="暂无数据" :image-size="48" />
@@ -852,11 +926,6 @@ onMounted(async () => {
       <el-form label-width="96px" class="task-basic-form">
         <el-form-item label="任务名称" required>
           <el-input v-model="taskForm.taskName" placeholder="采集任务名称" />
-        </el-form-item>
-        <el-form-item label="执行器地址">
-          <el-select model-value="default" disabled style="max-width:360px">
-            <el-option label="默认" value="default" />
-          </el-select>
         </el-form-item>
         <el-form-item label="执行周期" required>
           <ExecCycleSelect v-model="taskForm.cronExpr" :allow-custom="false" style="max-width:420px" />
@@ -909,6 +978,8 @@ onMounted(async () => {
               <el-option label="已采集" value="COLLECTED" />
               <el-option label="未采集" value="NOT_COLLECTED" />
             </el-select>
+            <el-button size="small" :disabled="taskForm.scopeType !== 'TABLE'" @click="selectAllSchedTables">全选</el-button>
+            <el-button size="small" :disabled="taskForm.scopeType !== 'TABLE'" @click="clearSchedTables">取消</el-button>
           </div>
           <el-scrollbar v-loading="schedTablesLoading" class="meta-picker-list">
             <el-empty v-if="taskForm.scopeType === 'FULL'" description="整库采集无需选表" :image-size="48" />

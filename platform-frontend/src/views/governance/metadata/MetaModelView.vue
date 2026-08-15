@@ -212,7 +212,17 @@ const fieldAttrDiff = computed(() => (compare.value?.fieldAttrDiff as FieldAttrD
 const detailFields = computed(() => parseFieldDefs(detailModel.value?.contentJson))
 
 function emptyField(): MetaFieldDef {
-  return { code: '', name: '', type: 'VARCHAR', length: 64, required: false, primaryKey: false, hint: '' }
+  return {
+    code: '',
+    name: '',
+    type: 'VARCHAR',
+    length: 64,
+    required: false,
+    primaryKey: false,
+    partitionKey: false,
+    promoteFlag: false,
+    hint: '',
+  }
 }
 
 function modelStatusLabel(status: string) {
@@ -273,6 +283,8 @@ function mapProbeFields(raw: unknown[], action: 'ADD' | 'MODIFY' = 'MODIFY'): Me
       length: o.length == null ? undefined : Number(o.length),
       required: Boolean(o.required),
       primaryKey: Boolean(o.primaryKey),
+      partitionKey: Boolean(o.partitionKey),
+      promoteFlag: Boolean(o.promoteFlag),
       hint: o.hint != null ? String(o.hint) : '',
       action,
     }
@@ -620,7 +632,7 @@ watch(() => form.metaDataSourceId, async (id) => {
   form.sourceColumnName = ''
   sourceColumns.value = []
   existingTableFields.value = []
-  if (id && form.modelType === 'COLUMN') await loadSourceTables()
+  if (id && (form.modelType === 'COLUMN' || form.modelType === 'TABLE')) await loadSourceTables()
   else sourceTables.value = []
 })
 
@@ -653,7 +665,7 @@ watch(() => form.modelType, async (t) => {
   sourceColumns.value = []
   existingTableFields.value = []
   fieldRows.value = t === 'COLUMN' ? [emptyColumnField('ADD')] : [emptyField()]
-  if (t === 'COLUMN' && form.metaDataSourceId) await loadSourceTables()
+  if ((t === 'COLUMN' || t === 'TABLE') && form.metaDataSourceId) await loadSourceTables()
   else sourceTables.value = []
 })
 
@@ -1129,11 +1141,24 @@ async function doRecheck() {
           </el-col>
           <el-col v-if="form.modelType === 'TABLE'" :span="12">
             <el-form-item label="表名" required>
-              <el-input
+              <el-select
                 v-model="form.sourceTableName"
-                placeholder="在该数据源下新建表的物理表名"
+                filterable
+                allow-create
+                default-first-option
+                clearable
+                placeholder="输入表名筛选，或新建物理表名"
+                style="width:100%"
+                :loading="sourceTablesLoading"
                 :disabled="!form.metaDataSourceId || dialogMode === 'edit'"
-              />
+              >
+                <el-option
+                  v-for="t in sourceTables"
+                  :key="t.tableName"
+                  :label="t.tableComment ? `${t.tableName}（${t.tableComment}）` : t.tableName"
+                  :value="t.tableName"
+                />
+              </el-select>
             </el-form-item>
           </el-col>
           <el-col v-else :span="12">
@@ -1142,7 +1167,7 @@ async function doRecheck() {
                 v-model="form.sourceTableName"
                 filterable
                 clearable
-                placeholder="选择已有表"
+                placeholder="输入表名筛选，或选择已有表"
                 style="width:100%"
                 :loading="sourceTablesLoading"
                 :disabled="!form.metaDataSourceId"
@@ -1301,6 +1326,16 @@ async function doRecheck() {
           <el-table-column label="主键" width="70" align="center">
             <template #default="{ row }">
               <el-checkbox v-model="row.primaryKey" />
+            </template>
+          </el-table-column>
+          <el-table-column label="分区" width="70" align="center">
+            <template #default="{ row }">
+              <el-checkbox v-model="row.partitionKey" />
+            </template>
+          </el-table-column>
+          <el-table-column label="沉淀" width="70" align="center">
+            <template #default="{ row }">
+              <el-checkbox v-model="row.promoteFlag" />
             </template>
           </el-table-column>
           <el-table-column
