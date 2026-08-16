@@ -627,9 +627,6 @@ onMounted(reload)
           <el-table-column label="部门" min-width="140" show-overflow-tooltip>
             <template #default="{ row }">{{ row.boundOrgName || currentDeptName }}</template>
           </el-table-column>
-          <el-table-column label="绑定集群" min-width="140" show-overflow-tooltip>
-            <template #default="{ row }">{{ row.clusterAccountName || '—' }}</template>
-          </el-table-column>
           <el-table-column label="状态" width="110">
             <template #default="{ row }">
               <el-tag size="small">{{ registerStatusZh(row.registerStatus) }}</el-tag>

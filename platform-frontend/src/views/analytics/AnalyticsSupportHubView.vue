@@ -2,11 +2,10 @@
 import { computed, nextTick, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import api from '@/api/http'
-import { ElMessage, type ElTree } from 'element-plus'
+import { ElMessage } from 'element-plus'
 import PageCard from '@/components/common/PageCard.vue'
 import HubSideLayout, { type HubNavItem } from '@/components/common/HubSideLayout.vue'
-import { statusLabel, statusTagType } from '@/utils/status-label'
-import { leafKeysForTreeCheck } from '@/utils/menu-tree-check'
+import { statusLabel } from '@/utils/status-label'
 import OrgManage from '@/views/system/OrgManage.vue'
 import UserManage from '@/views/system/UserManage.vue'
 import RoleManage from '@/views/system/RoleManage.vue'
@@ -23,6 +22,7 @@ import ExecCycleManageView from '@/views/system/ExecCycleManageView.vue'
 import PortalNavConfigPanel from '@/views/system/PortalNavConfigPanel.vue'
 import SysDictManagePanel from '@/views/system/SysDictManagePanel.vue'
 import BuiltinAttrManageView from '@/views/system/BuiltinAttrManageView.vue'
+import AuthConfigManagePanel from '@/views/system/AuthConfigManagePanel.vue'
 import KettleView from '@/views/integration/KettleView.vue'
 import SchedulerView from '@/views/integration/SchedulerView.vue'
 import { useAuthStore } from '@/stores/auth'
@@ -85,14 +85,6 @@ const NAV_BASE: HubNavItem[] = [
       { key: 'audit.security', label: '等保安全' },
     ],
   },
-  {
-    key: 'other',
-    label: '其他',
-    children: [
-      { key: 'other.roleMenus', label: '角色菜单权限' },
-      { key: 'other.probe', label: '对接探测' },
-    ],
-  },
 ]
 
 const navItems = computed(() => {
@@ -127,7 +119,7 @@ const OLD_TAB_MAP: Record<string, string> = {
   audit: 'audit.log',
   m144: 'audit.log',
   integration: 'apps.integration',
-  m145: 'other.probe',
+  m145: 'apps.integration',
   portal: 'apps.portal',
   'apps.links': 'apps.portal',
   tasks: 'tasks',
@@ -143,46 +135,15 @@ const router = useRouter()
 const tab = ref(DEFAULT_NAV)
 let applyingRoute = false
 
-interface Integration {
-  id: number
-  integrationCode: string
-  integrationName: string
-  targetSystem: string
-  endpoint: string
-  status: string
-  lastMessage?: string
-}
-interface MenuRow {
-  id: number
-  parentId: number
-  menuName: string
-  path?: string
-  menuType: number
-  permission?: string
-  sortOrder?: number
-  children?: MenuRow[]
-}
-interface CheckNode {
-  id: number
-  label: string
-  children?: CheckNode[]
-}
-
-const probeIntegrations = ref<Integration[]>([])
 const uumIntegrations = ref<Record<string, unknown>[]>([])
 const apps = ref<Record<string, unknown>[]>([])
 const appGrants = ref<Record<string, unknown>[]>([])
-const authConfigs = ref<Record<string, unknown>[]>([])
 const systemConfigs = ref<Record<string, unknown>[]>([])
 const services = ref<Record<string, unknown>[]>([])
 const serviceStats = ref<Record<string, unknown>[]>([])
 const approvals = ref<Record<string, unknown>[]>([])
 const users = ref<Array<{ id: number; displayName: string; username: string }>>([])
 const roles = ref<Array<{ id: number; roleName: string; roleCode?: string }>>([])
-const menuCheckTree = ref<CheckNode[]>([])
-const selectedRoleId = ref<number | undefined>()
-const menuTreeRef = ref<InstanceType<typeof ElTree>>()
-const savingMenus = ref(false)
 const loading = ref(false)
 
 const appForm = reactive({ appName: '', appType: 'WEB', endpointUrl: '/' })
@@ -237,31 +198,6 @@ function syncQuery() {
   router.replace({ path: '/analytics/support', query: q })
 }
 
-function buildCheckTree(rows: MenuRow[]): CheckNode[] {
-  const map = new Map<number, CheckNode>()
-  const roots: CheckNode[] = []
-  for (const r of rows) {
-    const id = Number(r.id)
-    const suffix = r.menuType === 1 ? ' [目录]' : ''
-    map.set(id, { id, label: `${r.menuName}${suffix}`, children: [] })
-  }
-  for (const r of rows) {
-    const id = Number(r.id)
-    const parentId = Number(r.parentId || 0)
-    const node = map.get(id)!
-    if (!parentId || !map.has(parentId)) roots.push(node)
-    else map.get(parentId)!.children!.push(node)
-  }
-  const prune = (nodes: CheckNode[]) => {
-    for (const n of nodes) {
-      if (n.children?.length === 0) delete n.children
-      else if (n.children) prune(n.children)
-    }
-  }
-  prune(roots)
-  return roots
-}
-
 async function loadAppsTab() {
   const [a, g, u, r] = await Promise.all([
     api.get('/system/uum/apps'),
@@ -273,10 +209,6 @@ async function loadAppsTab() {
   appGrants.value = g.data || []
   users.value = u.data || []
   roles.value = r.data || []
-}
-
-async function loadAuthTab() {
-  authConfigs.value = (await api.get('/system/uum/auth-configs')).data || []
 }
 
 async function loadSystemConfigs() {
@@ -298,64 +230,13 @@ async function loadUumIntegrations() {
   uumIntegrations.value = (await api.get('/system/uum/integrations')).data || []
 }
 
-async function loadProbe() {
-  const ov = (await api.get('/analytics/platform/support/overview')).data
-  probeIntegrations.value = (ov?.integrations as Integration[]) || []
-}
-
-async function loadRoleMenusTab() {
-  const [r, m] = await Promise.all([api.get('/system/roles'), api.get('/system/menus')])
-  roles.value = r.data || []
-  const rows = (m.data || []) as MenuRow[]
-  menuCheckTree.value = buildCheckTree(rows)
-  if (!selectedRoleId.value && roles.value.length) {
-    selectedRoleId.value = roles.value[0].id
-  }
-  if (selectedRoleId.value) await loadRoleMenus(selectedRoleId.value)
-}
-
-async function loadRoleMenus(roleId: number) {
-  const assignedRes = await api.get(`/system/roles/${roleId}/menus`)
-  const ids = (assignedRes.data || []) as number[]
-  await nextTick()
-  menuTreeRef.value?.setCheckedKeys(leafKeysForTreeCheck(menuCheckTree.value, ids))
-}
-
-async function onRoleChange(roleId: number | undefined) {
-  selectedRoleId.value = roleId
-  if (roleId) await loadRoleMenus(roleId)
-}
-
-async function saveRoleMenus() {
-  if (!selectedRoleId.value || !menuTreeRef.value) return
-  const role = roles.value.find((r) => r.id === selectedRoleId.value)
-  if (role?.roleCode === 'SYSTEM_ADMIN') {
-    ElMessage.warning('系统管理员角色固定拥有全部菜单，无法按勾选削减。请改用业务角色配置菜单。')
-    return
-  }
-  savingMenus.value = true
-  try {
-    const checked = menuTreeRef.value.getCheckedKeys(false) as number[]
-    const menuIds = [...new Set(checked.map((id) => Number(id)).filter((id) => Number.isFinite(id)))]
-    await api.put(`/system/roles/${selectedRoleId.value}/menus`, { menuIds })
-    ElMessage.success('角色菜单权限已保存')
-  } catch (e: unknown) {
-    ElMessage.error(e instanceof Error ? e.message : '保存失败')
-  } finally {
-    savingMenus.value = false
-  }
-}
-
 async function loadTabData() {
   loading.value = true
   try {
     if (tab.value === 'apps.manage') await loadAppsTab()
     else if (tab.value === 'apps.integration') await loadUumIntegrations()
-    else if (tab.value === 'auth') await loadAuthTab()
     else if (tab.value === 'sys.cfg.general') await loadSystemConfigs()
     else if (tab.value === 'services') await loadServicesTab()
-    else if (tab.value === 'other.probe') await loadProbe()
-    else if (tab.value === 'other.roleMenus') await loadRoleMenusTab()
   } catch {
     ElMessage.error('加载失败')
   } finally {
@@ -377,10 +258,6 @@ async function removeGrant(id: number) {
   await api.delete(`/system/uum/app-grants/${id}`)
   ElMessage.success('已删除')
   await loadAppsTab()
-}
-async function saveAuthConfig(row: Record<string, unknown>) {
-  await api.put(`/system/uum/auth-configs/${row.id}`, { configValue: row.configValue })
-  ElMessage.success('已保存')
 }
 async function saveSystemConfig(row: Record<string, unknown>) {
   await api.put(`/system/uum/system-configs/${row.id}`, { configValue: row.configValue })
@@ -408,12 +285,6 @@ async function testUumIntegration(id: number) {
   if (res.data?.reachable) ElMessage.success(res.data.message || '可达')
   else ElMessage.warning(res.data?.message || '未连通')
   await loadUumIntegrations()
-}
-async function testProbe(id: number) {
-  const res = await api.post(`/analytics/platform/integrations/${id}/test`, {})
-  if (res.data?.reachable) ElMessage.success(res.data.message || '可达')
-  else ElMessage.warning(res.data?.message || '未连通')
-  await loadProbe()
 }
 
 watch(tab, () => {
@@ -520,20 +391,7 @@ onMounted(() => {
 
         <!-- 认证 / 服务 -->
         <PageCard v-else-if="tab === 'auth'" title="认证中心">
-<el-table :data="authConfigs" stripe size="small">
-            <el-table-column prop="configKey" label="配置项" width="200" />
-            <el-table-column prop="description" label="说明" min-width="220" />
-            <el-table-column label="值" min-width="160">
-              <template #default="{ row }">
-                <el-input v-model="row.configValue" size="small" />
-              </template>
-            </el-table-column>
-            <el-table-column label="操作" width="80">
-              <template #default="{ row }">
-                <el-button link type="primary" @click="saveAuthConfig(row)">保存</el-button>
-              </template>
-            </el-table-column>
-          </el-table>
+          <AuthConfigManagePanel />
         </PageCard>
 
         <!-- 任务管理 / 集成运维（原一级「集成运维」迁入） -->
@@ -644,60 +502,6 @@ onMounted(() => {
           <SecurityConfig embed />
         </PageCard>
 
-        <!-- 其他 -->
-        <PageCard v-else-if="tab === 'other.roleMenus'" title="角色菜单权限">
-          <p class="ana-hint">选择角色后勾选菜单树，保存即调整该角色可见菜单。</p>
-          <el-form inline class="portal-inline-form portal-inline-form--block">
-            <el-form-item label="角色" class="portal-field-xl">
-              <el-select :model-value="selectedRoleId" filterable placeholder="选择角色" @update:model-value="onRoleChange">
-                <el-option
-                  v-for="r in roles"
-                  :key="r.id"
-                  :label="r.roleCode ? `${r.roleName}（${r.roleCode}）` : r.roleName"
-                  :value="r.id"
-                />
-              </el-select>
-            </el-form-item>
-            <el-form-item class="portal-form-actions">
-              <el-button type="primary" :loading="savingMenus" :disabled="!selectedRoleId" @click="saveRoleMenus">
-                保存菜单权限
-              </el-button>
-            </el-form-item>
-          </el-form>
-          <div class="menu-perm-panel">
-            <el-tree
-              v-if="menuCheckTree.length"
-              ref="menuTreeRef"
-              :data="menuCheckTree"
-              show-checkbox
-              node-key="id"
-              default-expand-all
-              :props="{ label: 'label', children: 'children' }"
-            />
-            <el-empty v-else description="暂无菜单数据" />
-          </div>
-        </PageCard>
-
-        <PageCard v-else-if="tab === 'other.probe'" title="对接探测">
-<el-table :data="probeIntegrations" stripe size="small">
-            <el-table-column prop="integrationCode" label="编码" width="100" />
-            <el-table-column prop="integrationName" label="名称" />
-            <el-table-column prop="targetSystem" label="目标系统" width="140" />
-            <el-table-column prop="endpoint" label="端点" min-width="200" show-overflow-tooltip />
-            <el-table-column label="状态" width="100">
-              <template #default="{ row }">
-                <el-tag :type="statusTagType(row.status)" size="small">{{ statusLabel(row.status) }}</el-tag>
-              </template>
-            </el-table-column>
-            <el-table-column prop="lastMessage" label="最近检测" min-width="160" show-overflow-tooltip />
-            <el-table-column label="操作" width="80">
-              <template #default="{ row }">
-                <el-button link type="primary" @click="testProbe(row.id)">检测</el-button>
-              </template>
-            </el-table-column>
-          </el-table>
-        </PageCard>
-
         <PageCard v-else :title="paneTitle">
           <el-empty description="请从左侧选择功能" />
         </PageCard>
@@ -716,20 +520,5 @@ onMounted(() => {
 }
 .support-embed :deep(.page-header) {
   display: none;
-}
-.ana-hint {
-  margin: 0 0 12px;
-  color: var(--el-text-color-secondary);
-  font-size: 13px;
-  line-height: 1.5;
-}
-.menu-perm-panel {
-  margin-top: 8px;
-  padding: 12px;
-  border: 1px solid var(--el-border-color-lighter);
-  border-radius: 8px;
-  max-height: 480px;
-  overflow: auto;
-  background: #fff;
 }
 </style>

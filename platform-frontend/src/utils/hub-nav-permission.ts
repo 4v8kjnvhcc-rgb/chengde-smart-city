@@ -191,8 +191,6 @@ export const SUPPORT_NAV_PERMISSIONS: Record<string, string | string[]> = {
   'audit.log': 'hub:analytics:support:audit:log',
   'audit.access': 'hub:analytics:support:audit:access',
   'audit.security': 'hub:analytics:support:audit:security',
-  'other.roleMenus': 'hub:analytics:support:other:roleMenus',
-  'other.probe': 'hub:analytics:support:other:probe',
 }
 
 /** 智能 BI */

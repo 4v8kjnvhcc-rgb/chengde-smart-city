@@ -403,7 +403,7 @@ function flowFullText(row: PipelineRow): string {
 }
 
 function cycleDisplay(cron?: string): string {
-  if (!cron) return ''
+  if (!cron) return '—'
   return cronNameMap.value[cron] || cron
 }
 
@@ -519,9 +519,8 @@ onMounted(async () => {
       </el-table-column>
       <el-table-column label="执行周期" min-width="140" show-overflow-tooltip>
         <template #default="{ row }">
-          <span v-if="row.scheduleCron" class="cycle-cell">
+            <span v-if="row.scheduleCron" class="cycle-cell">
             <span class="cycle-cell__name">{{ cycleDisplay(row.scheduleCron) }}</span>
-            <code v-if="cronNameMap[row.scheduleCron]" class="cron-code">{{ row.scheduleCron }}</code>
           </span>
           <span v-else class="muted">—</span>
         </template>

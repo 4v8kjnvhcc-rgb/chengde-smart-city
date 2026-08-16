@@ -6,11 +6,11 @@ import PageCard from '@/components/common/PageCard.vue'
 import { statusLabel } from '@/utils/status-label'
 import { generateTaskName } from '@/utils/task-naming'
 import ExecCycleSelect from '@/views/system/ExecCycleSelect.vue'
+import { useExecCycleLabel } from '@/utils/exec-cycle-label'
 import api from '@/api/http'
 import MetaDataSourcePickerDialog from '@/components/common/MetaDataSourcePickerDialog.vue'
 import type { MetaBindSource } from '@/utils/meta-datasource-conn'
 import { connectionKeyOf } from '@/utils/meta-datasource-conn'
-import { fetchConnectionTableNames } from '@/utils/layer-tables'
 import {
   ingestionApi,
   type IngestTask,
@@ -79,7 +79,7 @@ function isScheduled(row: IngestTask): boolean {
 }
 
 function cronDisplay(row: IngestTask): string {
-  return row.scheduleCron?.trim() || '—'
+  return cycleLabel(row.scheduleCron)
 }
 
 function hasRunHistory(row: IngestTask): boolean {
@@ -215,8 +215,6 @@ const selectedIds = ref<number[]>([])
 /** 元数据源下 JDBC 探到的全表（不论是否采集元数据） */
 const metaTables = ref<string[]>([])
 const metaTablesLoading = ref(false)
-const targetTables = ref<string[]>([])
-const targetTablesLoading = ref(false)
 
 const versionVisible = ref(false)
 const versionRows = ref<IngestTaskVersion[]>([])
@@ -235,6 +233,7 @@ const logFilter = reactive({
 })
 const runDetail = ref<Record<string, unknown> | null>(null)
 const logBusy = ref(false)
+const { label: cycleLabel } = useExecCycleLabel()
 
 const form = reactive({
   taskName: '',
@@ -253,14 +252,14 @@ const form = reactive({
   dateOffsetDays: -1,
   incrementColumn: '',
   targetTable: '',
-  targetConnection: 'smart_city_ods',
-  targetConnectionLabel: '平台原始库（smart_city_ods）',
+  targetConnection: '',
+  targetConnectionLabel: '',
   // multi
   sourceTables: [] as string[],
   targetTableRule: 'ods_{sourceTable}',
   // sql
   selectSql: '',
-  sqlTargetTable: 'ods_sql_result',
+  sqlTargetTable: '',
   paramBizDate: 'DATE_OFFSET:-1',
   // mapping
   mappingMode: 'NAME' as 'ORDER' | 'NAME' | 'MANUAL',
@@ -284,18 +283,6 @@ function openSourceDsPicker() {
 function onTargetDsPicked(row: MetaBindSource) {
   form.targetConnection = connectionKeyOf(row)
   form.targetConnectionLabel = `${row.sourceName}${row.databaseName ? `（${row.databaseName}）` : ''}`
-  void loadTargetTables()
-}
-
-async function loadTargetTables() {
-  targetTablesLoading.value = true
-  try {
-    targetTables.value = await fetchConnectionTableNames(form.targetConnection || 'smart_city_ods')
-  } catch {
-    targetTables.value = []
-  } finally {
-    targetTablesLoading.value = false
-  }
 }
 
 async function onSourceDsPicked(row: MetaBindSource) {
@@ -428,7 +415,7 @@ function buildConfig() {
     writeMode: form.writeMode,
     mapping,
     scheduleCron: form.scheduleCron,
-    targetConnection: form.targetConnection || 'smart_city_ods',
+    targetConnection: form.targetConnection,
     targetConnectionLabel: form.targetConnectionLabel || '',
     metaDataSourceId: form.metaDataSourceId,
     sourceConnection: form.sourceConnection
@@ -490,7 +477,7 @@ function onSyncModeChange() {
 }
 
 function onSingleTableChange() {
-  form.targetTable = suggestOds(form.sourceTable)
+  form.targetTable = ''
   form.pairs = []
   void refreshTaskName()
 }
@@ -881,11 +868,11 @@ function resetWizard() {
   form.targetTableRule = 'ods_{sourceTable}'
   form.pairs = []
   form.selectSql = ''
-  form.sqlTargetTable = 'ods_sql_result'
+  form.sqlTargetTable = ''
   form.paramBizDate = 'DATE_OFFSET:-1'
   form.targetTable = ''
-  form.targetConnection = 'smart_city_ods'
-  form.targetConnectionLabel = '平台原始库（smart_city_ods）'
+  form.targetConnection = ''
+  form.targetConnectionLabel = ''
   form.scheduleCron = '0 0 2 * * ?'
   form.enabled = false
   metaTables.value = []
@@ -915,6 +902,24 @@ function canGoNext(): boolean {
       return false
     }
   }
+  if (step.value === 3) {
+    if (!form.targetConnection) {
+      ElMessage.warning('请选择目标库')
+      return false
+    }
+    if (form.accessMode === 'SINGLE' && !form.targetTable.trim()) {
+      ElMessage.warning('请填写目标表')
+      return false
+    }
+    if (form.accessMode === 'SQL' && !form.sqlTargetTable.trim()) {
+      ElMessage.warning('请填写目标表')
+      return false
+    }
+    if (form.accessMode === 'MULTI' && !form.targetTableRule.trim()) {
+      ElMessage.warning('请填写目标命名规则')
+      return false
+    }
+  }
   return true
 }
 
@@ -924,9 +929,6 @@ function nextStep() {
   if (step.value < steps.length - 1) step.value += 1
   if (leaving === 3) {
     void refreshTaskName()
-  }
-  if (step.value === 3) {
-    void loadTargetTables()
   }
   if (step.value === 4 && form.accessMode !== 'MULTI' && !form.pairs.length) {
     loadMapping('NAME')
@@ -1222,7 +1224,7 @@ onMounted(() => {
               <el-input
                 :model-value="form.targetConnectionLabel || form.targetConnection"
                 readonly
-                placeholder="点击选择目标库（默认原始库，可改选）"
+                placeholder="点击选择目标库"
               />
               <el-button type="primary" @click="openTargetDsPicker">选择</el-button>
             </div>
@@ -1234,34 +1236,20 @@ onMounted(() => {
           </template>
           <template v-else-if="form.accessMode === 'SQL'">
             <el-form-item label="目标表" class="portal-field-xl">
-              <el-select
+              <el-input
                 v-model="form.sqlTargetTable"
-                filterable
-                allow-create
-                default-first-option
                 clearable
-                :loading="targetTablesLoading"
-                placeholder="输入表名筛选，或新建如 ods_xxx"
-                style="width: 100%"
-              >
-                <el-option v-for="t in targetTables" :key="t" :label="t" :value="t" />
-              </el-select>
+                placeholder="请手动填写，须以 ods_ 开头"
+              />
             </el-form-item>
           </template>
           <template v-else>
             <el-form-item label="目标表" class="portal-field-xl">
-              <el-select
+              <el-input
                 v-model="form.targetTable"
-                filterable
-                allow-create
-                default-first-option
                 clearable
-                :loading="targetTablesLoading"
-                placeholder="输入表名筛选，或新建（默认 ods_源表名）"
-                style="width: 100%"
-              >
-                <el-option v-for="t in targetTables" :key="t" :label="t" :value="t" />
-              </el-select>
+                placeholder="请手动填写，须以 ods_ 开头"
+              />
             </el-form-item>
           </template>
         </template>

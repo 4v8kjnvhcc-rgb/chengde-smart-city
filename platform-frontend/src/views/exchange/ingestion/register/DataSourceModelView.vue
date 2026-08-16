@@ -37,6 +37,56 @@ const selectedSource = computed(() => dataSources.value.find((s) => s.id === sel
 const selectedTable = computed(() => tables.value.find((t) => t.id === selectedTableId.value) || null)
 const isSelectedForwardTable = computed(() => selectedTable.value?.modelingMode === 'FORWARD')
 const projectSources = ref<DataSource[]>([])
+
+/** 组合模糊查询（输入框，非下拉） */
+const cascadeQuery = reactive({
+  project: '',
+  system: '',
+  source: '',
+  table: '',
+})
+const cascadeApplied = reactive({
+  project: '',
+  system: '',
+  source: '',
+  table: '',
+})
+
+function matchKw(text: string | undefined | null, kw: string) {
+  if (!kw.trim()) return true
+  return String(text || '').toLowerCase().includes(kw.trim().toLowerCase())
+}
+
+const filteredProjects = computed(() =>
+  projects.value.filter((p) => matchKw(p.projectName, cascadeApplied.project)),
+)
+const filteredSystems = computed(() =>
+  bizSystems.value.filter((s) => matchKw(s.systemName, cascadeApplied.system)),
+)
+const filteredSources = computed(() =>
+  dataSources.value.filter((s) => matchKw(s.sourceName, cascadeApplied.source)),
+)
+const filteredTables = computed(() =>
+  tables.value.filter((t) => matchKw(t.tableName, cascadeApplied.table) || matchKw(t.tableCode, cascadeApplied.table)),
+)
+
+function applyCascadeQuery() {
+  cascadeApplied.project = cascadeQuery.project
+  cascadeApplied.system = cascadeQuery.system
+  cascadeApplied.source = cascadeQuery.source
+  cascadeApplied.table = cascadeQuery.table
+}
+
+function resetCascadeQuery() {
+  cascadeQuery.project = ''
+  cascadeQuery.system = ''
+  cascadeQuery.source = ''
+  cascadeQuery.table = ''
+  cascadeApplied.project = ''
+  cascadeApplied.system = ''
+  cascadeApplied.source = ''
+  cascadeApplied.table = ''
+}
 function resetColumnForm() {
   columnForm.columnCode = ''
   columnForm.columnName = ''
@@ -570,6 +620,45 @@ onMounted(async () => {
         </div>
       </template>
 
+      <el-form inline class="portal-inline-form portal-inline-form--block cascade-query">
+        <el-form-item label="项目" class="portal-field-md">
+          <el-input
+            v-model="cascadeQuery.project"
+            clearable
+            placeholder="项目名称"
+            @keyup.enter="applyCascadeQuery"
+          />
+        </el-form-item>
+        <el-form-item label="系统" class="portal-field-md">
+          <el-input
+            v-model="cascadeQuery.system"
+            clearable
+            placeholder="系统名称"
+            @keyup.enter="applyCascadeQuery"
+          />
+        </el-form-item>
+        <el-form-item label="数据源" class="portal-field-md">
+          <el-input
+            v-model="cascadeQuery.source"
+            clearable
+            placeholder="数据源名称"
+            @keyup.enter="applyCascadeQuery"
+          />
+        </el-form-item>
+        <el-form-item label="数据表" class="portal-field-md">
+          <el-input
+            v-model="cascadeQuery.table"
+            clearable
+            placeholder="表名"
+            @keyup.enter="applyCascadeQuery"
+          />
+        </el-form-item>
+        <el-form-item class="portal-form-actions">
+          <el-button type="primary" @click="applyCascadeQuery">查询</el-button>
+          <el-button @click="resetCascadeQuery">重置</el-button>
+        </el-form-item>
+      </el-form>
+
       <div class="path-bar" v-if="selectedProject">
         <span class="path-chip">{{ selectedProject.projectName }}</span>
         <template v-if="selectedSystem">
@@ -591,11 +680,11 @@ onMounted(async () => {
           <section class="lane">
             <header class="lane-head">
               <span>项目</span>
-              <em>{{ projects.length }}</em>
+              <em>{{ filteredProjects.length }}</em>
             </header>
             <div class="lane-body">
               <button
-                v-for="p in projects"
+                v-for="p in filteredProjects"
                 :key="p.id"
                 type="button"
                 class="lane-item"
@@ -605,18 +694,18 @@ onMounted(async () => {
                 <span class="lane-item__name">{{ p.projectName }}</span>
                 <span class="lane-item__meta">{{ p.boundOrgName || '—' }}</span>
               </button>
-              <div v-if="!projects.length" class="lane-empty">暂无项目</div>
+              <div v-if="!filteredProjects.length" class="lane-empty">{{ projects.length ? '无匹配项目' : '暂无项目' }}</div>
             </div>
           </section>
 
           <section class="lane">
             <header class="lane-head">
               <span>系统</span>
-              <em>{{ bizSystems.length }}</em>
+              <em>{{ filteredSystems.length }}</em>
             </header>
             <div class="lane-body">
               <button
-                v-for="s in bizSystems"
+                v-for="s in filteredSystems"
                 :key="'sys-' + s.id"
                 type="button"
                 class="lane-item"
@@ -626,7 +715,7 @@ onMounted(async () => {
                 <span class="lane-item__name">{{ s.systemName }}</span>
                 <span class="lane-item__meta">数据源 {{ s.dataSourceCount ?? 0 }}</span>
               </button>
-              <div v-if="selectedProjectId && !bizSystems.length" class="lane-empty">暂无系统，请在项目详情中新增</div>
+              <div v-if="selectedProjectId && !filteredSystems.length" class="lane-empty">{{ bizSystems.length ? '无匹配系统' : '暂无系统，请在项目详情中新增' }}</div>
               <div v-else-if="!selectedProjectId" class="lane-empty">请选择项目</div>
             </div>
           </section>
@@ -634,11 +723,11 @@ onMounted(async () => {
           <section class="lane">
             <header class="lane-head">
               <span>数据源</span>
-              <em>{{ dataSources.length }}</em>
+              <em>{{ filteredSources.length }}</em>
             </header>
             <div class="lane-body">
               <button
-                v-for="s in dataSources"
+                v-for="s in filteredSources"
                 :key="s.id"
                 type="button"
                 class="lane-item"
@@ -658,7 +747,7 @@ onMounted(async () => {
                   </el-tag>
                 </span>
               </button>
-              <div v-if="selectedSystemId && !dataSources.length" class="lane-empty">暂无数据源</div>
+              <div v-if="selectedSystemId && !filteredSources.length" class="lane-empty">{{ dataSources.length ? '无匹配数据源' : '暂无数据源' }}</div>
               <div v-else-if="!selectedSystemId" class="lane-empty">请选择系统</div>
             </div>
           </section>
@@ -666,7 +755,7 @@ onMounted(async () => {
           <section class="lane">
             <header class="lane-head">
               <span>表</span>
-              <em>{{ tables.length }}</em>
+              <em>{{ filteredTables.length }}</em>
               <span v-if="isSelectedForwardTable" class="lane-head__actions">
                 <el-button link type="primary" :icon="Edit" title="编辑表" @click.stop="editSelectedTable" />
                 <el-button link type="danger" :icon="Delete" title="删除表" @click.stop="deleteSelectedTable" />
@@ -674,7 +763,7 @@ onMounted(async () => {
             </header>
             <div class="lane-body">
               <button
-                v-for="t in tables"
+                v-for="t in filteredTables"
                 :key="t.id"
                 type="button"
                 class="lane-item"
@@ -686,7 +775,7 @@ onMounted(async () => {
                   {{ t.modelingMode === 'REVERSE' ? '逆向' : '正向' }} · {{ t.columnCount ?? 0 }} 字段
                 </span>
               </button>
-              <div v-if="selectedSourceId && !tables.length" class="lane-empty">暂无登记表</div>
+              <div v-if="selectedSourceId && !filteredTables.length" class="lane-empty">{{ tables.length ? '无匹配表' : '暂无登记表' }}</div>
               <div v-else-if="!selectedSourceId" class="lane-empty">请选择数据源</div>
             </div>
           </section>

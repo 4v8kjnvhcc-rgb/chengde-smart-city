@@ -723,7 +723,7 @@ onMounted(async () => {
     </el-dialog>
 
     <el-dialog v-model="permDialogVisible" :title="permTitle" width="520px" destroy-on-close>
-      <p class="hint">勾选状态为当前用户通过角色合并得到的菜单权限（只读，改权限请到「用户中心 · 角色菜单权限」）。</p>
+      <p class="hint">勾选状态为当前用户通过角色合并得到的菜单权限（只读，改权限请到「用户中心 · 角色管理」）。</p>
       <el-tree
         ref="permTreeRef"
         :data="permTree"

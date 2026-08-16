@@ -1,0 +1,38 @@
+---
+description: 列表页表格宽度适配、列可拖拽、操作列置末与横向滚动
+globs: platform-frontend/src/**/*.{vue,ts,css}
+alwaysApply: true
+---
+
+# 列表页表格布局（硬约束）
+
+业务列表（Hub / 登记 / 管理台等 `el-table`）须统一：
+
+1. **总宽度**：表格铺满当前内容区，随浏览器窗口自适应（禁止人为把列表卡死在窄固定宽容器内）。
+2. **列宽可调**：列表 `el-table` 须启用边框（`border`，项目已全局默认 `true`），以便拖拽表头右边线调整列宽。
+3. **操作列**：查看 / 编辑 / 删除等按钮列必须是**最后一列**，且 `fixed="right"`；`label="操作"`。业务字段若也叫「操作」（如操作类型），须带 `prop`，不得与按钮列混淆。
+4. **横向滚动**：列总宽超出可视区时，表体左右滑动；操作列保持右侧固定可见。
+
+## 推荐写法
+
+```vue
+<el-table :data="rows" stripe border class="portal-table">
+  <el-table-column prop="name" label="名称" min-width="160" show-overflow-tooltip />
+  <el-table-column prop="code" label="编码" width="140" />
+  <el-table-column label="操作" width="180" fixed="right">
+    <template #default="{ row }">
+      <el-button link type="primary" @click="openView(row)">查看</el-button>
+      <el-button link type="primary" @click="openEdit(row)">编辑</el-button>
+      <el-button link type="danger" @click="doDelete(row)">删除</el-button>
+    </template>
+  </el-table-column>
+</el-table>
+```
+
+## 禁止
+
+- 操作按钮列插在中间列
+- 列表根容器 `max-width` 过小导致大片留白、无法用满窗口
+- 关闭 `border` 导致无法拖拽调列宽（特殊嵌套表除外，须注释原因）
+
+实现：`plugins/portal-list-table.ts` + `styles/element-overrides.css`。

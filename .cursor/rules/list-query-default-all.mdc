@@ -1,0 +1,42 @@
+---
+description: 列表页查询条件初始为全部（空筛选），禁止默认锁死某一状态
+globs: platform-frontend/src/**/*.{vue,ts}
+alwaysApply: true
+---
+
+# 列表查询默认全部显示
+
+业务列表页（含 Hub 内列表、登记/审核列表、任务列表等）进入时，**查询条件初始状态为「全部」**，一次加载出当前权限下的全量（或分页第一页），由用户再按需筛选。
+
+## 必须遵守
+
+1. 状态 / 类型 / 机构 / 项目等筛选控件：初始值为空字符串、`undefined` 或 `null`（与 `clearable` + `placeholder="全部"` 一致）。
+2. 「重置」须回到与初始相同的「全部」状态，再重新加载。
+3. 请求参数：空筛选不传或传 `undefined`，由后端返回未按该字段过滤的结果。
+
+```ts
+// ✅ GOOD
+const query = reactive({ keyword: '', status: '', orgName: '' })
+
+function resetQuery() {
+  query.keyword = ''
+  query.status = ''
+  query.orgName = ''
+  void reload()
+}
+```
+
+```ts
+// ❌ BAD — 进入页即只看待审核
+const query = reactive({ status: 'PENDING_REVIEW' })
+```
+
+## 例外（须业务语义明确，且注释说明）
+
+- **门户只读浏览**：如目录门户仅展示已发布资源（`PUBLISHED`），属于产品范围而非「查询默认锁状态」。
+- **向导/挑选器**：如「仅看待采集」对象挑选对话框，可默认窄范围，但须有「全部」选项且不得冒充通用列表页。
+
+## 禁止
+
+- 列表页默认选中「待审核」「启用」「草稿」等某一状态导致首屏看不到其它记录
+- 重置按钮恢复到非「全部」的默认状态

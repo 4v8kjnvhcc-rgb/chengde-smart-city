@@ -80,12 +80,27 @@ public class UnifiedUserManageController {
         return ApiResponse.ok(uumService.authConfigs());
     }
 
+    @PostMapping("/auth-configs")
+    @PreAuthorize("hasAuthority('system:uum:view') or hasAuthority('system:user:list') or hasAuthority('system:dict:edit') or hasRole('SYSTEM_ADMIN')")
+    public ApiResponse<Long> createAuthConfig(@AuthenticationPrincipal UserPrincipal principal,
+                                              @RequestBody Map<String, Object> body) {
+        return ApiResponse.ok(uumService.createAuthConfig(principal, body));
+    }
+
     @PutMapping("/auth-configs/{id}")
     @PreAuthorize("hasAuthority('system:uum:view') or hasAuthority('system:user:list') or hasAuthority('system:dict:edit') or hasRole('SYSTEM_ADMIN')")
     public ApiResponse<Void> updateAuthConfig(@AuthenticationPrincipal UserPrincipal principal,
                                               @PathVariable Long id,
                                               @RequestBody Map<String, Object> body) {
         uumService.updateAuthConfig(principal, id, body);
+        return ApiResponse.ok(null);
+    }
+
+    @DeleteMapping("/auth-configs/{id}")
+    @PreAuthorize("hasAuthority('system:uum:view') or hasAuthority('system:user:list') or hasAuthority('system:dict:edit') or hasRole('SYSTEM_ADMIN')")
+    public ApiResponse<Void> deleteAuthConfig(@AuthenticationPrincipal UserPrincipal principal,
+                                              @PathVariable Long id) {
+        uumService.deleteAuthConfig(principal, id);
         return ApiResponse.ok(null);
     }
 

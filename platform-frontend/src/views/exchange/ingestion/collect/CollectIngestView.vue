@@ -10,6 +10,9 @@ import { collectIngestMainTab, type IngestMainTab } from '../ingestion-nav'
 import StructuredTableWizard from './StructuredTableWizard.vue'
 import ManualUploadView from './ManualUploadView.vue'
 import ChannelTaskPanel from './ChannelTaskPanel.vue'
+import SemiIngestConfigView from './SemiIngestConfigView.vue'
+import ApiIngestConfigView from './ApiIngestConfigView.vue'
+import CdcIngestConfigView from './CdcIngestConfigView.vue'
 
 import { ingestionRegisterCache } from '../ingestion-register-cache'
 
@@ -1134,16 +1137,28 @@ onMounted(() => {
 
 
 
-    <!-- 非结构 / 半结构 / API / CDC：侧栏各一菜单，页内不再套 Tab -->
+    <!-- 非结构：沿用通道面板；半结构 / API / CDC：按原型配置页 + 同页任务管理 -->
 
-    <template v-else>
+    <template v-else-if="mainTab === 'unstruct'">
       <ChannelTaskPanel
-        :key="mainTab"
-        :title="activeOtherMeta?.label || '数据接入'"
-        :channel-type="activeChannelType || 'API'"
-        :config-fields="configFields(activeChannelType || 'API')"
+        key="unstruct"
+        :title="activeOtherMeta?.label || '非结构化数据接入'"
+        channel-type="UNSTRUCT"
+        :config-fields="configFields('UNSTRUCT')"
       />
     </template>
+
+    <SemiIngestConfigView v-else-if="mainTab === 'semi'" />
+    <ApiIngestConfigView v-else-if="mainTab === 'api'" />
+    <CdcIngestConfigView v-else-if="mainTab === 'cdc'" />
+
+    <ChannelTaskPanel
+      v-else
+      :key="mainTab"
+      :title="activeOtherMeta?.label || '数据接入'"
+      :channel-type="activeChannelType || 'API'"
+      :config-fields="configFields(activeChannelType || 'API')"
+    />
 
 
 

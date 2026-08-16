@@ -10,6 +10,7 @@ import RcResourceMonitorPanel from '@/views/resource/RcResourceMonitorPanel.vue'
 import RcStatsAnalysisPanel from '@/views/resource/RcStatsAnalysisPanel.vue'
 import { statusLabel, statusTagType } from '@/utils/status-label'
 import ExecCycleSelect from '@/views/system/ExecCycleSelect.vue'
+import { useExecCycleLabel } from '@/utils/exec-cycle-label'
 import { useAuthStore } from '@/stores/auth'
 import { filterHubNavByPermissions, filterHubNavByMenuVisible, RESOURCE_NAV_PERMISSIONS } from '@/utils/hub-nav-permission'
 
@@ -31,6 +32,7 @@ const NAV_BASE: HubNavItem[] = [
 ]
 
 const auth = useAuthStore()
+const { label: cycleLabel } = useExecCycleLabel()
 const navItems = computed(() => {
   const byPerm = filterHubNavByPermissions(NAV_BASE, auth.permissions, RESOURCE_NAV_PERMISSIONS, {
     isSystemAdmin: auth.isSystemAdmin,
@@ -2106,7 +2108,7 @@ onMounted(() => {
               <el-table-column prop="retentionDays" label="保存天数" width="90" />
               <el-table-column label="调度" width="150" show-overflow-tooltip>
                 <template #default="{ row }">
-                  <span v-if="row.scheduleEnabled">{{ row.scheduleCron || '-' }}</span>
+                  <span v-if="row.scheduleEnabled">{{ cycleLabel(row.scheduleCron) }}</span>
                   <span v-else>手动</span>
                 </template>
               </el-table-column>

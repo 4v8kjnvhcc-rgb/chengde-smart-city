@@ -30,6 +30,7 @@ import java.util.LinkedHashSet;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Objects;
 import java.util.Set;
 import java.util.UUID;
 import java.util.regex.Matcher;
@@ -394,9 +395,6 @@ public class UnstructuredPlatformService {
     @Transactional
     public void deleteDocument(UserPrincipal operator, Long id) {
         UnsDocument doc = getDoc(id);
-        if ("PUBLISHED".equalsIgnoreCase(doc.getPublishStatus())) {
-            throw new BusinessException(400, "已发布文件须先下线后再删除");
-        }
         if (!"EXTERNAL".equalsIgnoreCase(doc.getSourceType())) {
             storageClient.deleteDocument(doc.getStorageKey());
         }
@@ -576,6 +574,11 @@ public class UnstructuredPlatformService {
         content.put("topics", topics);
         content.put("sentiment", sentiment);
         content.put("summary", buildSummary(doc, keywords, topics, sentiment));
+        content.put("mediaKind", mediaKind);
+        // 多媒体：台账式内容理解（图像/音视频关键信息），与文档 NLP 字段并列落地
+        if ("IMAGE".equals(mediaKind) || "VIDEO".equals(mediaKind) || "AUDIO".equals(mediaKind)) {
+            content.put("mediaInsights", buildMediaInsights(doc, mediaKind, keywords, topics));
+        }
 
         Set<String> tags = new LinkedHashSet<>(parseTags(doc.getTagJson()));
         tags.addAll(keywords.stream().limit(6).toList());
@@ -599,6 +602,65 @@ public class UnstructuredPlatformService {
                 "UNS_META_UNDERSTAND", "uns_document", String.valueOf(id), doc.getTitle());
         Map<String, Object> out = documentRow(doc, categoryNameMap());
         out.put("message", "内容理解结果已落地，并同步更新标签");
+        return out;
+    }
+
+    /**
+     * 相似性连接：将种子文档关联到相似目标文档（写入 linked_doc_id）。
+     */
+    @Transactional
+    public Map<String, Object> linkSimilar(UserPrincipal operator, Long id, Long targetId) {
+        if (targetId == null || targetId <= 0) {
+            throw new BusinessException(400, "请指定相似目标文档");
+        }
+        if (Objects.equals(id, targetId)) {
+            throw new BusinessException(400, "不能与自身建立相似连接");
+        }
+        UnsDocument seed = getDoc(id);
+        UnsDocument target = getDoc(targetId);
+        seed.setLinkedDocId(targetId);
+        seed.setProcessStatus("LINKED");
+        seed.setFingerprint(buildFingerprint(seed));
+        documentMapper.updateById(seed);
+
+        UnsDocPipeline p = new UnsDocPipeline();
+        p.setDocId(id);
+        p.setPipelineType("LINK");
+        p.setStatus("LEDGER");
+        p.setResultMessage("相似连接：" + seed.getTitle() + " → " + target.getTitle()
+                + "（id=" + targetId + "）");
+        p.setDetailJson(toJson(Map.of(
+                "seedId", id,
+                "targetId", targetId,
+                "targetTitle", nz(target.getTitle(), ""),
+                "engineMode", "LEDGER"
+        )));
+        pipelineMapper.insert(p);
+        auditService.log(operator.getUserId(), operator.getUsername(), operator.getOrgId(),
+                "UNS_SIMILAR_LINK", "uns_document", String.valueOf(id),
+                seed.getTitle() + "->" + target.getTitle());
+
+        Map<String, Object> out = documentRow(seed, categoryNameMap());
+        out.put("message", "已建立相似连接：" + target.getTitle());
+        out.put("linkedDocId", targetId);
+        out.put("linkedDocTitle", target.getTitle());
+        return out;
+    }
+
+    @Transactional
+    public Map<String, Object> unlinkSimilar(UserPrincipal operator, Long id) {
+        UnsDocument seed = getDoc(id);
+        Long old = seed.getLinkedDocId();
+        seed.setLinkedDocId(null);
+        if ("LINKED".equalsIgnoreCase(seed.getProcessStatus())) {
+            seed.setProcessStatus("RAW");
+        }
+        documentMapper.updateById(seed);
+        auditService.log(operator.getUserId(), operator.getUsername(), operator.getOrgId(),
+                "UNS_SIMILAR_UNLINK", "uns_document", String.valueOf(id),
+                seed.getTitle() + " unlink " + old);
+        Map<String, Object> out = documentRow(seed, categoryNameMap());
+        out.put("message", "已解除相似连接");
         return out;
     }
 
@@ -761,9 +823,16 @@ public class UnstructuredPlatformService {
                 yield "台账标注完成：" + doc.getTagJson() + "（未接外部标签引擎）";
             }
             case "LINK" -> {
-                doc.setLinkedDocId(docId);
+                List<Map<String, Object>> similar = findSimilar(docId, 1);
+                if (!similar.isEmpty()) {
+                    Long targetId = ((Number) similar.get(0).get("id")).longValue();
+                    doc.setLinkedDocId(targetId);
+                    doc.setProcessStatus("LINKED");
+                    yield "相似连接完成：关联文档 id=" + targetId + "（台账指纹相似度）";
+                }
+                doc.setLinkedDocId(null);
                 doc.setProcessStatus("LINKED");
-                yield "台账关联完成：已回填文档自身关联键（未接外部关联引擎）";
+                yield "未找到可关联的相似文档，已标记关联处理完成（请先做特征提取/内容理解）";
             }
             default -> throw new BusinessException(400, "未知处理类型");
         };
@@ -837,6 +906,14 @@ public class UnstructuredPlatformService {
         row.put("keywords", parseContentList(d.getContentJson(), "keywords"));
         row.put("topics", parseContentList(d.getContentJson(), "topics"));
         row.put("sentiment", parseContentValue(d.getContentJson(), "sentiment"));
+        row.put("summary", parseContentValue(d.getContentJson(), "summary"));
+        row.put("linkedDocId", d.getLinkedDocId());
+        if (d.getLinkedDocId() != null) {
+            UnsDocument linked = documentMapper.selectById(d.getLinkedDocId());
+            row.put("linkedDocTitle", linked == null ? null : linked.getTitle());
+        } else {
+            row.put("linkedDocTitle", null);
+        }
         row.put("createdBy", d.getCreatedBy());
         row.put("createdAt", d.getCreatedAt());
         row.put("updatedAt", d.getUpdatedAt());
@@ -1099,6 +1176,31 @@ public class UnstructuredPlatformService {
             });
         }
         return topics.stream().limit(5).collect(Collectors.toList());
+    }
+
+    /** 多媒体内容理解台账：分辨率/时长/主题标签等，便于检索消费 */
+    private Map<String, Object> buildMediaInsights(UnsDocument doc, String mediaKind,
+                                                   List<String> keywords, List<String> topics) {
+        Map<String, Object> insights = new LinkedHashMap<>();
+        insights.put("analysisMode", "LEDGER");
+        insights.put("mediaKind", mediaKind);
+        insights.put("format", resolveFormat(doc));
+        if (doc.getMediaWidth() != null && doc.getMediaHeight() != null) {
+            insights.put("resolution", doc.getMediaWidth() + "x" + doc.getMediaHeight());
+        }
+        if (doc.getMediaDurationSec() != null) {
+            insights.put("durationSec", doc.getMediaDurationSec());
+        }
+        insights.put("detectedLabels", keywords.stream().limit(8).collect(Collectors.toList()));
+        insights.put("sceneTopics", topics.stream().limit(5).collect(Collectors.toList()));
+        String hint = switch (mediaKind) {
+            case "IMAGE" -> "图像关键信息：分辨率、格式、标签与主题（台账解析，可手工维护）";
+            case "VIDEO" -> "视频关键信息：分辨率、时长、主题标签（台账解析，可手工维护）";
+            case "AUDIO" -> "音频关键信息：时长、主题标签（台账解析，可手工维护）";
+            default -> "多媒体内容理解";
+        };
+        insights.put("hint", hint);
+        return insights;
     }
 
     private List<String> extractKeywords(String text, int limit) {

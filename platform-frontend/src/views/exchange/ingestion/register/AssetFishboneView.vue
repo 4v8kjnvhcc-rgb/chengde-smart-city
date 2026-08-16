@@ -67,13 +67,6 @@ const layoutEdges = ref<LayoutEdge[]>([])
 const svgW = ref(1200)
 const svgH = ref(560)
 
-const hintText = computed(() => {
-  if (mode.value === 'PLATFORM' && selectedOrgId.value == null) {
-    return '中心为「承德市高新区」，周围为各部门；点击部门后向右展开部门 → 项目 → 系统 → 数据库 → 数据表 → 数据项 → 数据字典（有关联时）鱼骨图，可用 +/- 展开或折叠。'
-  }
-  return '鱼骨图从左到右：部门 → 项目 → 系统 → 数据库 → 数据表 → 数据项 → 数据字典（若数据项已关联字典）。点击节点旁 +/- 展开或折叠。'
-})
-
 const selectedOrgName = computed(() => {
   if (selectedOrg.value?.orgName) return selectedOrg.value.orgName
   if (selectedOrgId.value == null) return ''
@@ -327,7 +320,6 @@ onMounted(() => {
 <template>
   <div class="fishbone-page" v-loading="loading">
     <PageCard title="数据资产图谱分析">
-      <p class="hint">{{ hintText }}</p>
       <div v-if="loadError" class="error">{{ loadError }}</div>
 
       <div class="toolbar">
@@ -415,7 +407,6 @@ onMounted(() => {
 
 <style scoped>
 .fishbone-page { min-height: 420px; }
-.hint { margin: 0 0 12px; color: #64748b; font-size: 13px; line-height: 1.6; }
 .error { color: #dc2626; margin-bottom: 8px; }
 .toolbar {
   display: flex;

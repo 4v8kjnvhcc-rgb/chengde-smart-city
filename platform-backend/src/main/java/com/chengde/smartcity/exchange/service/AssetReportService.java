@@ -571,7 +571,7 @@ public class AssetReportService {
         return metricMapper.selectList(q).stream().map(m -> {
             Map<String, Object> row = new LinkedHashMap<>();
             row.put("date", m.getMetricDate() == null ? null : m.getMetricDate().toString());
-            row.put("month", m.getMetricDate() == null ? "" : String.format("%02d月%02d", m.getMetricDate().getMonthValue(), m.getMetricDate().getDayOfMonth()));
+            row.put("month", m.getMetricDate() == null ? "" : String.format("%02d/%02d", m.getMetricDate().getMonthValue(), m.getMetricDate().getDayOfMonth()));
             row.put("value", m.getValueNum() == null ? 0 : m.getValueNum().doubleValue());
             row.put("count", m.getValueNum() == null ? 0 : m.getValueNum().intValue());
             row.put("gb", m.getValueNum() == null ? 0 : m.getValueNum().doubleValue());

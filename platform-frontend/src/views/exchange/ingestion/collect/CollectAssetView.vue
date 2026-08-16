@@ -1,9 +1,11 @@
 <script setup lang="ts">
 import { onMounted, ref } from 'vue'
 import PageCard from '@/components/common/PageCard.vue'
+import { useExecCycleLabel } from '@/utils/exec-cycle-label'
 import { ingestionApi, useIngestionLoading, type AssetTag, type HealthMetric, type Policy } from '../useIngestionHub'
 
 const { loading, loadError, withLoad } = useIngestionLoading()
+const { label: cycleLabel } = useExecCycleLabel()
 const classifyPolicies = ref<Policy[]>([])
 const maskPolicies = ref<Policy[]>([])
 const lifecyclePolicies = ref<Policy[]>([])
@@ -89,7 +91,9 @@ onMounted(reload)
     <PageCard title="数据备份">
       <el-table :data="backupJobs" stripe size="small">
         <el-table-column prop="jobCode" label="作业" />
-        <el-table-column prop="scheduleCron" label="周期" width="120" />
+        <el-table-column label="执行周期" width="140" show-overflow-tooltip>
+          <template #default="{ row }">{{ cycleLabel(row.scheduleCron as string) }}</template>
+        </el-table-column>
         <el-table-column prop="backupPath" label="路径" min-width="180" />
       </el-table>
     </PageCard>

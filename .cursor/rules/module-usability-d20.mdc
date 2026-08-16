@@ -26,6 +26,6 @@ alwaysApply: true
 - 「查看结果」读**目标落层**（治理后看 DWD/DWS/ADS），不得默默读 ODS/源表
 - 占位默认（`table_name`、`output_table`、`/tmp/...`）不得未校验即执行
 - 类型不安全变换（如 MD5→DATE）必须新列或拦截
-- 状态展示 `statusLabel`；工具栏 `portal-inline-form`；加载按当前视图、并行≤3
+- 状态展示 `statusLabel`；工具栏 `portal-inline-form`；列表表格拉满窗口、列可拖宽、操作列末列固定（见 `list-table-layout.mdc`）；加载按当前视图、并行≤3
 - `sys_admin` 全量放行
 - 交付前勾 D20 §四 清单，并更新 D17 迭代记录

@@ -1,10 +1,12 @@
 <script setup lang="ts">
 import { computed, onMounted, ref } from 'vue'
 import PageCard from '@/components/common/PageCard.vue'
+import { useExecCycleLabel } from '@/utils/exec-cycle-label'
 import { ingestionApi, useIngestionLoading, type AssetTag, type HealthMetric, type Policy } from '../useIngestionHub'
 
 const props = defineProps<{ module: string }>()
 const { loading, loadError, withLoad } = useIngestionLoading()
+const { label: cycleLabel } = useExecCycleLabel()
 const policies = ref<Policy[]>([])
 const tags = ref<AssetTag[]>([])
 const health = ref<HealthMetric[]>([])
@@ -85,7 +87,9 @@ onMounted(reload)
 
       <el-table v-if="module === 'm073'" :data="backupJobs" stripe>
         <el-table-column prop="jobCode" label="作业" />
-        <el-table-column prop="scheduleCron" label="周期" width="120" />
+        <el-table-column label="执行周期" width="140" show-overflow-tooltip>
+          <template #default="{ row }">{{ cycleLabel(row.scheduleCron as string) }}</template>
+        </el-table-column>
         <el-table-column prop="backupPath" label="路径" min-width="180" />
         <el-table-column label="状态" width="90">
           <template #default="{ row }">{{ $statusLabel(row.status) }}</template>

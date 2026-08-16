@@ -224,6 +224,21 @@ public class UnstructuredPlatformController {
         return ApiResponse.ok(service.findSimilar(id, limit));
     }
 
+    @PostMapping("/documents/{id}/similar-link/{targetId}")
+    @PreAuthorize("isAuthenticated()")
+    public ApiResponse<Map<String, Object>> linkSimilar(@AuthenticationPrincipal UserPrincipal principal,
+                                                        @PathVariable Long id,
+                                                        @PathVariable Long targetId) {
+        return ApiResponse.ok(service.linkSimilar(principal, id, targetId));
+    }
+
+    @DeleteMapping("/documents/{id}/similar-link")
+    @PreAuthorize("isAuthenticated()")
+    public ApiResponse<Map<String, Object>> unlinkSimilar(@AuthenticationPrincipal UserPrincipal principal,
+                                                          @PathVariable Long id) {
+        return ApiResponse.ok(service.unlinkSimilar(principal, id));
+    }
+
     @GetMapping("/metadata/overview")
     @PreAuthorize("isAuthenticated()")
     public ApiResponse<Map<String, Object>> metadataOverview() {

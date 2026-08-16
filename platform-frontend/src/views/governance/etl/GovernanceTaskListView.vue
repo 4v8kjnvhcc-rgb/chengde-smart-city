@@ -11,6 +11,7 @@ import ExecCycleSelect from '@/views/system/ExecCycleSelect.vue'
 import MetaDataSourcePickerDialog from '@/components/common/MetaDataSourcePickerDialog.vue'
 import type { MetaBindSource } from '@/utils/meta-datasource-conn'
 import { connectionKeyOf, displayNameOfConnection } from '@/utils/meta-datasource-conn'
+import { useExecCycleLabel } from '@/utils/exec-cycle-label'
 
 export type ListMode = 'mgmt' | 'run' | 'schedule'
 
@@ -105,6 +106,7 @@ const emit = defineEmits<{
 }>()
 
 const route = useRoute()
+const { label: cycleLabel } = useExecCycleLabel()
 const router = useRouter()
 
 const tasks = ref<TaskRow[]>([])
@@ -147,8 +149,8 @@ const form = reactive({
   sourceTable: '',
   sourceTable2: '',
   joinKey: 'id',
-  targetConnection: 'smart_city_dwd',
-  targetConnectionLabel: '平台 DWD（过程层产出）',
+  targetConnection: '',
+  targetConnectionLabel: '',
   targetTable: '',
   rules: [] as string[],
   scheduleEnabled: false,
@@ -164,9 +166,6 @@ const dsPickerRole = ref<'source' | 'target'>('source')
 const connLabelMap = ref<Record<string, string>>({})
 
 function openDsPicker(role: 'source' | 'target') {
-  if (isFusion.value && role === 'source') {
-    // 融合默认 DWD，仍允许改选
-  }
   dsPickerRole.value = role
   dsPickerVisible.value = true
 }
@@ -189,7 +188,7 @@ function onDsPicked(row: MetaBindSource) {
     form.targetConnection = key
     form.targetConnectionLabel = label
     form.targetTable = ''
-    void loadTargetPlatformTables(key)
+    if (isFusion.value) void loadTargetPlatformTables(key)
   }
 }
 
@@ -385,7 +384,7 @@ watch(() => form.sourceConnection, (conn) => {
 watch(() => form.targetConnection, (conn) => {
   form.targetTable = ''
   targetPlatformTables.value = []
-  if (conn && (PLATFORM_LAYER_IDS[conn] != null || conn.startsWith('meta:'))) {
+  if (isFusion.value && conn && (PLATFORM_LAYER_IDS[conn] != null || conn.startsWith('meta:'))) {
     void loadTargetPlatformTables(conn)
   }
 })
@@ -447,13 +446,13 @@ async function loadCreateOptions() {
 function openCreate() {
   form.taskName = ''
   form.description = ''
-  form.sourceConnection = isFusion.value ? 'smart_city_dwd' : ''
-  form.sourceConnectionLabel = isFusion.value ? '平台 DWD（过程层，融合输入）' : ''
+  form.sourceConnection = ''
+  form.sourceConnectionLabel = ''
   form.sourceTable = ''
   form.sourceTable2 = ''
   form.joinKey = 'id'
-  form.targetConnection = isFusion.value ? 'smart_city_dws' : 'smart_city_dwd'
-  form.targetConnectionLabel = isFusion.value ? '平台 DWS（主题/基础库）' : '平台 DWD（过程层产出）'
+  form.targetConnection = ''
+  form.targetConnectionLabel = ''
   form.targetTable = ''
   form.rules = []
   form.scheduleEnabled = false
@@ -462,15 +461,23 @@ function openCreate() {
   form.startTime = ''
   form.timeUnit = 'DAY'
   form.intervalValue = 1
+  platformTables.value = []
+  targetPlatformTables.value = []
   createVisible.value = true
   void loadCreateOptions()
-  if (isFusion.value) void loadPlatformTables('smart_city_dwd')
-  void loadTargetPlatformTables(form.targetConnection)
 }
 
 async function submitCreate() {
   if (!form.taskName.trim()) {
     ElMessage.warning('请输入任务名称')
+    return
+  }
+  if (!form.sourceConnection) {
+    ElMessage.warning(isFusion.value ? '请选择源库' : '请选择来源库')
+    return
+  }
+  if (!form.targetConnection) {
+    ElMessage.warning('请选择目标库')
     return
   }
   if (isFusion.value && !form.sourceTable.trim()) {
@@ -680,7 +687,7 @@ function scheduleModeLabel(row: TaskRow) {
     const unitMap: Record<string, string> = { HOUR: '小时', DAY: '天', WEEK: '周', MONTH: '月' }
     return `每 ${row.intervalValue || 1} ${unitMap[row.timeUnit || 'DAY'] || row.timeUnit}`
   }
-  return row.scheduleCron || 'Cron'
+  return cycleLabel(row.scheduleCron)
 }
 
 async function openOutputPreview(row: TaskRow, table?: string) {
@@ -889,12 +896,12 @@ defineExpose({ reload: load })
         <el-form-item label="描述">
           <el-input v-model="form.description" type="textarea" :rows="2" />
         </el-form-item>
-        <el-form-item :label="isFusion ? '源库' : '来源库'" :required="isFusion">
+        <el-form-item :label="isFusion ? '源库' : '来源库'" required>
           <div class="conn-pick">
             <el-input
               :model-value="sourceDisplay()"
               readonly
-              :placeholder="isFusion ? '点击选择来源库（默认过程层）' : '点击选择来源库'"
+              :placeholder="isFusion ? '点击选择源库' : '点击选择来源库'"
             />
             <el-button type="primary" @click="openDsPicker('source')">选择</el-button>
           </div>
@@ -942,7 +949,7 @@ defineExpose({ reload: load })
         <el-form-item v-if="isFusion && form.sourceTable2" label="关联键">
           <el-input v-model="form.joinKey" placeholder="如 id" />
         </el-form-item>
-        <el-form-item label="目标库">
+        <el-form-item label="目标库" required>
           <div class="conn-pick">
             <el-input
               :model-value="targetDisplay()"
@@ -956,24 +963,32 @@ defineExpose({ reload: load })
           </div>
         </el-form-item>
         <el-form-item label="目标表">
-          <el-select
-            v-if="form.targetConnection"
-            v-model="form.targetTable"
-            clearable
-            filterable
-            allow-create
-            default-first-option
-            :loading="targetTablesLoading"
-            :placeholder="isFusion ? '输入表名筛选，或新建如 dws_xxx' : '输入表名筛选，或新建如 dwd_xxx'"
-            style="width:100%"
-          >
-            <el-option
-              v-for="t in targetTableSelectOptions"
-              :key="t.value"
-              :label="t.label"
-              :value="t.value"
+          <template v-if="form.targetConnection">
+            <el-select
+              v-if="isFusion"
+              v-model="form.targetTable"
+              clearable
+              filterable
+              allow-create
+              default-first-option
+              :loading="targetTablesLoading"
+              placeholder="输入表名筛选，或新建如 dws_xxx"
+              style="width:100%"
+            >
+              <el-option
+                v-for="t in targetTableSelectOptions"
+                :key="t.value"
+                :label="t.label"
+                :value="t.value"
+              />
+            </el-select>
+            <el-input
+              v-else
+              v-model="form.targetTable"
+              clearable
+              placeholder="请手动填写，须以 dwd_ 开头"
             />
-          </el-select>
+          </template>
           <el-input v-else v-model="form.targetTable" placeholder="请先选择目标库" disabled />
         </el-form-item>
         <el-form-item :label="isFusion ? '清洗规则' : '治理规则'">

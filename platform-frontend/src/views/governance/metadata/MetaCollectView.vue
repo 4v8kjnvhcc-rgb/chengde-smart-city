@@ -8,6 +8,7 @@ import PortalPagination from '@/components/common/PortalPagination.vue'
 import { useClientPager } from '@/composables/useClientPager'
 import ExecCycleSelect from '@/views/system/ExecCycleSelect.vue'
 import { statusLabel } from '@/utils/status-label'
+import { useExecCycleLabel } from '@/utils/exec-cycle-label'
 
 interface CategoryNode {
   id: number
@@ -255,10 +256,7 @@ function formatTime(v?: string) {
   return String(v).replace('T', ' ').slice(0, 19)
 }
 
-function cycleLabel(cron?: string) {
-  if (!cron) return '—'
-  return cron
-}
+const { label: cycleLabel } = useExecCycleLabel()
 
 async function loadCategories() {
   const res = await api.get('/governance/platform/metadata/source-categories/tree')
@@ -565,34 +563,13 @@ function canDeleteTask(row: Task) {
   return row.status !== 'RUNNING' && row.publishStatus !== 'PUBLISHED'
 }
 
-async function deleteOneTask(row: Task, reload: () => Promise<void>) {
-  if (!canDeleteTask(row)) {
-    if (row.status === 'RUNNING') {
-      ElMessage.warning('运行中任务不可删除')
-    } else {
-      ElMessage.warning('已发布任务须先下线再删除')
-    }
-    return
-  }
-  try {
-    await ElMessageBox.confirm(`确认删除任务「${row.taskName}」？`, '删除确认', { type: 'warning' })
-    await api.delete(`/governance/platform/metadata/collect/tasks/${row.id}`)
-    ElMessage.success('已删除')
-    await reload()
-  } catch (e: unknown) {
-    if (e === 'cancel' || (e as { message?: string })?.message === 'cancel') return
-    const err = e as Error & { message?: string }
-    ElMessage.error(err.message || '删除失败')
-  }
-}
-
 async function batchDeleteTasks(ids: number[], reload: () => Promise<void>, clearSelection: () => void) {
   if (!ids.length) {
     ElMessage.warning('请选择要删除的任务')
     return
   }
   try {
-    await ElMessageBox.confirm(`确认删除选中的 ${ids.length} 个任务？`, '删除确认', { type: 'warning' })
+    await ElMessageBox.confirm(`确认删除选中的 ${ids.length} 个任务？`, '批量删除确认', { type: 'warning' })
     await api.post('/governance/platform/metadata/collect/tasks/batch-delete', { ids })
     ElMessage.success('已删除')
     clearSelection()
@@ -661,7 +638,7 @@ onMounted(async () => {
               plain
               :disabled="!selectedManualTaskIds.length"
               @click="deleteManualTasksBatch"
-            >删除</el-button>
+            >批量删除</el-button>
           </el-form-item>
           <el-form-item label="数据分类" class="portal-field-md">
             <el-select
@@ -718,16 +695,6 @@ onMounted(async () => {
           <el-table-column label="创建时间" width="160">
             <template #default="{ row }">{{ formatTime(row.createdAt) }}</template>
           </el-table-column>
-          <el-table-column label="操作" width="80" fixed="right">
-            <template #default="{ row }">
-              <el-button
-                link
-                type="danger"
-                :disabled="!canDeleteTask(row)"
-                @click="deleteOneTask(row, loadManualTasks)"
-              >删除</el-button>
-            </template>
-          </el-table-column>
         </el-table>
         <PortalPagination
           v-model:page="manualPage"
@@ -740,7 +707,7 @@ onMounted(async () => {
         <el-form inline class="portal-inline-form portal-inline-form--block">
           <el-form-item class="portal-form-actions">
             <el-button type="primary" @click="openCreateTaskDialog">+ 新增</el-button>
-            <el-button type="danger" plain :disabled="!selectedTaskIds.length" @click="deleteScheduledTasks">删除</el-button>
+            <el-button type="danger" plain :disabled="!selectedTaskIds.length" @click="deleteScheduledTasks">批量删除</el-button>
           </el-form-item>
           <el-form-item label="关键字" class="portal-field-md">
             <el-input v-model="taskFilter.keyword" placeholder="任务名称" clearable @keyup.enter="loadScheduledTasks" />
@@ -832,12 +799,6 @@ onMounted(async () => {
                 type="warning"
                 @click="unpublishTask(row)"
               >下线</el-button>
-              <el-button
-                link
-                type="danger"
-                :disabled="!canDeleteTask(row)"
-                @click="deleteOneTask(row, loadScheduledTasks)"
-              >删除</el-button>
             </template>
           </el-table-column>
         </el-table>

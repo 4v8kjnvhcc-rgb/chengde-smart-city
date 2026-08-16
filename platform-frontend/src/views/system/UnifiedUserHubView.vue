@@ -8,6 +8,7 @@ import HubSideLayout, { type HubNavItem } from '@/components/common/HubSideLayou
 import { statusLabel } from '@/utils/status-label'
 import { leafKeysForTreeCheck } from '@/utils/menu-tree-check'
 import PortalNavConfigPanel from '@/views/system/PortalNavConfigPanel.vue'
+import AuthConfigManagePanel from '@/views/system/AuthConfigManagePanel.vue'
 import AuditLog from '@/views/system/AuditLog.vue'
 import RuntimeErrorLog from '@/views/system/RuntimeErrorLog.vue'
 
@@ -49,7 +50,6 @@ const loading = ref(false)
 const overview = ref<Record<string, unknown> | null>(null)
 const apps = ref<Record<string, unknown>[]>([])
 const appGrants = ref<Record<string, unknown>[]>([])
-const authConfigs = ref<Record<string, unknown>[]>([])
 const services = ref<Record<string, unknown>[]>([])
 const serviceStats = ref<Record<string, unknown>[]>([])
 const approvals = ref<Record<string, unknown>[]>([])
@@ -224,10 +224,6 @@ async function loadAppsTab() {
   roles.value = r.data || []
 }
 
-async function loadAuthTab() {
-  authConfigs.value = (await api.get('/system/uum/auth-configs')).data || []
-}
-
 async function loadServicesTab() {
   const [s, st, ap] = await Promise.all([
     api.get('/system/uum/services'),
@@ -248,7 +244,6 @@ async function loadTabData() {
   try {
     if (tab.value === 'users') await loadUsersTab()
     else if (tab.value === 'apps') await loadAppsTab()
-    else if (tab.value === 'auth') await loadAuthTab()
     else if (tab.value === 'services') await loadServicesTab()
     else if (tab.value === 'integration') await loadIntegrationTab()
   } finally {
@@ -287,11 +282,6 @@ async function removeGrant(id: number) {
   await api.delete(`/system/uum/app-grants/${id}`)
   ElMessage.success('已删除')
   await loadAppsTab()
-}
-
-async function saveConfig(row: Record<string, unknown>) {
-  await api.put(`/system/uum/auth-configs/${row.id}`, { configValue: row.configValue })
-  ElMessage.success('配置已保存')
 }
 
 async function createService() {
@@ -472,21 +462,7 @@ onMounted(async () => {
       </PageCard>
 
       <PageCard v-if="tab === 'auth'" title="认证中心">
-<el-table :data="authConfigs" stripe size="small">
-          <el-table-column prop="configKey" label="配置项" width="200" />
-          <el-table-column prop="description" label="说明" min-width="220" />
-          <el-table-column label="值" min-width="160">
-            <template #default="{ row }">
-              <el-input v-model="row.configValue" size="small" />
-            </template>
-          </el-table-column>
-          <el-table-column label="操作" width="80">
-            <template #default="{ row }">
-              <el-button link type="primary" @click="saveConfig(row)">保存</el-button>
-            </template>
-          </el-table-column>
-        </el-table>
-        <el-button style="margin-top:12px" @click="router.push('/system/maintenance?pane=security')">等保 / 双因素开关</el-button>
+        <AuthConfigManagePanel />
       </PageCard>
 
       <PageCard v-if="tab === 'services'" title="服务中心">

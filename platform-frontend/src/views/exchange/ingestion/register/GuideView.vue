@@ -268,7 +268,7 @@ onMounted(() =>
 <template>
   <div v-loading="loading" class="guide-page">
     <el-alert v-if="loadError" type="error" :title="loadError" show-icon :closable="false" style="margin-bottom:12px" />
-    <PageCard title="填报指引（11 步）">
+    <PageCard title="填报指引">
       <p class="guide-intro">{{ intro }}</p>
 
       <div class="guide-nav">

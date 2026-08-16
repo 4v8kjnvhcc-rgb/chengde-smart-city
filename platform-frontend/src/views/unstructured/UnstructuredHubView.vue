@@ -2,12 +2,13 @@
 import { computed, nextTick, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import api from '@/api/http'
-import { ElMessage, ElMessageBox, type UploadFile } from 'element-plus'
+import { ElMessage, ElMessageBox, type UploadFile, type UploadUserFile } from 'element-plus'
 import PageCard from '@/components/common/PageCard.vue'
 import PortalPagination from '@/components/common/PortalPagination.vue'
 import { useClientPager } from '@/composables/useClientPager'
 import HubSideLayout, { type HubNavItem } from '@/components/common/HubSideLayout.vue'
 import { statusLabel, statusTagType } from '@/utils/status-label'
+import { formatDateTime } from '@/utils/datetime'
 import { useAuthStore } from '@/stores/auth'
 import { filterHubNavByPermissions, filterHubNavByMenuVisible, UNSTRUCT_NAV_PERMISSIONS } from '@/utils/hub-nav-permission'
 
@@ -73,6 +74,9 @@ interface Doc {
   publishStatus: string
   processStatus?: string
   tagJson?: string
+  linkedDocId?: number | null
+  linkedDocTitle?: string
+  summary?: string
   createdAt?: string
   updatedAt?: string
   keywords?: string[]
@@ -207,13 +211,32 @@ const {
 } = useClientPager(categories)
 const docs = ref<Doc[]>([])
 const { page: docPage, pageSize: docPageSize, paged: pagedDocs, total: docTotal, resetPage: resetDocPage } = useClientPager(docs)
+const metaQuery = reactive({ keyword: '', mediaHint: '', metaStatus: '' })
+const metaFilteredDocs = computed(() => {
+  let list = docs.value
+  const kw = metaQuery.keyword.trim().toLowerCase()
+  if (kw) {
+    list = list.filter((d) =>
+      [d.title, d.originalFileName, d.docCode, d.author, d.description, tagsLabel(d.tagJson)]
+        .filter(Boolean)
+        .some((x) => String(x).toLowerCase().includes(kw)),
+    )
+  }
+  if (metaQuery.mediaHint) {
+    list = list.filter((d) => mediaKindOf(d.contentType) === metaQuery.mediaHint)
+  }
+  if (metaQuery.metaStatus) {
+    list = list.filter((d) => (d.metaStatus || 'RAW') === metaQuery.metaStatus)
+  }
+  return list
+})
 const {
   page: metaPage,
   pageSize: metaPageSize,
   paged: pagedMetaDocs,
   total: metaTotal,
   resetPage: resetMetaPage,
-} = useClientPager(docs)
+} = useClientPager(metaFilteredDocs)
 const pipelines = ref<Pipeline[]>([])
 const searchQ = ref('')
 const searchCategory = ref<string>('')
@@ -258,8 +281,11 @@ const docForm = reactive({
   sourceUrl: '',
 })
 const selectedFile = ref<File | null>(null)
+const uploadFileList = ref<UploadUserFile[]>([])
 const filesSourceTab = ref<'upload' | 'external'>('upload')
-const docQuery = reactive({ keyword: '', categoryCode: '', publishStatus: '' })
+const docQuery = reactive({ keyword: '', categoryCode: '' })
+const docCreateVisible = ref(false)
+const docCreating = ref(false)
 const externalPlatforms = ref<ExternalPlatform[]>([])
 const {
   page: extPlatPage,
@@ -319,7 +345,7 @@ const metaEdit = reactive({
   title: '',
   author: '',
   description: '',
-  tagJson: '',
+  tagText: '',
   mediaFormat: '',
   mediaWidth: undefined as number | undefined,
   mediaHeight: undefined as number | undefined,
@@ -327,7 +353,10 @@ const metaEdit = reactive({
 })
 const metaOverview = ref<Record<string, unknown> | null>(null)
 const metaBusyId = ref<number | null>(null)
+const metaDetailVisible = ref(false)
+const metaDetailDoc = ref<Doc | null>(null)
 const similarVisible = ref(false)
+const similarSeedId = ref<number | null>(null)
 const similarSeedTitle = ref('')
 const similarHits = ref<Doc[]>([])
 const similarLoading = ref(false)
@@ -435,7 +464,6 @@ async function loadDocuments() {
   docs.value = (await api.get('/unstructured/platform/documents', {
     params: {
       keyword: docQuery.keyword || undefined,
-      publishStatus: docQuery.publishStatus || undefined,
       categoryCode: docQuery.categoryCode || undefined,
     },
   })).data || []
@@ -447,7 +475,6 @@ async function loadDocuments() {
 function onResetDocuments() {
   docQuery.keyword = ''
   docQuery.categoryCode = ''
-  docQuery.publishStatus = ''
   resetDocPage()
   void loadDocuments()
 }
@@ -778,6 +805,37 @@ function onFileChange(uploadFile: UploadFile) {
   }
 }
 
+function onUploadChange(file: UploadFile, files: UploadUserFile[]) {
+  uploadFileList.value = files.slice(-1)
+  onFileChange(file)
+}
+
+function onUploadRemove() {
+  selectedFile.value = null
+  uploadFileList.value = []
+}
+
+function resetDocForm() {
+  Object.assign(docForm, {
+    title: '',
+    categoryCode: '',
+    mediaHint: 'DOCUMENT',
+    contentType: 'application/pdf',
+    description: '',
+    tagText: '',
+    sourceType: 'UPLOAD',
+    sourceSystem: '',
+    sourceUrl: '',
+  })
+  selectedFile.value = null
+  uploadFileList.value = []
+}
+
+function openDocCreate() {
+  resetDocForm()
+  docCreateVisible.value = true
+}
+
 function tagsToJson(value: string) {
   const tags = value.split(/[,，]/).map((x) => x.trim()).filter(Boolean)
   return JSON.stringify([...new Set(tags)])
@@ -797,6 +855,7 @@ function parseContentField(doc: Doc, key: 'keywords' | 'topics' | 'sentiment' | 
   if (key === 'keywords' && Array.isArray(doc.keywords)) return doc.keywords
   if (key === 'topics' && Array.isArray(doc.topics)) return doc.topics
   if (key === 'sentiment' && doc.sentiment) return doc.sentiment
+  if (key === 'summary' && doc.summary) return doc.summary
   if (!doc.contentJson) return key === 'keywords' || key === 'topics' ? [] : ''
   try {
     const obj = JSON.parse(doc.contentJson) as Record<string, unknown>
@@ -840,23 +899,25 @@ async function registerDoc() {
     ElMessage.warning('请选择要上传的文件')
     return
   }
-  const form = new FormData()
-  form.append('file', selectedFile.value)
-  form.append('title', docForm.title.trim())
-  form.append('categoryCode', docForm.categoryCode)
-  form.append('description', docForm.description.trim())
-  form.append('tagJson', tagsToJson(docForm.tagText))
-  form.append('sourceSystem', docForm.sourceSystem.trim())
-  await api.post('/unstructured/platform/documents/upload', form)
-  ElMessage.success('文件资源已登记')
-  docForm.title = ''
-  docForm.description = ''
-  docForm.tagText = ''
-  docForm.sourceSystem = ''
-  selectedFile.value = null
-  await loadDocuments()
-  overviewLoaded = false
-  await loadOverview()
+  docCreating.value = true
+  try {
+    const form = new FormData()
+    form.append('file', selectedFile.value)
+    form.append('title', docForm.title.trim())
+    form.append('categoryCode', docForm.categoryCode)
+    form.append('description', docForm.description.trim())
+    form.append('tagJson', tagsToJson(docForm.tagText))
+    form.append('sourceSystem', docForm.sourceSystem.trim())
+    await api.post('/unstructured/platform/documents/upload', form)
+    ElMessage.success('文件资源已登记')
+    docCreateVisible.value = false
+    resetDocForm()
+    await loadDocuments()
+    overviewLoaded = false
+    await loadOverview()
+  } finally {
+    docCreating.value = false
+  }
 }
 
 function openDocEdit(row: Doc) {
@@ -945,24 +1006,19 @@ function mediaLabel(contentType?: string) {
   return '文档'
 }
 
-async function publishDoc(id: number) {
-  await api.post(`/unstructured/platform/documents/${id}/publish`)
-  ElMessage.success('已发布')
-  await loadDocuments()
+function mediaKindOf(contentType?: string) {
+  const value = String(contentType || '').toLowerCase()
+  if (value.startsWith('image/')) return 'IMAGE'
+  if (value.startsWith('video/')) return 'VIDEO'
+  if (value.startsWith('audio/')) return 'AUDIO'
+  return 'DOCUMENT'
 }
 
-async function offlineDoc(id: number) {
-  await api.post(`/unstructured/platform/documents/${id}/offline`)
-  ElMessage.success('已下线')
-  await loadDocuments()
-}
-
-async function indexDoc(id: number) {
-  await api.post(`/unstructured/platform/documents/${id}/index`)
-  ElMessage.success('已建索引')
-  await loadDocuments()
-  overviewLoaded = false
-  await loadOverview()
+function onResetMetaQuery() {
+  metaQuery.keyword = ''
+  metaQuery.mediaHint = ''
+  metaQuery.metaStatus = ''
+  resetMetaPage()
 }
 
 async function doSearch(silent = false) {
@@ -1001,7 +1057,7 @@ function openMetaEdit(row: Doc) {
   metaEdit.title = row.title
   metaEdit.author = row.author || ''
   metaEdit.description = row.description || ''
-  metaEdit.tagJson = row.tagJson || '[]'
+  metaEdit.tagText = tagsLabel(row.tagJson) === '—' ? '' : tagsLabel(row.tagJson).replace(/、/g, ',')
   metaEdit.mediaFormat = row.mediaFormat || ''
   metaEdit.mediaWidth = row.mediaWidth
   metaEdit.mediaHeight = row.mediaHeight
@@ -1016,7 +1072,7 @@ async function saveMetadata() {
       title: metaEdit.title,
       author: metaEdit.author || null,
       description: metaEdit.description || null,
-      tagJson: metaEdit.tagJson,
+      tagJson: tagsToJson(metaEdit.tagText),
       mediaFormat: metaEdit.mediaFormat || null,
       mediaWidth: metaEdit.mediaWidth ?? null,
       mediaHeight: metaEdit.mediaHeight ?? null,
@@ -1029,6 +1085,16 @@ async function saveMetadata() {
   } catch {
     ElMessage.error('保存元数据失败')
   }
+}
+
+function openMetaDetail(row: Doc) {
+  metaDetailDoc.value = row
+  metaDetailVisible.value = true
+}
+
+function contentSummary(row: Doc) {
+  const s = row.summary || parseContentField(row, 'summary')
+  return s ? String(s) : '—'
 }
 
 async function extractFeatures(row: Doc) {
@@ -1058,6 +1124,7 @@ async function understandContent(row: Doc) {
 }
 
 async function openSimilar(row: Doc) {
+  similarSeedId.value = row.id
   similarSeedTitle.value = row.title
   similarVisible.value = true
   similarLoading.value = true
@@ -1071,6 +1138,26 @@ async function openSimilar(row: Doc) {
   } finally {
     similarLoading.value = false
   }
+}
+
+async function linkSimilarDoc(target: Doc) {
+  if (!similarSeedId.value) return
+  try {
+    const res = await api.post(`/unstructured/platform/documents/${similarSeedId.value}/similar-link/${target.id}`)
+    ElMessage.success(String(res.data?.message || '已建立相似连接'))
+    await Promise.all([loadMetadataOverview(), loadDocuments()])
+  } catch {
+    ElMessage.error('建立相似连接失败')
+  }
+}
+
+async function unlinkSimilarDoc(row: Doc) {
+  try {
+    await ElMessageBox.confirm(`确认解除「${row.title}」的相似连接？`, '解除相似连接', { type: 'warning' })
+    const res = await api.delete(`/unstructured/platform/documents/${row.id}/similar-link`)
+    ElMessage.success(String(res.data?.message || '已解除相似连接'))
+    await Promise.all([loadMetadataOverview(), loadDocuments()])
+  } catch { /* cancel */ }
 }
 
 async function runPipe(docId: number) {
@@ -1300,75 +1387,29 @@ onMounted(() => {
       <PageCard v-else-if="activeNav === 'files'" title="文件资源管理">
         <el-tabs v-model="filesSourceTab" class="uns-files-tabs" @tab-change="onFilesSourceTabChange">
           <el-tab-pane label="本地上传" name="upload">
-            <div class="uns-register-card">
-              <div class="uns-register-card__header">
-                <span class="uns-register-card__title">登记本地文件</span>
-              </div>
-              <el-form inline class="portal-inline-form">
-                <el-form-item label="标题" class="portal-field-lg">
-                  <el-input v-model="docForm.title" placeholder="文档标题" />
-                </el-form-item>
-                <el-form-item label="分类" class="portal-field-lg">
-                  <el-select v-model="docForm.categoryCode" placeholder="选择已登记分类" filterable>
-                    <el-option v-for="c in categories" :key="c.id" :label="c.categoryName" :value="c.categoryCode" />
-                  </el-select>
-                </el-form-item>
-                <el-form-item label="媒介类型" class="portal-field-sm">
-                  <el-select v-model="docForm.mediaHint" @change="onMediaHintChange">
-                    <el-option v-for="m in MEDIA_OPTIONS" :key="m.value" :label="m.label" :value="m.value" />
-                  </el-select>
-                </el-form-item>
-                <el-form-item label="来源平台" class="portal-field-lg">
-                  <el-input v-model="docForm.sourceSystem" placeholder="可选，如 OA 系统" />
-                </el-form-item>
-                <el-form-item label="选择文件" class="portal-field-xl">
-                  <el-upload action="#" :auto-upload="false" :limit="1" :show-file-list="true" @change="onFileChange">
-                    <el-button>选择文件（最大 200 MB）</el-button>
-                  </el-upload>
-                </el-form-item>
-                <el-form-item label="标签" class="portal-field-lg">
-                  <el-input v-model="docForm.tagText" placeholder="多个标签用逗号分隔" />
-                </el-form-item>
-                <el-form-item label="描述" class="portal-field-xl">
-                  <el-input v-model="docForm.description" placeholder="文件内容与用途说明" />
-                </el-form-item>
-                <el-form-item class="portal-form-actions">
-                  <el-button type="primary" @click="registerDoc">登记</el-button>
-                </el-form-item>
-              </el-form>
-            </div>
-            <div class="uns-list-header">
-              <span>已登记文件资源</span>
-            </div>
-            <el-form inline class="portal-inline-form portal-inline-form--block portal-inline-form--sm" size="small">
+            <el-form inline class="portal-inline-form portal-inline-form--block">
               <el-form-item label="关键词" class="portal-field-lg">
                 <el-input v-model="docQuery.keyword" clearable placeholder="标题或文件名" @keyup.enter="loadDocuments" />
               </el-form-item>
               <el-form-item label="分类" class="portal-field-md">
-                <el-select v-model="docQuery.categoryCode" clearable placeholder="全部分类">
+                <el-select v-model="docQuery.categoryCode" clearable placeholder="全部">
                   <el-option v-for="c in categories" :key="c.id" :label="c.categoryName" :value="c.categoryCode" />
-                </el-select>
-              </el-form-item>
-              <el-form-item label="发布状态" class="portal-field-sm">
-                <el-select v-model="docQuery.publishStatus" clearable placeholder="全部">
-                  <el-option label="草稿" value="DRAFT" />
-                  <el-option label="已发布" value="PUBLISHED" />
-                  <el-option label="已下线" value="OFFLINE" />
                 </el-select>
               </el-form-item>
               <el-form-item class="portal-form-actions">
                 <el-button type="primary" @click="loadDocuments">查询</el-button>
                 <el-button @click="onResetDocuments">重置</el-button>
+                <el-button @click="openDocCreate">新增</el-button>
               </el-form-item>
             </el-form>
-            <el-table :data="pagedDocs" stripe size="small">
-              <el-table-column label="文件资源" min-width="190">
+            <el-table :data="pagedDocs" stripe border class="portal-table" size="small">
+              <el-table-column label="文件资源" min-width="190" show-overflow-tooltip>
                 <template #default="{ row }">
                   <el-button link type="primary" @click="openDetail(row.id)">{{ row.title }}</el-button>
                   <div class="uns-file-sub">{{ row.originalFileName || row.docCode }} · {{ formatSize(row.fileSize) }}</div>
                 </template>
               </el-table-column>
-              <el-table-column label="分类" width="130">
+              <el-table-column label="分类" width="130" show-overflow-tooltip>
                 <template #default="{ row }">
                   {{ categories.find((c) => c.categoryCode === row.categoryCode)?.categoryName || row.categoryCode || '—' }}
                 </template>
@@ -1376,47 +1417,19 @@ onMounted(() => {
               <el-table-column label="媒介" width="80">
                 <template #default="{ row }">{{ mediaLabel(row.contentType) }}</template>
               </el-table-column>
-              <el-table-column label="来源" min-width="120">
+              <el-table-column label="来源" min-width="120" show-overflow-tooltip>
                 <template #default="{ row }">{{ row.sourceSystem || (row.sourceType === 'EXTERNAL' ? '外部平台' : '平台上传') }}</template>
               </el-table-column>
-              <el-table-column label="发布" width="100">
-                <template #default="{ row }">
-                  <el-tag :type="statusTagType(row.publishStatus)" size="small">
-                    {{ statusLabel(row.publishStatus) }}
-                  </el-tag>
-                </template>
+              <el-table-column label="更新时间" width="170">
+                <template #default="{ row }">{{ formatDateTime(row.updatedAt || row.createdAt) }}</template>
               </el-table-column>
-              <el-table-column label="索引" width="100">
-                <template #default="{ row }">
-                  <el-tag :type="statusTagType(row.indexStatus)" size="small">
-                    {{ statusLabel(row.indexStatus) }}
-                  </el-tag>
-                </template>
-              </el-table-column>
-              <el-table-column label="操作" width="220" fixed="right">
+              <el-table-column label="操作" width="280" fixed="right">
                 <template #default="{ row }">
                   <el-button link type="primary" size="small" @click="openDetail(row.id)">详情</el-button>
-                  <el-button link size="small" @click="accessFile(row, false)">预览</el-button>
-                  <el-button link size="small" @click="accessFile(row, true)">下载</el-button>
-                  <el-divider direction="vertical" />
                   <el-button link type="primary" size="small" @click="openDocEdit(row)">编辑</el-button>
-                  <el-button
-                    v-if="row.publishStatus !== 'PUBLISHED'"
-                    link
-                    type="success"
-                    size="small"
-                    @click="publishDoc(row.id)"
-                  >发布</el-button>
-                  <el-button v-else link size="small" @click="offlineDoc(row.id)">下线</el-button>
-                  <el-dropdown v-if="row.indexStatus !== 'INDEXED' || row.publishStatus !== 'PUBLISHED'" trigger="click" size="small">
-                    <el-button link size="small">更多</el-button>
-                    <template #dropdown>
-                      <el-dropdown-menu>
-                        <el-dropdown-item v-if="row.indexStatus !== 'INDEXED'" @click="indexDoc(row.id)">建立索引</el-dropdown-item>
-                        <el-dropdown-item v-if="row.publishStatus !== 'PUBLISHED'" divided style="color:var(--el-color-danger)" @click="deleteDoc(row)">删除</el-dropdown-item>
-                      </el-dropdown-menu>
-                    </template>
-                  </el-dropdown>
+                  <el-button link type="primary" size="small" @click="accessFile(row, false)">预览</el-button>
+                  <el-button link type="primary" size="small" @click="accessFile(row, true)">下载</el-button>
+                  <el-button link type="danger" size="small" @click="deleteDoc(row)">删除</el-button>
                 </template>
               </el-table-column>
             </el-table>
@@ -1444,7 +1457,7 @@ onMounted(() => {
                 <el-button type="primary" @click="openExtPlatCreate">新增</el-button>
               </el-form-item>
             </el-form>
-            <el-table :data="pagedExtPlatforms" stripe size="small">
+            <el-table :data="pagedExtPlatforms" stripe border class="portal-table" size="small">
               <el-table-column type="index" label="序号" width="70" :index="extPlatIndex" />
               <el-table-column prop="platformName" label="平台名称" min-width="180" show-overflow-tooltip />
               <el-table-column label="对接方式" width="140">
@@ -1600,11 +1613,60 @@ onMounted(() => {
           </template>
         </el-dialog>
 
+        <el-dialog
+          v-model="docCreateVisible"
+          title="新增本地文件"
+          width="620px"
+          destroy-on-close
+          @closed="resetDocForm"
+        >
+          <el-form label-width="90px">
+            <el-form-item label="标题" required>
+              <el-input v-model="docForm.title" placeholder="文档标题" />
+            </el-form-item>
+            <el-form-item label="分类" required>
+              <el-select v-model="docForm.categoryCode" placeholder="选择已登记分类" filterable style="width:100%">
+                <el-option v-for="c in categories" :key="c.id" :label="c.categoryName" :value="c.categoryCode" />
+              </el-select>
+            </el-form-item>
+            <el-form-item label="媒介类型">
+              <el-select v-model="docForm.mediaHint" style="width:100%" @change="onMediaHintChange">
+                <el-option v-for="m in MEDIA_OPTIONS" :key="m.value" :label="m.label" :value="m.value" />
+              </el-select>
+            </el-form-item>
+            <el-form-item label="来源平台">
+              <el-input v-model="docForm.sourceSystem" placeholder="可选，如 OA 系统" />
+            </el-form-item>
+            <el-form-item label="选择文件" required>
+              <el-upload
+                action="#"
+                :auto-upload="false"
+                :limit="1"
+                v-model:file-list="uploadFileList"
+                :on-change="onUploadChange"
+                :on-remove="onUploadRemove"
+              >
+                <el-button>选择文件（最大 200 MB）</el-button>
+              </el-upload>
+            </el-form-item>
+            <el-form-item label="标签">
+              <el-input v-model="docForm.tagText" placeholder="多个标签用逗号分隔" />
+            </el-form-item>
+            <el-form-item label="描述">
+              <el-input v-model="docForm.description" type="textarea" :rows="3" placeholder="文件内容与用途说明" />
+            </el-form-item>
+          </el-form>
+          <template #footer>
+            <el-button @click="docCreateVisible = false">取消</el-button>
+            <el-button type="primary" :loading="docCreating" @click="registerDoc">登记</el-button>
+          </template>
+        </el-dialog>
+
         <el-dialog v-model="docDialogVisible" title="编辑文件资源" width="560px">
           <el-form label-width="90px">
             <el-form-item label="标题" required><el-input v-model="docEditing.title" /></el-form-item>
             <el-form-item label="分类" required>
-              <el-select v-model="docEditing.categoryCode" filterable>
+              <el-select v-model="docEditing.categoryCode" filterable style="width:100%">
                 <el-option v-for="c in categories" :key="c.id" :label="c.categoryName" :value="c.categoryCode" />
               </el-select>
             </el-form-item>
@@ -1741,6 +1803,14 @@ onMounted(() => {
       </PageCard>
 
       <PageCard v-else-if="activeNav === 'metadata'" title="非结构化元数据管理">
+        <el-alert
+          type="info"
+          :closable="false"
+          show-icon
+          class="uns-meta-flow"
+          title="治理流程：基本特征提取 → 内容理解（关键词/主题/情感或多媒体关键信息）→ 标签化与相似性检索/连接 → 元数据落地维护"
+          description="覆盖文档、图片、音频、视频。提取与理解结果写入元数据库（feature_json / content_json / tag_json），供检索与消费；相似连接写入关联文档便于关联浏览。"
+        />
         <el-row :gutter="12" class="uns-meta-kpi">
           <el-col :span="6">
             <div class="uns-kpi uns-kpi--blue">
@@ -1767,24 +1837,52 @@ onMounted(() => {
             </div>
           </el-col>
         </el-row>
-        <div class="uns-list-header">
-          <span>元数据列表</span>
-        </div>
-        <el-table :data="pagedMetaDocs" stripe size="small">
-          <el-table-column prop="title" label="文档" min-width="150" show-overflow-tooltip />
+
+        <el-form inline class="portal-inline-form portal-inline-form--block">
+          <el-form-item label="关键词" class="portal-field-lg">
+            <el-input
+              v-model="metaQuery.keyword"
+              clearable
+              placeholder="标题 / 作者 / 标签"
+              @keyup.enter="resetMetaPage"
+            />
+          </el-form-item>
+          <el-form-item label="媒介类型" class="portal-field-md">
+            <el-select v-model="metaQuery.mediaHint" clearable placeholder="全部">
+              <el-option v-for="m in MEDIA_OPTIONS" :key="m.value" :label="m.label" :value="m.value" />
+            </el-select>
+          </el-form-item>
+          <el-form-item label="元数据状态" class="portal-field-md">
+            <el-select v-model="metaQuery.metaStatus" clearable placeholder="全部">
+              <el-option label="原始" value="RAW" />
+              <el-option label="已提取特征" value="EXTRACTED" />
+              <el-option label="已内容理解" value="UNDERSTOOD" />
+            </el-select>
+          </el-form-item>
+          <el-form-item class="portal-form-actions">
+            <el-button type="primary" @click="resetMetaPage">查询</el-button>
+            <el-button @click="onResetMetaQuery">重置</el-button>
+          </el-form-item>
+        </el-form>
+
+        <el-table :data="pagedMetaDocs" stripe border class="portal-table" size="small">
+          <el-table-column prop="title" label="文件对象" min-width="150" show-overflow-tooltip />
           <el-table-column label="类型" width="80">
             <template #default="{ row }">{{ mediaLabel(row.contentType) }}</template>
           </el-table-column>
           <el-table-column label="作者" width="100" show-overflow-tooltip>
             <template #default="{ row }">{{ row.author || '—' }}</template>
           </el-table-column>
+          <el-table-column label="创建时间" width="170">
+            <template #default="{ row }">{{ formatDateTime(row.createdAt) }}</template>
+          </el-table-column>
           <el-table-column label="基本特征" min-width="140" show-overflow-tooltip>
             <template #default="{ row }">{{ featureBrief(row) }}</template>
           </el-table-column>
-          <el-table-column label="关键词" min-width="140" show-overflow-tooltip>
+          <el-table-column label="关键词" min-width="120" show-overflow-tooltip>
             <template #default="{ row }">{{ contentListLabel(row, 'keywords') }}</template>
           </el-table-column>
-          <el-table-column label="主题" min-width="120" show-overflow-tooltip>
+          <el-table-column label="主题" min-width="100" show-overflow-tooltip>
             <template #default="{ row }">{{ contentListLabel(row, 'topics') }}</template>
           </el-table-column>
           <el-table-column label="情感" width="80">
@@ -1795,6 +1893,17 @@ onMounted(() => {
           <el-table-column label="标签" min-width="120" show-overflow-tooltip>
             <template #default="{ row }">{{ tagsLabel(row.tagJson) }}</template>
           </el-table-column>
+          <el-table-column label="相似连接" min-width="120" show-overflow-tooltip>
+            <template #default="{ row }">
+              <el-button
+                v-if="row.linkedDocId"
+                link
+                type="primary"
+                @click="openDetail(row.linkedDocId)"
+              >{{ row.linkedDocTitle || `#${row.linkedDocId}` }}</el-button>
+              <span v-else>—</span>
+            </template>
+          </el-table-column>
           <el-table-column label="元数据状态" width="120">
             <template #default="{ row }">
               <el-tag :type="statusTagType(row.metaStatus || 'RAW')" size="small">
@@ -1802,7 +1911,7 @@ onMounted(() => {
               </el-tag>
             </template>
           </el-table-column>
-          <el-table-column label="操作" width="240" fixed="right">
+          <el-table-column label="操作" width="360" fixed="right">
             <template #default="{ row }">
               <el-button
                 link
@@ -1818,20 +1927,21 @@ onMounted(() => {
                 :loading="metaBusyId === row.id"
                 @click="understandContent(row)"
               >内容理解</el-button>
-              <el-dropdown trigger="click" size="small">
-                <el-button link size="small">更多</el-button>
-                <template #dropdown>
-                  <el-dropdown-menu>
-                    <el-dropdown-item @click="openSimilar(row)">相似检索</el-dropdown-item>
-                    <el-dropdown-item @click="openMetaEdit(row)">编辑落地</el-dropdown-item>
-                  </el-dropdown-menu>
-                </template>
-              </el-dropdown>
+              <el-button link type="primary" size="small" @click="openSimilar(row)">相似检索</el-button>
+              <el-button link type="primary" size="small" @click="openMetaEdit(row)">编辑落地</el-button>
+              <el-button link type="primary" size="small" @click="openMetaDetail(row)">查看</el-button>
+              <el-button
+                v-if="row.linkedDocId"
+                link
+                type="danger"
+                size="small"
+                @click="unlinkSimilarDoc(row)"
+              >解除连接</el-button>
             </template>
           </el-table-column>
         </el-table>
         <PortalPagination
-          v-if="docs.length"
+          v-if="metaFilteredDocs.length"
           v-model:page="metaPage"
           v-model:page-size="metaPageSize"
           :total="metaTotal"
@@ -1861,8 +1971,8 @@ onMounted(() => {
             <el-form-item label="时长(秒)">
               <el-input-number v-model="metaEdit.mediaDurationSec" :min="0" :controls="false" />
             </el-form-item>
-            <el-form-item label="标签 JSON">
-              <el-input v-model="metaEdit.tagJson" type="textarea" :rows="3" placeholder='["政务","公开"]' />
+            <el-form-item label="标签">
+              <el-input v-model="metaEdit.tagText" type="textarea" :rows="2" placeholder="多个标签用逗号分隔，如：政务,公开" />
             </el-form-item>
           </el-form>
           <template #footer>
@@ -1871,8 +1981,29 @@ onMounted(() => {
           </template>
         </el-dialog>
 
-        <el-drawer v-model="similarVisible" :title="`相似检索：${similarSeedTitle}`" size="520px">
-<el-table v-loading="similarLoading" :data="similarHits" stripe size="small">
+        <el-drawer v-model="metaDetailVisible" title="元数据详情" size="560px">
+          <template v-if="metaDetailDoc">
+            <el-descriptions :column="1" border size="small">
+              <el-descriptions-item label="标题">{{ metaDetailDoc.title }}</el-descriptions-item>
+              <el-descriptions-item label="类型">{{ mediaLabel(metaDetailDoc.contentType) }}</el-descriptions-item>
+              <el-descriptions-item label="作者">{{ metaDetailDoc.author || '—' }}</el-descriptions-item>
+              <el-descriptions-item label="创建时间">{{ formatDateTime(metaDetailDoc.createdAt) }}</el-descriptions-item>
+              <el-descriptions-item label="基本特征">{{ featureBrief(metaDetailDoc) }}</el-descriptions-item>
+              <el-descriptions-item label="关键词">{{ contentListLabel(metaDetailDoc, 'keywords') }}</el-descriptions-item>
+              <el-descriptions-item label="主题">{{ contentListLabel(metaDetailDoc, 'topics') }}</el-descriptions-item>
+              <el-descriptions-item label="情感">{{ statusLabel(parseContentField(metaDetailDoc, 'sentiment') || '') }}</el-descriptions-item>
+              <el-descriptions-item label="摘要">{{ contentSummary(metaDetailDoc) }}</el-descriptions-item>
+              <el-descriptions-item label="标签">{{ tagsLabel(metaDetailDoc.tagJson) }}</el-descriptions-item>
+              <el-descriptions-item label="相似连接">
+                {{ metaDetailDoc.linkedDocTitle || (metaDetailDoc.linkedDocId ? `#${metaDetailDoc.linkedDocId}` : '—') }}
+              </el-descriptions-item>
+              <el-descriptions-item label="元数据状态">{{ statusLabel(metaDetailDoc.metaStatus || 'RAW') }}</el-descriptions-item>
+            </el-descriptions>
+          </template>
+        </el-drawer>
+
+        <el-drawer v-model="similarVisible" :title="`相似检索：${similarSeedTitle}`" size="560px">
+          <el-table v-loading="similarLoading" :data="similarHits" stripe border class="portal-table" size="small">
             <el-table-column prop="title" label="相似文档" min-width="160" show-overflow-tooltip />
             <el-table-column label="相似度" width="90">
               <template #default="{ row }">
@@ -1882,8 +2013,10 @@ onMounted(() => {
             <el-table-column label="标签" min-width="120" show-overflow-tooltip>
               <template #default="{ row }">{{ tagsLabel(row.tagJson) }}</template>
             </el-table-column>
-            <el-table-column label="元数据" width="110">
-              <template #default="{ row }">{{ statusLabel(row.metaStatus || 'RAW') }}</template>
+            <el-table-column label="操作" width="120" fixed="right">
+              <template #default="{ row }">
+                <el-button link type="primary" size="small" @click="linkSimilarDoc(row)">建立连接</el-button>
+              </template>
             </el-table-column>
           </el-table>
           <el-empty v-if="!similarLoading && !similarHits.length" description="暂无相似结果，请先完成特征提取或内容理解" />
@@ -2378,24 +2511,12 @@ onMounted(() => {
 .uns-meta-size-row .el-input-number {
   width: 120px;
 }
-.uns-register-card,
 .uns-search-card {
   margin-bottom: 16px;
   padding: 16px 18px 10px;
   border: 1px solid var(--el-border-color-lighter);
   border-radius: 8px;
   background: linear-gradient(135deg, #f5f9ff 0%, #fafcff 100%);
-}
-.uns-register-card__header {
-  display: flex;
-  align-items: baseline;
-  gap: 12px;
-  margin-bottom: 12px;
-}
-.uns-register-card__title {
-  font-size: 14px;
-  font-weight: 600;
-  color: var(--el-text-color-primary);
 }
 .uns-toolbar {
   display: flex;

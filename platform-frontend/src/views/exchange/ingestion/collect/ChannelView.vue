@@ -2,10 +2,12 @@
 import { computed, onMounted, reactive, ref } from 'vue'
 import PageCard from '@/components/common/PageCard.vue'
 import ExecCycleSelect from '@/views/system/ExecCycleSelect.vue'
+import { useExecCycleLabel } from '@/utils/exec-cycle-label'
 import { ingestionApi, useIngestionLoading, type Channel, type IngestTask } from '../useIngestionHub'
 
 const props = defineProps<{ module: string }>()
 const { loading, loadError, withLoad } = useIngestionLoading()
+const { label: cycleLabel } = useExecCycleLabel()
 const channels = ref<Channel[]>([])
 const tasks = ref<IngestTask[]>([])
 const taskForm = reactive({ channelId: undefined as number | undefined, taskName: '', scheduleCron: '0 0 2 * * ?' })
@@ -81,7 +83,9 @@ onMounted(reload)
       <el-table :data="tasks.filter(t => !channelType || channels.some(c => c.id === t.channelId))" stripe size="small">
         <el-table-column prop="taskCode" label="编码" width="160" />
         <el-table-column prop="taskName" label="任务" min-width="140" />
-        <el-table-column prop="scheduleCron" label="Cron" width="120" />
+        <el-table-column label="执行周期" width="140" show-overflow-tooltip>
+          <template #default="{ row }">{{ cycleLabel(row.scheduleCron) }}</template>
+        </el-table-column>
         <el-table-column label="状态" width="90">
           <template #default="{ row }">{{ $statusLabel(row.status) }}</template>
         </el-table-column>

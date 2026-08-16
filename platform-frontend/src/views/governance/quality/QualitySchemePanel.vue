@@ -9,6 +9,7 @@ import PortalPagination from '@/components/common/PortalPagination.vue'
 import { useClientPager } from '@/composables/useClientPager'
 import { statusLabel, statusTagType } from '@/utils/status-label'
 import ExecCycleSelect, { type ExecCycleOption } from '@/views/system/ExecCycleSelect.vue'
+import { useExecCycleLabel } from '@/utils/exec-cycle-label'
 
 interface SchemeRow {
   id: number
@@ -66,6 +67,7 @@ interface LogRow {
 const loading = ref(false)
 const rows = ref<SchemeRow[]>([])
 const selectedIds = ref<number[]>([])
+const { label: cycleLabel } = useExecCycleLabel()
 const filter = reactive({
   keyword: '',
   scheduleStatus: '' as string,
@@ -461,7 +463,7 @@ async function batchStop() {
 async function batchDelete() {
   const list = selectedRows()
   if (!list.length) return ElMessage.warning('请先勾选记录')
-  await ElMessageBox.confirm(`确认删除选中的 ${list.length} 条记录？`, '删除确认', { type: 'warning' })
+  await ElMessageBox.confirm(`确认删除选中的 ${list.length} 条记录？`, '批量删除确认', { type: 'warning' })
   for (const row of list) {
     try {
       await api.delete(`/governance/quality/schemes/${row.id}`)
@@ -471,13 +473,7 @@ async function batchDelete() {
     }
   }
   selectedIds.value = []
-  await loadList()
-}
-
-async function removeOne(row: SchemeRow) {
-  await ElMessageBox.confirm(`确认删除「${row.schemeName}」？`, '删除确认', { type: 'warning' })
-  await api.delete(`/governance/quality/schemes/${row.id}`)
-  ElMessage.success('已删除')
+  ElMessage.success('批量删除已处理')
   await loadList()
 }
 
@@ -565,6 +561,7 @@ onMounted(loadList)
     <div class="toolbar">
       <div class="toolbar__group">
         <el-button type="primary" @click="openCreate">+ 新增</el-button>
+        <el-button type="danger" plain @click="batchDelete">批量删除</el-button>
         <el-button @click="loadList" :loading="loading">刷新</el-button>
       </div>
       <div class="toolbar__group">
@@ -581,9 +578,6 @@ onMounted(loadList)
           <el-button @click="batchExecute">执行</el-button>
         </el-tooltip>
       </div>
-      <div class="toolbar__group toolbar__group--danger">
-        <el-button type="danger" plain @click="batchDelete">删除</el-button>
-      </div>
     </div>
 
     <el-table
@@ -597,8 +591,8 @@ onMounted(loadList)
       <el-table-column type="selection" width="44" />
       <el-table-column type="index" label="序号" width="56" />
       <el-table-column prop="schemeName" label="名称" min-width="140" show-overflow-tooltip />
-      <el-table-column label="执行周期" width="120" show-overflow-tooltip>
-        <template #default="{ row }">{{ row.cycleName || row.cronExpr || '—' }}</template>
+      <el-table-column label="执行周期" width="140" show-overflow-tooltip>
+        <template #default="{ row }">{{ row.cycleName || cycleLabel(row.cronExpr) }}</template>
       </el-table-column>
       <el-table-column label="状态" width="100">
         <template #default="{ row }">
@@ -619,11 +613,10 @@ onMounted(loadList)
       </el-table-column>
       <el-table-column prop="lastExecAt" label="最近执行" width="170" />
       <el-table-column prop="updatedAt" label="更新时间" width="170" />
-      <el-table-column label="操作" width="160" fixed="right">
+      <el-table-column label="操作" width="120" fixed="right">
         <template #default="{ row }">
           <el-button link type="primary" @click="openEdit(row)">修改</el-button>
           <el-button link @click="openLogs(row)">日志</el-button>
-          <el-button link type="danger" @click="removeOne(row)">删除</el-button>
         </template>
       </el-table-column>
     </el-table>

@@ -1,0 +1,31 @@
+---
+description: 用户可见时间统一为 YYYY-MM-DD HH:mm:ss（空格分隔，禁止 ISO 的 T）
+globs: platform-frontend/src/**/*.{vue,ts}
+alwaysApply: true
+---
+
+# 时间展示格式
+
+面向用户的表格、详情、日志、提示中的日期时间，统一为：
+
+`YYYY-MM-DD HH:mm:ss`（例：`2026-07-20 17:08:47`）
+
+## 必须遵守
+
+1. **禁止**向用户展示 ISO-8601 带 `T` 的形式（如 `2026-07-20T17:08:47`）。
+2. 前端展示统一调用 [`platform-frontend/src/utils/datetime.ts`](platform-frontend/src/utils/datetime.ts) 的 `formatDateTime()`（或全局 `$formatDateTime`）。
+3. 表格禁止裸写 `<el-table-column prop="createdAt" />` 等时间列；应使用：
+
+```vue
+<el-table-column label="创建时间" width="170">
+  <template #default="{ row }">{{ formatDateTime(row.createdAt) }}</template>
+</el-table-column>
+```
+
+4. `el-date-picker` 的 `format` / `value-format` 使用 `YYYY-MM-DD HH:mm:ss`（或仅日期的 `YYYY-MM-DD`）。
+5. 后端 API 序列化 `LocalDateTime` 等须输出空格格式（见 `JacksonDateTimeConfig`）；反序列化须兼容历史带 `T` 的入参。
+
+## 禁止
+
+- 模板中直接 `{{ row.createdAt }}` 且未格式化
+- 仅用 `.replace('T', ' ')` 而不走统一工具（新代码禁止；旧代码改造时改为 `formatDateTime`）

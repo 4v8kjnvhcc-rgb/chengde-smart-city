@@ -9,12 +9,14 @@ import router from './router'
 import { statusLabel, statusTagType } from './utils/status-label'
 import { formatDateTime } from './utils/datetime'
 import { installFrontendErrorReporter } from './utils/error-reporter'
+import { preparePortalListTableDefaults, installPortalListTable } from './plugins/portal-list-table'
 import './styles/variables.css'
 import './styles/global.css'
 import './styles/element-overrides.css'
 import './style.css'
 
 installFrontendErrorReporter()
+preparePortalListTableDefaults()
 
 const app = createApp(App)
 for (const [key, component] of Object.entries(ElementPlusIconsVue)) {
@@ -26,4 +28,5 @@ app.config.globalProperties.$formatDateTime = formatDateTime
 app.use(createPinia())
 app.use(router)
 app.use(ElementPlus, { locale: zhCn })
+installPortalListTable(app)
 app.mount('#app')

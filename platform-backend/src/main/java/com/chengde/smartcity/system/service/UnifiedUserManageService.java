@@ -11,7 +11,9 @@ import com.chengde.smartcity.analysis.service.AnalyticsPlatformService;
 import com.chengde.smartcity.audit.AuditService;
 import com.chengde.smartcity.common.exception.BusinessException;
 import com.chengde.smartcity.security.UserPrincipal;
+import com.chengde.smartcity.system.dto.SysDictItemRequest;
 import com.chengde.smartcity.system.entity.SysAppGrant;
+import com.chengde.smartcity.system.entity.SysDict;
 import com.chengde.smartcity.system.entity.SysRole;
 import com.chengde.smartcity.system.entity.SysServiceApproval;
 import com.chengde.smartcity.system.entity.SysServiceCallStat;
@@ -30,6 +32,7 @@ import java.util.Map;
 import java.util.stream.Collectors;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import org.springframework.util.StringUtils;
 
 /** 统一用户管理系统（3.1.1）：在系统管理域聚合七中心能力 */
 @Service
@@ -206,9 +209,69 @@ public class UnifiedUserManageService {
     }
 
     @Transactional
+    public Long createAuthConfig(UserPrincipal operator, Map<String, Object> body) {
+        SysDict dict = dictService.getByCode("AUTH");
+        String key = bodyStr(body, "configKey");
+        if (!StringUtils.hasText(key)) {
+            throw new BusinessException(400, "配置项不能为空");
+        }
+        return dictService.createItem(operator, dict.getId(), toAuthItemRequest(body, key.trim()));
+    }
+
+    @Transactional
     public void updateAuthConfig(UserPrincipal operator, Long id, Map<String, Object> body) {
-        Object v = body == null ? null : body.get("configValue");
+        if (body == null) {
+            throw new BusinessException(400, "请求体不能为空");
+        }
+        boolean fullUpdate = body.containsKey("configKey") || body.containsKey("description") || body.containsKey("status");
+        if (fullUpdate) {
+            String key = bodyStr(body, "configKey");
+            if (!StringUtils.hasText(key)) {
+                throw new BusinessException(400, "配置项不能为空");
+            }
+            dictService.updateItem(operator, id, toAuthItemRequest(body, key.trim()));
+            return;
+        }
+        Object v = body.get("configValue");
         dictService.updateItemValue(operator, id, v == null ? "" : String.valueOf(v));
+    }
+
+    @Transactional
+    public void deleteAuthConfig(UserPrincipal operator, Long id) {
+        dictService.deleteItem(operator, id);
+    }
+
+    private static SysDictItemRequest toAuthItemRequest(Map<String, Object> body, String key) {
+        Integer status = 1;
+        Object st = body.get("status");
+        if (st instanceof Number n) {
+            status = n.intValue();
+        } else if (st != null) {
+            String s = String.valueOf(st).trim().toUpperCase(Locale.ROOT);
+            if ("DISABLED".equals(s) || "0".equals(s) || "FALSE".equals(s)) {
+                status = 0;
+            }
+        }
+        Integer sortOrder = 0;
+        Object so = body.get("sortOrder");
+        if (so instanceof Number n) {
+            sortOrder = n.intValue();
+        }
+        return new SysDictItemRequest(
+                key,
+                body.get("configValue") == null ? "" : String.valueOf(body.get("configValue")),
+                body.get("description") == null ? "" : String.valueOf(body.get("description")).trim(),
+                sortOrder,
+                status,
+                null);
+    }
+
+    private static String bodyStr(Map<String, Object> body, String key) {
+        if (body == null || body.get(key) == null) {
+            return null;
+        }
+        String v = String.valueOf(body.get(key)).trim();
+        return v.isEmpty() ? null : v;
     }
 
     public List<AnaPlatformApp> apps() {

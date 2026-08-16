@@ -12,6 +12,7 @@ import PageCard from '@/components/common/PageCard.vue'
 import PortalPagination from '@/components/common/PortalPagination.vue'
 import { useClientPager } from '@/composables/useClientPager'
 import { statusLabel, statusTagType } from '@/utils/status-label'
+import { useExecCycleLabel } from '@/utils/exec-cycle-label'
 
 interface TaskRow {
   id: number
@@ -90,6 +91,7 @@ const DIM_META: { key: string; label: string; desc: string }[] = [
 
 const loading = ref(false)
 const keyword = ref('')
+const { label: cycleLabel } = useExecCycleLabel()
 const tasks = ref<TaskRow[]>([])
 
 const filteredTasks = computed(() => {
@@ -222,7 +224,7 @@ const scoreVerdict = computed(() => {
 
 function scheduleLabel(row: TaskRow) {
   if (row.scheduleType === 'CRON') {
-    return row.cronExpr ? `定时 · ${row.cronExpr}` : '定时'
+    return row.cronExpr ? `定时 · ${cycleLabel(row.cronExpr)}` : '定时'
   }
   return '手动'
 }

@@ -4,6 +4,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import PageCard from '@/components/common/PageCard.vue'
 import api from '@/api/http'
 import { statusLabel } from '@/utils/status-label'
+import { useExecCycleLabel } from '@/utils/exec-cycle-label'
 
 const BASE = '/exchange/ingestion/asset-search'
 const tab = ref('portal')
@@ -21,6 +22,7 @@ const overview = ref<Record<string, unknown>>({
 
 const mode = ref('FUZZY')
 const q = ref('')
+const { label: cycleLabel } = useExecCycleLabel()
 const tagIds = ref<number[]>([])
 const tableId = ref<number | undefined>()
 const dataItem = ref('')
@@ -470,7 +472,9 @@ onActivated(() => {
           <el-table-column label="策略" width="120">
             <template #default="{ row }">{{ statusLabel(row.updateStrategy) }}</template>
           </el-table-column>
-          <el-table-column prop="cronExpr" label="Cron" width="120" />
+          <el-table-column label="执行周期" width="140" show-overflow-tooltip>
+            <template #default="{ row }">{{ cycleLabel(row.cronExpr as string) }}</template>
+          </el-table-column>
           <el-table-column label="上次状态" width="100">
             <template #default="{ row }">{{ statusLabel(row.lastStatus) }}</template>
           </el-table-column>

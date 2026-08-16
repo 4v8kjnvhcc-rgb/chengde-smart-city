@@ -17,6 +17,7 @@ import {
   rejectRegister,
 } from './register-workflow'
 import AssetCatalogFormDialog from './AssetCatalogFormDialog.vue'
+import { formatDateTime } from '@/utils/datetime'
 
 const auth = useAuthStore()
 
@@ -28,7 +29,7 @@ const query = reactive({
   assetName: '',
   orgName: '',
   projectName: '',
-  status: 'PENDING_REVIEW',
+  status: '',
 })
 
 const dialogVisible = ref(false)
@@ -57,7 +58,7 @@ function resetQuery() {
   query.assetName = ''
   query.orgName = ''
   query.projectName = ''
-  query.status = 'PENDING_REVIEW'
+  query.status = ''
   void reload()
 }
 
@@ -115,11 +116,6 @@ async function doDelete(row: AssetCatalogReg) {
     if (e === 'cancel' || e === 'close') return
     ElMessage.error(e instanceof Error ? e.message : '删除失败')
   }
-}
-
-function formatTime(v?: string) {
-  if (!v) return '—'
-  return String(v).replace('T', ' ').slice(0, 19)
 }
 
 async function loadFilterOptions() {
@@ -191,7 +187,7 @@ onMounted(() => {
         <el-table-column prop="systemName" label="来源系统" min-width="140" show-overflow-tooltip />
         <el-table-column prop="tableName" label="来源表" min-width="140" show-overflow-tooltip />
         <el-table-column label="创建时间" width="170">
-          <template #default="{ row }">{{ formatTime(row.createdAt) }}</template>
+          <template #default="{ row }">{{ formatDateTime(row.createdAt) }}</template>
         </el-table-column>
         <el-table-column label="状态" width="110">
           <template #default="{ row }">

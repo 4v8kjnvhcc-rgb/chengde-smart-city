@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onActivated, onMounted, reactive, ref } from 'vue'
+import { computed, onActivated, onMounted, reactive, ref, watch } from 'vue'
 import api from '@/api/http'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import PageCard from '@/components/common/PageCard.vue'
@@ -168,15 +168,29 @@ function onReset() {
   keyword.value = ''
 }
 
+/** 同级（同一 parentId）下一项排序号：max+1，无兄弟时从 1 起 */
+function nextSortOrder(parentId: number): number {
+  const pid = parentId || 0
+  let max = 0
+  for (const r of rows.value) {
+    if ((r.parentId || 0) === pid) {
+      const s = Number(r.sortOrder ?? 0)
+      if (Number.isFinite(s) && s > max) max = s
+    }
+  }
+  return max + 1
+}
+
 function openCreate(parentId = 0) {
   editingId.value = null
+  const pid = parentId || 0
   Object.assign(form, {
     categoryName: '',
     categoryCode: `CAT_${Date.now().toString().slice(-8)}`,
-    parentId: parentId || 0,
+    parentId: pid,
     secretFlag: 0,
     description: '',
-    sortOrder: 0,
+    sortOrder: nextSortOrder(pid),
   })
   dialogVisible.value = true
 }
@@ -193,6 +207,15 @@ function openEdit(row: CategoryRow) {
   })
   dialogVisible.value = true
 }
+
+/** 新增时切换上级：按新同级重新取下一排序号 */
+watch(
+  () => form.parentId,
+  (pid) => {
+    if (editingId.value != null || !dialogVisible.value) return
+    form.sortOrder = nextSortOrder(pid || 0)
+  },
+)
 
 async function save() {
   if (!form.categoryName.trim()) {
@@ -284,11 +307,6 @@ onActivated(() => {
       >
         <el-table-column prop="categoryName" label="资源目录名称" min-width="220" show-overflow-tooltip />
         <el-table-column prop="categoryCode" label="分类代码" width="140" />
-        <el-table-column prop="categoryPath" label="路径" min-width="200" show-overflow-tooltip />
-        <el-table-column label="是否涉密" width="90">
-          <template #default="{ row }">{{ row.secretFlag === 1 ? '是' : '否' }}</template>
-        </el-table-column>
-        <el-table-column prop="sortOrder" label="排序" width="80" align="center" />
         <el-table-column prop="description" label="描述" min-width="120" show-overflow-tooltip />
         <el-table-column label="操作" width="240" fixed="right">
           <template #default="{ row }">
@@ -336,9 +354,6 @@ onActivated(() => {
             <el-radio :value="0">否</el-radio>
             <el-radio :value="1">是</el-radio>
           </el-radio-group>
-        </el-form-item>
-        <el-form-item label="排序">
-          <el-input-number v-model="form.sortOrder" :min="0" :step="1" controls-position="right" style="width: 100%" />
         </el-form-item>
         <el-form-item label="描述">
           <el-input v-model="form.description" type="textarea" :rows="3" placeholder="选填" />

@@ -69,6 +69,7 @@ const levels = ref<LevelRow[]>([])
 const categories = ref<CategoryRow[]>([])
 const marks = ref<MarkRow[]>([])
 const { page: markPage, pageSize: markPageSize, paged: pagedMarks, total: markTotal, resetPage: resetMarkPage } = useClientPager(marks)
+const selectedMarkIds = ref<number[]>([])
 const scopes = ref<ScopeRow[]>([])
 const audits = ref<Record<string, unknown>[]>([])
 const hits = ref<Record<string, unknown>[]>([])
@@ -249,12 +250,19 @@ function openEditMark(row: MarkRow) {
   void loadCandidates()
 }
 
-async function removeMark(row: MarkRow) {
-  await ElMessageBox.confirm(`确认物理删除标注「${row.assetName || row.assetCode || row.id}」？`, '删除确认', {
+async function batchDeleteMarks() {
+  if (!selectedMarkIds.value.length) {
+    ElMessage.warning('请先勾选要删除的标注')
+    return
+  }
+  await ElMessageBox.confirm(`确认批量删除选中的 ${selectedMarkIds.value.length} 条标注？`, '批量删除确认', {
     type: 'warning',
   })
-  await api.delete(`/exchange/ingestion/classify-grade/marks/${row.id}`)
-  ElMessage.success('已删除')
+  for (const id of selectedMarkIds.value) {
+    await api.delete(`/exchange/ingestion/classify-grade/marks/${id}`)
+  }
+  selectedMarkIds.value = []
+  ElMessage.success('批量删除已完成')
   await loadMarks()
 }
 
@@ -418,15 +426,21 @@ onMounted(reloadAll)
         <el-form-item class="portal-form-actions">
           <el-button type="primary" @click="loadMarks">查询</el-button>
           <el-button @click="onResetMarks">重置</el-button>
-          <el-button @click="openMark">新增标注</el-button>
+          <el-button type="primary" @click="openMark">新增标注</el-button>
+          <el-button type="danger" plain :disabled="!selectedMarkIds.length" @click="batchDeleteMarks">批量删除</el-button>
         </el-form-item>
       </el-form>
-      <el-table :data="pagedMarks" stripe border>
+      <el-table
+        :data="pagedMarks"
+        stripe
+        border
+        @selection-change="(rows: MarkRow[]) => { selectedMarkIds = rows.map((r) => r.id) }"
+      >
+        <el-table-column type="selection" width="44" />
         <el-table-column label="资产类型" width="100">
           <template #default="{ row }">{{ statusLabel(row.assetType) }}</template>
         </el-table-column>
         <el-table-column prop="assetName" label="资产名称" min-width="160" />
-        <el-table-column prop="assetCode" label="编码" width="140" />
         <el-table-column label="分类" width="120">
           <template #default="{ row }">{{ catName(row.categoryId) }}</template>
         </el-table-column>
@@ -438,10 +452,9 @@ onMounted(reloadAll)
         </el-table-column>
         <el-table-column prop="gradedBy" label="定级人" width="100" />
         <el-table-column prop="versionNo" label="版本" width="70" />
-        <el-table-column label="操作" width="140" fixed="right">
+        <el-table-column label="操作" width="90" fixed="right">
           <template #default="{ row }">
             <el-button link type="primary" @click="openEditMark(row)">编辑</el-button>
-            <el-button link type="danger" @click="removeMark(row)">删除</el-button>
           </template>
         </el-table-column>
       </el-table>

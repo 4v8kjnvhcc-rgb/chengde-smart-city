@@ -32,6 +32,9 @@
   border: 1px solid var(--portal-border);
   border-radius: var(--portal-radius);
   box-shadow: var(--portal-shadow);
+  width: 100%;
+  max-width: 100%;
+  box-sizing: border-box;
 }
 
 .portal-card .el-card__header {
@@ -39,10 +42,42 @@
   font-weight: 600;
 }
 
+.portal-card .el-card__body {
+  width: 100%;
+  max-width: 100%;
+  box-sizing: border-box;
+  overflow-x: auto;
+}
+
 .portal-table .el-table th.el-table__cell {
   background: #fafafa;
   color: var(--portal-text);
   font-weight: 600;
+}
+
+/* 列表表格：铺满内容区；列过多时表内横向滚动；操作列由 fixed=right 钉在末列 */
+.el-table {
+  width: 100% !important;
+  max-width: 100%;
+}
+
+.el-table .el-table__inner-wrapper {
+  width: 100%;
+}
+
+.el-table .el-table__header-wrapper,
+.el-table .el-table__body-wrapper,
+.el-table .el-table__footer-wrapper {
+  width: 100%;
+}
+
+.el-table .el-table__body-wrapper {
+  overflow-x: auto;
+}
+
+.hub-side-layout__main .el-table,
+.portal-main .el-table {
+  width: 100% !important;
 }
 
 /* 单行工具栏表单：控件等高、垂直居中、宽度统一 */

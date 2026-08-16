@@ -197,26 +197,6 @@ async function removeRule(id: number) {
   }
 }
 
-async function alignStandard() {
-  try {
-    await ElMessageBox.confirm(
-      '将目录重置为标准 11 类（空值/值域/规范/脚本/记录数/唯一性/准确性/波动/一致性/逻辑性/自定义），会补回已删除的标准项，并清理旧 QR_* / 临时规则。是否继续？',
-      '对齐标准目录',
-      { type: 'warning' },
-    )
-    loading.value = true
-    const res = await api.post('/governance/quality/rule-mgmt/align-standard')
-    const d = res.data || {}
-    ElMessage.success(`已对齐：标准 ${d.alignedStandard ?? '—'} 条，清理临时 ${d.purgedTemp ?? 0} 条`)
-    await load()
-  } catch (e: unknown) {
-    if (e === 'cancel' || String(e) === 'cancel') return
-    ElMessage.error(e instanceof Error ? e.message : '对齐失败')
-  } finally {
-    loading.value = false
-  }
-}
-
 async function ensureSources() {
   if (sources.value.length) return
   sources.value = await loadQualitySourceOptions()
@@ -317,14 +297,12 @@ onMounted(() => {
 
     <div class="toolbar">
       <el-button type="primary" @click="openCreate">+ 新增</el-button>
-      <el-button @click="alignStandard" :loading="loading">对齐标准目录</el-button>
     </div>
 
     <el-table v-loading="loading" :data="pagedRules" stripe border>
       <el-table-column label="排序" width="72">
         <template #default="{ row }">{{ row.sortNo ?? '—' }}</template>
       </el-table-column>
-      <el-table-column prop="ruleCode" label="编码" min-width="160" show-overflow-tooltip />
       <el-table-column prop="ruleName" label="名称" min-width="140" show-overflow-tooltip />
       <el-table-column label="描述" min-width="280" show-overflow-tooltip>
         <template #default="{ row }">{{ ruleDesc(row) }}</template>

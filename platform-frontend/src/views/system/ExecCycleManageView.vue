@@ -4,6 +4,7 @@ import api from '@/api/http'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import PortalPagination from '@/components/common/PortalPagination.vue'
 import { useClientPager } from '@/composables/useClientPager'
+import { invalidateExecCycleMap } from '@/utils/exec-cycle-label'
 
 interface ExecCycle {
   id: number
@@ -18,6 +19,7 @@ interface ExecCycle {
 const loading = ref(false)
 const rows = ref<ExecCycle[]>([])
 const keyword = ref('')
+const selectedIds = ref<number[]>([])
 const { page, pageSize, paged, total, resetPage } = useClientPager(rows)
 const unitTab = ref<'sec' | 'min' | 'hour' | 'day' | 'month' | 'week' | 'year'>('sec')
 
@@ -275,20 +277,31 @@ async function save() {
       ElMessage.success('已创建')
     }
     dialog.visible = false
+    invalidateExecCycleMap()
     await load()
   } catch (e: unknown) {
     ElMessage.error((e as Error)?.message || '保存失败')
   }
 }
 
-async function remove(row: ExecCycle) {
+async function batchDelete() {
+  if (!selectedIds.value.length) {
+    ElMessage.warning('请先勾选要删除的执行周期')
+    return
+  }
   try {
-    await ElMessageBox.confirm(`确认删除执行周期「${row.cycleName}」？`, '删除', { type: 'warning' })
+    await ElMessageBox.confirm(`确认批量删除选中的 ${selectedIds.value.length} 条执行周期？`, '批量删除确认', {
+      type: 'warning',
+    })
   } catch {
     return
   }
-  await api.delete(`/system/exec-cycles/${row.id}`)
-  ElMessage.success('已删除')
+  for (const id of selectedIds.value) {
+    await api.delete(`/system/exec-cycles/${id}`)
+  }
+  selectedIds.value = []
+  ElMessage.success('批量删除已完成')
+  invalidateExecCycleMap()
   await load()
 }
 
@@ -307,24 +320,29 @@ onMounted(load)
 <template>
   <div v-loading="loading" class="exec-cycle">
     <div class="toolbar">
-      <el-input v-model="keyword" clearable placeholder="编码/名称/Cron" style="width:240px" @keyup.enter="load" />
+      <el-button type="primary" @click="openCreate">新建执行周期</el-button>
+      <el-button type="danger" plain :disabled="!selectedIds.length" @click="batchDelete">批量删除</el-button>
+      <el-input v-model="keyword" clearable placeholder="名称/Cron" style="width:240px" @keyup.enter="load" />
       <el-button type="primary" @click="load">查询</el-button>
       <el-button @click="onReset">重置</el-button>
-      <el-button type="primary" @click="openCreate">新建执行周期</el-button>
     </div>
 
-    <el-table :data="paged" stripe size="small">
-      <el-table-column prop="cycleCode" label="编码" width="140" />
+    <el-table
+      :data="paged"
+      stripe
+      size="small"
+      @selection-change="(sel: ExecCycle[]) => { selectedIds = sel.map((r) => r.id) }"
+    >
+      <el-table-column type="selection" width="44" />
       <el-table-column prop="cycleName" label="名称" min-width="140" />
       <el-table-column prop="cronExpr" label="Cron" min-width="180" show-overflow-tooltip />
       <el-table-column prop="description" label="说明" min-width="160" show-overflow-tooltip />
       <el-table-column label="状态" width="90">
         <template #default="{ row }">{{ $statusLabel(row.status) }}</template>
       </el-table-column>
-      <el-table-column label="操作" width="140" fixed="right">
+      <el-table-column label="操作" width="90" fixed="right">
         <template #default="{ row }">
           <el-button link type="primary" @click="openEdit(row)">编辑</el-button>
-          <el-button link type="danger" @click="remove(row)">删除</el-button>
         </template>
       </el-table-column>
     </el-table>

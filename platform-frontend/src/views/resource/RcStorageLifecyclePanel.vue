@@ -10,10 +10,12 @@ import PortalPagination from '@/components/common/PortalPagination.vue'
 import { useClientPager } from '@/composables/useClientPager'
 import { statusLabel, statusTagType } from '@/utils/status-label'
 import ExecCycleSelect from '@/views/system/ExecCycleSelect.vue'
+import { useExecCycleLabel } from '@/utils/exec-cycle-label'
 
 const props = defineProps<{
   mode: 'backup' | 'archive' | 'destroy'
 }>()
+const { label: cycleLabel } = useExecCycleLabel()
 
 interface ManagedTable {
   id: number
@@ -564,7 +566,7 @@ onMounted(reload)
           </el-table-column>
           <el-table-column label="调度" width="160" show-overflow-tooltip>
             <template #default="{ row }">
-              <span v-if="row.scheduleEnabled === 1">{{ row.scheduleCron || '-' }}</span>
+              <span v-if="row.scheduleEnabled === 1">{{ cycleLabel(row.scheduleCron) }}</span>
               <span v-else>手动</span>
             </template>
           </el-table-column>
@@ -689,7 +691,7 @@ onMounted(reload)
         <el-table-column prop="destroyRule" label="销毁规则" min-width="160" show-overflow-tooltip />
         <el-table-column label="调度" width="160" show-overflow-tooltip>
           <template #default="{ row }">
-            <span v-if="row.scheduleEnabled === 1">{{ row.scheduleCron || '-' }}</span>
+            <span v-if="row.scheduleEnabled === 1">{{ cycleLabel(row.scheduleCron) }}</span>
             <span v-else>手动</span>
           </template>
         </el-table-column>

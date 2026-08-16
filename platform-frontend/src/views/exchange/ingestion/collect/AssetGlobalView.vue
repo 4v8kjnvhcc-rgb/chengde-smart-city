@@ -1,6 +1,7 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRouter } from 'vue-router'
+import * as echarts from 'echarts'
 import PageCard from '@/components/common/PageCard.vue'
 import api from '@/api/http'
 import { statusLabel } from '@/utils/status-label'
@@ -17,6 +18,9 @@ const facets = ref<Record<string, unknown> | null>(null)
 const detail = ref<Record<string, unknown> | null>(null)
 const projectId = ref<number | undefined>()
 
+const trendChartRef = ref<HTMLDivElement | null>(null)
+let trendChart: echarts.ECharts | null = null
+
 const kpis = computed(() => (panorama.value?.kpis as Record<string, unknown>) || {})
 const drillLinks = computed(() => (panorama.value?.drillLinks as Record<string, unknown>[]) || [])
 const trendSeries = computed(() => (trends.value?.series as Record<string, unknown>[]) || [])
@@ -26,6 +30,40 @@ const byDim = computed(() => Object.entries((facets.value?.byTagDim as Record<st
 const projects = computed(() => (facets.value?.projects as Record<string, unknown>[]) || [])
 const lineageNodes = computed(() => (lineage.value?.nodes as Record<string, unknown>[]) || [])
 const lineageEdges = computed(() => (lineage.value?.edges as Record<string, unknown>[]) || [])
+
+function disposeTrendChart() {
+  trendChart?.dispose()
+  trendChart = null
+}
+
+function renderTrendChart() {
+  if (!trendChartRef.value || tab.value !== 'trends') return
+  const series = trendSeries.value
+  const days = series.map((r) => String(r.day || ''))
+  const newTables = series.map((r) => Number(r.newTables || 0))
+  const searches = series.map((r) => Number(r.searches || 0))
+  const newMarks = series.map((r) => Number(r.newMarks || 0))
+  if (!trendChart) {
+    trendChart = echarts.init(trendChartRef.value)
+  }
+  trendChart.setOption({
+    tooltip: { trigger: 'axis' },
+    legend: { data: ['新登记表', '检索次数', '新分级标注'] },
+    grid: { left: 48, right: 24, top: 48, bottom: 48 },
+    xAxis: {
+      type: 'category',
+      data: days,
+      axisLabel: { rotate: days.length > 10 ? 30 : 0 },
+    },
+    yAxis: { type: 'value', minInterval: 1 },
+    series: [
+      { name: '新登记表', type: 'bar', data: newTables, barMaxWidth: 28 },
+      { name: '检索次数', type: 'bar', data: searches, barMaxWidth: 28 },
+      { name: '新分级标注', type: 'bar', data: newMarks, barMaxWidth: 28 },
+    ],
+  })
+  trendChart.resize()
+}
 
 async function loadOverview() {
   panorama.value = (await api.get(`${BASE}/panorama`)).data
@@ -54,6 +92,12 @@ async function reload() {
     console.error(e)
   } finally {
     loading.value = false
+    if (tab.value === 'trends') {
+      await nextTick()
+      renderTrendChart()
+    } else {
+      disposeTrendChart()
+    }
   }
 }
 
@@ -72,7 +116,23 @@ async function openDetail(row: Record<string, unknown>) {
   tab.value = 'detail'
 }
 
-onMounted(reload)
+function onResize() {
+  trendChart?.resize()
+}
+
+watch(trendSeries, () => {
+  if (tab.value === 'trends') void nextTick(() => renderTrendChart())
+})
+
+onMounted(() => {
+  void reload()
+  window.addEventListener('resize', onResize)
+})
+
+onBeforeUnmount(() => {
+  window.removeEventListener('resize', onResize)
+  disposeTrendChart()
+})
 </script>
 
 <template>
@@ -170,22 +230,8 @@ onMounted(reload)
 
       <div v-if="tab === 'trends'">
         <div class="block-title">近 {{ trends?.days || 14 }} 日：新登记表 / 检索次数 / 新分级标注</div>
-        <el-table :data="trendSeries" stripe size="small" max-height="480">
-          <el-table-column prop="day" label="日期" width="120" />
-          <el-table-column prop="newTables" label="新登记表" width="100" />
-          <el-table-column prop="searches" label="检索次数" width="100" />
-          <el-table-column prop="newMarks" label="新分级标注" width="110" />
-          <el-table-column label="登记表趋势" min-width="200">
-            <template #default="{ row }">
-              <div class="bar"><span :style="{ width: Math.min(Number(row.newTables) * 12, 100) + '%' }" /></div>
-            </template>
-          </el-table-column>
-          <el-table-column label="检索趋势" min-width="200">
-            <template #default="{ row }">
-              <div class="bar bar--search"><span :style="{ width: Math.min(Number(row.searches) * 4, 100) + '%' }" /></div>
-            </template>
-          </el-table-column>
-        </el-table>
+        <div ref="trendChartRef" class="trend-chart" />
+        <el-empty v-if="!trendSeries.length" description="暂无趋势数据" />
       </div>
 
       <div v-if="tab === 'lineage'">
@@ -267,7 +313,5 @@ onMounted(reload)
 .drill-title { font-weight: 600; margin-bottom: 4px; }
 .drill-desc { color: var(--el-text-color-secondary); font-size: 12px; }
 .tag-chip { margin: 0 6px 6px 0; }
-.bar { height: 8px; background: var(--el-fill-color); border-radius: 4px; overflow: hidden; }
-.bar > span { display: block; height: 100%; background: var(--el-color-primary); }
-.bar--search > span { background: var(--el-color-success); }
+.trend-chart { width: 100%; height: 420px; }
 </style>

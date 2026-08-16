@@ -158,7 +158,7 @@ const menuRemountKey = computed(() => defaultOpeneds.value.join(',') || 'root')
   min-width: 0;
   min-height: 0;
   padding: 16px;
-  overflow-x: hidden;
+  overflow-x: auto;
   overflow-y: auto;
   background: var(--portal-bg);
 }

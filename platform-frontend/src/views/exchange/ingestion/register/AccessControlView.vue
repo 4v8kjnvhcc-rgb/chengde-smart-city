@@ -1,14 +1,40 @@
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref, watch } from 'vue'
+import { computed, nextTick, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { ElMessage, ElMessageBox } from 'element-plus'
+import { ElMessage, ElMessageBox, type ElTree } from 'element-plus'
 import api from '@/api/http'
 import PageCard from '@/components/common/PageCard.vue'
+import PortalPagination from '@/components/common/PortalPagination.vue'
+import { useClientPager } from '@/composables/useClientPager'
 import { statusLabel } from '@/utils/status-label'
+import { leafKeysForTreeCheck } from '@/utils/menu-tree-check'
 import { ingestionApi, useIngestionLoading, type Project } from '../useIngestionHub'
 
 /** 归集 Hub 内访问控制入口 */
 const HUB_ACCESS_ROUTE = { path: '/exchange/ingestion', query: { system: 'register', module: 'm048' } }
+
+interface RoleRow {
+  id: number
+  roleCode: string
+  roleName: string
+  roleType?: number
+  description?: string
+  status: number
+}
+
+interface MenuRow {
+  id: number
+  parentId: number
+  menuName: string
+  menuType: number
+}
+
+interface TreeNode {
+  id: number
+  label: string
+  disabled?: boolean
+  children?: TreeNode[]
+}
 
 const route = useRoute()
 const router = useRouter()
@@ -23,7 +49,26 @@ const canApproveCross = computed(() => true)
 const activeTab = ref('overview')
 const overview = ref<Record<string, unknown> | null>(null)
 
+/** 项目授权下拉用 */
 const roles = ref<Array<{ id: number; roleCode: string; roleName: string }>>([])
+/** 功能权限 Tab：与统一用户「角色管理」同源，仅查看 */
+const functionRoles = ref<RoleRow[]>([])
+const functionKeyword = ref('')
+const functionLoading = ref(false)
+const {
+  page: functionPage,
+  pageSize: functionPageSize,
+  paged: pagedFunctionRoles,
+  total: functionRoleTotal,
+  resetPage: resetFunctionRolePage,
+} = useClientPager(functionRoles)
+
+const menuViewVisible = ref(false)
+const menuViewLoading = ref(false)
+const menuViewRoleName = ref('')
+const menuViewTree = ref<TreeNode[]>([])
+const menuViewTreeRef = ref<InstanceType<typeof ElTree>>()
+
 const orgs = ref<Array<{ id: number; orgName: string }>>([])
 const users = ref<Array<{ id: number; displayName: string; username: string; orgId: number }>>([])
 const projects = ref<Project[]>([])
@@ -53,6 +98,34 @@ const crossForm = reactive({
   reason: '',
 })
 
+function buildMenuTree(rows: MenuRow[], lockAll = false): TreeNode[] {
+  const map = new Map<number, TreeNode>()
+  const roots: TreeNode[] = []
+  for (const r of rows) {
+    const id = Number(r.id)
+    const suffix = r.menuType === 1 ? ' [目录]' : ''
+    map.set(id, { id, label: `${r.menuName}${suffix}`, disabled: lockAll, children: [] })
+  }
+  for (const r of rows) {
+    const id = Number(r.id)
+    const parentId = Number(r.parentId || 0)
+    const node = map.get(id)!
+    if (!parentId || !map.has(parentId)) {
+      roots.push(node)
+    } else {
+      map.get(parentId)!.children!.push(node)
+    }
+  }
+  const prune = (nodes: TreeNode[]) => {
+    for (const n of nodes) {
+      if (n.children?.length === 0) delete n.children
+      else if (n.children) prune(n.children)
+    }
+  }
+  prune(roots)
+  return roots
+}
+
 async function loadOverview() {
   await withLoad(async () => {
     overview.value = (await api.get('/system/access/overview')).data
@@ -61,6 +134,50 @@ async function loadOverview() {
 
 async function loadRoles() {
   roles.value = (await api.get('/system/roles')).data || []
+}
+
+async function loadFunctionRoles() {
+  functionLoading.value = true
+  try {
+    const res = await api.get('/system/roles', {
+      params: {
+        keyword: functionKeyword.value.trim() || undefined,
+        includeDisabled: true,
+      },
+    })
+    functionRoles.value = (res.data || []) as RoleRow[]
+    resetFunctionRolePage()
+  } catch (e: unknown) {
+    functionRoles.value = []
+    ElMessage.error(e instanceof Error ? e.message : '加载角色失败')
+  } finally {
+    functionLoading.value = false
+  }
+}
+
+async function openMenuView(role: RoleRow) {
+  menuViewRoleName.value = role.roleName
+  menuViewTree.value = []
+  menuViewVisible.value = true
+  menuViewLoading.value = true
+  try {
+    const menusRes = await api.get('/system/menus')
+    const rows = Array.isArray(menusRes.data) ? (menusRes.data as MenuRow[]) : []
+    menuViewTree.value = buildMenuTree(rows, true)
+    if (!rows.length) {
+      ElMessage.warning('暂无可用菜单数据')
+      return
+    }
+    const assignedRes = await api.get(`/system/roles/${role.id}/menus`)
+    await nextTick()
+    const leafKeys = leafKeysForTreeCheck(rows, assignedRes.data || [])
+    menuViewTreeRef.value?.setCheckedKeys(leafKeys, false)
+  } catch (e: unknown) {
+    menuViewTree.value = []
+    ElMessage.error(e instanceof Error ? e.message : '加载菜单权限失败')
+  } finally {
+    menuViewLoading.value = false
+  }
 }
 
 async function loadOrgs() {
@@ -102,7 +219,7 @@ async function loadCross() {
 
 watch(activeTab, async (tab) => {
   if (tab === 'overview') await loadOverview()
-  else if (tab === 'function') await loadRoles()
+  else if (tab === 'function') await loadFunctionRoles()
   else if (tab === 'resource') {
     await Promise.all([loadProjects(), loadUsers(), loadProjectGrants()])
     await loadRoles()
@@ -247,16 +364,55 @@ onMounted(async () => {
         </el-tab-pane>
 
         <el-tab-pane label="功能权限" name="function">
-          <p class="sub">角色菜单/按钮授权在系统「角色管理」中配置（已支持按钮级）。以下为当前角色一览。</p>
-          <el-table :data="roles" stripe size="small">
-            <el-table-column prop="roleCode" label="角色编码" width="160" />
-            <el-table-column prop="roleName" label="角色名称" />
-            <el-table-column label="操作" width="140">
-              <template #default>
-                <el-button link type="primary" @click="router.push('/system/roles')">配置菜单</el-button>
+          <el-form inline class="portal-inline-form portal-inline-form--block" @submit.prevent>
+            <el-form-item label="关键字" class="portal-field-lg">
+              <el-input
+                v-model="functionKeyword"
+                clearable
+                placeholder="编码 / 名称"
+                @keyup.enter="loadFunctionRoles"
+              />
+            </el-form-item>
+            <el-form-item class="portal-form-actions">
+              <el-button type="primary" :loading="functionLoading" @click="loadFunctionRoles">查询</el-button>
+              <el-button
+                @click="
+                  functionKeyword = '';
+                  loadFunctionRoles()
+                "
+              >
+                重置
+              </el-button>
+            </el-form-item>
+          </el-form>
+          <el-table class="portal-table" :data="pagedFunctionRoles" v-loading="functionLoading" stripe>
+            <el-table-column prop="roleCode" label="编码" min-width="140" />
+            <el-table-column prop="roleName" label="名称" min-width="140" />
+            <el-table-column prop="description" label="描述" min-width="180" show-overflow-tooltip />
+            <el-table-column label="类型" width="100">
+              <template #default="{ row }">
+                {{ row.roleType === 1 ? '系统' : '业务' }}
+              </template>
+            </el-table-column>
+            <el-table-column label="状态" width="100">
+              <template #default="{ row }">
+                <el-tag :type="row.status === 1 ? 'success' : 'info'" size="small">
+                  {{ statusLabel(row.status) }}
+                </el-tag>
+              </template>
+            </el-table-column>
+            <el-table-column label="操作" width="100" fixed="right">
+              <template #default="{ row }">
+                <el-button type="primary" link @click="openMenuView(row)">查看</el-button>
               </template>
             </el-table-column>
           </el-table>
+          <PortalPagination
+            v-if="functionRoleTotal"
+            v-model:page="functionPage"
+            v-model:page-size="functionPageSize"
+            :total="functionRoleTotal"
+          />
         </el-tab-pane>
 
         <el-tab-pane label="项目授权" name="resource">
@@ -419,10 +575,29 @@ onMounted(async () => {
         </el-tab-pane>
       </el-tabs>
     </PageCard>
+
+    <el-dialog
+      v-model="menuViewVisible"
+      :title="`查看菜单权限 · ${menuViewRoleName}`"
+      width="520px"
+      destroy-on-close
+    >
+      <div v-loading="menuViewLoading">
+        <el-tree
+          v-if="menuViewTree.length"
+          ref="menuViewTreeRef"
+          :data="menuViewTree"
+          show-checkbox
+          node-key="id"
+          default-expand-all
+          :props="{ label: 'label', children: 'children', disabled: 'disabled' }"
+          empty-text="暂无菜单"
+        />
+        <el-empty v-else description="暂无菜单数据" :image-size="72" />
+      </div>
+      <template #footer>
+        <el-button type="primary" @click="menuViewVisible = false">关闭</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
-
-<style scoped>
-.hint { color: var(--el-text-color-secondary); margin: 0 0 12px; line-height: 1.6; }
-.sub { color: var(--el-text-color-secondary); margin: 0 0 12px; font-size: 13px; }
-</style>

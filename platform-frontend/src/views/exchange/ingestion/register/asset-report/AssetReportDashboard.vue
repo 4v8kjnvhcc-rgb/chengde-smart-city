@@ -38,14 +38,26 @@ const topTables = computed(() => (report.value?.topTablesByStorage as Record<str
 const workflows = computed(() => (report.value?.workflows as Record<string, unknown>[]) || [])
 const topTasks = computed(() => (report.value?.topTasks as Record<string, unknown>[]) || [])
 
-async function load() {
-  await withLoad(async () => {
-    const data = (await ingestionApi.assetReport()).data || {}
-    // 红框区域使用模拟数据；非红框（登记项目/物理表/数据库/热门表/表新增趋势/热门项目名称与表数）保留真实数据
-    report.value = applyMockRedBox(data)
+/** 将「07月18」等轴标签统一为右侧图表所用的 MM/DD */
+function formatTrendAxisLabel(raw?: string | null) {
+  if (!raw) return ''
+  const s = String(raw).trim()
+  const cn = s.match(/^(\d{1,2})月(\d{1,2})/)
+  if (cn) return `${cn[1].padStart(2, '0')}/${cn[2].padStart(2, '0')}`
+  const iso = s.match(/^\d{4}-(\d{2})-(\d{2})/)
+  if (iso) return `${iso[1]}/${iso[2]}`
+  if (/^\d{1,2}\/\d{1,2}$/.test(s)) {
+    const [mm, dd] = s.split('/')
+    return `${mm.padStart(2, '0')}/${dd.padStart(2, '0')}`
+  }
+  return s
+}
+
+function normalizeTrendPoints<T extends { month?: string; date?: string }>(list: T[]): T[] {
+  return list.map((t) => {
+    const label = formatTrendAxisLabel(t.month || t.date)
+    return { ...t, month: label, date: label }
   })
-  await nextTick()
-  renderCharts()
 }
 
 /**
@@ -141,7 +153,24 @@ function applyMockRedBox(real: Record<string, unknown>) {
     { taskName: 'API 拉取·信用评分', status: 'SUCCESS' },
     { taskName: 'Redis 缓存预热', status: 'FAILED' },
   ]
+
+  // 表新增趋势保留真实数据，仅统一 X 轴为 MM/DD（与存储趋势一致）
+  const realTableTrend = Array.isArray(real.tableTrend)
+    ? (real.tableTrend as { month?: string; date?: string; value?: number; count?: number }[])
+    : []
+  out.tableTrend = normalizeTrendPoints(realTableTrend)
+
   return out
+}
+
+async function load() {
+  await withLoad(async () => {
+    const data = (await ingestionApi.assetReport()).data || {}
+    // 红框区域使用模拟数据；非红框（登记项目/物理表/数据库/热门表/表新增趋势/热门项目名称与表数）保留真实数据
+    report.value = applyMockRedBox(data)
+  })
+  await nextTick()
+  renderCharts()
 }
 
 function renderCharts() {
@@ -152,7 +181,7 @@ function renderCharts() {
       tooltip: { trigger: 'axis' },
       xAxis: {
         type: 'category',
-        data: tableTrend.value.map((t) => t.month || t.date || ''),
+        data: tableTrend.value.map((t) => formatTrendAxisLabel(t.month || t.date || '')),
         axisLabel: { fontSize: 10 },
       },
       yAxis: { type: 'value', minInterval: 1 },
@@ -172,7 +201,7 @@ function renderCharts() {
       tooltip: { trigger: 'axis' },
       xAxis: {
         type: 'category',
-        data: storageTrend.value.map((t) => t.month || t.date || ''),
+        data: storageTrend.value.map((t) => formatTrendAxisLabel(t.month || t.date || '')),
         axisLabel: { fontSize: 10 },
       },
       yAxis: { type: 'value' },
