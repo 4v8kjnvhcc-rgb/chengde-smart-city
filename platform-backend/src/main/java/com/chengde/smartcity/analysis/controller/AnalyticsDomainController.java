@@ -181,9 +181,16 @@ public class AnalyticsDomainController {
     @PostMapping("/indicator-groups/{id}/publish")
     @PreAuthorize("isAuthenticated()")
     public ApiResponse<Void> publishIndicatorGroup(@AuthenticationPrincipal UserPrincipal principal,
-                                                   @PathVariable Long id) {
-        service.publishIndicatorGroup(principal, id);
+                                                   @PathVariable Long id,
+                                                   @RequestBody(required = false) Map<String, Object> body) {
+        service.publishIndicatorGroup(principal, id, body);
         return ApiResponse.ok(null);
+    }
+
+    @GetMapping("/indicator-groups/{id}/sql")
+    @PreAuthorize("isAuthenticated()")
+    public ApiResponse<Map<String, Object>> groupSql(@PathVariable Long id) {
+        return ApiResponse.ok(service.latestGroupSql(id));
     }
 
     @GetMapping("/indicator-groups/{id}/indicators")

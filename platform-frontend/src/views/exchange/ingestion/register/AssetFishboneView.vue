@@ -54,6 +54,13 @@ const TYPE_COLOR: Record<string, string> = {
 
 const { loading, loadError, withLoad } = useIngestionLoading()
 
+const props = withDefaults(defineProps<{
+  /** 嵌在其它 PageCard 内时不重复套标题卡片 */
+  embedded?: boolean
+}>(), {
+  embedded: false,
+})
+
 const mode = ref<'PLATFORM' | 'DEPT'>('DEPT')
 const rootOrg = ref<{ id: number | null; orgName: string } | null>(null)
 const orgs = ref<Array<{ id: number; orgName: string; orgCode?: string }>>([])
@@ -326,7 +333,7 @@ onMounted(() => {
 
 <template>
   <div class="fishbone-page" v-loading="loading">
-    <PageCard title="数据资产图谱分析">
+    <component :is="embedded ? 'div' : PageCard" v-bind="embedded ? {} : { title: '数据资产图谱分析' }">
       <p class="hint">{{ hintText }}</p>
       <div v-if="loadError" class="error">{{ loadError }}</div>
 
@@ -409,7 +416,7 @@ onMounted(() => {
           </g>
         </svg>
       </div>
-    </PageCard>
+    </component>
   </div>
 </template>
 

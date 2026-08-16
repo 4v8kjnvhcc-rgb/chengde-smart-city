@@ -1,27 +1,10 @@
 <script setup lang="ts">
 /**
- * M047 数据资产图谱分析：表血缘（主） + 组织鱼骨图谱（辅）
+ * M047 数据资产图谱分析：组织鱼骨图谱（部门 → 项目 → 系统 → 库 → 表 → 数据项 → 字典）
  */
-import { ref } from 'vue'
-import LineageView from './LineageView.vue'
 import AssetFishboneView from './AssetFishboneView.vue'
-
-const tab = ref<'lineage' | 'fishbone'>('lineage')
 </script>
 
 <template>
-  <div class="lineage-hub">
-    <el-tabs v-model="tab" class="hub-tabs">
-      <el-tab-pane label="表级血缘" name="lineage" />
-      <el-tab-pane label="组织鱼骨图谱" name="fishbone" />
-    </el-tabs>
-    <LineageView v-if="tab === 'lineage'" />
-    <AssetFishboneView v-else />
-  </div>
+  <AssetFishboneView />
 </template>
-
-<style scoped>
-.hub-tabs {
-  margin-bottom: 8px;
-}
-</style>

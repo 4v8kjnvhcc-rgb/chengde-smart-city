@@ -42,6 +42,8 @@ const editingId = ref<number | null>(null)
 const currentRoleId = ref<number | null>(null)
 const currentRoleCode = ref<string>('')
 const menuTree = ref<TreeNode[]>([])
+/** 扁平菜单行，保存时剔除有下级的目录 id */
+const menuFlatRows = ref<MenuRow[]>([])
 const treeRef = ref<InstanceType<typeof ElTree>>()
 const saving = ref(false)
 const submitting = ref(false)
@@ -188,7 +190,8 @@ async function openMenuConfig(role: Role) {
   menuDialogVisible.value = true
   try {
     const menusRes = await api.get('/system/menus')
-    const rows = Array.isArray(menusRes.data) ? menusRes.data : []
+    const rows = Array.isArray(menusRes.data) ? (menusRes.data as MenuRow[]) : []
+    menuFlatRows.value = rows
     menuTree.value = buildTree(rows, role.roleCode === 'SYSTEM_ADMIN')
     if (!rows.length) {
       ElMessage.warning('暂无可用菜单数据，请确认系统菜单已恢复')
@@ -221,8 +224,8 @@ async function saveMenus() {
   saving.value = true
   try {
     const checked = treeRef.value.getCheckedKeys(false) as number[]
-    // 只保存勾选项；半选父节点不入库，避免未勾选的下级仍因父 path 被门户匹配出来
-    const menuIds = [...new Set(checked.map((id) => Number(id)).filter((id) => Number.isFinite(id)))]
+    // 只存叶子/空目录；全选时 Element 会把有下级的父 id 一并返回，入库后 Hub 祖先 visible=0 会裁掉子项
+    const menuIds = leafKeysForTreeCheck(menuFlatRows.value, checked)
     await api.put(`/system/roles/${currentRoleId.value}/menus`, { menuIds })
     ElMessage.success('菜单权限已保存')
     menuDialogVisible.value = false

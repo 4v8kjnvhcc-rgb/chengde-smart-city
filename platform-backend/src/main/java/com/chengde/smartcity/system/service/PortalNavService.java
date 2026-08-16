@@ -287,7 +287,7 @@ public class PortalNavService {
 
     /**
      * 收集用户已授权且未隐藏的菜单 path，供门户飞出匹配。
-     * 自身或任一祖先 visible=0（菜单管理「是否隐藏」）则不参与匹配，避免目录隐藏后子项 path 仍撑出入口。
+     * 自身或非 Hub 壳祖先 visible=0 则不参与匹配；Hub 页壳/分组目录 visible=0 仅表示不进顶栏，不裁子 path。
      */
     private Set<String> collectUserMenuPaths(UserPrincipal principal) {
         List<SysMenu> allActive = menuMapper.selectList(new LambdaQueryWrapper<SysMenu>()
@@ -316,11 +316,34 @@ public class PortalNavService {
         return paths;
     }
 
+    /** Hub 顶栏壳 / 分组：visible=0 不进门户，不参与 path 血缘隐藏 */
+    private static boolean isHubChromeOnly(SysMenu m) {
+        if (m == null) {
+            return false;
+        }
+        String it = m.getIntegrationType();
+        if (it == null || !"hub".equalsIgnoreCase(it.trim())) {
+            return false;
+        }
+        if (Long.valueOf(13L).equals(m.getId()) || Long.valueOf(14L).equals(m.getId())) {
+            return true;
+        }
+        if (m.getMenuType() != null && m.getMenuType() == 1) {
+            return true;
+        }
+        String path = m.getPath() == null ? "" : m.getPath().trim();
+        if (path.contains("?")) {
+            return false;
+        }
+        String base = path.split("#")[0];
+        return base.matches("^/(governance|resource|unstructured|ingestion|analytics/(support|bi|population|legal-entity|macro|key-domains))$");
+    }
+
     private static boolean isLineageHidden(SysMenu m, Map<Long, SysMenu> byId) {
         SysMenu cur = m;
         int guard = 0;
         while (cur != null && guard++ < 32) {
-            if (cur.getVisible() != null && cur.getVisible() == 0) {
+            if (cur.getVisible() != null && cur.getVisible() == 0 && !isHubChromeOnly(cur)) {
                 return true;
             }
             Long pid = cur.getParentId();

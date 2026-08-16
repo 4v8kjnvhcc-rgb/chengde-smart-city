@@ -180,6 +180,8 @@ const approvals = ref<Record<string, unknown>[]>([])
 const users = ref<Array<{ id: number; displayName: string; username: string }>>([])
 const roles = ref<Array<{ id: number; roleName: string; roleCode?: string }>>([])
 const menuCheckTree = ref<CheckNode[]>([])
+/** 扁平菜单，供 leafKeysForTreeCheck（树节点无 parentId） */
+const menuFlatRows = ref<MenuRow[]>([])
 const selectedRoleId = ref<number | undefined>()
 const menuTreeRef = ref<InstanceType<typeof ElTree>>()
 const savingMenus = ref(false)
@@ -307,6 +309,7 @@ async function loadRoleMenusTab() {
   const [r, m] = await Promise.all([api.get('/system/roles'), api.get('/system/menus')])
   roles.value = r.data || []
   const rows = (m.data || []) as MenuRow[]
+  menuFlatRows.value = rows
   menuCheckTree.value = buildCheckTree(rows)
   if (!selectedRoleId.value && roles.value.length) {
     selectedRoleId.value = roles.value[0].id
@@ -318,7 +321,7 @@ async function loadRoleMenus(roleId: number) {
   const assignedRes = await api.get(`/system/roles/${roleId}/menus`)
   const ids = (assignedRes.data || []) as number[]
   await nextTick()
-  menuTreeRef.value?.setCheckedKeys(leafKeysForTreeCheck(menuCheckTree.value, ids))
+  menuTreeRef.value?.setCheckedKeys(leafKeysForTreeCheck(menuFlatRows.value, ids), false)
 }
 
 async function onRoleChange(roleId: number | undefined) {
@@ -336,7 +339,7 @@ async function saveRoleMenus() {
   savingMenus.value = true
   try {
     const checked = menuTreeRef.value.getCheckedKeys(false) as number[]
-    const menuIds = [...new Set(checked.map((id) => Number(id)).filter((id) => Number.isFinite(id)))]
+    const menuIds = leafKeysForTreeCheck(menuFlatRows.value, checked)
     await api.put(`/system/roles/${selectedRoleId.value}/menus`, { menuIds })
     ElMessage.success('角色菜单权限已保存')
   } catch (e: unknown) {

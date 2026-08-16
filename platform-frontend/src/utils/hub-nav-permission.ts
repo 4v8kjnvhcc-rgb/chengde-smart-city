@@ -52,8 +52,8 @@ export function filterHubNavByPermissions(
 
 /**
  * 按 sys_menu.visible 过滤 Hub 侧栏（对超管同样生效）。
- * 叶子命中 path?tab=key 或 permission 映射；任一世系节点 visible=0 则隐藏。
- * Hub 页壳（id=13/14 等）visible=0 仅表示不进门户顶栏，不参与侧栏隐藏判定。
+ * 叶子命中 path?tab=key 或 permission 映射；叶子自身 visible=0 则隐藏。
+ * Hub 页壳 / Hub 分组目录 visible=0 仅表示不进门户顶栏，祖先隐藏不阻断侧栏子项。
  */
 export function filterHubNavByMenuVisible(
   items: HubNavItem[],
@@ -73,18 +73,25 @@ export function filterHubNavByMenuVisible(
   }
   walkMenu(menus)
 
-  /** Hub 页壳（如 id=13 统一用户）：visible=0 表示不进门户顶栏，不应阻断 Hub 内页侧栏 */
-  const isHubPageShell = (node: MenuNode | undefined): boolean => {
+  /** Hub 顶栏壳 / 分组：visible=0 不进门户，不参与 Hub 侧栏血缘隐藏 */
+  const isHubChromeOnly = (node: MenuNode | undefined): boolean => {
     if (!node || node.integrationType !== 'hub') return false
     if (node.id === 13 || node.id === 14) return true
+    if (node.menuType === 1) return true
     const base = (node.path || '').split('?')[0]?.split('#')[0] || ''
-    return /^\/analytics\/(support|bi|population|legal-entity|macro|key-domains)$/.test(base)
+    const q = (node.path || '').includes('?')
+    if (q) return false
+    return (
+      /^\/(governance|resource|unstructured|ingestion|analytics\/(support|bi|population|legal-entity|macro|key-domains))$/.test(
+        base,
+      )
+    )
   }
 
   const lineageHidden = (node: MenuNode | undefined): boolean => {
     let cur = node
     while (cur) {
-      if (cur.visible === 0 && !isHubPageShell(cur)) return true
+      if (cur.visible === 0 && !isHubChromeOnly(cur)) return true
       cur = cur.parentId ? byId.get(cur.parentId) : undefined
     }
     return false

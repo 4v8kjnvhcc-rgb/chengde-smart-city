@@ -201,7 +201,7 @@ async function saveRoleMenus() {
   savingMenus.value = true
   try {
     const checked = menuTreeRef.value.getCheckedKeys(false) as number[]
-    const menuIds = [...new Set(checked.map((id) => Number(id)).filter((id) => Number.isFinite(id)))]
+    const menuIds = leafKeysForTreeCheck(allMenus.value, checked)
     await api.put(`/system/roles/${selectedRoleId.value}/menus`, { menuIds })
     ElMessage.success('角色菜单权限已保存')
   } catch (e: unknown) {

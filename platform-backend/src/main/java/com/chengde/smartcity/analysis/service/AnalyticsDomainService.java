@@ -708,6 +708,17 @@ public class AnalyticsDomainService {
     }
 
     @Transactional
+    public void publishIndicatorGroup(UserPrincipal operator, Long id, Map<String, Object> body) {
+        Map<String, Object> opts = body != null ? body : Map.of();
+        publishIndicatorGroup(operator, id,
+                str(opts.get("taskName"), null),
+                str(opts.get("execCycle"), null),
+                str(opts.get("cronExpr"), null),
+                str(opts.get("remark"), null),
+                str(opts.get("executorAddress"), "DEFAULT"));
+    }
+
+    @Transactional
     public void publishIndicatorGroup(UserPrincipal operator, Long id, String taskName,
                                       String execCycle, String cronExpr, String remark, String executorAddress) {
         AnaIndicatorGroup g = getIndicatorGroup(id);
@@ -733,6 +744,59 @@ public class AnalyticsDomainService {
                 .orderByAsc(AnaIndicator::getId));
         enrichIndicatorDisplay(list);
         return list;
+    }
+
+    /** 指标组当前生效的 SQL 草稿（用于修改时回填语句弹窗）。 */
+    public Map<String, Object> latestGroupSql(Long groupId) {
+        getIndicatorGroup(groupId);
+        List<AnaIndicator> list = indicatorMapper.selectList(new LambdaQueryWrapper<AnaIndicator>()
+                .eq(AnaIndicator::getGroupId, groupId)
+                .eq(AnaIndicator::getStatus, "ACTIVE")
+                .isNotNull(AnaIndicator::getQueryId)
+                .orderByDesc(AnaIndicator::getId)
+                .last("LIMIT 1"));
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("sqlText", "");
+        out.put("datasourceKey", "");
+        out.put("datasourceName", "");
+        out.put("timeoutSec", 60);
+        if (list.isEmpty()) {
+            return out;
+        }
+        AnaIndicator ind = list.get(0);
+        AnaIndicatorQuery q = indicatorQueryMapper.selectById(ind.getQueryId());
+        if (q != null) {
+            out.put("sqlText", q.getSqlText() == null ? "" : q.getSqlText());
+            out.put("datasourceKey", q.getDatasourceKey() == null ? "" : q.getDatasourceKey());
+            out.put("datasourceName", q.getDatasourceName() == null ? "" : q.getDatasourceName());
+            out.put("timeoutSec", q.getTimeoutSec() == null ? 60 : q.getTimeoutSec());
+            return out;
+        }
+        out.put("sqlText", ind.getExprText() == null ? "" : ind.getExprText());
+        return out;
+    }
+
+    private void deactivateExistingGroupSql(Long groupId) {
+        List<AnaIndicator> old = indicatorMapper.selectList(new LambdaQueryWrapper<AnaIndicator>()
+                .eq(AnaIndicator::getGroupId, groupId)
+                .eq(AnaIndicator::getStatus, "ACTIVE"));
+        LinkedHashSet<Long> qids = new LinkedHashSet<>();
+        LocalDateTime now = LocalDateTime.now();
+        for (AnaIndicator ind : old) {
+            if (ind.getQueryId() != null && ind.getQueryId() > 0) {
+                qids.add(ind.getQueryId());
+            }
+            ind.setStatus("INACTIVE");
+            ind.setUpdatedAt(now);
+            indicatorMapper.updateById(ind);
+        }
+        for (Long qid : qids) {
+            AnaIndicatorQuery q = indicatorQueryMapper.selectById(qid);
+            if (q == null) continue;
+            q.setStatus("INACTIVE");
+            q.setUpdatedAt(now);
+            indicatorQueryMapper.updateById(q);
+        }
     }
 
     public List<Map<String, Object>> listIndicatorDatasourceCatalog(String domain, String category, String keyword) {
@@ -884,47 +948,27 @@ public class AnalyticsDomainService {
         if (!sql.toLowerCase(Locale.ROOT).startsWith("select")) {
             throw new BusinessException(400, "仅支持 SELECT 查询语句");
         }
+        String dsKey = str(body.get("datasourceKey"), null);
+        if (dsKey == null || dsKey.isBlank()) {
+            throw new BusinessException(400, "请选择数据源");
+        }
         int timeout = 60;
         try {
             if (body.get("timeoutSec") != null) timeout = Math.max(5, Integer.parseInt(String.valueOf(body.get("timeoutSec"))));
         } catch (Exception ignored) { /* keep default */ }
-        String wrapped = "SELECT * FROM (" + sql.replaceAll(";\\s*$", "") + ") _ana_ind_preview LIMIT 20";
+        List<Map<String, Object>> raw = indicatorTaskService.runSelect(dsKey, sql, timeout, 200);
         List<String> columns = new ArrayList<>();
-        List<Map<String, Object>> rows = new ArrayList<>();
-        try {
-            Integer old = null;
-            try {
-                old = jdbcTemplate.getQueryTimeout();
-                jdbcTemplate.setQueryTimeout(timeout);
-            } catch (Exception ignored) { /* optional */ }
-            try {
-                List<Map<String, Object>> raw = jdbcTemplate.queryForList(wrapped);
-                if (!raw.isEmpty()) {
-                    columns.addAll(raw.get(0).keySet());
-                } else {
-                    columns.addAll(extractSelectAliases(sql).stream()
-                            .map(f -> String.valueOf(f.get("resultField"))).toList());
-                }
-                rows.addAll(raw);
-            } finally {
-                if (old != null) {
-                    try { jdbcTemplate.setQueryTimeout(old); } catch (Exception ignored) { /* ignore */ }
-                }
-            }
-        } catch (Exception e) {
-            // 预览失败仍返回解析字段，便于先保存语句
-            List<Map<String, Object>> parsed = extractSelectAliases(sql);
-            Map<String, Object> out = new LinkedHashMap<>();
-            out.put("columns", parsed.stream().map(f -> String.valueOf(f.get("resultField"))).toList());
-            out.put("rows", List.of());
-            out.put("message", "预览执行失败：" + e.getMessage());
-            out.put("fields", parsed);
-            return out;
+        if (!raw.isEmpty()) {
+            columns.addAll(raw.get(0).keySet());
+        } else {
+            columns.addAll(extractSelectAliases(sql).stream()
+                    .map(f -> String.valueOf(f.get("resultField"))).toList());
         }
         Map<String, Object> out = new LinkedHashMap<>();
         out.put("columns", columns);
-        out.put("rows", rows);
-        out.put("fields", enrichFieldsFromMeta(columns, sql));
+        out.put("rows", raw);
+        out.put("rowCount", raw.size());
+        out.put("truncated", raw.size() >= 200);
         return out;
     }
 
@@ -952,9 +996,21 @@ public class AnalyticsDomainService {
                 }
             }
         } else {
-            fields = parseIndicatorSql(Map.of("sqlText", sql));
+            fields = extractSelectAliases(sql);
         }
-        if (fields.isEmpty()) throw new BusinessException(400, "请先解析结果字段");
+        if (fields.isEmpty()) {
+            try {
+                List<Map<String, Object>> sample = indicatorTaskService.runSelect(dsKey, sql, timeout, 1);
+                if (!sample.isEmpty()) {
+                    fields = enrichFieldsFromMeta(new ArrayList<>(sample.get(0).keySet()), sql);
+                }
+            } catch (BusinessException e) {
+                throw new BusinessException(400, "未能解析结果列：" + e.getMessage());
+            }
+        }
+        if (fields.isEmpty()) {
+            throw new BusinessException(400, "未能从 SQL 解析结果列，请为列指定 AS 别名");
+        }
 
         String slug = str(body.get("querySlug"), fields.get(0).get("fieldName") != null
                 ? String.valueOf(fields.get(0).get("fieldName"))
@@ -973,6 +1029,7 @@ public class AnalyticsDomainService {
                 d = group.getOwnerDomainCode();
             }
             slug = group.getTargetTable().replaceFirst("^ind_", "");
+            deactivateExistingGroupSql(group.getId());
         } else if (isUnifiedIndicatorScope(d)) {
             throw new BusinessException(400, "统一入口新增指标须指定 groupId");
         }

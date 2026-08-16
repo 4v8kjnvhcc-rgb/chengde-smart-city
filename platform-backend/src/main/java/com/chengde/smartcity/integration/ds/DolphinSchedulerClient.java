@@ -388,6 +388,9 @@ public class DolphinSchedulerClient {
         JsonNode data = root.path("data");
         List<Map<String, Object>> rows = new ArrayList<>();
         JsonNode list = data.path("totalList");
+        if (!list.isArray() || list.isEmpty()) {
+            list = data.path("records");
+        }
         if (list.isArray()) {
             for (JsonNode n : list) {
                 Map<String, Object> row = new HashMap<>();

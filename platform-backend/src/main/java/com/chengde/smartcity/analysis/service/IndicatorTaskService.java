@@ -362,7 +362,7 @@ public class IndicatorTaskService {
 
         try {
             indicatorJdbcSupport.ensureResultTable(domainDb, targetTable, indicators);
-            logBuf.append("- 物理库/表增量就绪 ").append(domainDb).append('.').append(targetTable)
+            logBuf.append("- 物理库/表已就绪 ").append(domainDb).append('.').append(targetTable)
                     .append(" @").append(indicatorJdbcSupport.endpointLabel()).append('\n');
         } catch (Exception e) {
             log.warn("indicator ensure ddl failed taskId={}: {}", task.getId(), e.getMessage());
@@ -372,6 +372,8 @@ public class IndicatorTaskService {
 
         int success = 0;
         int failed = 0;
+        boolean singleQuery = queryIds.size() == 1;
+        List<Map<String, Object>> resultRows = new ArrayList<>();
         Map<String, Object> snapshot = new LinkedHashMap<>();
         for (Long qid : queryIds) {
             AnaIndicatorQuery q = queryMapper.selectById(qid);
@@ -387,17 +389,21 @@ public class IndicatorTaskService {
                 continue;
             }
             try {
-                List<Map<String, Object>> rows = querySourceRows(q, sql);
+                List<Map<String, Object>> rows = querySourceRows(q, sql, singleQuery ? 10000 : 100);
                 List<AnaIndicator> ofQuery = indicators.stream()
                         .filter(i -> qid.equals(i.getQueryId()))
                         .toList();
-                Map<String, Object> first = rows.isEmpty() ? Map.of() : rows.get(0);
-                for (AnaIndicator ind : ofQuery) {
-                    String col = ind.getFieldName() == null || ind.getFieldName().isBlank()
-                            ? ind.getResultField() : ind.getFieldName();
-                    if (col == null || col.isBlank()) continue;
-                    Object val = pickValue(first, ind.getResultField(), col);
-                    snapshot.put(col.trim().toLowerCase(Locale.ROOT), val);
+                if (singleQuery) {
+                    resultRows.addAll(rows);
+                } else {
+                    Map<String, Object> first = rows.isEmpty() ? Map.of() : rows.get(0);
+                    for (AnaIndicator ind : ofQuery) {
+                        String col = ind.getFieldName() == null || ind.getFieldName().isBlank()
+                                ? ind.getResultField() : ind.getFieldName();
+                        if (col == null || col.isBlank()) continue;
+                        Object val = pickValue(first, ind.getResultField(), col);
+                        snapshot.put(col.trim().toLowerCase(Locale.ROOT), val);
+                    }
                 }
                 success++;
                 logBuf.append("- ").append(q.getQueryNo()).append(" OK rows=")
@@ -415,13 +421,17 @@ public class IndicatorTaskService {
             logBuf.append("- 无关联指标语句，跳过计算\n");
             failed++;
         }
+        if (!singleQuery && success > 0) {
+            resultRows = snapshot.isEmpty() ? List.of() : List.of(snapshot);
+        }
 
         boolean wrote = false;
         if (success > 0) {
             try {
-                indicatorJdbcSupport.insertSnapshot(domainDb, targetTable, task.getId(), triggerType, snapshot);
+                int n = indicatorJdbcSupport.replaceResultRows(domainDb, targetTable, indicators,
+                        resultRows, task.getId(), triggerType);
                 wrote = true;
-                logBuf.append("- 已写入结果行 cols=").append(snapshot.size()).append('\n');
+                logBuf.append("- 已覆盖写入结果行 rows=").append(n).append('\n');
             } catch (Exception e) {
                 failed++;
                 logBuf.append("- 写入结果失败: ").append(e.getMessage()).append('\n');
@@ -447,23 +457,74 @@ public class IndicatorTaskService {
                 success, failed, wrote, domainDb, targetTable);
     }
 
-    private List<Map<String, Object>> querySourceRows(AnaIndicatorQuery q, String sql) throws Exception {
-        String wrapped = "SELECT * FROM (" + sql + ") _ana_ind_run LIMIT 100";
+    /** 只读执行 SELECT，不写指标结果表。limit<=0 表示不追加 LIMIT。 */
+    public List<Map<String, Object>> runSelect(String datasourceKey, String sql, int timeoutSec, int limit) {
+        if (sql == null || sql.isBlank()) {
+            throw new BusinessException(400, "请填写查询语句");
+        }
+        String text = sql.trim();
+        if (!text.toLowerCase(Locale.ROOT).startsWith("select")) {
+            throw new BusinessException(400, "仅支持 SELECT 查询语句");
+        }
+        AnaIndicatorQuery q = new AnaIndicatorQuery();
+        q.setDatasourceKey(datasourceKey);
+        q.setTimeoutSec(timeoutSec);
+        try {
+            return querySourceRows(q, text.replaceAll(";\\s*$", ""), limit);
+        } catch (BusinessException e) {
+            throw e;
+        } catch (Exception e) {
+            throw new BusinessException(400, "SQL 执行失败：" + (e.getMessage() == null ? e.getClass().getSimpleName() : e.getMessage()));
+        }
+    }
+
+    private List<Map<String, Object>> querySourceRows(AnaIndicatorQuery q, String sql, int limit) throws Exception {
+        int timeout = q.getTimeoutSec() == null ? 60 : Math.max(5, q.getTimeoutSec());
+        String wrapped = limit > 0
+                ? "SELECT * FROM (" + sql + ") _ana_ind_run LIMIT " + limit
+                : "SELECT * FROM (" + sql + ") _ana_ind_run";
         String dsKey = q.getDatasourceKey() == null ? "" : q.getDatasourceKey().trim();
         if (dsKey.isBlank() || "platform".equalsIgnoreCase(dsKey) || "control".equalsIgnoreCase(dsKey)) {
-            return jdbcTemplate.queryForList(wrapped);
+            Integer old = null;
+            try {
+                old = jdbcTemplate.getQueryTimeout();
+                jdbcTemplate.setQueryTimeout(timeout);
+                return jdbcTemplate.queryForList(wrapped);
+            } finally {
+                if (old != null) {
+                    try {
+                        jdbcTemplate.setQueryTimeout(old);
+                    } catch (Exception ignored) {
+                        /* ignore */
+                    }
+                }
+            }
         }
         try {
             var ep = connectionResolver.resolve(dsKey);
             try (Connection conn = java.sql.DriverManager.getConnection(ep.jdbcUrl(), ep.username(), ep.password());
-                 Statement st = conn.createStatement();
-                 ResultSet rs = st.executeQuery(wrapped)) {
-                return resultSetToMaps(rs);
+                 Statement st = conn.createStatement()) {
+                st.setQueryTimeout(timeout);
+                try (ResultSet rs = st.executeQuery(wrapped)) {
+                    return resultSetToMaps(rs);
+                }
             }
         } catch (BusinessException e) {
-            // 连接键无法解析时回落平台库（兼容历史 platform / 库名）
             log.debug("indicator source resolve fallback dsKey={}: {}", dsKey, e.getMessage());
-            return jdbcTemplate.queryForList(wrapped);
+            Integer old = null;
+            try {
+                old = jdbcTemplate.getQueryTimeout();
+                jdbcTemplate.setQueryTimeout(timeout);
+                return jdbcTemplate.queryForList(wrapped);
+            } finally {
+                if (old != null) {
+                    try {
+                        jdbcTemplate.setQueryTimeout(old);
+                    } catch (Exception ignored) {
+                        /* ignore */
+                    }
+                }
+            }
         }
     }
 

@@ -291,7 +291,7 @@ async function save() {
 async function publish(row: PipelineRow) {
   try {
     await api.post(`/governance/cross-pipelines/${row.id}/publish`)
-    ElMessage.success('已发布到 DolphinScheduler')
+    ElMessage.success('已发布到 DolphinScheduler；实时任务监控将显示待执行。如需立刻跑，请点「执行」')
     await loadList()
   } catch (e: unknown) {
     ElMessage.error((e as Error)?.message || '发布失败')

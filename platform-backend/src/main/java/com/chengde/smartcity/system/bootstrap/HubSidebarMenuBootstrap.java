@@ -12,8 +12,10 @@ import org.springframework.jdbc.datasource.init.ScriptUtils;
 import org.springframework.stereotype.Component;
 
 /**
- * 若 Flyway V80 尚未写入 Hub 侧栏菜单（例如后端在迁移脚本加入前已长期运行），启动时补跑 V80。
- * 平台管理仅保留一级快捷入口（id=19，无子菜单）；禁止复活旧 /system/* 子树。
+ * 启动时仅做「结构补齐 / 停用废弃菜单 / 超管授权」。
+ * <p><b>禁止</b>覆盖 {@code sys_menu.visible}（菜单管理「是否隐藏」）：
+ * 该字段由运维在界面维护，每次部署/重启不得改回，否则生产会出现「部署后大批菜单又隐藏」。</p>
+ * 平台管理仅保留一级快捷入口（id=19，无子菜单）；禁止复活旧 /system/* 子树（仅 status=0）。
  */
 @Component
 public class HubSidebarMenuBootstrap implements ApplicationRunner {
@@ -42,46 +44,48 @@ public class HubSidebarMenuBootstrap implements ApplicationRunner {
         jdbcTemplate.update(
                 "UPDATE sys_menu SET status = 0 WHERE id = 4100 OR permission = 'exchange:project:delete'");
 
-        // 平台管理：无下级目录快捷入口，首页直达统一用户
+        // 平台管理：结构对齐（不改 visible）
         jdbcTemplate.update(
-                "UPDATE sys_menu SET status = 1, visible = 1, parent_id = 1, menu_name = '平台管理', "
+                "UPDATE sys_menu SET status = 1, parent_id = 1, menu_name = '平台管理', "
                         + "menu_type = 1, path = '/system', component = NULL, "
                         + "permission = 'hub:system:platform', integration_type = 'self', sort_order = 90 "
                         + "WHERE id = 19");
 
-        // 业务功能平台 + 人口信息库
+        // 业务功能平台 + 人口信息库：结构对齐（不改 visible）
         jdbcTemplate.update(
-                "UPDATE sys_menu SET status = 1, visible = 1, parent_id = 1, menu_name = '业务功能平台', "
+                "UPDATE sys_menu SET status = 1, parent_id = 1, menu_name = '业务功能平台', "
                         + "menu_type = 1, path = '/business', permission = 'hub:business:platform', "
                         + "integration_type = 'self', sort_order = 18 WHERE id = 6000");
         jdbcTemplate.update(
-                "UPDATE sys_menu SET status = 1, visible = 0, parent_id = 6000, "
+                "UPDATE sys_menu SET status = 1, parent_id = 6000, "
                         + "menu_name = '承德市高新区人口信息库', menu_type = 2, "
                         + "path = '/business/gaoxin-pop-lib', permission = 'hub:business:gaoxin-pop-lib', "
                         + "integration_type = 'self', sort_order = 1 WHERE id = 6010");
 
-        // 旧平台管理子树 / 集成运维一级壳 / V210 误复活的旧 UUM「日志审计」保持停用
-        jdbcTemplate.update(
-                "UPDATE sys_menu SET status = 0, visible = 0 WHERE id IN (27, 6400, 6401, 6402, 6403, 6500, 30, 31)"
+        // 废弃菜单：只停用 status，不改 visible（避免与「是否隐藏」运维配置纠缠）
+        int retired = jdbcTemplate.update(
+                "UPDATE sys_menu SET status = 0 WHERE status <> 0 AND ("
+                        + "id IN (27, 6400, 6401, 6402, 6403, 6500, 30, 31, 7507, 7508)"
                         + " OR id BETWEEN 7600 AND 7611"
                         + " OR id IN (7630, 7631, 7632, 7633)"
                         + " OR path = '/integration'"
-                        + " OR (IFNULL(path,'') LIKE '/system/%' AND path <> '/system')");
+                        + " OR (IFNULL(path,'') LIKE '/system/%' AND path <> '/system')"
+                        + ")");
+        if (retired > 0) {
+            log.info("Retired obsolete menus (status=0 only, visible untouched): {} rows", retired);
+        }
 
-        // 通用支撑：统一用户 / 智能BI / 任务管理 / 集成运维（7882/7883 为配置与门户入口）
+        // 通用支撑：统一用户 / 智能BI / 任务管理 / 集成运维（7882/7883）
         jdbcTemplate.update(
                 "UPDATE sys_menu SET status = 1 WHERE id IN (12, 7880, 7881, 7882, 7883, 13, 14, 15, 16, 17, 18, 19, 6000, 6010)");
         jdbcTemplate.update(
-                "UPDATE sys_menu SET parent_id = 7880, sort_order = 3, status = 1, visible = 1, "
+                "UPDATE sys_menu SET parent_id = 7880, sort_order = 3, status = 1, "
                         + "menu_name = '任务管理', path = '/analytics/support?tab=tasks', "
                         + "permission = 'hub:analytics:support:tasks' WHERE id = 7882");
         jdbcTemplate.update(
-                "UPDATE sys_menu SET parent_id = 7880, sort_order = 4, status = 1, visible = 1, "
+                "UPDATE sys_menu SET parent_id = 7880, sort_order = 4, status = 1, "
                         + "menu_name = '集成运维', path = '/analytics/support?tab=ops.kettle', "
                         + "permission = 'hub:analytics:support:ops' WHERE id = 7883");
-        // UUM 内不再保留重复配置项（侧栏仍按 permission 控制）
-        jdbcTemplate.update(
-                "UPDATE sys_menu SET status = 0, visible = 0 WHERE id IN (7507, 7508)");
 
         int granted = jdbcTemplate.update(
                 "INSERT INTO sys_role_menu (role_id, menu_id) "

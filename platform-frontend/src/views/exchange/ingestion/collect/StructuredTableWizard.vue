@@ -78,8 +78,26 @@ function isScheduled(row: IngestTask): boolean {
   return lifecycleOf(row) === 'STARTED' || (row.enabled === 1 && jobSyncMode(row) !== 'REALTIME')
 }
 
+/** cron → 执行周期中文名（来自系统「执行周期管理」） */
+const cronNameMap = ref<Record<string, string>>({})
+
+async function loadCycleNames() {
+  try {
+    const list = (await api.get('/system/exec-cycles', { params: { status: 'ACTIVE' } })).data || []
+    const map: Record<string, string> = {}
+    for (const o of list as Array<{ cycleName?: string; cronExpr?: string }>) {
+      if (o.cronExpr) map[o.cronExpr] = o.cycleName || o.cronExpr
+    }
+    cronNameMap.value = map
+  } catch {
+    cronNameMap.value = {}
+  }
+}
+
 function cronDisplay(row: IngestTask): string {
-  return row.scheduleCron?.trim() || '—'
+  const cron = row.scheduleCron?.trim()
+  if (!cron) return '—'
+  return cronNameMap.value[cron] || cron
 }
 
 function hasRunHistory(row: IngestTask): boolean {
@@ -947,7 +965,8 @@ watch(
   },
 )
 
-onMounted(() => {
+onMounted(async () => {
+  await loadCycleNames()
   loadBase()
 })
 </script>
@@ -997,7 +1016,7 @@ onMounted(() => {
             </el-tag>
           </template>
         </el-table-column>
-        <el-table-column label="Cron" width="100" align="center" header-align="center" show-overflow-tooltip>
+        <el-table-column label="执行周期" min-width="120" align="center" header-align="center" show-overflow-tooltip>
           <template #default="{ row }">{{ cronDisplay(row) }}</template>
         </el-table-column>
         <el-table-column label="任务状态" width="88" align="center" header-align="center">

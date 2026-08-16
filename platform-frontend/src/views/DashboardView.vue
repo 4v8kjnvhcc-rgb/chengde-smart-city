@@ -124,16 +124,33 @@ function isPlatformMgmtMenu(n: MenuNode): boolean {
   return n.path === '/system' || n.menuName === '平台管理'
 }
 
+function isBusinessPlatformMenu(n: MenuNode): boolean {
+  return n.path === '/business' || n.menuName === '业务功能平台'
+}
+
 function isPlatformMgmtNav(n: PortalNavNode): boolean {
   const theme = (n.themeKey || '').trim()
   const menuPath = (n.menuPath || '').trim()
   return n.name === '平台管理' || theme === '/system' || menuPath === '/system'
 }
 
+function isBusinessPlatformNav(n: PortalNavNode): boolean {
+  const theme = (n.themeKey || '').trim()
+  const menuPath = (n.menuPath || '').trim()
+  return n.name === '业务功能平台' || theme === '/business' || menuPath === '/business'
+}
+
 function hasPlatformMgmtAccess(): boolean {
   if (auth.isSystemAdmin) return true
   if ((auth.permissions || []).includes('hub:system:platform')) return true
   return getAuthorizedPlatforms(auth.menus).some((n) => isPlatformMgmtMenu(n))
+}
+
+function hasBusinessPlatformAccess(): boolean {
+  if (auth.isSystemAdmin) return true
+  if ((auth.permissions || []).includes('hub:business:platform')) return true
+  if ((auth.permissions || []).includes('hub:business:gaoxin-pop-lib')) return true
+  return getAuthorizedPlatforms(auth.menus).some((n) => isBusinessPlatformMenu(n))
 }
 
 /** 合成「平台管理」菜单节点（门户卡兜底，不依赖树结构） */
@@ -154,9 +171,11 @@ function syntheticPlatformMgmtMenu(): MenuNode {
   }
 }
 
-/** 一级「平台管理」；集成运维已迁入通用支撑，不再作为门户卡片 */
+/** 一级「平台管理 / 业务功能平台」菜单兜底；集成运维已迁入通用支撑，不再作为门户卡片 */
 const menuExtraPlatforms = computed(() =>
-  getAuthorizedPlatforms(auth.menus).filter((n) => isPlatformMgmtMenu(n)),
+  getAuthorizedPlatforms(auth.menus).filter(
+    (n) => isPlatformMgmtMenu(n) || isBusinessPlatformMenu(n),
+  ),
 )
 
 const displayCards = computed<DisplayCard[]>(() => {
@@ -165,24 +184,33 @@ const displayCards = computed<DisplayCard[]>(() => {
     source: 'nav' as const,
     key: `nav-${n.id}`,
     title: n.name,
-    themePath: isPlatformMgmtNav(n) ? '/system' : (n.themeKey || '/exchange'),
+    themePath: isPlatformMgmtNav(n)
+      ? '/system'
+      : isBusinessPlatformNav(n)
+        ? '/business'
+        : (n.themeKey || '/exchange'),
     // 门户配置若挂了平台管理，同样直达，不展开空下拉
     direct: isPlatformMgmtNav(n),
     nav: n,
   }))
   const navHasPlatformMgmt = fromNav.some((c) => c.title === '平台管理' || c.themePath === '/system')
+  const navHasBusiness = fromNav.some((c) => c.title === '业务功能平台' || c.themePath === '/business')
   const fromMenu: DisplayCard[] = menuExtraPlatforms.value
-    .filter(() => !navHasPlatformMgmt)
+    .filter((n) => {
+      if (isPlatformMgmtMenu(n)) return !navHasPlatformMgmt
+      if (isBusinessPlatformMenu(n)) return !navHasBusiness
+      return false
+    })
     .map((n) => ({
       source: 'menu' as const,
       key: `menu-${n.id}`,
-      title: '平台管理',
-      themePath: '/system',
-      direct: true,
+      title: isBusinessPlatformMenu(n) ? '业务功能平台' : '平台管理',
+      themePath: isBusinessPlatformMenu(n) ? '/business' : '/system',
+      direct: isPlatformMgmtMenu(n),
       menu: n,
     }))
   const cards = [...fromNav, ...fromMenu]
-  // 有权限但导航/菜单树都没带出时，仍出第五张卡（对齐门户五卡）
+  // 有权限但导航/菜单树都没带出时，仍出平台管理卡
   if (!cards.some((c) => c.title === '平台管理' || c.themePath === '/system') && hasPlatformMgmtAccess()) {
     cards.push({
       source: 'menu',
@@ -192,6 +220,23 @@ const displayCards = computed<DisplayCard[]>(() => {
       direct: true,
       menu: syntheticPlatformMgmtMenu(),
     })
+  }
+  // 业务功能：有权限且子菜单未隐藏时，导航被裁空仍出卡（下拉取菜单可见子项）
+  if (
+    !cards.some((c) => c.title === '业务功能平台' || c.themePath === '/business')
+    && hasBusinessPlatformAccess()
+  ) {
+    const biz = getAuthorizedPlatforms(auth.menus).find((n) => isBusinessPlatformMenu(n))
+    if (biz && visibleMenuChildren(biz).length > 0) {
+      cards.push({
+        source: 'menu',
+        key: 'menu-business-platform',
+        title: '业务功能平台',
+        themePath: '/business',
+        direct: false,
+        menu: biz,
+      })
+    }
   }
   return cards
 })
