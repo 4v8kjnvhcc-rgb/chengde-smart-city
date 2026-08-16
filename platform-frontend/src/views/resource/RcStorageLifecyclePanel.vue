@@ -1,7 +1,7 @@
 <script setup lang="ts">
 /**
- * 资源中心存储生命周期：备份 / 归档 / 销毁（同一套 rc policies API）。
- * 备份模式：弹框新增/编辑 + 查看/执行/启停/删除；调度优先 DS，不可用时回退应用内定时。
+ * 资源中心存储生命周期：备份 / 归档 / 销毁。
+ * 多表按日快照写入 *_bak.{表}{yyyyMMdd}（跑到哪天打哪天），源表不改；归档同名 tsv.gz；满 6 个月才销毁。
  */
 import { computed, onMounted, reactive, ref, watch } from 'vue'
 import api from '@/api/http'
@@ -15,14 +15,10 @@ const props = defineProps<{
   mode: 'backup' | 'archive' | 'destroy'
 }>()
 
-interface ManagedTable {
-  id: number
-  physicalTable: string
-}
-interface Library {
-  id: number
-  libName: string
-  libType: string
+interface SourceDb {
+  database: string
+  backupDatabase: string
+  layer: string
 }
 interface Policy {
   id: number
@@ -31,8 +27,6 @@ interface Policy {
   actionType: string
   retentionDays?: number
   managedTableId?: number
-  storageStrategy?: string
-  backupLibraryId?: number
   tableRule?: string
   compressEnabled?: number
   compressType?: string
@@ -43,7 +37,6 @@ interface Policy {
   lastRunStatus?: string
   lastRunAt?: string
   lastRunMessage?: string
-  dsPublishStatus?: string
   nextRunAt?: string
 }
 interface Artifact {
@@ -59,13 +52,21 @@ interface Artifact {
   createdAt?: string
 }
 
+const SOURCE_DB_LABEL: Record<string, string> = {
+  smart_city: '控制面 smart_city',
+  smart_city_ods: 'ODS smart_city_ods',
+  smart_city_dwd: 'DWD smart_city_dwd',
+  smart_city_dws: 'DWS smart_city_dws',
+  smart_city_ads: 'ADS smart_city_ads',
+}
+
 const loading = ref(false)
 const saving = ref(false)
-const managedTables = ref<ManagedTable[]>([])
-const libraries = ref<Library[]>([])
+const sourceDbs = ref<SourceDb[]>([])
+const tableNames = ref<string[]>([])
+const tablesLoading = ref(false)
 const policies = ref<Policy[]>([])
 const artifacts = ref<Artifact[]>([])
-const lastRun = ref<Record<string, unknown> | null>(null)
 
 const dialogVisible = ref(false)
 const dialogMode = ref<'create' | 'edit' | 'view'>('create')
@@ -73,60 +74,58 @@ const editingId = ref<number | null>(null)
 
 const form = reactive({
   policyName: '',
-  retentionDays: 30,
-  managedTableId: undefined as number | undefined,
-  storageStrategy: 'LOCAL',
-  backupLibraryId: undefined as number | undefined,
-  tableRule: '',
-  backupScope: 'FULL' as 'FULL' | 'BY_TIME' | 'BY_PARTITION' | 'BY_BOTH',
-  timeColumn: '',
-  timeBeforeDays: 30,
-  partitionName: '',
+  sourceDb: 'smart_city_ods',
+  tableNames: [] as string[],
+  backupScope: 'TABLE' as 'TABLE' | 'PARTITION',
   compressEnabled: true,
   compressType: 'GZIP',
-  destroyRule: '',
-  scheduleEnabled: false,
   scheduleCron: '0 0 2 * * ?',
 })
 
-function encodeTableRule(): string | undefined {
-  if (props.mode !== 'backup') return form.tableRule || undefined
-  if (form.backupScope === 'FULL') return form.tableRule || undefined
+function parseRule(raw?: string): Record<string, unknown> {
+  if (!raw || !raw.trim().startsWith('{')) return {}
+  try {
+    return JSON.parse(raw) as Record<string, unknown>
+  } catch {
+    return {}
+  }
+}
+
+function policyMeta(row: Policy) {
+  const o = parseRule(row.tableRule)
+  const names = Array.isArray(o.tableNames)
+    ? (o.tableNames as unknown[]).map((x) => String(x))
+    : (o.tableName ? [String(o.tableName)] : [])
+  const scope = String(o.backupScope || 'TABLE').toUpperCase()
+  return {
+    sourceDb: String(o.sourceDb || ''),
+    tableName: names.join('、') || String(o.tableName || ''),
+    tableNames: names,
+    backupDb: String(o.backupDatabase || (o.sourceDb ? `${o.sourceDb}_bak` : '')),
+    backupScope: scope === 'PARTITION' || scope === 'BY_PARTITION' || scope === 'BY_BOTH' ? 'PARTITION' : 'TABLE',
+  }
+}
+
+function encodeRule(): string {
   return JSON.stringify({
-    v: 1,
+    v: 3,
+    sourceDb: form.sourceDb,
+    tableNames: form.tableNames,
+    tableName: form.tableNames[0] || '',
+    backupDatabase: `${form.sourceDb}_bak`,
     backupScope: form.backupScope,
-    timeColumn: form.timeColumn || '',
-    timeBeforeDays: form.timeBeforeDays,
-    partitionName: form.partitionName || '',
-    note: form.tableRule || '',
   })
 }
 
-function decodeTableRule(raw?: string) {
-  form.backupScope = 'FULL'
-  form.timeColumn = ''
-  form.timeBeforeDays = form.retentionDays || 30
-  form.partitionName = ''
-  form.tableRule = ''
-  if (!raw || !raw.trim()) return
-  const t = raw.trim()
-  if (t.startsWith('{')) {
-    try {
-      const o = JSON.parse(t) as Record<string, unknown>
-      const scope = String(o.backupScope || 'FULL').toUpperCase()
-      if (scope === 'BY_TIME' || scope === 'BY_PARTITION' || scope === 'BY_BOTH' || scope === 'FULL') {
-        form.backupScope = scope as typeof form.backupScope
-      }
-      form.timeColumn = String(o.timeColumn || '')
-      form.timeBeforeDays = Number(o.timeBeforeDays ?? form.retentionDays ?? 30) || 30
-      form.partitionName = String(o.partitionName || '')
-      form.tableRule = String(o.note || '')
-      return
-    } catch {
-      /* fall through */
-    }
-  }
-  form.tableRule = raw
+function fillForm(row: Policy) {
+  const m = policyMeta(row)
+  form.policyName = row.policyName || ''
+  form.sourceDb = m.sourceDb || 'smart_city_ods'
+  form.tableNames = [...m.tableNames]
+  form.backupScope = m.backupScope === 'PARTITION' ? 'PARTITION' : 'TABLE'
+  form.compressEnabled = row.compressEnabled === 1 || row.compressType === 'GZIP'
+  form.compressType = row.compressType || 'GZIP'
+  form.scheduleCron = row.scheduleCron || '0 0 2 * * ?'
 }
 
 const actionType = computed(() =>
@@ -143,12 +142,12 @@ const filtered = computed(() => {
   const kw = policyKeyword.value.trim().toLowerCase()
   if (!kw) return list
   return list.filter((p) => {
-    const table = tableName(p.managedTableId).toLowerCase()
+    const m = policyMeta(p)
     return (
       (p.policyName || '').toLowerCase().includes(kw)
       || (p.policyCode || '').toLowerCase().includes(kw)
-      || table.includes(kw)
-      || (p.tableRule || '').toLowerCase().includes(kw)
+      || m.tableName.toLowerCase().includes(kw)
+      || m.sourceDb.toLowerCase().includes(kw)
     )
   })
 })
@@ -193,26 +192,40 @@ const dialogTitle = computed(() => {
 })
 
 const formReadonly = computed(() => dialogMode.value === 'view')
+const bakDbLabel = computed(() => (form.sourceDb ? `${form.sourceDb}_bak` : '-'))
 
-const artifactDialogVisible = ref(false)
-const artifactSaving = ref(false)
-const editingArtifactId = ref<number | null>(null)
-const artifactForm = reactive({
-  physicalTable: '',
-  fileName: '',
-  storageLocation: '',
-  message: '',
-  status: 'SUCCESS',
-})
-
-const tableName = (id?: number) => {
-  if (!id) return '-'
-  return managedTables.value.find((t) => t.id === id)?.physicalTable || String(id)
+async function loadTables(db: string) {
+  if (!db) {
+    tableNames.value = []
+    return
+  }
+  tablesLoading.value = true
+  try {
+    const res = await api.get('/resource-center/platform/lifecycle/tables', { params: { database: db } })
+    tableNames.value = res.data || []
+    const allowed = new Set(tableNames.value)
+    form.tableNames = form.tableNames.filter((t) => allowed.has(t))
+  } catch (e: unknown) {
+    tableNames.value = []
+    const msg = (e as { response?: { data?: { message?: string } } })?.response?.data?.message
+    ElMessage.warning(msg || '无法列出该库表，请确认分层库连接')
+  } finally {
+    tablesLoading.value = false
+  }
 }
 
-const libName = (id?: number) => {
-  if (!id) return '-'
-  return libraries.value.find((l) => l.id === id)?.libName || String(id)
+watch(() => form.sourceDb, (db) => {
+  if (dialogVisible.value) loadTables(db)
+})
+
+function resetForm() {
+  form.policyName = ''
+  form.sourceDb = 'smart_city_ods'
+  form.tableNames = []
+  form.backupScope = 'TABLE'
+  form.compressEnabled = true
+  form.compressType = 'GZIP'
+  form.scheduleCron = '0 0 2 * * ?'
 }
 
 function doPolicyQuery() {
@@ -237,51 +250,17 @@ function doArtifactReset() {
   resetArtifactPage()
 }
 
-function resetForm() {
-  form.policyName = ''
-  form.retentionDays = 30
-  form.managedTableId = undefined
-  form.storageStrategy = 'LOCAL'
-  form.backupLibraryId = undefined
-  form.tableRule = ''
-  form.backupScope = 'FULL'
-  form.timeColumn = ''
-  form.timeBeforeDays = 30
-  form.partitionName = ''
-  form.compressEnabled = true
-  form.compressType = 'GZIP'
-  form.destroyRule = ''
-  form.scheduleEnabled = false
-  form.scheduleCron = '0 0 2 * * ?'
-}
-
-function fillForm(row: Policy) {
-  form.policyName = row.policyName || ''
-  form.retentionDays = row.retentionDays ?? 30
-  form.managedTableId = row.managedTableId
-  form.storageStrategy = row.storageStrategy || 'LOCAL'
-  form.backupLibraryId = row.backupLibraryId
-  decodeTableRule(row.tableRule)
-  form.compressEnabled = row.compressEnabled === 1 || row.compressType === 'GZIP'
-  form.compressType = row.compressType || 'GZIP'
-  form.destroyRule = row.destroyRule || ''
-  form.scheduleEnabled = row.scheduleEnabled === 1
-  form.scheduleCron = row.scheduleCron || '0 0 2 * * ?'
-}
-
 async function reload() {
   loading.value = true
   try {
-    const [tables, pols, arts, libs] = await Promise.all([
-      api.get('/resource-center/platform/managed-tables'),
+    const [dbs, pols, arts] = await Promise.all([
+      api.get('/resource-center/platform/lifecycle/databases'),
       api.get('/resource-center/platform/policies', { params: { actionType: actionType.value } }),
       api.get('/resource-center/platform/backups/artifacts'),
-      api.get('/resource-center/platform/libraries'),
     ])
-    managedTables.value = tables.data || []
+    sourceDbs.value = dbs.data || []
     policies.value = pols.data || []
     artifacts.value = arts.data || []
-    libraries.value = libs.data || []
   } catch (e: unknown) {
     ElMessage.error(e instanceof Error ? e.message : '加载失败')
   } finally {
@@ -289,25 +268,28 @@ async function reload() {
   }
 }
 
-function openCreate() {
+async function openCreate() {
   dialogMode.value = 'create'
   editingId.value = null
   resetForm()
   dialogVisible.value = true
+  await loadTables(form.sourceDb)
 }
 
-function openEdit(row: Policy) {
+async function openEdit(row: Policy) {
   dialogMode.value = 'edit'
   editingId.value = row.id
   fillForm(row)
   dialogVisible.value = true
+  await loadTables(form.sourceDb)
 }
 
-function openView(row: Policy) {
+async function openView(row: Policy) {
   dialogMode.value = 'view'
   editingId.value = row.id
   fillForm(row)
   dialogVisible.value = true
+  await loadTables(form.sourceDb)
 }
 
 async function submitDialog() {
@@ -319,47 +301,33 @@ async function submitDialog() {
     ElMessage.warning('请填写策略名称')
     return
   }
-  if (!form.managedTableId) {
-    ElMessage.warning(props.mode === 'backup' ? '请选择备份目标表' : '请选择关联纳管表')
+  if (!form.sourceDb || !form.tableNames.length) {
+    ElMessage.warning('请选择源库和表')
     return
   }
-  if (props.mode === 'backup' && !form.storageStrategy) {
-    ElMessage.warning('请选择存储策略')
+  if (!form.scheduleCron.trim()) {
+    ElMessage.warning('请选择执行周期')
     return
-  }
-  if (form.scheduleEnabled && !form.scheduleCron.trim()) {
-    ElMessage.warning('启用周期调度时请填写 Cron')
-    return
-  }
-  if (props.mode === 'backup' && form.backupScope !== 'FULL') {
-    if ((form.backupScope === 'BY_TIME' || form.backupScope === 'BY_BOTH') && !form.timeColumn.trim()) {
-      ElMessage.warning('按时间备份请填写时间列')
-      return
-    }
-    if ((form.backupScope === 'BY_PARTITION' || form.backupScope === 'BY_BOTH') && !form.partitionName.trim()) {
-      ElMessage.warning('按分区备份请填写分区名')
-      return
-    }
   }
   const body = {
     policyName: form.policyName,
     actionType: actionType.value,
-    retentionDays: form.retentionDays,
-    managedTableId: form.managedTableId,
-    storageStrategy: form.storageStrategy,
-    backupLibraryId: form.backupLibraryId,
-    tableRule: encodeTableRule(),
+    retentionDays: 180,
+    sourceDb: form.sourceDb,
+    tableNames: form.tableNames,
+    tableName: form.tableNames[0],
+    backupScope: form.backupScope,
+    tableRule: encodeRule(),
     compressEnabled: props.mode === 'archive' ? form.compressEnabled : false,
     compressType: props.mode === 'archive' ? form.compressType : 'NONE',
-    destroyRule: props.mode === 'destroy' ? form.destroyRule : undefined,
-    scheduleEnabled: form.scheduleEnabled,
-    scheduleCron: form.scheduleEnabled ? form.scheduleCron : undefined,
+    scheduleEnabled: true,
+    scheduleCron: form.scheduleCron,
   }
   saving.value = true
   try {
     if (dialogMode.value === 'create') {
       await api.post('/resource-center/platform/policies', body)
-      ElMessage.success('策略已创建')
+      ElMessage.success('策略已创建，请启动调度后按周期执行')
     } else if (editingId.value != null) {
       await api.put(`/resource-center/platform/policies/${editingId.value}`, body)
       ElMessage.success('策略已保存')
@@ -371,30 +339,6 @@ async function submitDialog() {
     ElMessage.error(msg || (e instanceof Error ? e.message : '保存失败'))
   } finally {
     saving.value = false
-  }
-}
-
-async function runPolicy(id: number) {
-  try {
-    const res = await api.post(`/resource-center/platform/policies/${id}/execute`)
-    lastRun.value = res.data
-    const st = String(res.data?.status || '')
-    if (st === 'LEDGER') {
-      ElMessage.warning(String(res.data?.message || '已记台账，未改物理数据'))
-      if (props.mode === 'backup' || props.mode === 'archive') {
-        activeTab.value = 'artifacts'
-      }
-    } else {
-      ElMessage.success(String(res.data?.message || '策略已执行'))
-      if (props.mode === 'backup' || props.mode === 'archive') {
-        activeTab.value = 'artifacts'
-      }
-    }
-    await reload()
-  } catch (e: unknown) {
-    const msg = (e as { response?: { data?: { message?: string } } })?.response?.data?.message
-    ElMessage.error(msg || '策略执行失败（销毁场景可能被策略拒绝）')
-    await reload()
   }
 }
 
@@ -440,10 +384,10 @@ async function removePolicy(row: Policy) {
 async function verifyArtifact(id: number) {
   try {
     const res = await api.get(`/resource-center/platform/backups/artifacts/${id}/verify`)
-    ElMessage.success(res.data?.match ? '校验通过' : '校验失败（种子产物可能无实体文件）')
+    ElMessage.success(res.data?.match ? '校验通过' : '校验失败')
   } catch (e: unknown) {
     const msg = (e as { response?: { data?: { message?: string } } })?.response?.data?.message
-    ElMessage.warning(msg || '校验未通过（种子产物可能仅有台账）')
+    ElMessage.warning(msg || '校验未通过')
   }
 }
 
@@ -457,41 +401,9 @@ async function restoreArtifact(id: number) {
   }
 }
 
-function openEditArtifact(row: Artifact) {
-  editingArtifactId.value = row.id
-  artifactForm.physicalTable = row.physicalTable || ''
-  artifactForm.fileName = row.fileName || ''
-  artifactForm.storageLocation = row.storageLocation || row.filePath || ''
-  artifactForm.message = row.message || ''
-  artifactForm.status = row.status || 'SUCCESS'
-  artifactDialogVisible.value = true
-}
-
-async function submitArtifactDialog() {
-  if (editingArtifactId.value == null) return
-  artifactSaving.value = true
-  try {
-    await api.put(`/resource-center/platform/backups/artifacts/${editingArtifactId.value}`, {
-      storageLocation: artifactForm.storageLocation || null,
-      message: artifactForm.message || null,
-      status: artifactForm.status,
-    })
-    ElMessage.success('产物已保存')
-    artifactDialogVisible.value = false
-    await reload()
-  } catch (e: unknown) {
-    const msg = (e as { response?: { data?: { message?: string } } })?.response?.data?.message
-    ElMessage.error(msg || '保存失败')
-  } finally {
-    artifactSaving.value = false
-  }
-}
-
 async function removeArtifact(row: Artifact) {
   try {
-    await ElMessageBox.confirm(`确认删除产物「${row.fileName || row.id}」？将同时尝试清理本地文件。`, '删除确认', {
-      type: 'warning',
-    })
+    await ElMessageBox.confirm(`确认删除产物记录「${row.fileName || row.id}」？`, '删除确认', { type: 'warning' })
     await api.delete(`/resource-center/platform/backups/artifacts/${row.id}`)
     ElMessage.success('已删除')
     await reload()
@@ -509,19 +421,6 @@ onMounted(reload)
 
 <template>
   <div v-loading="loading">
-    <el-alert
-      v-if="lastRun"
-      :type="lastRun.status === 'LEDGER' ? 'warning' : 'success'"
-      :closable="true"
-      style="margin-bottom:12px"
-      :title="`最近执行：${statusLabel(String(lastRun.actionType || ''))} · ${statusLabel(String(lastRun.status || ''))}`"
-      @close="lastRun = null"
-    >
-      {{ lastRun.message || `产物行数 ${lastRun.rowCount ?? '-'}` }}
-      <template v-if="lastRun.storageLocation">；位置 {{ lastRun.storageLocation }}</template>
-    </el-alert>
-
-    <!-- 备份 / 归档：策略与产物分 Tab -->
     <template v-if="mode === 'backup' || mode === 'archive'">
       <el-tabs v-model="activeTab" class="backup-tabs">
         <el-tab-pane :label="mode === 'backup' ? '备份策略' : '归档策略'" name="policies" />
@@ -534,7 +433,7 @@ onMounted(reload)
             <el-input
               v-model="policyQuery"
               clearable
-              placeholder="策略名 / 编码 / 表名"
+              placeholder="策略名 / 库 / 表名"
               @keyup.enter="doPolicyQuery"
             />
           </el-form-item>
@@ -549,27 +448,26 @@ onMounted(reload)
         </el-form>
         <el-table :data="pagedPolicies" stripe size="small">
           <el-table-column prop="policyName" label="策略" min-width="140" show-overflow-tooltip />
-          <el-table-column label="纳管表" min-width="140" show-overflow-tooltip>
-            <template #default="{ row }">{{ tableName(row.managedTableId) }}</template>
+          <el-table-column label="源库" min-width="140" show-overflow-tooltip>
+            <template #default="{ row }">{{ policyMeta(row).sourceDb || '-' }}</template>
           </el-table-column>
-          <el-table-column prop="retentionDays" label="保存天数" width="90" />
-          <el-table-column v-if="mode === 'backup'" label="存储策略" width="100">
-            <template #default="{ row }">{{ statusLabel(row.storageStrategy || 'LOCAL') }}</template>
+          <el-table-column label="表" min-width="180" show-overflow-tooltip>
+            <template #default="{ row }">{{ policyMeta(row).tableName || '-' }}</template>
           </el-table-column>
-          <el-table-column v-if="mode === 'backup'" label="备份库" min-width="120" show-overflow-tooltip>
-            <template #default="{ row }">{{ libName(row.backupLibraryId) }}</template>
+          <el-table-column v-if="mode === 'backup'" label="备份库" min-width="160" show-overflow-tooltip>
+            <template #default="{ row }">{{ policyMeta(row).backupDb || '-' }}</template>
+          </el-table-column>
+          <el-table-column v-if="mode === 'backup'" label="方式" width="110">
+            <template #default="{ row }">{{ policyMeta(row).backupScope === 'PARTITION' ? '按区' : '按时间' }}</template>
           </el-table-column>
           <el-table-column v-if="mode === 'archive'" label="压缩" width="90">
             <template #default="{ row }">{{ statusLabel(row.compressType || (row.compressEnabled ? 'GZIP' : 'NONE')) }}</template>
           </el-table-column>
-          <el-table-column label="调度" width="160" show-overflow-tooltip>
-            <template #default="{ row }">
-              <span v-if="row.scheduleEnabled === 1">{{ row.scheduleCron || '-' }}</span>
-              <span v-else>手动</span>
-            </template>
+          <el-table-column label="执行周期" width="180" show-overflow-tooltip>
+            <template #default="{ row }">{{ row.scheduleCron || '-' }}</template>
           </el-table-column>
-          <el-table-column v-if="mode === 'backup'" label="DS状态" width="100">
-            <template #default="{ row }">{{ statusLabel(row.dsPublishStatus || 'DRAFT') }}</template>
+          <el-table-column label="调度" width="90">
+            <template #default="{ row }">{{ row.scheduleEnabled === 1 ? '已启动' : '已停止' }}</template>
           </el-table-column>
           <el-table-column label="最近状态" width="100">
             <template #default="{ row }">
@@ -579,19 +477,18 @@ onMounted(reload)
               <span v-else>-</span>
             </template>
           </el-table-column>
-          <el-table-column label="操作" :width="mode === 'backup' ? 320 : 220" fixed="right">
+          <el-table-column label="操作" width="240" fixed="right">
             <template #default="{ row }">
               <el-button link type="primary" @click="openView(row)">查看</el-button>
               <el-button link type="primary" @click="openEdit(row)">编辑</el-button>
-              <el-button link type="primary" @click="runPolicy(row.id)">执行</el-button>
               <el-button
-                v-if="mode === 'backup' && row.scheduleEnabled !== 1"
+                v-if="row.scheduleEnabled !== 1"
                 link
                 type="success"
                 @click="startSchedule(row)"
               >启动</el-button>
               <el-button
-                v-if="mode === 'backup' && row.scheduleEnabled === 1"
+                v-else
                 link
                 type="warning"
                 @click="stopSchedule(row)"
@@ -605,7 +502,7 @@ onMounted(reload)
           v-model:page-size="policyPageSize"
           :total="policyTotal"
         />
-        <el-empty v-if="!loading && !filtered.length" description="暂无策略，请点击新增" />
+        <el-empty v-if="!loading && !filtered.length" description="暂无策略，请点击新增并启动调度" />
       </div>
 
       <div v-show="activeTab === 'artifacts'">
@@ -614,7 +511,7 @@ onMounted(reload)
             <el-input
               v-model="artifactQuery"
               clearable
-              placeholder="表名 / 文件名 / 说明"
+              placeholder="表名 / 文件名 / 路径"
               @keyup.enter="doArtifactQuery"
             />
           </el-form-item>
@@ -626,21 +523,20 @@ onMounted(reload)
         </el-form>
         <el-table :data="pagedArtifacts" stripe size="small">
           <el-table-column prop="physicalTable" label="表" width="160" />
-          <el-table-column prop="fileName" label="文件" min-width="160" show-overflow-tooltip />
-          <el-table-column label="存储位置" min-width="200" show-overflow-tooltip>
+          <el-table-column prop="fileName" label="名称" min-width="160" show-overflow-tooltip />
+          <el-table-column label="存储位置" min-width="240" show-overflow-tooltip>
             <template #default="{ row }">{{ row.storageLocation || row.filePath || '-' }}</template>
           </el-table-column>
-          <el-table-column prop="rowCount" label="行数" width="80" />
+          <el-table-column prop="rowCount" label="行数" width="90" />
           <el-table-column label="状态" width="90">
             <template #default="{ row }">
               <el-tag :type="statusTagType(row.status)" size="small">{{ statusLabel(row.status) }}</el-tag>
             </template>
           </el-table-column>
-          <el-table-column prop="message" label="说明" min-width="140" show-overflow-tooltip />
-          <el-table-column label="操作" :width="mode === 'backup' ? 240 : 180" fixed="right">
+          <el-table-column prop="message" label="说明" min-width="160" show-overflow-tooltip />
+          <el-table-column label="操作" :width="mode === 'backup' ? 200 : 140" fixed="right">
             <template #default="{ row }">
-              <el-button link type="primary" @click="openEditArtifact(row)">编辑</el-button>
-              <el-button link type="primary" @click="verifyArtifact(row.id)">校验</el-button>
+              <el-button v-if="mode === 'archive'" link type="primary" @click="verifyArtifact(row.id)">校验</el-button>
               <el-button
                 v-if="mode === 'backup'"
                 link
@@ -658,12 +554,11 @@ onMounted(reload)
         />
         <el-empty
           v-if="!loading && !filteredArtifacts.length"
-          :description="mode === 'backup' ? '暂无备份产物：可在「备份策略」中执行策略生成' : '暂无归档产物'"
+          :description="mode === 'backup' ? '暂无备份产物：请启动策略等待定时执行' : '暂无归档产物'"
         />
       </div>
     </template>
 
-    <!-- 销毁：仅策略列表 -->
     <template v-else>
       <el-form inline class="portal-inline-form portal-inline-form--block" @submit.prevent="doPolicyQuery">
         <el-form-item label="关键字" class="portal-field-xl">
@@ -683,15 +578,20 @@ onMounted(reload)
       </el-form>
       <el-table :data="pagedPolicies" stripe size="small">
         <el-table-column prop="policyName" label="策略" min-width="140" show-overflow-tooltip />
-        <el-table-column label="纳管表" min-width="140" show-overflow-tooltip>
-          <template #default="{ row }">{{ tableName(row.managedTableId) }}</template>
+        <el-table-column label="源库" min-width="140" show-overflow-tooltip>
+          <template #default="{ row }">{{ policyMeta(row).sourceDb || '-' }}</template>
         </el-table-column>
-        <el-table-column prop="destroyRule" label="销毁规则" min-width="160" show-overflow-tooltip />
-        <el-table-column label="调度" width="160" show-overflow-tooltip>
-          <template #default="{ row }">
-            <span v-if="row.scheduleEnabled === 1">{{ row.scheduleCron || '-' }}</span>
-            <span v-else>手动</span>
-          </template>
+        <el-table-column label="表" min-width="180" show-overflow-tooltip>
+          <template #default="{ row }">{{ policyMeta(row).tableName || '-' }}</template>
+        </el-table-column>
+        <el-table-column label="方式" width="90">
+          <template #default="{ row }">{{ policyMeta(row).backupScope === 'PARTITION' ? '按区' : '按时间' }}</template>
+        </el-table-column>
+        <el-table-column label="执行周期" width="180" show-overflow-tooltip>
+          <template #default="{ row }">{{ row.scheduleCron || '-' }}</template>
+        </el-table-column>
+        <el-table-column label="调度" width="90">
+          <template #default="{ row }">{{ row.scheduleEnabled === 1 ? '已启动' : '已停止' }}</template>
         </el-table-column>
         <el-table-column label="最近状态" width="100">
           <template #default="{ row }">
@@ -701,11 +601,22 @@ onMounted(reload)
             <span v-else>-</span>
           </template>
         </el-table-column>
-        <el-table-column label="操作" width="220" fixed="right">
+        <el-table-column label="操作" width="240" fixed="right">
           <template #default="{ row }">
             <el-button link type="primary" @click="openView(row)">查看</el-button>
             <el-button link type="primary" @click="openEdit(row)">编辑</el-button>
-            <el-button link type="danger" @click="runPolicy(row.id)">尝试执行</el-button>
+            <el-button
+              v-if="row.scheduleEnabled !== 1"
+              link
+              type="success"
+              @click="startSchedule(row)"
+            >启动</el-button>
+            <el-button
+              v-else
+              link
+              type="warning"
+              @click="stopSchedule(row)"
+            >停止</el-button>
             <el-button link type="danger" @click="removePolicy(row)">删除</el-button>
           </template>
         </el-table-column>
@@ -715,102 +626,50 @@ onMounted(reload)
         v-model:page-size="policyPageSize"
         :total="policyTotal"
       />
-      <el-empty v-if="!loading && !filtered.length" description="暂无策略，请点击新增" />
+      <el-empty v-if="!loading && !filtered.length" description="暂无策略，请点击新增并启动调度" />
     </template>
 
-    <el-dialog v-model="dialogVisible" :title="dialogTitle" width="560px" destroy-on-close>
-      <el-form label-width="100px">
+    <el-dialog v-model="dialogVisible" :title="dialogTitle" width="640px" destroy-on-close>
+      <el-form label-width="110px">
         <el-form-item label="策略名称" required>
           <el-input v-model="form.policyName" :disabled="formReadonly" maxlength="128" />
         </el-form-item>
-        <el-form-item :label="mode === 'backup' ? '备份表' : '纳管表'" required>
-          <el-select
-            v-model="form.managedTableId"
-            filterable
-            clearable
-            :disabled="formReadonly"
-            placeholder="输入表名筛选"
-            style="width: 100%"
-          >
-            <el-option v-for="t in managedTables" :key="t.id" :label="t.physicalTable" :value="t.id" />
-          </el-select>
-        </el-form-item>
-        <el-form-item v-if="mode !== 'destroy'" label="保存天数">
-          <el-input-number
-            v-model="form.retentionDays"
-            :min="1"
-            :max="3650"
-            :disabled="formReadonly"
-            controls-position="right"
-          />
-        </el-form-item>
-        <el-form-item v-if="mode === 'backup'" label="存储策略">
-          <el-select v-model="form.storageStrategy" :disabled="formReadonly" style="width: 100%">
-            <el-option :label="statusLabel('LOCAL')" value="LOCAL" />
-            <el-option :label="statusLabel('NAS')" value="NAS" />
-            <el-option :label="statusLabel('OBJECT')" value="OBJECT" />
-          </el-select>
-        </el-form-item>
-        <el-form-item v-if="mode === 'backup'" label="备份库">
-          <el-select
-            v-model="form.backupLibraryId"
-            filterable
-            clearable
-            :disabled="formReadonly"
-            style="width: 100%"
-          >
+        <el-form-item label="源库" required>
+          <el-select v-model="form.sourceDb" :disabled="formReadonly" filterable style="width: 100%">
             <el-option
-              v-for="l in libraries"
-              :key="l.id"
-              :label="`${l.libName}（${statusLabel(l.libType)}）`"
-              :value="l.id"
+              v-for="d in sourceDbs"
+              :key="d.database"
+              :label="SOURCE_DB_LABEL[d.database] || d.database"
+              :value="d.database"
             />
           </el-select>
         </el-form-item>
-        <el-form-item v-if="mode === 'backup'" label="备份范围">
-          <el-select v-model="form.backupScope" :disabled="formReadonly" style="width: 100%">
-            <el-option label="整表（真实导出）" value="FULL" />
-            <el-option label="按时间（台账）" value="BY_TIME" />
-            <el-option label="按分区（台账）" value="BY_PARTITION" />
-            <el-option label="按时间+分区（台账）" value="BY_BOTH" />
+        <el-form-item label="表" required>
+          <el-select
+            v-model="form.tableNames"
+            multiple
+            filterable
+            collapse-tags
+            collapse-tags-tooltip
+            :disabled="formReadonly"
+            :loading="tablesLoading"
+            placeholder="可多选"
+            style="width: 100%"
+          >
+            <el-option v-for="t in tableNames" :key="t" :label="t" :value="t" />
           </el-select>
         </el-form-item>
-        <el-form-item
-          v-if="mode === 'backup' && (form.backupScope === 'BY_TIME' || form.backupScope === 'BY_BOTH')"
-          label="时间列"
-          required
-        >
-          <el-input v-model="form.timeColumn" :disabled="formReadonly" placeholder="如 created_at / dt" />
+        <el-form-item v-if="mode === 'backup'" label="备份库">
+          <el-input :model-value="bakDbLabel" disabled />
         </el-form-item>
-        <el-form-item
-          v-if="mode === 'backup' && (form.backupScope === 'BY_TIME' || form.backupScope === 'BY_BOTH')"
-          label="早于天数"
-        >
-          <el-input-number
-            v-model="form.timeBeforeDays"
-            :min="1"
-            :max="3650"
-            :disabled="formReadonly"
-            controls-position="right"
-          />
+        <el-form-item v-if="mode === 'backup' || mode === 'destroy'" label="方式">
+          <el-select v-model="form.backupScope" :disabled="formReadonly" style="width: 100%">
+            <el-option label="按时间" value="TABLE" />
+            <el-option label="按区" value="PARTITION" />
+          </el-select>
         </el-form-item>
-        <el-form-item
-          v-if="mode === 'backup' && (form.backupScope === 'BY_PARTITION' || form.backupScope === 'BY_BOTH')"
-          label="分区名"
-          required
-        >
-          <el-input v-model="form.partitionName" :disabled="formReadonly" placeholder="如 p202401" />
-        </el-form-item>
-        <el-alert
-          v-if="mode === 'backup' && form.backupScope !== 'FULL' && !formReadonly"
-          type="warning"
-          :closable="false"
-          show-icon
-          title="按时间/分区为台账演示：执行后生成产物记录，不按条件真实导出数据。"
-          style="margin-bottom: 12px"
-        />
-        <el-form-item v-if="mode === 'backup'" label="表规则">
-          <el-input v-model="form.tableRule" :disabled="formReadonly" placeholder="备注说明（可选）" />
+        <el-form-item v-if="(mode === 'backup' || mode === 'destroy') && form.backupScope === 'PARTITION'">
+          <el-alert type="info" :closable="false" show-icon title="按区仅登记台账，不导出分区、不 DROP PARTITION。" />
         </el-form-item>
         <el-form-item v-if="mode === 'archive'" label="压缩">
           <el-switch v-model="form.compressEnabled" :disabled="formReadonly" />
@@ -821,66 +680,20 @@ onMounted(reload)
             <el-option :label="statusLabel('NONE')" value="NONE" />
           </el-select>
         </el-form-item>
-        <el-form-item v-if="mode === 'destroy'" label="销毁规则">
-          <el-input v-model="form.destroyRule" :disabled="formReadonly" placeholder="如：超期且无在用订阅方可申请销毁" />
-        </el-form-item>
-        <el-form-item label="周期调度">
-          <el-switch v-model="form.scheduleEnabled" :disabled="formReadonly" />
-        </el-form-item>
-        <el-form-item v-if="form.scheduleEnabled" label="执行周期">
+        <el-form-item label="执行周期" required>
           <ExecCycleSelect v-if="!formReadonly" v-model="form.scheduleCron" />
           <span v-else>{{ form.scheduleCron || '-' }}</span>
         </el-form-item>
-        <el-alert
-          v-if="mode === 'backup' && form.scheduleEnabled && !formReadonly"
-          type="info"
-          :closable="false"
-          show-icon
-          title="启动调度时优先发布到 DolphinScheduler；不可用则使用应用内定时。"
-        />
       </el-form>
       <template #footer>
         <el-button @click="dialogVisible = false">{{ formReadonly ? '关闭' : '取消' }}</el-button>
         <el-button v-if="!formReadonly" type="primary" :loading="saving" @click="submitDialog">确定</el-button>
       </template>
     </el-dialog>
-
-    <el-dialog v-model="artifactDialogVisible" title="编辑备份产物" width="520px" destroy-on-close>
-      <el-form label-width="100px">
-        <el-form-item label="表">
-          <el-input v-model="artifactForm.physicalTable" disabled />
-        </el-form-item>
-        <el-form-item label="文件">
-          <el-input v-model="artifactForm.fileName" disabled />
-        </el-form-item>
-        <el-form-item label="存储位置">
-          <el-input v-model="artifactForm.storageLocation" maxlength="512" />
-        </el-form-item>
-        <el-form-item label="说明">
-          <el-input v-model="artifactForm.message" type="textarea" :rows="2" maxlength="512" />
-        </el-form-item>
-        <el-form-item label="状态">
-          <el-select v-model="artifactForm.status" style="width: 100%">
-            <el-option :label="statusLabel('SUCCESS')" value="SUCCESS" />
-            <el-option :label="statusLabel('FAILED')" value="FAILED" />
-            <el-option :label="statusLabel('PARTIAL')" value="PARTIAL" />
-          </el-select>
-        </el-form-item>
-      </el-form>
-      <template #footer>
-        <el-button @click="artifactDialogVisible = false">取消</el-button>
-        <el-button type="primary" :loading="artifactSaving" @click="submitArtifactDialog">确定</el-button>
-      </template>
-    </el-dialog>
   </div>
 </template>
 
 <style scoped>
-.toolbar {
-  display: flex;
-  gap: 8px;
-  margin-bottom: 8px;
-}
 .backup-tabs {
   margin-bottom: 4px;
 }

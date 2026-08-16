@@ -17,6 +17,9 @@ logging:
 app:
   security:
     credential-key: ${CREDENTIAL_KEY:chengde-smartcity-credential-key}
+  lifecycle:
+    archive-dir: ${APP_ARCHIVE_DIR:data/archives}
+    archive-host-dir: ${ARCHIVE_HOST_DIR:}
   portal-sso:
     enabled: ${PORTAL_SSO_ENABLED:true}
     secret: ${PORTAL_SSO_SECRET:chengde-portal-assessment-sso-shared-secret-2026}

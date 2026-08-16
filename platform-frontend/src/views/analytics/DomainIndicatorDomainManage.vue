@@ -9,7 +9,7 @@ const props = defineProps<{ domain: string }>()
 const isUnifiedEntry = computed(() => props.domain === 'all' || props.domain === 'gov')
 
 export interface IndicatorDomainRow {
-  id: number
+  id: string
   domainName: string
   domainDbName: string
   remark?: string
@@ -25,7 +25,7 @@ const query = reactive({
 
 const dialogVisible = ref(false)
 const saving = ref(false)
-const editingId = ref<number | null>(null)
+const editingId = ref<string | null>(null)
 const formRef = ref<FormInstance>()
 const form = reactive({
   ownerDomainCode: 'population',

@@ -1,10 +1,11 @@
 package com.chengde.smartcity.analysis.controller;
 
 import com.chengde.smartcity.analysis.entity.AnaIndicator;
-import com.chengde.smartcity.analysis.entity.AnaIndicatorDomain;
-import com.chengde.smartcity.analysis.entity.AnaIndicatorGroup;
-import com.chengde.smartcity.analysis.entity.AnaIndicatorTask;
 import com.chengde.smartcity.analysis.entity.AnaModelSample;
+import com.chengde.smartcity.analysis.entity.IndArea;
+import com.chengde.smartcity.analysis.entity.IndField;
+import com.chengde.smartcity.analysis.entity.IndGroup;
+import com.chengde.smartcity.analysis.entity.IndJob;
 import com.chengde.smartcity.analysis.entity.AnaPopBatchLedger;
 import com.chengde.smartcity.analysis.entity.AnaPopServiceContract;
 import com.chengde.smartcity.analysis.entity.AnaPopVerifyLedger;
@@ -96,7 +97,7 @@ public class AnalyticsDomainController {
 
     @GetMapping("/{domain}/indicator-domains")
     @PreAuthorize("isAuthenticated()")
-    public ApiResponse<List<AnaIndicatorDomain>> indicatorDomains(
+    public ApiResponse<List<IndArea>> indicatorDomains(
             @PathVariable String domain,
             @RequestParam(required = false) String domainName,
             @RequestParam(required = false) String domainDbName) {
@@ -105,16 +106,16 @@ public class AnalyticsDomainController {
 
     @PostMapping("/{domain}/indicator-domains")
     @PreAuthorize("isAuthenticated()")
-    public ApiResponse<Long> createIndicatorDomain(@AuthenticationPrincipal UserPrincipal principal,
-                                                   @PathVariable String domain,
-                                                   @RequestBody Map<String, Object> body) {
+    public ApiResponse<String> createIndicatorDomain(@AuthenticationPrincipal UserPrincipal principal,
+                                                     @PathVariable String domain,
+                                                     @RequestBody Map<String, Object> body) {
         return ApiResponse.ok(service.createIndicatorDomain(principal, domain, body));
     }
 
     @PutMapping("/indicator-domains/{id}")
     @PreAuthorize("isAuthenticated()")
     public ApiResponse<Void> updateIndicatorDomain(@AuthenticationPrincipal UserPrincipal principal,
-                                                   @PathVariable Long id,
+                                                   @PathVariable String id,
                                                    @RequestBody Map<String, Object> body) {
         service.updateIndicatorDomain(principal, id, body);
         return ApiResponse.ok(null);
@@ -123,7 +124,7 @@ public class AnalyticsDomainController {
     @DeleteMapping("/indicator-domains/{id}")
     @PreAuthorize("isAuthenticated()")
     public ApiResponse<Void> deleteIndicatorDomain(@AuthenticationPrincipal UserPrincipal principal,
-                                                   @PathVariable Long id) {
+                                                   @PathVariable String id) {
         service.deleteIndicatorDomain(principal, id);
         return ApiResponse.ok(null);
     }
@@ -131,16 +132,16 @@ public class AnalyticsDomainController {
     @PostMapping("/indicator-domains/{id}/publish")
     @PreAuthorize("isAuthenticated()")
     public ApiResponse<Map<String, Object>> publishIndicatorDomain(@AuthenticationPrincipal UserPrincipal principal,
-                                                                   @PathVariable Long id,
+                                                                   @PathVariable String id,
                                                                    @RequestBody(required = false) Map<String, Object> body) {
         return ApiResponse.ok(service.publishIndicatorDomain(principal, id, body));
     }
 
     @GetMapping("/{domain}/indicator-groups")
     @PreAuthorize("isAuthenticated()")
-    public ApiResponse<List<AnaIndicatorGroup>> indicatorGroups(
+    public ApiResponse<List<IndGroup>> indicatorGroups(
             @PathVariable String domain,
-            @RequestParam(required = false) Long indicatorDomainId,
+            @RequestParam(required = false) String indicatorDomainId,
             @RequestParam(required = false) String groupName,
             @RequestParam(required = false) String targetTable,
             @RequestParam(required = false) String groupCategory) {
@@ -149,22 +150,22 @@ public class AnalyticsDomainController {
 
     @GetMapping("/indicator-groups/{id}")
     @PreAuthorize("isAuthenticated()")
-    public ApiResponse<AnaIndicatorGroup> indicatorGroup(@PathVariable Long id) {
+    public ApiResponse<IndGroup> indicatorGroup(@PathVariable String id) {
         return ApiResponse.ok(service.getIndicatorGroup(id));
     }
 
     @PostMapping("/{domain}/indicator-groups")
     @PreAuthorize("isAuthenticated()")
-    public ApiResponse<Long> createIndicatorGroup(@AuthenticationPrincipal UserPrincipal principal,
-                                                  @PathVariable String domain,
-                                                  @RequestBody Map<String, Object> body) {
+    public ApiResponse<String> createIndicatorGroup(@AuthenticationPrincipal UserPrincipal principal,
+                                                    @PathVariable String domain,
+                                                    @RequestBody Map<String, Object> body) {
         return ApiResponse.ok(service.createIndicatorGroup(principal, domain, body));
     }
 
     @PutMapping("/indicator-groups/{id}")
     @PreAuthorize("isAuthenticated()")
     public ApiResponse<Void> updateIndicatorGroup(@AuthenticationPrincipal UserPrincipal principal,
-                                                  @PathVariable Long id,
+                                                  @PathVariable String id,
                                                   @RequestBody Map<String, Object> body) {
         service.updateIndicatorGroup(principal, id, body);
         return ApiResponse.ok(null);
@@ -173,7 +174,7 @@ public class AnalyticsDomainController {
     @DeleteMapping("/indicator-groups/{id}")
     @PreAuthorize("isAuthenticated()")
     public ApiResponse<Void> deleteIndicatorGroup(@AuthenticationPrincipal UserPrincipal principal,
-                                                  @PathVariable Long id) {
+                                                  @PathVariable String id) {
         service.deleteIndicatorGroup(principal, id);
         return ApiResponse.ok(null);
     }
@@ -181,7 +182,7 @@ public class AnalyticsDomainController {
     @PostMapping("/indicator-groups/{id}/publish")
     @PreAuthorize("isAuthenticated()")
     public ApiResponse<Void> publishIndicatorGroup(@AuthenticationPrincipal UserPrincipal principal,
-                                                   @PathVariable Long id,
+                                                   @PathVariable String id,
                                                    @RequestBody(required = false) Map<String, Object> body) {
         service.publishIndicatorGroup(principal, id, body);
         return ApiResponse.ok(null);
@@ -189,13 +190,13 @@ public class AnalyticsDomainController {
 
     @GetMapping("/indicator-groups/{id}/sql")
     @PreAuthorize("isAuthenticated()")
-    public ApiResponse<Map<String, Object>> groupSql(@PathVariable Long id) {
+    public ApiResponse<Map<String, Object>> groupSql(@PathVariable String id) {
         return ApiResponse.ok(service.latestGroupSql(id));
     }
 
     @GetMapping("/indicator-groups/{id}/indicators")
     @PreAuthorize("isAuthenticated()")
-    public ApiResponse<List<AnaIndicator>> groupIndicators(@PathVariable Long id) {
+    public ApiResponse<List<IndField>> groupIndicators(@PathVariable String id) {
         return ApiResponse.ok(service.listIndicatorsByGroup(id));
     }
 
@@ -210,7 +211,7 @@ public class AnalyticsDomainController {
 
     @GetMapping("/{domain}/indicator-tasks")
     @PreAuthorize("isAuthenticated()")
-    public ApiResponse<List<AnaIndicatorTask>> indicatorTasks(
+    public ApiResponse<List<IndJob>> indicatorTasks(
             @PathVariable String domain,
             @RequestParam(required = false) String taskName,
             @RequestParam(required = false) String scheduleStatus,
@@ -223,13 +224,12 @@ public class AnalyticsDomainController {
     @PreAuthorize("isAuthenticated()")
     public ApiResponse<Map<String, Object>> indicatorTasksBatch(@AuthenticationPrincipal UserPrincipal principal,
                                                                 @RequestBody Map<String, Object> body) {
-        List<Long> ids = new java.util.ArrayList<>();
+        List<String> ids = new java.util.ArrayList<>();
         Object raw = body.get("ids");
         if (raw instanceof List<?> list) {
             for (Object o : list) {
-                if (o instanceof Number n) ids.add(n.longValue());
-                else if (o != null && !String.valueOf(o).isBlank()) {
-                    ids.add(Long.valueOf(String.valueOf(o)));
+                if (o != null && !String.valueOf(o).isBlank()) {
+                    ids.add(String.valueOf(o));
                 }
             }
         }
@@ -239,46 +239,46 @@ public class AnalyticsDomainController {
     @PostMapping("/indicator-tasks/{id}/execute")
     @PreAuthorize("isAuthenticated()")
     public ApiResponse<Map<String, Object>> executeIndicatorTask(@AuthenticationPrincipal UserPrincipal principal,
-                                                                 @PathVariable Long id) {
+                                                                 @PathVariable String id) {
         return ApiResponse.ok(indicatorTaskService.execute(principal, id));
     }
 
     @PostMapping("/indicator-tasks/{id}/start")
     @PreAuthorize("isAuthenticated()")
     public ApiResponse<Map<String, Object>> startIndicatorTask(@AuthenticationPrincipal UserPrincipal principal,
-                                                               @PathVariable Long id) {
+                                                               @PathVariable String id) {
         return ApiResponse.ok(indicatorTaskService.start(principal, id));
     }
 
     @PostMapping("/indicator-tasks/{id}/stop")
     @PreAuthorize("isAuthenticated()")
     public ApiResponse<Map<String, Object>> stopIndicatorTask(@AuthenticationPrincipal UserPrincipal principal,
-                                                              @PathVariable Long id) {
+                                                              @PathVariable String id) {
         return ApiResponse.ok(indicatorTaskService.stop(principal, id));
     }
 
     @PostMapping("/indicator-tasks/{id}/offline")
     @PreAuthorize("isAuthenticated()")
     public ApiResponse<Map<String, Object>> offlineIndicatorTask(@AuthenticationPrincipal UserPrincipal principal,
-                                                                 @PathVariable Long id) {
+                                                                 @PathVariable String id) {
         return ApiResponse.ok(indicatorTaskService.offline(principal, id));
     }
 
     @GetMapping("/indicator-tasks/{id}/log")
     @PreAuthorize("isAuthenticated()")
-    public ApiResponse<Map<String, Object>> indicatorTaskLog(@PathVariable Long id) {
+    public ApiResponse<Map<String, Object>> indicatorTaskLog(@PathVariable String id) {
         return ApiResponse.ok(indicatorTaskService.logDetail(id));
     }
 
     @GetMapping("/indicator-tasks/{id}/indicators")
     @PreAuthorize("isAuthenticated()")
-    public ApiResponse<List<AnaIndicator>> indicatorTaskIndicators(@PathVariable Long id) {
+    public ApiResponse<List<IndField>> indicatorTaskIndicators(@PathVariable String id) {
         return ApiResponse.ok(indicatorTaskService.indicatorsOfTask(id));
     }
 
     @PostMapping("/indicator-tasks/{id}/ds-trigger")
     public ApiResponse<Map<String, Object>> indicatorTaskDsTrigger(
-            @PathVariable Long id,
+            @PathVariable String id,
             @RequestHeader(value = "X-Ds-Callback-Token", required = false) String token,
             @RequestBody(required = false) Map<String, Object> body) {
         Long dsInstanceId = null;
@@ -318,9 +318,9 @@ public class AnalyticsDomainController {
 
     @PostMapping("/{domain}/indicators/sql")
     @PreAuthorize("isAuthenticated()")
-    public ApiResponse<Long> createIndicatorSql(@AuthenticationPrincipal UserPrincipal principal,
-                                                @PathVariable String domain,
-                                                @RequestBody Map<String, Object> body) {
+    public ApiResponse<String> createIndicatorSql(@AuthenticationPrincipal UserPrincipal principal,
+                                                  @PathVariable String domain,
+                                                  @RequestBody Map<String, Object> body) {
         return ApiResponse.ok(service.createIndicatorSql(principal, domain, body));
     }
 
@@ -335,7 +335,7 @@ public class AnalyticsDomainController {
     @PutMapping("/indicators/{id}")
     @PreAuthorize("isAuthenticated()")
     public ApiResponse<Void> updateIndicator(@AuthenticationPrincipal UserPrincipal principal,
-                                             @PathVariable Long id,
+                                             @PathVariable String id,
                                              @RequestBody Map<String, Object> body) {
         service.updateIndicator(principal, id, body);
         return ApiResponse.ok(null);
@@ -343,7 +343,7 @@ public class AnalyticsDomainController {
 
     @DeleteMapping("/indicators/{id}")
     @PreAuthorize("isAuthenticated()")
-    public ApiResponse<Void> deleteIndicator(@AuthenticationPrincipal UserPrincipal principal, @PathVariable Long id) {
+    public ApiResponse<Void> deleteIndicator(@AuthenticationPrincipal UserPrincipal principal, @PathVariable String id) {
         service.deleteIndicator(principal, id);
         return ApiResponse.ok(null);
     }

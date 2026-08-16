@@ -23,15 +23,15 @@ const props = defineProps<{
 }>()
 
 interface DomainRow {
-  id: number
+  id: string
   domainName: string
   domainDbName: string
   remark?: string
 }
 
 interface GroupRow {
-  id: number
-  indicatorDomainId: number
+  id: string
+  indicatorDomainId: string
   groupName: string
   targetTable: string
   groupCategory: string
@@ -42,8 +42,8 @@ interface GroupRow {
 
 /** 发布后生成的指标任务（按 groupId 映射） */
 interface TaskRow {
-  id: number
-  groupId: number
+  id: string
+  groupId: string
   taskName: string
   scheduleStatus: string
   execStatus: string
@@ -53,7 +53,7 @@ interface TaskRow {
 }
 
 interface IndicatorRow {
-  id: number
+  id: string
   queryNo?: string
   resultField?: string
   fieldType?: string
@@ -65,11 +65,11 @@ interface IndicatorRow {
 const loading = ref(false)
 const domains = ref<DomainRow[]>([])
 const domainKeyword = ref('')
-const selectedDomainId = ref<number | null>(null)
+const selectedDomainId = ref<string | null>(null)
 
 const groups = ref<GroupRow[]>([])
 /** groupId → 指标任务 */
-const taskByGroupId = ref<Map<number, TaskRow>>(new Map())
+const taskByGroupId = ref<Map<string, TaskRow>>(new Map())
 const query = reactive({
   groupName: '',
   targetTable: '',
@@ -84,8 +84,8 @@ const logRuns = ref<Array<{ id: number; triggerType: string; execStatus: string;
 const detailSaving = ref(false)
 const detailFormRef = ref<FormInstance>()
 const detail = reactive({
-  id: null as number | null,
-  indicatorDomainId: null as number | null,
+  id: null as string | null,
+  indicatorDomainId: null as string | null,
   groupName: '',
   targetTable: '',
   groupCategory: 'UNIT',
@@ -177,6 +177,7 @@ const filteredDomains = computed(() => {
 
 function categoryLabel(code: string) {
   if (code === 'UNIT') return '单元指标组'
+  if (code === 'LIST') return '列表指标组'
   if (code === 'COMPOSITE') return '复合指标组'
   return code || '—'
 }
@@ -222,7 +223,7 @@ async function loadGroups() {
         api.get(`/analytics/domain/${props.domain}/indicator-tasks`),
       ])
       groups.value = gRes.data || []
-      const map = new Map<number, TaskRow>()
+      const map = new Map<string, TaskRow>()
       for (const t of (tRes.data || []) as TaskRow[]) {
         if (t.groupId != null) map.set(t.groupId, t)
       }
@@ -245,7 +246,7 @@ async function batchTaskAction(action: 'EXECUTE' | 'START' | 'STOP') {
   // 针对当前指标域下全部已发布组对应的任务，不按行勾选
   const ids = groups.value
     .map((g) => taskOf(g)?.id)
-    .filter((id): id is number => id != null)
+    .filter((id): id is string => !!id)
   if (!ids.length) {
     ElMessage.warning('当前指标域下暂无已发布的指标任务，请先发布指标组')
     return
@@ -295,7 +296,7 @@ function resetQuery() {
   loadGroups()
 }
 
-function selectDomain(id: number) {
+function selectDomain(id: string) {
   selectedDomainId.value = id
   loadGroups()
 }
@@ -402,7 +403,7 @@ async function closeGroupDialog() {
   await loadGroups()
 }
 
-async function ensureGroupSaved(opts?: { silent?: boolean }): Promise<number | null> {
+async function ensureGroupSaved(opts?: { silent?: boolean }): Promise<string | null> {
   if (!detailFormRef.value) return detail.id
   await detailFormRef.value.validate()
   detailSaving.value = true
@@ -417,7 +418,7 @@ async function ensureGroupSaved(opts?: { silent?: boolean }): Promise<number | n
     }
     if (detail.id == null) {
       const res = await api.post(`/analytics/domain/${props.domain}/indicator-groups`, body)
-      detail.id = res.data as number
+      detail.id = String(res.data)
       if (!opts?.silent) ElMessage.success('指标组已保存')
     } else {
       await api.put(`/analytics/domain/indicator-groups/${detail.id}`, body)
@@ -626,6 +627,7 @@ onMounted(async () => {
           <el-form-item label="组分类" class="portal-field-md">
             <el-select v-model="query.groupCategory" clearable placeholder="请选择">
               <el-option label="单元指标组" value="UNIT" />
+              <el-option label="列表指标组" value="LIST" />
               <el-option label="复合指标组" value="COMPOSITE" />
             </el-select>
           </el-form-item>
@@ -757,12 +759,14 @@ onMounted(async () => {
                 >
                   <el-option v-for="t in indTableOptions" :key="t" :label="t" :value="t" />
                 </el-select>
+                <p class="table-name-hint">任务执行时主表只留本批；上一批追加到「表名_history」，用 calc_at 区分。首次写入不建空历史表。</p>
               </el-form-item>
             </el-col>
             <el-col :span="12">
               <el-form-item label="指标组分类" prop="groupCategory" required>
                 <el-select v-model="detail.groupCategory" placeholder="请选择指标组分类" style="width: 100%">
                   <el-option label="单元指标组" value="UNIT" />
+                  <el-option label="列表指标组" value="LIST" />
                   <el-option label="复合指标组" value="COMPOSITE" />
                 </el-select>
               </el-form-item>
@@ -1077,6 +1081,12 @@ onMounted(async () => {
   background: #fff;
   border-color: var(--el-color-primary-light-5);
   box-shadow: 0 0 0 1px var(--el-color-primary-light-7);
+}
+.table-name-hint {
+  margin: 4px 0 0;
+  font-size: 12px;
+  line-height: 1.4;
+  color: var(--el-text-color-secondary);
 }
 </style>
 

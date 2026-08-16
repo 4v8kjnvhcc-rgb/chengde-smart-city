@@ -69,6 +69,7 @@ import java.util.zip.GZIPOutputStream;
 import javax.sql.DataSource;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.context.annotation.Lazy;
 import org.springframework.scheduling.support.CronExpression;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
@@ -128,6 +129,7 @@ public class ResourceCenterPlatformService {
     private final AuditLogMapper auditLogMapper;
     private final StorageIntegrationClient storageIntegrationClient;
     private final DataSource platformDataSource;
+    private final StorageLifecycleService storageLifecycleService;
 
     public ResourceCenterPlatformService(RcBaseLibraryMapper libraryMapper,
                                          RcPartitionDefMapper partitionMapper,
@@ -147,7 +149,8 @@ public class ResourceCenterPlatformService {
                                          AuditService auditService,
                                          AuditLogMapper auditLogMapper,
                                          StorageIntegrationClient storageIntegrationClient,
-                                         DataSource platformDataSource) {
+                                         DataSource platformDataSource,
+                                         @Lazy StorageLifecycleService storageLifecycleService) {
         this.libraryMapper = libraryMapper;
         this.partitionMapper = partitionMapper;
         this.partitionOpMapper = partitionOpMapper;
@@ -167,6 +170,15 @@ public class ResourceCenterPlatformService {
         this.auditLogMapper = auditLogMapper;
         this.storageIntegrationClient = storageIntegrationClient;
         this.platformDataSource = platformDataSource;
+        this.storageLifecycleService = storageLifecycleService;
+    }
+
+    public List<Map<String, String>> listLifecycleDatabases() {
+        return storageLifecycleService.listSourceDatabases();
+    }
+
+    public List<String> listLifecycleTables(String database) {
+        return storageLifecycleService.listTables(database);
     }
 
     public Map<String, Object> libraryOverview() {
@@ -188,10 +200,10 @@ public class ResourceCenterPlatformService {
         out.put("modules", listAssetModules());
         out.put("inventory", inventory);
         out.put("lifecycleHints", Map.of(
-                "backup", "逻辑备份可在本区对纳管表执行，或前往「数据库存储管理」配置策略",
-                "archive", "归档策略在「数据库存储管理 / 归集·数据资产管理」执行（台账为主）",
-                "restore", "恢复依据备份产物 SHA 校验后手工回灌，本阶段不做自动覆盖生产表",
-                "migrate", "迁移请经治理/融合任务将成果表重新纳管到目标库区"
+                "backup", "过期数据定时迁入同机备份库（*_bak），请到「数据备份」配置周期",
+                "archive", "从备份库定时打成 gzip 落到宿主机归档盘",
+                "restore", "备份产物可恢复到独立表，不覆盖源表",
+                "migrate", "销毁只删备份库过期行与归档文件，不删源业务表"
         ));
         return out;
     }
@@ -987,48 +999,63 @@ public class ResourceCenterPlatformService {
             throw new BusinessException(400, "actionType 须为 BACKUP / ARCHIVE / DESTROY");
         }
         Long managedId = longVal(body.get("managedTableId"));
-        if (managedId == null) {
-            throw new BusinessException(400, "须关联纳管表，为数据配置生命周期策略");
+        String sourceDb = str(body.get("sourceDb"), null);
+        List<String> tableNames = extractLifecycleTableNames(body);
+        String tableName = tableNames.isEmpty() ? str(body.get("tableName"), null) : tableNames.get(0);
+        RcManagedTable mt = null;
+        if (managedId != null) {
+            mt = managedTableMapper.selectById(managedId);
+            if (mt == null || !"ACTIVE".equalsIgnoreCase(mt.getStatus())) {
+                throw new BusinessException(400, "纳管表不存在或已解绑");
+            }
+            if (tableNames.isEmpty() && (tableName == null || tableName.isBlank())) {
+                tableName = mt.getPhysicalTable();
+                tableNames = List.of(tableName);
+            }
+            if (sourceDb == null || sourceDb.isBlank()) {
+                sourceDb = com.chengde.smartcity.masterdata.support.DataLayerSupport.databaseForLayer(
+                        com.chengde.smartcity.masterdata.support.DataLayerSupport.layerForTableName(tableName));
+            }
         }
-        RcManagedTable mt = managedTableMapper.selectById(managedId);
-        if (mt == null || !"ACTIVE".equalsIgnoreCase(mt.getStatus())) {
-            throw new BusinessException(400, "纳管表不存在或已解绑");
+        if (managedId == null && tableName != null) {
+            RcManagedTable found = findActiveManagedByTable(tableName);
+            if (found != null) {
+                mt = found;
+                managedId = found.getId();
+            }
         }
-        Long backupLibId = longVal(body.get("backupLibraryId"));
-        if (backupLibId != null && libraryMapper.selectById(backupLibId) == null) {
-            throw new BusinessException(400, "备份库不存在");
+        if (sourceDb == null || tableNames.isEmpty()) {
+            throw new BusinessException(400, "请选择源库和表");
         }
-        String strategy = str(body.get("storageStrategy"), "LOCAL").toUpperCase(Locale.ROOT);
-        if (!Set.of("LOCAL", "NAS", "OBJECT").contains(strategy)) {
-            throw new BusinessException(400, "storageStrategy 须为 LOCAL / NAS / OBJECT");
+        StorageLifecycleService.requireSourceDb(sourceDb);
+        for (String tn : tableNames) {
+            StorageLifecycleService.requireIdent(tn, "tableName");
         }
-        boolean scheduleOn = boolVal(body.get("scheduleEnabled"), false);
         String cron = str(body.get("scheduleCron"), null);
-        if (scheduleOn) {
-            validateCron(cron);
-        }
+        validateCron(cron);
+        String tableRule = mergeLifecycleRule(body, sourceDb, tableNames);
         String compressType = str(body.get("compressType"),
                 boolVal(body.get("compressEnabled"), false) ? "GZIP" : "NONE").toUpperCase(Locale.ROOT);
         RcStoragePolicy p = new RcStoragePolicy();
         p.setPolicyCode(str(body.get("policyCode"), "POL_" + System.currentTimeMillis()));
         p.setPolicyName(required(body.get("policyName"), "policyName").toString());
         p.setActionType(action);
-        p.setRetentionDays(body.get("retentionDays") == null ? 30
-                : Integer.valueOf(String.valueOf(body.get("retentionDays"))));
-        p.setThemeId(longVal(body.get("themeId")) != null ? longVal(body.get("themeId")) : mt.getThemeId());
+        p.setRetentionDays(180);
+        p.setThemeId(longVal(body.get("themeId")) != null ? longVal(body.get("themeId"))
+                : (mt == null ? null : mt.getThemeId()));
         p.setManagedTableId(managedId);
-        p.setStorageStrategy(strategy);
-        p.setBackupLibraryId(backupLibId);
-        p.setTableRule(str(body.get("tableRule"), null));
+        p.setStorageStrategy("DB");
+        p.setBackupLibraryId(null);
+        p.setTableRule(tableRule);
         p.setCompressEnabled(boolVal(body.get("compressEnabled"), "GZIP".equals(compressType)) ? 1 : 0);
         p.setCompressType(compressType);
-        p.setDestroyRule(str(body.get("destroyRule"), null));
-        p.setScheduleEnabled(scheduleOn ? 1 : 0);
+        p.setDestroyRule("DESTROY".equals(action)
+                ? str(body.get("destroyRule"), "仅销毁满6个月的备份日快照表与归档文件，源表不改")
+                : str(body.get("destroyRule"), null));
+        p.setScheduleEnabled(1);
         p.setScheduleCron(cron);
-        if (scheduleOn) {
-            p.setNextRunAt(computeNextRun(cron, LocalDateTime.now()));
-        }
-        p.setDsPublishStatus("DRAFT");
+        p.setNextRunAt(computeNextRun(cron, LocalDateTime.now()));
+        p.setDsPublishStatus("LOCAL");
         p.setStatus("ACTIVE");
         policyMapper.insert(p);
         auditService.log(operator.getUserId(), operator.getUsername(), operator.getOrgId(),
@@ -1036,22 +1063,95 @@ public class ResourceCenterPlatformService {
         return p.getId();
     }
 
+    private List<String> extractLifecycleTableNames(Map<String, Object> body) {
+        List<String> names = new ArrayList<>();
+        Object raw = body.get("tableNames");
+        if (raw instanceof List<?> list) {
+            for (Object o : list) {
+                if (o != null && !String.valueOf(o).isBlank()) {
+                    names.add(String.valueOf(o).trim());
+                }
+            }
+        }
+        if (names.isEmpty()) {
+            String one = str(body.get("tableName"), null);
+            if (one != null) {
+                names.add(one);
+            }
+        }
+        if (names.isEmpty()) {
+            String existing = str(body.get("tableRule"), null);
+            if (existing != null && existing.trim().startsWith("{")) {
+                try {
+                    @SuppressWarnings("unchecked")
+                    Map<String, Object> parsed = JSON.readValue(existing, Map.class);
+                    names.addAll(StorageLifecycleService.resolveTableNames(parsed));
+                } catch (Exception ignored) {
+                    // keep empty
+                }
+            }
+        }
+        return names;
+    }
+
+    private String mergeLifecycleRule(Map<String, Object> body, String sourceDb, List<String> tableNames) {
+        Map<String, Object> rule = new LinkedHashMap<>();
+        String existing = str(body.get("tableRule"), null);
+        if (existing != null && existing.trim().startsWith("{")) {
+            try {
+                @SuppressWarnings("unchecked")
+                Map<String, Object> parsed = JSON.readValue(existing, Map.class);
+                if (parsed != null) {
+                    rule.putAll(parsed);
+                }
+            } catch (Exception ignored) {
+                rule.put("note", existing);
+            }
+        }
+        rule.put("v", 3);
+        rule.put("sourceDb", sourceDb);
+        rule.put("tableNames", tableNames);
+        rule.put("tableName", tableNames.isEmpty() ? null : tableNames.get(0));
+        rule.put("backupDatabase", com.chengde.smartcity.masterdata.support.DataLayerSupport.backupDatabaseFor(sourceDb));
+        String scope = body.get("backupScope") != null
+                ? String.valueOf(body.get("backupScope")).toUpperCase(Locale.ROOT)
+                : str(rule.get("backupScope"), "TABLE").toUpperCase(Locale.ROOT);
+        if ("BY_PARTITION".equals(scope) || "PARTITION".equals(scope) || "BY_BOTH".equals(scope)) {
+            rule.put("backupScope", "PARTITION");
+        } else {
+            rule.put("backupScope", "TABLE");
+        }
+        rule.remove("timeColumn");
+        rule.remove("timeBeforeDays");
+        rule.remove("partitionName");
+        try {
+            return JSON.writeValueAsString(rule);
+        } catch (Exception e) {
+            throw new BusinessException(400, "策略规则无法序列化");
+        }
+    }
+
+    private String inferTableName(RcStoragePolicy p) {
+        if (p.getManagedTableId() == null) return null;
+        RcManagedTable mt = managedTableMapper.selectById(p.getManagedTableId());
+        return mt == null ? null : mt.getPhysicalTable();
+    }
+
     @Transactional
     public Map<String, Object> updatePolicySchedule(UserPrincipal operator, Long policyId, Map<String, Object> body) {
         RcStoragePolicy p = policyMapper.selectById(policyId);
         if (p == null) throw new BusinessException(404, "策略不存在");
-        boolean scheduleOn = boolVal(body.get("scheduleEnabled"),
-                p.getScheduleEnabled() != null && p.getScheduleEnabled() == 1);
+        boolean scheduleOn = boolVal(body.get("scheduleEnabled"), true);
         String cron = str(body.get("scheduleCron"), p.getScheduleCron());
-        if (scheduleOn) {
-            validateCron(cron);
-            p.setScheduleEnabled(1);
-            p.setScheduleCron(cron);
-            p.setNextRunAt(computeNextRun(cron, LocalDateTime.now()));
-        } else {
+        validateCron(cron);
+        if (!scheduleOn) {
             p.setScheduleEnabled(0);
             p.setScheduleCron(cron);
             p.setNextRunAt(null);
+        } else {
+            p.setScheduleEnabled(1);
+            p.setScheduleCron(cron);
+            p.setNextRunAt(computeNextRun(cron, LocalDateTime.now()));
         }
         policyMapper.updateById(p);
         auditService.log(operator.getUserId(), operator.getUsername(), operator.getOrgId(),
@@ -1072,9 +1172,7 @@ public class ResourceCenterPlatformService {
         if (body.containsKey("policyName")) {
             p.setPolicyName(required(body.get("policyName"), "policyName").toString());
         }
-        if (body.containsKey("retentionDays") && body.get("retentionDays") != null) {
-            p.setRetentionDays(Integer.valueOf(String.valueOf(body.get("retentionDays"))));
-        }
+        p.setRetentionDays(180);
         if (body.containsKey("managedTableId")) {
             Long managedId = longVal(body.get("managedTableId"));
             if (managedId == null) throw new BusinessException(400, "请选择纳管表");
@@ -1093,8 +1191,28 @@ public class ResourceCenterPlatformService {
         if (body.containsKey("backupLibraryId")) {
             p.setBackupLibraryId(longVal(body.get("backupLibraryId")));
         }
-        if (body.containsKey("tableRule")) {
-            p.setTableRule(str(body.get("tableRule"), null));
+        if (body.containsKey("sourceDb") || body.containsKey("tableName") || body.containsKey("tableNames")
+                || body.containsKey("tableRule") || body.containsKey("backupScope")) {
+            Map<String, Object> existing = storageLifecycleService.parseRule(p);
+            String sourceDb = str(body.get("sourceDb"), str(existing.get("sourceDb"), null));
+            List<String> tableNames = extractLifecycleTableNames(body);
+            if (tableNames.isEmpty()) {
+                tableNames = StorageLifecycleService.resolveTableNames(existing);
+            }
+            if (tableNames.isEmpty()) {
+                String inferred = inferTableName(p);
+                if (inferred != null) {
+                    tableNames = List.of(inferred);
+                }
+            }
+            if (sourceDb == null || tableNames.isEmpty()) {
+                throw new BusinessException(400, "请选择源库和表");
+            }
+            StorageLifecycleService.requireSourceDb(sourceDb);
+            for (String tn : tableNames) {
+                StorageLifecycleService.requireIdent(tn, "tableName");
+            }
+            p.setTableRule(mergeLifecycleRule(body, sourceDb, tableNames));
         }
         if (body.containsKey("compressEnabled") || body.containsKey("compressType")) {
             String compressType = str(body.get("compressType"),
@@ -1106,19 +1224,11 @@ public class ResourceCenterPlatformService {
             p.setDestroyRule(str(body.get("destroyRule"), null));
         }
         if (body.containsKey("scheduleEnabled") || body.containsKey("scheduleCron")) {
-            boolean scheduleOn = boolVal(body.get("scheduleEnabled"),
-                    p.getScheduleEnabled() != null && p.getScheduleEnabled() == 1);
             String cron = str(body.get("scheduleCron"), p.getScheduleCron());
-            if (scheduleOn) {
-                validateCron(cron);
-                p.setScheduleEnabled(1);
-                p.setScheduleCron(cron);
-                p.setNextRunAt(computeNextRun(cron, LocalDateTime.now()));
-            } else {
-                p.setScheduleEnabled(0);
-                p.setNextRunAt(null);
-                if (cron != null) p.setScheduleCron(cron);
-            }
+            validateCron(cron);
+            p.setScheduleEnabled(1);
+            p.setScheduleCron(cron);
+            p.setNextRunAt(computeNextRun(cron, LocalDateTime.now()));
         }
         if (body.containsKey("status")) {
             p.setStatus(str(body.get("status"), p.getStatus()));
@@ -1143,87 +1253,10 @@ public class ResourceCenterPlatformService {
         return p;
     }
 
-    @Transactional
     public Map<String, Object> executePolicy(UserPrincipal operator, Long policyId) {
-        RcStoragePolicy p = policyMapper.selectById(policyId);
-        if (p == null) throw new BusinessException(404, "策略不存在");
-        String action = p.getActionType() == null ? "" : p.getActionType().toUpperCase(Locale.ROOT);
-        String actor = operator != null ? operator.getUsername() : "scheduler";
-        Map<String, Object> out = new LinkedHashMap<>();
-        out.put("policyId", policyId);
-        out.put("actionType", action);
-        String runStatus;
-        String message;
-        Long artifactId = null;
-        Long rowCount = null;
-        String storageLocation = null;
-        try {
-            if ("BACKUP".equals(action)) {
-                Long managedId = p.getManagedTableId();
-                if (managedId == null) throw new BusinessException(400, "备份策略未绑定纳管表");
-                Map<String, Object> scopeMeta = parseBackupScope(p.getTableRule());
-                String scope = str(scopeMeta.get("backupScope"), "FULL").toUpperCase(Locale.ROOT);
-                Map<String, Object> backup;
-                if ("BY_TIME".equals(scope) || "BY_PARTITION".equals(scope) || "BY_BOTH".equals(scope)) {
-                    // 按时间/分区：台账假执行（有产物记录，不按条件真实导出）
-                    backup = runScopedBackupLedger(operator, p, scopeMeta);
-                    runStatus = "LEDGER";
-                } else {
-                    backup = runLogicalBackup(operator, managedId, p.getRetentionDays(),
-                            p.getStorageStrategy(), p.getTableRule(), p.getBackupLibraryId());
-                    runStatus = "SUCCESS";
-                }
-                out.putAll(backup);
-                message = str(backup.get("message"), "备份完成");
-                artifactId = longVal(backup.get("artifactId"));
-                rowCount = backup.get("rowCount") == null ? null : Long.valueOf(String.valueOf(backup.get("rowCount")));
-                storageLocation = str(backup.get("storageLocation"), str(backup.get("filePath"), null));
-            } else if ("ARCHIVE".equals(action)) {
-                Map<String, Object> archive = runArchiveLedger(operator, p);
-                out.putAll(archive);
-                runStatus = "LEDGER";
-                message = str(archive.get("message"), "归档状态已记录（台账），未移动物理数据");
-                artifactId = longVal(archive.get("artifactId"));
-                rowCount = archive.get("rowCount") == null ? null : Long.valueOf(String.valueOf(archive.get("rowCount")));
-                storageLocation = str(archive.get("storageLocation"), null);
-            } else if ("DESTROY".equals(action)) {
-                runStatus = "REJECTED";
-                message = "销毁策略禁止自动执行物理删除；规则="
-                        + (p.getDestroyRule() == null || p.getDestroyRule().isBlank() ? "未配置" : p.getDestroyRule());
-                out.put("status", runStatus);
-                out.put("message", message);
-                recordPolicyRun(p, runStatus, null, null, null, message, actor);
-                markPolicyRun(p, runStatus, message);
-                if (p.getScheduleEnabled() != null && p.getScheduleEnabled() == 1) {
-                    refreshNextRunAfterExecute(policyId);
-                }
-                auditService.log(operator != null ? operator.getUserId() : null, actor,
-                        operator != null ? operator.getOrgId() : null,
-                        "RC_POLICY_RUN", "rc_storage_policy", String.valueOf(policyId), action);
-                throw new BusinessException(403, message);
-            } else {
-                throw new BusinessException(400, "不支持的策略动作: " + action);
-            }
-            out.put("status", runStatus);
-            out.put("message", message);
-            recordPolicyRun(p, runStatus, rowCount, artifactId, storageLocation, message, actor);
-            markPolicyRun(p, runStatus, message);
-            if (p.getScheduleEnabled() != null && p.getScheduleEnabled() == 1) {
-                refreshNextRunAfterExecute(policyId);
-            }
-            auditService.log(operator != null ? operator.getUserId() : null, actor,
-                    operator != null ? operator.getOrgId() : null,
-                    "RC_POLICY_RUN", "rc_storage_policy", String.valueOf(policyId), action);
-            out.put("retentionDays", p.getRetentionDays());
-            out.put("storageLocation", storageLocation);
-            return out;
-        } catch (BusinessException ex) {
-            if (!"DESTROY".equals(action)) {
-                recordPolicyRun(p, "FAILED", null, null, null, ex.getMessage(), actor);
-                markPolicyRun(p, "FAILED", ex.getMessage());
-            }
-            throw ex;
-        }
+        Map<String, Object> executed = storageLifecycleService.execute(operator, policyId);
+        refreshNextRunAfterExecute(policyId);
+        return executed;
     }
 
     public void refreshNextRunAfterExecute(Long policyId) {
@@ -1248,80 +1281,8 @@ public class ResourceCenterPlatformService {
         return policyRunLogMapper.selectList(q.last("LIMIT 100"));
     }
 
-    @Transactional
     public Map<String, Object> restoreArtifact(UserPrincipal operator, Long artifactId) {
-        RcBackupArtifact art = backupArtifactMapper.selectById(artifactId);
-        if (art == null) throw new BusinessException(404, "备份/归档产物不存在");
-        if (!"BACKUP".equalsIgnoreCase(str(art.getArtifactType(), "BACKUP"))) {
-            throw new BusinessException(400, "仅支持对备份产物执行恢复");
-        }
-        Path path = Path.of(art.getFilePath());
-        if (!Files.exists(path)) {
-            throw new BusinessException(404, "产物文件不存在: " + art.getFilePath());
-        }
-        String restoreTable = "rc_restore_" + artifactId;
-        if (!IDENT.matcher(restoreTable).matches()) {
-            throw new BusinessException(400, "恢复表名非法");
-        }
-        long rows = 0;
-        try (BufferedReader reader = Files.newBufferedReader(path, StandardCharsets.UTF_8);
-             Connection conn = platformDataSource.getConnection();
-             Statement st = conn.createStatement()) {
-            String line;
-            List<String> headers = null;
-            while ((line = reader.readLine()) != null) {
-                if (line.startsWith("#") || line.isBlank()) continue;
-                if (headers == null) {
-                    headers = List.of(line.split("\t", -1));
-                    for (String h : headers) {
-                        if (!IDENT.matcher(h).matches()) {
-                            throw new BusinessException(400, "备份列名非法，无法恢复: " + h);
-                        }
-                    }
-                    st.execute("DROP TABLE IF EXISTS `" + restoreTable + "`");
-                    StringBuilder ddl = new StringBuilder("CREATE TABLE `").append(restoreTable).append("` (");
-                    for (int i = 0; i < headers.size(); i++) {
-                        if (i > 0) ddl.append(", ");
-                        ddl.append("`").append(headers.get(i)).append("` TEXT NULL");
-                    }
-                    ddl.append(") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
-                    st.execute(ddl.toString());
-                    continue;
-                }
-                String[] values = line.split("\t", -1);
-                StringBuilder sql = new StringBuilder("INSERT INTO `").append(restoreTable).append("` VALUES (");
-                for (int i = 0; i < headers.size(); i++) {
-                    if (i > 0) sql.append(", ");
-                    String raw = i < values.length ? values[i] : "";
-                    if ("\\N".equals(raw)) {
-                        sql.append("NULL");
-                    } else {
-                        sql.append("'").append(raw.replace("'", "''")).append("'");
-                    }
-                }
-                sql.append(")");
-                st.executeUpdate(sql.toString());
-                rows++;
-            }
-            if (headers == null) {
-                throw new BusinessException(400, "备份文件无有效数据列");
-            }
-        } catch (BusinessException ex) {
-            throw ex;
-        } catch (Exception ex) {
-            throw new BusinessException(500, "数据恢复失败: " + ex.getMessage());
-        }
-        auditService.log(operator.getUserId(), operator.getUsername(), operator.getOrgId(),
-                "RC_BACKUP_RESTORE", "rc_backup_artifact", String.valueOf(artifactId),
-                "restoreTable=" + restoreTable + " rows=" + rows);
-        Map<String, Object> out = new LinkedHashMap<>();
-        out.put("artifactId", artifactId);
-        out.put("restoreTable", restoreTable);
-        out.put("rowCount", rows);
-        out.put("sourceTable", art.getPhysicalTable());
-        out.put("message", "已恢复至独立表 " + restoreTable + "（不覆盖原表）");
-        out.put("status", "SUCCESS");
-        return out;
+        return storageLifecycleService.restore(operator, artifactId);
     }
 
     @Transactional

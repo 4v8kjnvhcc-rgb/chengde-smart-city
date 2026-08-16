@@ -4,18 +4,17 @@ import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.chengde.smartcity.analysis.entity.AnaAnalysisModel;
 import com.chengde.smartcity.analysis.entity.AnaDomainModule;
 import com.chengde.smartcity.analysis.entity.AnaIndicator;
-import com.chengde.smartcity.analysis.entity.AnaIndicatorDomain;
-import com.chengde.smartcity.analysis.entity.AnaIndicatorGroup;
 import com.chengde.smartcity.analysis.entity.AnaModelIndicator;
 import com.chengde.smartcity.analysis.entity.AnaModelSample;
 import com.chengde.smartcity.analysis.entity.AnaPopBatchLedger;
 import com.chengde.smartcity.analysis.entity.AnaPopServiceContract;
 import com.chengde.smartcity.analysis.entity.AnaPopVerifyLedger;
 import com.chengde.smartcity.analysis.entity.AnaZoneBinding;
+import com.chengde.smartcity.analysis.entity.IndArea;
+import com.chengde.smartcity.analysis.entity.IndField;
+import com.chengde.smartcity.analysis.entity.IndGroup;
 import com.chengde.smartcity.analysis.mapper.AnaAnalysisModelMapper;
 import com.chengde.smartcity.analysis.mapper.AnaDomainModuleMapper;
-import com.chengde.smartcity.analysis.mapper.AnaIndicatorDomainMapper;
-import com.chengde.smartcity.analysis.mapper.AnaIndicatorGroupMapper;
 import com.chengde.smartcity.analysis.mapper.AnaIndicatorMapper;
 import com.chengde.smartcity.analysis.mapper.AnaModelIndicatorMapper;
 import com.chengde.smartcity.analysis.mapper.AnaPopBatchLedgerMapper;
@@ -34,8 +33,6 @@ import com.chengde.smartcity.masterdata.entity.RcManagedTable;
 import com.chengde.smartcity.masterdata.mapper.GovCatalogResourceMapper;
 import com.chengde.smartcity.masterdata.mapper.GovMetadataRegistryMapper;
 import com.chengde.smartcity.masterdata.mapper.RcManagedTableMapper;
-import com.chengde.smartcity.analysis.entity.AnaIndicatorQuery;
-import com.chengde.smartcity.analysis.mapper.AnaIndicatorQueryMapper;
 import com.chengde.smartcity.security.UserPrincipal;
 import java.time.LocalDateTime;
 import java.util.ArrayList;
@@ -64,9 +61,7 @@ public class AnalyticsDomainService {
     private final AnaAnalysisModelMapper modelMapper;
     private final AnaZoneBindingMapper zoneBindingMapper;
     private final AnaIndicatorMapper indicatorMapper;
-    private final AnaIndicatorQueryMapper indicatorQueryMapper;
-    private final AnaIndicatorDomainMapper indicatorDomainMapper;
-    private final AnaIndicatorGroupMapper indicatorGroupMapper;
+    private final IndicatorLedgerService indicatorLedgerService;
     private final IndicatorTaskService indicatorTaskService;
     private final AnaModelIndicatorMapper modelIndicatorMapper;
     private final AnaPopVerifyLedgerMapper popVerifyLedgerMapper;
@@ -86,9 +81,7 @@ public class AnalyticsDomainService {
                                   AnaAnalysisModelMapper modelMapper,
                                   AnaZoneBindingMapper zoneBindingMapper,
                                   AnaIndicatorMapper indicatorMapper,
-                                  AnaIndicatorQueryMapper indicatorQueryMapper,
-                                  AnaIndicatorDomainMapper indicatorDomainMapper,
-                                  AnaIndicatorGroupMapper indicatorGroupMapper,
+                                  IndicatorLedgerService indicatorLedgerService,
                                   @Lazy IndicatorTaskService indicatorTaskService,
                                   AnaModelIndicatorMapper modelIndicatorMapper,
                                   AnaPopVerifyLedgerMapper popVerifyLedgerMapper,
@@ -107,9 +100,7 @@ public class AnalyticsDomainService {
         this.modelMapper = modelMapper;
         this.zoneBindingMapper = zoneBindingMapper;
         this.indicatorMapper = indicatorMapper;
-        this.indicatorQueryMapper = indicatorQueryMapper;
-        this.indicatorDomainMapper = indicatorDomainMapper;
-        this.indicatorGroupMapper = indicatorGroupMapper;
+        this.indicatorLedgerService = indicatorLedgerService;
         this.indicatorTaskService = indicatorTaskService;
         this.modelIndicatorMapper = modelIndicatorMapper;
         this.popVerifyLedgerMapper = popVerifyLedgerMapper;
@@ -404,399 +395,74 @@ public class AnalyticsDomainService {
 
     // ---------- indicator domains（指标域） ----------
 
-    private static final Pattern IND_DB_NAME = Pattern.compile("^ind_[a-z0-9]+(?:_[a-z0-9]+)*$");
-    /** 业务支撑四系统；治理平台统一入口用 all/gov */
-    private static final Set<String> BIZ_OWNER_DOMAINS = Set.of("population", "legal", "macro", "key");
-
     private static boolean isUnifiedIndicatorScope(String domain) {
         return "all".equals(domain) || "gov".equals(domain);
     }
 
-    public List<AnaIndicatorDomain> listIndicatorDomains(String domain, String domainName, String domainDbName) {
-        String d = normalizeDomain(domain);
-        LambdaQueryWrapper<AnaIndicatorDomain> q = new LambdaQueryWrapper<AnaIndicatorDomain>()
-                .eq(AnaIndicatorDomain::getStatus, "ACTIVE")
-                .orderByDesc(AnaIndicatorDomain::getId);
-        if (!isUnifiedIndicatorScope(d)) {
-            q.eq(AnaIndicatorDomain::getOwnerDomainCode, d);
-        }
-        if (domainName != null && !domainName.isBlank()) {
-            q.like(AnaIndicatorDomain::getDomainName, domainName.trim());
-        }
-        if (domainDbName != null && !domainDbName.isBlank()) {
-            q.like(AnaIndicatorDomain::getDomainDbName, domainDbName.trim());
-        }
-        return indicatorDomainMapper.selectList(q);
+    public List<IndArea> listIndicatorDomains(String domain, String domainName, String domainDbName) {
+        return indicatorLedgerService.listDomains(domain, domainName, domainDbName);
     }
 
     @Transactional
-    public Long createIndicatorDomain(UserPrincipal operator, String domain, Map<String, Object> body) {
-        String d = normalizeDomain(domain);
-        if (isUnifiedIndicatorScope(d)) {
-            String owner = str(body.get("ownerDomainCode"), null);
-            if (owner == null || !BIZ_OWNER_DOMAINS.contains(owner.trim().toLowerCase(Locale.ROOT))) {
-                throw new BusinessException(400, "请选择所属业务支撑系统（population|legal|macro|key）");
-            }
-            d = owner.trim().toLowerCase(Locale.ROOT);
-        }
-        String name = required(body.get("domainName"), "domainName").toString().trim();
-        String dbName = required(body.get("domainDbName"), "domainDbName").toString().trim().toLowerCase(Locale.ROOT);
-        validateIndDbName(dbName);
-        Long dup = indicatorDomainMapper.selectCount(new LambdaQueryWrapper<AnaIndicatorDomain>()
-                .eq(AnaIndicatorDomain::getDomainDbName, dbName)
-                .eq(AnaIndicatorDomain::getStatus, "ACTIVE"));
-        if (dup != null && dup > 0) {
-            throw new BusinessException(400, "指标域库名已存在");
-        }
-        AnaIndicatorDomain row = new AnaIndicatorDomain();
-        row.setOwnerDomainCode(d);
-        row.setDomainName(name);
-        row.setDomainDbName(dbName);
-        row.setRemark(str(body.get("remark"), null));
-        row.setStatus("ACTIVE");
-        row.setCreatedBy(operator.getUsername());
-        row.setCreatedAt(LocalDateTime.now());
-        row.setUpdatedAt(LocalDateTime.now());
-        indicatorDomainMapper.insert(row);
-        auditService.log(operator.getUserId(), operator.getUsername(), operator.getOrgId(),
-                "ANA_IND_DOMAIN_CREATE", d, dbName, name);
-        return row.getId();
+    public String createIndicatorDomain(UserPrincipal operator, String domain, Map<String, Object> body) {
+        return indicatorLedgerService.createDomain(operator, domain, body);
     }
 
     @Transactional
-    public void updateIndicatorDomain(UserPrincipal operator, Long id, Map<String, Object> body) {
-        AnaIndicatorDomain row = indicatorDomainMapper.selectById(id);
-        if (row == null || !"ACTIVE".equalsIgnoreCase(row.getStatus())) {
-            throw new BusinessException(404, "指标域不存在");
-        }
-        if (body.get("domainName") != null) {
-            String name = String.valueOf(body.get("domainName")).trim();
-            if (name.isEmpty()) throw new BusinessException(400, "domainName required");
-            row.setDomainName(name);
-        }
-        if (body.get("domainDbName") != null) {
-            String dbName = String.valueOf(body.get("domainDbName")).trim().toLowerCase(Locale.ROOT);
-            validateIndDbName(dbName);
-            Long dup = indicatorDomainMapper.selectCount(new LambdaQueryWrapper<AnaIndicatorDomain>()
-                    .eq(AnaIndicatorDomain::getDomainDbName, dbName)
-                    .eq(AnaIndicatorDomain::getStatus, "ACTIVE")
-                    .ne(AnaIndicatorDomain::getId, id));
-            if (dup != null && dup > 0) {
-                throw new BusinessException(400, "指标域库名已存在");
-            }
-            row.setDomainDbName(dbName);
-        }
-        if (body.containsKey("remark")) {
-            row.setRemark(str(body.get("remark"), null));
-        }
-        row.setUpdatedAt(LocalDateTime.now());
-        indicatorDomainMapper.updateById(row);
-        auditService.log(operator.getUserId(), operator.getUsername(), operator.getOrgId(),
-                "ANA_IND_DOMAIN_UPDATE", row.getOwnerDomainCode(), row.getDomainDbName(), row.getDomainName());
+    public void updateIndicatorDomain(UserPrincipal operator, String id, Map<String, Object> body) {
+        indicatorLedgerService.updateDomain(operator, id, body);
     }
 
     @Transactional
-    public void deleteIndicatorDomain(UserPrincipal operator, Long id) {
-        AnaIndicatorDomain row = indicatorDomainMapper.selectById(id);
-        if (row == null) throw new BusinessException(404, "指标域不存在");
-        long groupCnt = indicatorGroupMapper.selectCount(new LambdaQueryWrapper<AnaIndicatorGroup>()
-                .eq(AnaIndicatorGroup::getIndicatorDomainId, id)
-                .ne(AnaIndicatorGroup::getStatus, "INACTIVE"));
-        if (groupCnt > 0) {
-            throw new BusinessException(400, "该指标域下仍有指标组，请先删除指标组后再删除指标域");
-        }
-        row.setStatus("INACTIVE");
-        row.setUpdatedAt(LocalDateTime.now());
-        indicatorDomainMapper.updateById(row);
-        auditService.log(operator.getUserId(), operator.getUsername(), operator.getOrgId(),
-                "ANA_IND_DOMAIN_DELETE", row.getOwnerDomainCode(), row.getDomainDbName(), "INACTIVE");
-    }
-
-    /** 发布指标域下全部可发布的指标组（生成/刷新指标任务）。body 可含 taskName/execCycle/remark/executorAddress。 */
-    @Transactional
-    public Map<String, Object> publishIndicatorDomain(UserPrincipal operator, Long domainId, Map<String, Object> body) {
-        AnaIndicatorDomain domain = indicatorDomainMapper.selectById(domainId);
-        if (domain == null || !"ACTIVE".equalsIgnoreCase(domain.getStatus())) {
-            throw new BusinessException(404, "指标域不存在");
-        }
-        Map<String, Object> opts = body != null ? body : Map.of();
-        String execCycle = str(opts.get("execCycle"), null);
-        String cronExpr = str(opts.get("cronExpr"), null);
-        if ((cronExpr == null || cronExpr.isBlank()) && (execCycle == null || execCycle.isBlank())) {
-            throw new BusinessException(400, "请选择执行周期");
-        }
-        String taskNameOverride = str(opts.get("taskName"), null);
-        String remark = str(opts.get("remark"), null);
-        String executorAddress = str(opts.get("executorAddress"), "DEFAULT");
-        String cycleName = str(opts.get("cycleName"), null);
-
-        List<AnaIndicatorGroup> groups = indicatorGroupMapper.selectList(new LambdaQueryWrapper<AnaIndicatorGroup>()
-                .eq(AnaIndicatorGroup::getIndicatorDomainId, domainId)
-                .ne(AnaIndicatorGroup::getStatus, "INACTIVE"));
-        int ok = 0;
-        int skip = 0;
-        List<String> messages = new ArrayList<>();
-        String cycleKey = (execCycle != null && !execCycle.isBlank())
-                ? execCycle.trim()
-                : (cycleName != null && !cycleName.isBlank() ? cycleName.trim() : "CUSTOM");
-        for (AnaIndicatorGroup g : groups) {
-            long cnt = indicatorMapper.selectCount(new LambdaQueryWrapper<AnaIndicator>()
-                    .eq(AnaIndicator::getGroupId, g.getId())
-                    .eq(AnaIndicator::getStatus, "ACTIVE"));
-            if (cnt == 0) {
-                skip++;
-                messages.add(g.getGroupName() + "：无指标，已跳过");
-                continue;
-            }
-            String taskName = (taskNameOverride != null && !taskNameOverride.isBlank() && groups.size() == 1)
-                    ? taskNameOverride.trim()
-                    : g.getGroupName();
-            if (taskNameOverride != null && !taskNameOverride.isBlank() && groups.size() > 1) {
-                taskName = taskNameOverride.trim() + "-" + g.getGroupName();
-            }
-            publishIndicatorGroup(operator, g.getId(), taskName, cycleKey,
-                    cronExpr, remark, executorAddress);
-            ok++;
-        }
-        if (ok == 0 && groups.isEmpty()) {
-            throw new BusinessException(400, "该指标域下暂无指标组可发布");
-        }
-        if (ok == 0) {
-            throw new BusinessException(400, "没有可发布的指标组（请先在组内新增指标）");
-        }
-        Map<String, Object> out = new LinkedHashMap<>();
-        out.put("domainId", domainId);
-        out.put("published", ok);
-        out.put("skipped", skip);
-        out.put("messages", messages);
-        out.put("execCycle", cycleKey);
-        out.put("cronExpr", cronExpr);
-        return out;
-    }
-
-    private static void validateIndDbName(String dbName) {
-        if (dbName == null || !IND_DB_NAME.matcher(dbName).matches()) {
-            throw new BusinessException(400, "指标域库名须以 ind_ 开头，支持小写字母、数字、下划线，不能以下划线结尾");
-        }
-    }
-
-    // ---------- indicator groups（指标组） ----------
-
-    public List<AnaIndicatorGroup> listIndicatorGroups(String domain, Long indicatorDomainId,
-                                                       String groupName, String targetTable, String groupCategory) {
-        String d = normalizeDomain(domain);
-        LambdaQueryWrapper<AnaIndicatorGroup> q = new LambdaQueryWrapper<AnaIndicatorGroup>()
-                .ne(AnaIndicatorGroup::getStatus, "INACTIVE")
-                .orderByDesc(AnaIndicatorGroup::getId);
-        if (!isUnifiedIndicatorScope(d)) {
-            q.eq(AnaIndicatorGroup::getOwnerDomainCode, d);
-        }
-        if (indicatorDomainId != null && indicatorDomainId > 0) {
-            q.eq(AnaIndicatorGroup::getIndicatorDomainId, indicatorDomainId);
-        }
-        if (groupName != null && !groupName.isBlank()) {
-            q.like(AnaIndicatorGroup::getGroupName, groupName.trim());
-        }
-        if (targetTable != null && !targetTable.isBlank()) {
-            q.like(AnaIndicatorGroup::getTargetTable, targetTable.trim());
-        }
-        if (groupCategory != null && !groupCategory.isBlank()) {
-            q.eq(AnaIndicatorGroup::getGroupCategory, groupCategory.trim().toUpperCase(Locale.ROOT));
-        }
-        List<AnaIndicatorGroup> list = indicatorGroupMapper.selectList(q);
-        fillGroupDomainNames(list);
-        return list;
-    }
-
-    public AnaIndicatorGroup getIndicatorGroup(Long id) {
-        AnaIndicatorGroup g = indicatorGroupMapper.selectById(id);
-        if (g == null || "INACTIVE".equalsIgnoreCase(g.getStatus())) {
-            throw new BusinessException(404, "指标组不存在");
-        }
-        fillGroupDomainNames(List.of(g));
-        return g;
+    public void deleteIndicatorDomain(UserPrincipal operator, String id) {
+        indicatorLedgerService.deleteDomain(operator, id);
     }
 
     @Transactional
-    public Long createIndicatorGroup(UserPrincipal operator, String domain, Map<String, Object> body) {
-        String d = normalizeDomain(domain);
-        Long domainId = longVal(required(body.get("indicatorDomainId"), "indicatorDomainId"));
-        AnaIndicatorDomain indDomain = requireActiveIndicatorDomain(domainId, d);
-        String owner = isUnifiedIndicatorScope(d) ? indDomain.getOwnerDomainCode() : d;
-        String name = required(body.get("groupName"), "groupName").toString().trim();
-        String table = required(body.get("targetTable"), "targetTable").toString().trim().toLowerCase(Locale.ROOT);
-        validateIndDbName(table);
-        ensureUniqueGroupTable(table, null);
-        String category = str(body.get("groupCategory"), "UNIT").toUpperCase(Locale.ROOT);
-        if (!"UNIT".equals(category) && !"COMPOSITE".equals(category)) {
-            throw new BusinessException(400, "groupCategory 须为 UNIT 或 COMPOSITE");
-        }
-        AnaIndicatorGroup g = new AnaIndicatorGroup();
-        g.setOwnerDomainCode(owner);
-        g.setIndicatorDomainId(indDomain.getId());
-        g.setGroupName(name);
-        g.setTargetTable(table);
-        g.setGroupCategory(category);
-        g.setModelMethod(str(body.get("modelMethod"), "SQL").toUpperCase(Locale.ROOT));
-        g.setDescription(str(body.get("description"), null));
-        g.setStatus("DRAFT");
-        g.setCreatedBy(operator.getUsername());
-        g.setCreatedAt(LocalDateTime.now());
-        g.setUpdatedAt(LocalDateTime.now());
-        indicatorGroupMapper.insert(g);
-        auditService.log(operator.getUserId(), operator.getUsername(), operator.getOrgId(),
-                "ANA_IND_GROUP_CREATE", owner, table, name);
-        return g.getId();
+    public Map<String, Object> publishIndicatorDomain(UserPrincipal operator, String domainId, Map<String, Object> body) {
+        return indicatorLedgerService.publishDomain(operator, domainId, body);
+    }
+
+    public List<IndGroup> listIndicatorGroups(String domain, String indicatorDomainId,
+                                              String groupName, String targetTable, String groupCategory) {
+        return indicatorLedgerService.listGroups(domain, indicatorDomainId, groupName, targetTable, groupCategory);
+    }
+
+    public IndGroup getIndicatorGroup(String id) {
+        return indicatorLedgerService.getGroup(id);
     }
 
     @Transactional
-    public void updateIndicatorGroup(UserPrincipal operator, Long id, Map<String, Object> body) {
-        AnaIndicatorGroup g = getIndicatorGroup(id);
-        if (body.get("groupName") != null) {
-            String name = String.valueOf(body.get("groupName")).trim();
-            if (name.isEmpty()) throw new BusinessException(400, "groupName required");
-            g.setGroupName(name);
-        }
-        if (body.get("targetTable") != null) {
-            String table = String.valueOf(body.get("targetTable")).trim().toLowerCase(Locale.ROOT);
-            validateIndDbName(table);
-            ensureUniqueGroupTable(table, id);
-            g.setTargetTable(table);
-        }
-        if (body.get("groupCategory") != null) {
-            String category = String.valueOf(body.get("groupCategory")).trim().toUpperCase(Locale.ROOT);
-            if (!"UNIT".equals(category) && !"COMPOSITE".equals(category)) {
-                throw new BusinessException(400, "groupCategory 须为 UNIT 或 COMPOSITE");
-            }
-            g.setGroupCategory(category);
-        }
-        if (body.containsKey("description")) {
-            g.setDescription(str(body.get("description"), null));
-        }
-        if (body.get("indicatorDomainId") != null) {
-            Long domainId = longVal(body.get("indicatorDomainId"));
-            AnaIndicatorDomain indDomain = requireActiveIndicatorDomain(domainId, g.getOwnerDomainCode());
-            g.setIndicatorDomainId(indDomain.getId());
-        }
-        g.setUpdatedAt(LocalDateTime.now());
-        indicatorGroupMapper.updateById(g);
-        auditService.log(operator.getUserId(), operator.getUsername(), operator.getOrgId(),
-                "ANA_IND_GROUP_UPDATE", g.getOwnerDomainCode(), g.getTargetTable(), g.getGroupName());
+    public String createIndicatorGroup(UserPrincipal operator, String domain, Map<String, Object> body) {
+        return indicatorLedgerService.createGroup(operator, domain, body);
     }
 
     @Transactional
-    public void deleteIndicatorGroup(UserPrincipal operator, Long id) {
-        AnaIndicatorGroup g = getIndicatorGroup(id);
-        g.setStatus("INACTIVE");
-        g.setUpdatedAt(LocalDateTime.now());
-        indicatorGroupMapper.updateById(g);
-        List<AnaIndicator> inds = indicatorMapper.selectList(new LambdaQueryWrapper<AnaIndicator>()
-                .eq(AnaIndicator::getGroupId, id)
-                .eq(AnaIndicator::getStatus, "ACTIVE"));
-        for (AnaIndicator ind : inds) {
-            ind.setStatus("INACTIVE");
-            ind.setUpdatedAt(LocalDateTime.now());
-            indicatorMapper.updateById(ind);
-        }
-        auditService.log(operator.getUserId(), operator.getUsername(), operator.getOrgId(),
-                "ANA_IND_GROUP_DELETE", g.getOwnerDomainCode(), g.getTargetTable(), "INACTIVE");
+    public void updateIndicatorGroup(UserPrincipal operator, String id, Map<String, Object> body) {
+        indicatorLedgerService.updateGroup(operator, id, body);
     }
 
     @Transactional
-    public void publishIndicatorGroup(UserPrincipal operator, Long id) {
-        publishIndicatorGroup(operator, id, null, null, null, null, null);
+    public void deleteIndicatorGroup(UserPrincipal operator, String id) {
+        indicatorLedgerService.deleteGroup(operator, id);
     }
 
     @Transactional
-    public void publishIndicatorGroup(UserPrincipal operator, Long id, Map<String, Object> body) {
-        Map<String, Object> opts = body != null ? body : Map.of();
-        publishIndicatorGroup(operator, id,
-                str(opts.get("taskName"), null),
-                str(opts.get("execCycle"), null),
-                str(opts.get("cronExpr"), null),
-                str(opts.get("remark"), null),
-                str(opts.get("executorAddress"), "DEFAULT"));
+    public void publishIndicatorGroup(UserPrincipal operator, String id) {
+        indicatorLedgerService.publishGroup(operator, id, Map.of());
     }
 
     @Transactional
-    public void publishIndicatorGroup(UserPrincipal operator, Long id, String taskName,
-                                      String execCycle, String cronExpr, String remark, String executorAddress) {
-        AnaIndicatorGroup g = getIndicatorGroup(id);
-        long cnt = indicatorMapper.selectCount(new LambdaQueryWrapper<AnaIndicator>()
-                .eq(AnaIndicator::getGroupId, id)
-                .eq(AnaIndicator::getStatus, "ACTIVE"));
-        if (cnt == 0) {
-            throw new BusinessException(400, "请先新增指标后再发布");
-        }
-        g.setStatus("PUBLISHED");
-        g.setUpdatedAt(LocalDateTime.now());
-        indicatorGroupMapper.updateById(g);
-        indicatorTaskService.ensureFromPublishedGroup(operator, g, taskName, execCycle, cronExpr, remark, executorAddress);
-        auditService.log(operator.getUserId(), operator.getUsername(), operator.getOrgId(),
-                "ANA_IND_GROUP_PUBLISH", g.getOwnerDomainCode(), g.getTargetTable(), g.getGroupName());
+    public void publishIndicatorGroup(UserPrincipal operator, String id, Map<String, Object> body) {
+        indicatorLedgerService.publishGroup(operator, id, body);
     }
 
-    public List<AnaIndicator> listIndicatorsByGroup(Long groupId) {
-        getIndicatorGroup(groupId);
-        List<AnaIndicator> list = indicatorMapper.selectList(new LambdaQueryWrapper<AnaIndicator>()
-                .eq(AnaIndicator::getGroupId, groupId)
-                .eq(AnaIndicator::getStatus, "ACTIVE")
-                .orderByAsc(AnaIndicator::getId));
-        enrichIndicatorDisplay(list);
-        return list;
+    public List<IndField> listIndicatorsByGroup(String groupId) {
+        return indicatorLedgerService.listFieldsByGroup(groupId);
     }
 
-    /** 指标组当前生效的 SQL 草稿（用于修改时回填语句弹窗）。 */
-    public Map<String, Object> latestGroupSql(Long groupId) {
-        getIndicatorGroup(groupId);
-        List<AnaIndicator> list = indicatorMapper.selectList(new LambdaQueryWrapper<AnaIndicator>()
-                .eq(AnaIndicator::getGroupId, groupId)
-                .eq(AnaIndicator::getStatus, "ACTIVE")
-                .isNotNull(AnaIndicator::getQueryId)
-                .orderByDesc(AnaIndicator::getId)
-                .last("LIMIT 1"));
-        Map<String, Object> out = new LinkedHashMap<>();
-        out.put("sqlText", "");
-        out.put("datasourceKey", "");
-        out.put("datasourceName", "");
-        out.put("timeoutSec", 60);
-        if (list.isEmpty()) {
-            return out;
-        }
-        AnaIndicator ind = list.get(0);
-        AnaIndicatorQuery q = indicatorQueryMapper.selectById(ind.getQueryId());
-        if (q != null) {
-            out.put("sqlText", q.getSqlText() == null ? "" : q.getSqlText());
-            out.put("datasourceKey", q.getDatasourceKey() == null ? "" : q.getDatasourceKey());
-            out.put("datasourceName", q.getDatasourceName() == null ? "" : q.getDatasourceName());
-            out.put("timeoutSec", q.getTimeoutSec() == null ? 60 : q.getTimeoutSec());
-            return out;
-        }
-        out.put("sqlText", ind.getExprText() == null ? "" : ind.getExprText());
-        return out;
-    }
-
-    private void deactivateExistingGroupSql(Long groupId) {
-        List<AnaIndicator> old = indicatorMapper.selectList(new LambdaQueryWrapper<AnaIndicator>()
-                .eq(AnaIndicator::getGroupId, groupId)
-                .eq(AnaIndicator::getStatus, "ACTIVE"));
-        LinkedHashSet<Long> qids = new LinkedHashSet<>();
-        LocalDateTime now = LocalDateTime.now();
-        for (AnaIndicator ind : old) {
-            if (ind.getQueryId() != null && ind.getQueryId() > 0) {
-                qids.add(ind.getQueryId());
-            }
-            ind.setStatus("INACTIVE");
-            ind.setUpdatedAt(now);
-            indicatorMapper.updateById(ind);
-        }
-        for (Long qid : qids) {
-            AnaIndicatorQuery q = indicatorQueryMapper.selectById(qid);
-            if (q == null) continue;
-            q.setStatus("INACTIVE");
-            q.setUpdatedAt(now);
-            indicatorQueryMapper.updateById(q);
-        }
+    public Map<String, Object> latestGroupSql(String groupId) {
+        return indicatorLedgerService.latestGroupSql(groupId);
     }
 
     public List<Map<String, Object>> listIndicatorDatasourceCatalog(String domain, String category, String keyword) {
@@ -842,71 +508,6 @@ public class AnalyticsDomainService {
         row.put("version", version);
         row.put("deptName", dept);
         return row;
-    }
-
-    private AnaIndicatorDomain requireActiveIndicatorDomain(Long domainId, String ownerDomain) {
-        if (domainId == null) throw new BusinessException(400, "indicatorDomainId required");
-        AnaIndicatorDomain indDomain = indicatorDomainMapper.selectById(domainId);
-        if (indDomain == null || !"ACTIVE".equalsIgnoreCase(indDomain.getStatus())) {
-            throw new BusinessException(404, "指标域不存在");
-        }
-        if (ownerDomain != null && !isUnifiedIndicatorScope(ownerDomain)
-                && !ownerDomain.equalsIgnoreCase(indDomain.getOwnerDomainCode())) {
-            throw new BusinessException(400, "指标域不属于当前业务域");
-        }
-        return indDomain;
-    }
-
-    private void ensureUniqueGroupTable(String table, Long excludeId) {
-        LambdaQueryWrapper<AnaIndicatorGroup> q = new LambdaQueryWrapper<AnaIndicatorGroup>()
-                .eq(AnaIndicatorGroup::getTargetTable, table)
-                .ne(AnaIndicatorGroup::getStatus, "INACTIVE");
-        if (excludeId != null) q.ne(AnaIndicatorGroup::getId, excludeId);
-        Long dup = indicatorGroupMapper.selectCount(q);
-        if (dup != null && dup > 0) {
-            throw new BusinessException(400, "指标组结果表名已存在");
-        }
-    }
-
-    private void fillGroupDomainNames(List<AnaIndicatorGroup> list) {
-        if (list == null || list.isEmpty()) return;
-        Set<Long> ids = list.stream().map(AnaIndicatorGroup::getIndicatorDomainId)
-                .filter(id -> id != null && id > 0).collect(Collectors.toSet());
-        if (ids.isEmpty()) return;
-        Map<Long, String> names = new HashMap<>();
-        for (AnaIndicatorDomain d : indicatorDomainMapper.selectBatchIds(ids)) {
-            names.put(d.getId(), d.getDomainName());
-        }
-        for (AnaIndicatorGroup g : list) {
-            g.setIndicatorDomainName(names.get(g.getIndicatorDomainId()));
-        }
-    }
-
-    private void enrichIndicatorDisplay(List<AnaIndicator> list) {
-        Set<Long> qids = list.stream().map(AnaIndicator::getQueryId).filter(id -> id != null && id > 0)
-                .collect(Collectors.toSet());
-        Map<Long, String> qmap = new HashMap<>();
-        if (!qids.isEmpty()) {
-            for (AnaIndicatorQuery q : indicatorQueryMapper.selectBatchIds(qids)) {
-                qmap.put(q.getId(), q.getQueryNo());
-            }
-        }
-        for (AnaIndicator ind : list) {
-            if (ind.getQueryId() != null && qmap.containsKey(ind.getQueryId())) {
-                ind.setQueryNo(qmap.get(ind.getQueryId()));
-            } else {
-                ind.setQueryNo(ind.getIndicatorCode());
-            }
-            if (ind.getResultField() == null || ind.getResultField().isBlank()) {
-                ind.setResultField(str(ind.getSourceColumn(), ind.getIndicatorCode()));
-            }
-            if (ind.getFieldName() == null || ind.getFieldName().isBlank()) {
-                ind.setFieldName(ind.getIndicatorCode());
-            }
-            if (ind.getFieldType() == null || ind.getFieldType().isBlank()) {
-                ind.setFieldType("字符串");
-            }
-        }
     }
 
     // ---------- indicators ----------
@@ -973,8 +574,7 @@ public class AnalyticsDomainService {
     }
 
     @Transactional
-    public Long createIndicatorSql(UserPrincipal operator, String domain, Map<String, Object> body) {
-        String d = normalizeDomain(domain);
+    public String createIndicatorSql(UserPrincipal operator, String domain, Map<String, Object> body) {
         String sql = required(body.get("sqlText"), "sqlText").toString().trim();
         String dsKey = str(body.get("datasourceKey"), "platform");
         String dsName = str(body.get("datasourceName"), datasourceLabel(dsKey));
@@ -983,7 +583,6 @@ public class AnalyticsDomainService {
             if (body.get("timeoutSec") != null) timeout = Math.max(5, Integer.parseInt(String.valueOf(body.get("timeoutSec"))));
         } catch (Exception ignored) { /* default */ }
 
-        @SuppressWarnings("unchecked")
         List<Map<String, Object>> fields;
         Object rawFields = body.get("fields");
         if (rawFields instanceof List<?> list && !list.isEmpty()) {
@@ -1012,47 +611,24 @@ public class AnalyticsDomainService {
             throw new BusinessException(400, "未能从 SQL 解析结果列，请为列指定 AS 别名");
         }
 
+        Object rawGid = body.get("groupId");
+        if (rawGid != null && !String.valueOf(rawGid).isBlank()) {
+            return indicatorLedgerService.saveGroupSql(operator, domain, body, fields, sql, dsKey, dsName, timeout);
+        }
+        String d = normalizeDomain(domain);
+        if (isUnifiedIndicatorScope(d)) {
+            throw new BusinessException(400, "统一入口新增指标须指定 groupId");
+        }
+
         String slug = str(body.get("querySlug"), fields.get(0).get("fieldName") != null
                 ? String.valueOf(fields.get(0).get("fieldName"))
                 : "query");
         slug = slug.replaceAll("[^a-zA-Z0-9_]", "_").toLowerCase(Locale.ROOT);
         if (slug.isBlank()) slug = "query";
-
-        Long groupId = longVal(body.get("groupId"));
-        AnaIndicatorGroup group = null;
-        if (groupId != null) {
-            group = getIndicatorGroup(groupId);
-            if (!isUnifiedIndicatorScope(d) && !d.equalsIgnoreCase(group.getOwnerDomainCode())) {
-                throw new BusinessException(400, "指标组不属于当前业务域");
-            }
-            if (isUnifiedIndicatorScope(d)) {
-                d = group.getOwnerDomainCode();
-            }
-            slug = group.getTargetTable().replaceFirst("^ind_", "");
-            deactivateExistingGroupSql(group.getId());
-        } else if (isUnifiedIndicatorScope(d)) {
-            throw new BusinessException(400, "统一入口新增指标须指定 groupId");
-        }
-
-        long seq = indicatorQueryMapper.selectCount(new LambdaQueryWrapper<AnaIndicatorQuery>()
-                .eq(AnaIndicatorQuery::getDomainCode, d));
-        String queryNo = group != null
-                ? group.getTargetTable() + "_sql" + seq
-                : (d + ".ind_" + slug + "_sql" + seq);
-
-        AnaIndicatorQuery q = new AnaIndicatorQuery();
-        q.setDomainCode(d);
-        q.setQueryNo(queryNo);
-        q.setDatasourceKey(dsKey);
-        q.setDatasourceName(dsName);
-        q.setTimeoutSec(timeout);
-        q.setSqlText(sql);
-        q.setStatus("ACTIVE");
-        q.setCreatedBy(operator.getUsername());
-        q.setCreatedAt(LocalDateTime.now());
-        q.setUpdatedAt(LocalDateTime.now());
-        indicatorQueryMapper.insert(q);
-
+        long seq = indicatorMapper.selectCount(new LambdaQueryWrapper<AnaIndicator>()
+                .eq(AnaIndicator::getDomainCode, d));
+        String queryNo = d + ".ind_" + slug + "_sql" + seq;
+        Long lastId = null;
         int i = 0;
         for (Map<String, Object> f : fields) {
             String resultField = required(f.get("resultField"), "resultField").toString();
@@ -1060,8 +636,6 @@ public class AnalyticsDomainService {
             String indName = str(f.get("indicatorName"), resultField);
             AnaIndicator ind = new AnaIndicator();
             ind.setDomainCode(d);
-            ind.setGroupId(groupId);
-            ind.setQueryId(q.getId());
             ind.setResultField(resultField);
             ind.setFieldType(str(f.get("fieldType"), "字符串"));
             ind.setFieldLength(intVal(f.get("fieldLength")));
@@ -1070,7 +644,6 @@ public class AnalyticsDomainService {
             ind.setIndicatorFlag(str(f.get("indicatorFlag"), null));
             ind.setIndicatorCode(queryNo + "_" + (++i));
             ind.setIndicatorName(indName);
-            ind.setSourceTable(group != null ? group.getTargetTable() : null);
             ind.setSourceColumn(resultField);
             ind.setAggFunc("EXPR");
             ind.setExprText(sql);
@@ -1079,22 +652,20 @@ public class AnalyticsDomainService {
             ind.setCreatedAt(LocalDateTime.now());
             ind.setUpdatedAt(LocalDateTime.now());
             indicatorMapper.insert(ind);
-        }
-        if (group != null && "PUBLISHED".equalsIgnoreCase(group.getStatus())) {
-            group.setStatus("DRAFT");
-            group.setUpdatedAt(LocalDateTime.now());
-            indicatorGroupMapper.updateById(group);
+            lastId = ind.getId();
         }
         auditService.log(operator.getUserId(), operator.getUsername(), operator.getOrgId(),
                 "ANA_IND_SQL_CREATE", d, queryNo, "fields=" + fields.size());
-        return q.getId();
+        return lastId == null ? queryNo : String.valueOf(lastId);
     }
 
     @Transactional
     public Long createIndicator(UserPrincipal operator, String domain, Map<String, Object> body) {
-        // 兼容旧接口；若带 sqlText 则走语句模式
+        // 兼容旧接口；若带 sqlText 则走语句模式（分析模型种子仍写 ana_indicator）
         if (body.get("sqlText") != null && !String.valueOf(body.get("sqlText")).isBlank()) {
-            return createIndicatorSql(operator, domain, body);
+            String sid = createIndicatorSql(operator, domain, body);
+            Long n = longVal(sid);
+            return n != null ? n : 0L;
         }
         String d = normalizeDomain(domain);
         String agg = str(body.get("aggFunc"), "COUNT").toUpperCase(Locale.ROOT);
@@ -1124,8 +695,13 @@ public class AnalyticsDomainService {
     }
 
     @Transactional
-    public void updateIndicator(UserPrincipal operator, Long id, Map<String, Object> body) {
-        AnaIndicator ind = indicatorMapper.selectById(id);
+    public void updateIndicator(UserPrincipal operator, String id, Map<String, Object> body) {
+        if (id != null && !id.isBlank() && indicatorLedgerService.updateField(operator, id.trim(), body)) {
+            return;
+        }
+        Long lid = longVal(id);
+        if (lid == null) throw new BusinessException(404, "指标不存在");
+        AnaIndicator ind = indicatorMapper.selectById(lid);
         if (ind == null || !"ACTIVE".equalsIgnoreCase(ind.getStatus())) {
             throw new BusinessException(404, "指标不存在");
         }
@@ -1150,14 +726,37 @@ public class AnalyticsDomainService {
     }
 
     @Transactional
-    public void deleteIndicator(UserPrincipal operator, Long id) {
-        AnaIndicator ind = indicatorMapper.selectById(id);
+    public void deleteIndicator(UserPrincipal operator, String id) {
+        if (id != null && !id.isBlank() && indicatorLedgerService.deleteField(operator, id.trim())) {
+            return;
+        }
+        Long lid = longVal(id);
+        if (lid == null) throw new BusinessException(404, "指标不存在");
+        AnaIndicator ind = indicatorMapper.selectById(lid);
         if (ind == null) throw new BusinessException(404, "指标不存在");
         ind.setStatus("INACTIVE");
         ind.setUpdatedAt(LocalDateTime.now());
         indicatorMapper.updateById(ind);
         auditService.log(operator.getUserId(), operator.getUsername(), operator.getOrgId(),
                 "ANA_IND_DELETE", ind.getDomainCode(), ind.getIndicatorCode(), "INACTIVE");
+    }
+
+    private void enrichIndicatorDisplay(List<AnaIndicator> list) {
+        if (list == null) return;
+        for (AnaIndicator ind : list) {
+            if (ind.getQueryNo() == null || ind.getQueryNo().isBlank()) {
+                ind.setQueryNo(ind.getIndicatorCode());
+            }
+            if (ind.getResultField() == null || ind.getResultField().isBlank()) {
+                ind.setResultField(str(ind.getSourceColumn(), ind.getIndicatorCode()));
+            }
+            if (ind.getFieldName() == null || ind.getFieldName().isBlank()) {
+                ind.setFieldName(ind.getIndicatorCode());
+            }
+            if (ind.getFieldType() == null || ind.getFieldType().isBlank()) {
+                ind.setFieldType("字符串");
+            }
+        }
     }
 
     private static String datasourceLabel(String key) {

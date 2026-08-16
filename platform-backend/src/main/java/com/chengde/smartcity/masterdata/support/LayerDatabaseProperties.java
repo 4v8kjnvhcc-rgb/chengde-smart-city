@@ -53,7 +53,9 @@ public class LayerDatabaseProperties {
         if (database == null || database.isBlank()) {
             return ods;
         }
-        return switch (database.trim().toLowerCase()) {
+        String src = DataLayerSupport.sourceDatabaseOf(database);
+        return switch (src) {
+            case DataLayerSupport.CONTROL -> new Endpoint();
             case DataLayerSupport.DWD -> dwd;
             case DataLayerSupport.DWS -> dws;
             case DataLayerSupport.ADS -> ads;

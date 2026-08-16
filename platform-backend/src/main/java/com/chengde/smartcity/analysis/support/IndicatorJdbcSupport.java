@@ -1,6 +1,6 @@
 package com.chengde.smartcity.analysis.support;
 
-import com.chengde.smartcity.analysis.entity.AnaIndicator;
+import com.chengde.smartcity.analysis.entity.IndField;
 import com.chengde.smartcity.common.exception.BusinessException;
 import java.sql.Connection;
 import java.sql.DriverManager;
@@ -21,11 +21,12 @@ import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
 
 /**
- * 指标结果库：建库/建表/补列，任务执行时以全量覆盖方式写入查询结果（TRUNCATE + INSERT）。
+ * 指标结果库：建库/建表/补列，任务执行时写入查询结果。
  * <ul>
  *   <li>库：{@code CREATE DATABASE IF NOT EXISTS}</li>
  *   <li>表：已存在则跳过建表，仅 {@code ADD COLUMN} 补缺字段；去掉历史多余列 task_id / trigger_type</li>
- *   <li>落数：仅指标任务执行（手动执行或发布后的调度）写入；保存语句不落结果表</li>
+ *   <li>落数：仅指标任务执行（手动执行或发布后的调度）写入；保存/预览不落结果表</li>
+ *   <li>主表只保留本批；若主表已有数据，先追加进 {@code {table}_history}（保留原 calc_at），再写入本批</li>
  * </ul>
  */
 @Component
@@ -93,7 +94,7 @@ public class IndicatorJdbcSupport {
      * 增量就绪结果表：库/表已存在则跳过重建，仅补新增业务字段列。
      * 固定列：id / calc_at。
      */
-    public void ensureResultTable(String database, String tableName, List<AnaIndicator> indicators) {
+    public void ensureResultTable(String database, String tableName, List<IndField> indicators) {
         String db = sanitizeDbName(database);
         String table = sanitizeTableName(tableName);
         ensureDatabase(db);
@@ -148,18 +149,20 @@ public class IndicatorJdbcSupport {
     }
 
     /**
-     * 全量覆盖写入查询结果：TRUNCATE 后按指标字段映射插入全部行。
-     * 预览/执行查询不得调用本方法。
+     * 任务执行写入查询结果：主表只留本批。
+     * 主表已有行时先 {@code INSERT…SELECT} 追加到 {@code {table}_history}（保留原 calc_at），再删除主表旧行后插入本批。
+     * 主表为空（首次落数）只写主表，不建空历史表。
+     * 预览/保存不得调用本方法。
      *
-     * @return 写入行数
+     * @return 写入主表行数
      */
-    public int replaceResultRows(String database, String tableName, List<AnaIndicator> indicators,
-                                 List<Map<String, Object>> sourceRows, Long taskId, String triggerType) {
+    public int replaceResultRows(String database, String tableName, List<IndField> indicators,
+                                 List<Map<String, Object>> sourceRows, String taskId, String triggerType) {
         String db = sanitizeDbName(database);
         String table = sanitizeTableName(tableName);
-        LinkedHashMap<String, AnaIndicator> colToInd = new LinkedHashMap<>();
+        LinkedHashMap<String, IndField> colToInd = new LinkedHashMap<>();
         if (indicators != null) {
-            for (AnaIndicator ind : indicators) {
+            for (IndField ind : indicators) {
                 if (ind == null) continue;
                 String name = ind.getFieldName();
                 if (name == null || name.isBlank()) {
@@ -177,52 +180,21 @@ public class IndicatorJdbcSupport {
         Connection conn = null;
         try {
             conn = openDatabase(db);
-            conn.setAutoCommit(false);
-            try (Statement st = conn.createStatement()) {
-                st.execute("TRUNCATE TABLE `" + table + "`");
+            boolean archived = false;
+            int archivedRows = 0;
+            if (tableHasRows(conn, table)) {
+                String history = historyTableName(table);
+                ensureHistoryTable(conn, db, table, history);
+                conn.setAutoCommit(false);
+                archivedRows = archiveMainToHistory(conn, table, history);
+                archived = true;
+            } else {
+                conn.setAutoCommit(false);
             }
-            int written = 0;
-            if (sourceRows != null && !sourceRows.isEmpty() && !colToInd.isEmpty()) {
-                List<String> cols = new ArrayList<>();
-                cols.add("calc_at");
-                cols.addAll(colToInd.keySet());
-                StringBuilder sql = new StringBuilder("INSERT INTO `").append(table).append("` (");
-                for (int i = 0; i < cols.size(); i++) {
-                    if (i > 0) sql.append(',');
-                    sql.append('`').append(cols.get(i)).append('`');
-                }
-                sql.append(") VALUES (");
-                for (int i = 0; i < cols.size(); i++) {
-                    if (i > 0) sql.append(',');
-                    sql.append('?');
-                }
-                sql.append(')');
-                Timestamp now = Timestamp.valueOf(LocalDateTime.now());
-                try (PreparedStatement ps = conn.prepareStatement(sql.toString())) {
-                    int batch = 0;
-                    for (Map<String, Object> row : sourceRows) {
-                        ps.setTimestamp(1, now);
-                        int idx = 2;
-                        for (Map.Entry<String, AnaIndicator> e : colToInd.entrySet()) {
-                            AnaIndicator ind = e.getValue();
-                            ps.setObject(idx++, pickValue(row, ind.getResultField(), ind.getFieldName()));
-                        }
-                        ps.addBatch();
-                        batch++;
-                        written++;
-                        if (batch >= 200) {
-                            ps.executeBatch();
-                            batch = 0;
-                        }
-                    }
-                    if (batch > 0) {
-                        ps.executeBatch();
-                    }
-                }
-            }
+            int written = insertLatestRows(conn, table, colToInd, sourceRows);
             conn.commit();
-            log.info("指标结果表覆盖写入 db={} table={} rows={} taskId={} trigger={}",
-                    db, table, written, taskId, triggerType);
+            log.info("指标结果表写入 db={} table={} latestRows={} archived={} histRows={} taskId={} trigger={}",
+                    db, table, written, archived, archivedRows, taskId, triggerType);
             return written;
         } catch (SQLException e) {
             if (conn != null) {
@@ -232,7 +204,7 @@ public class IndicatorJdbcSupport {
                     /* ignore */
                 }
             }
-            throw new BusinessException(500, "覆盖写入指标结果失败 " + db + "." + table + " — " + e.getMessage());
+            throw new BusinessException(500, "写入指标结果失败 " + db + "." + table + " — " + e.getMessage());
         } finally {
             if (conn != null) {
                 try {
@@ -249,13 +221,13 @@ public class IndicatorJdbcSupport {
         }
     }
 
-    /** 兼容旧调用：先清空再写入一行快照。 */
-    public void insertSnapshot(String database, String tableName, Long taskId, String triggerType,
+    /** 兼容旧调用：主表只留本批快照，旧行进历史表。 */
+    public void insertSnapshot(String database, String tableName, String taskId, String triggerType,
                                Map<String, Object> values) {
-        List<AnaIndicator> fake = new ArrayList<>();
+        List<IndField> fake = new ArrayList<>();
         if (values != null) {
             for (String key : values.keySet()) {
-                AnaIndicator ind = new AnaIndicator();
+                IndField ind = new IndField();
                 ind.setFieldName(key);
                 ind.setResultField(key);
                 fake.add(ind);
@@ -263,6 +235,139 @@ public class IndicatorJdbcSupport {
         }
         List<Map<String, Object>> rows = values == null ? List.of() : List.of(new LinkedHashMap<>(values));
         replaceResultRows(database, tableName, fake, rows, taskId, triggerType);
+    }
+
+    private int insertLatestRows(Connection conn, String table, LinkedHashMap<String, IndField> colToInd,
+                                 List<Map<String, Object>> sourceRows) throws SQLException {
+        int written = 0;
+        if (sourceRows == null || sourceRows.isEmpty() || colToInd.isEmpty()) {
+            return 0;
+        }
+        List<String> cols = new ArrayList<>();
+        cols.add("calc_at");
+        cols.addAll(colToInd.keySet());
+        StringBuilder sql = new StringBuilder("INSERT INTO `").append(table).append("` (");
+        for (int i = 0; i < cols.size(); i++) {
+            if (i > 0) sql.append(',');
+            sql.append('`').append(cols.get(i)).append('`');
+        }
+        sql.append(") VALUES (");
+        for (int i = 0; i < cols.size(); i++) {
+            if (i > 0) sql.append(',');
+            sql.append('?');
+        }
+        sql.append(')');
+        Timestamp now = Timestamp.valueOf(LocalDateTime.now());
+        try (PreparedStatement ps = conn.prepareStatement(sql.toString())) {
+            int batch = 0;
+            for (Map<String, Object> row : sourceRows) {
+                ps.setTimestamp(1, now);
+                int idx = 2;
+                for (Map.Entry<String, IndField> e : colToInd.entrySet()) {
+                    IndField ind = e.getValue();
+                    ps.setObject(idx++, pickValue(row, ind.getResultField(), ind.getFieldName()));
+                }
+                ps.addBatch();
+                batch++;
+                written++;
+                if (batch >= 200) {
+                    ps.executeBatch();
+                    batch = 0;
+                }
+            }
+            if (batch > 0) {
+                ps.executeBatch();
+            }
+        }
+        return written;
+    }
+
+    private static boolean tableHasRows(Connection conn, String table) throws SQLException {
+        try (Statement st = conn.createStatement();
+             ResultSet rs = st.executeQuery("SELECT 1 FROM `" + table + "` LIMIT 1")) {
+            return rs.next();
+        }
+    }
+
+    /** {@code ind_xxx} → {@code ind_xxx_history}，批次用已有 calc_at 区分。 */
+    static String historyTableName(String table) {
+        String hist = table + "_history";
+        if (hist.length() > 64 || !SAFE_IDENT.matcher(hist).matches()) {
+            throw new BusinessException(400, "指标历史表名不合法（超过 64 字符或含非法字符）: " + hist);
+        }
+        return hist;
+    }
+
+    private void ensureHistoryTable(Connection conn, String db, String table, String history) throws SQLException {
+        try (Statement st = conn.createStatement()) {
+            if (!tableExists(conn, db, history)) {
+                st.execute("CREATE TABLE `" + history + "` LIKE `" + table + "`");
+                log.info("指标历史表新建 db={} table={} like={}", db, history, table);
+            }
+        }
+        alignHistoryColumns(conn, db, table, history);
+    }
+
+    private void alignHistoryColumns(Connection conn, String db, String table, String history) throws SQLException {
+        List<String[]> missing = new ArrayList<>();
+        try (PreparedStatement ps = conn.prepareStatement(
+                "SELECT COLUMN_NAME, COLUMN_TYPE FROM information_schema.COLUMNS "
+                        + "WHERE TABLE_SCHEMA=? AND TABLE_NAME=? ORDER BY ORDINAL_POSITION")) {
+            ps.setString(1, db);
+            ps.setString(2, table);
+            try (ResultSet rs = ps.executeQuery()) {
+                while (rs.next()) {
+                    String col = rs.getString(1);
+                    if (col == null || "id".equalsIgnoreCase(col)) {
+                        continue;
+                    }
+                    missing.add(new String[] { col, rs.getString(2) });
+                }
+            }
+        }
+        try (Statement st = conn.createStatement()) {
+            for (String[] item : missing) {
+                if (!columnExists(conn, db, history, item[0])) {
+                    st.execute("ALTER TABLE `" + history + "` ADD COLUMN `" + item[0] + "` " + item[1] + " NULL");
+                    log.info("指标历史表补列 db={} table={} col={}", db, history, item[0]);
+                }
+            }
+        }
+    }
+
+    private int archiveMainToHistory(Connection conn, String table, String history) throws SQLException {
+        List<String> cols = listColumnsExcludeId(conn, table);
+        if (cols.isEmpty()) {
+            throw new SQLException("结果表无可用列，无法归档到 " + history);
+        }
+        StringBuilder list = new StringBuilder();
+        for (int i = 0; i < cols.size(); i++) {
+            if (i > 0) list.append(',');
+            list.append('`').append(cols.get(i)).append('`');
+        }
+        String insertSql = "INSERT INTO `" + history + "` (" + list + ") SELECT " + list + " FROM `" + table + "`";
+        int moved;
+        try (Statement st = conn.createStatement()) {
+            moved = st.executeUpdate(insertSql);
+            st.executeUpdate("DELETE FROM `" + table + "`");
+        }
+        return moved;
+    }
+
+    private List<String> listColumnsExcludeId(Connection conn, String table) throws SQLException {
+        List<String> cols = new ArrayList<>();
+        try (PreparedStatement ps = conn.prepareStatement(
+                "SELECT COLUMN_NAME FROM information_schema.COLUMNS "
+                        + "WHERE TABLE_SCHEMA=DATABASE() AND TABLE_NAME=? AND COLUMN_NAME<>'id' "
+                        + "ORDER BY ORDINAL_POSITION")) {
+            ps.setString(1, table);
+            try (ResultSet rs = ps.executeQuery()) {
+                while (rs.next()) {
+                    cols.add(rs.getString(1));
+                }
+            }
+        }
+        return cols;
     }
 
     private static Object pickValue(Map<String, Object> row, String resultField, String fieldName) {
@@ -322,12 +427,12 @@ public class IndicatorJdbcSupport {
         return n;
     }
 
-    private LinkedHashMap<String, String> columnDefs(List<AnaIndicator> indicators) {
+    private LinkedHashMap<String, String> columnDefs(List<IndField> indicators) {
         LinkedHashMap<String, String> cols = new LinkedHashMap<>();
         if (indicators == null) {
             return cols;
         }
-        for (AnaIndicator ind : indicators) {
+        for (IndField ind : indicators) {
             if (ind == null) continue;
             String name = ind.getFieldName();
             if (name == null || name.isBlank()) {

@@ -1,8 +1,8 @@
 package com.chengde.smartcity.analysis.mapper;
 
 import com.baomidou.mybatisplus.core.mapper.BaseMapper;
-import com.chengde.smartcity.analysis.entity.AnaIndicatorTask;
+import com.chengde.smartcity.analysis.entity.IndGroup;
 import org.apache.ibatis.annotations.Mapper;
 
 @Mapper
-public interface AnaIndicatorTaskMapper extends BaseMapper<AnaIndicatorTask> {}
+public interface IndGroupMapper extends BaseMapper<IndGroup> {}
