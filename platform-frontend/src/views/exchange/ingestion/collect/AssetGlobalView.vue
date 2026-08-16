@@ -5,6 +5,7 @@ import * as echarts from 'echarts'
 import PageCard from '@/components/common/PageCard.vue'
 import api from '@/api/http'
 import { statusLabel } from '@/utils/status-label'
+import AssetFishboneView from '../register/AssetFishboneView.vue'
 
 const BASE = '/exchange/ingestion/global-asset-view'
 const router = useRouter()
@@ -13,10 +14,8 @@ const tab = ref('overview')
 const panorama = ref<Record<string, unknown> | null>(null)
 const topAssets = ref<Record<string, unknown>[]>([])
 const trends = ref<Record<string, unknown> | null>(null)
-const lineage = ref<Record<string, unknown> | null>(null)
 const facets = ref<Record<string, unknown> | null>(null)
 const detail = ref<Record<string, unknown> | null>(null)
-const projectId = ref<number | undefined>()
 
 const trendChartRef = ref<HTMLDivElement | null>(null)
 let trendChart: echarts.ECharts | null = null
@@ -27,9 +26,6 @@ const trendSeries = computed(() => (trends.value?.series as Record<string, unkno
 const bySource = computed(() => Object.entries((facets.value?.bySource as Record<string, number>) || {}).map(([name, count]) => ({ name, count })))
 const byLevel = computed(() => Object.entries((facets.value?.byLevel as Record<string, number>) || {}).map(([code, count]) => ({ code, count })))
 const byDim = computed(() => Object.entries((facets.value?.byTagDim as Record<string, number>) || {}).map(([code, count]) => ({ code, count })))
-const projects = computed(() => (facets.value?.projects as Record<string, unknown>[]) || [])
-const lineageNodes = computed(() => (lineage.value?.nodes as Record<string, unknown>[]) || [])
-const lineageEdges = computed(() => (lineage.value?.edges as Record<string, unknown>[]) || [])
 
 function disposeTrendChart() {
   trendChart?.dispose()
@@ -77,9 +73,6 @@ async function loadTrends() {
 async function loadFacets() {
   facets.value = (await api.get(`${BASE}/facets`)).data
 }
-async function loadLineage() {
-  lineage.value = (await api.get(`${BASE}/lineage`, { params: { projectId: projectId.value } })).data
-}
 
 async function reload() {
   loading.value = true
@@ -87,7 +80,6 @@ async function reload() {
     if (tab.value === 'overview') await Promise.all([loadOverview(), loadFacets()])
     else if (tab.value === 'top') await loadTop()
     else if (tab.value === 'trends') await loadTrends()
-    else if (tab.value === 'lineage') await Promise.all([loadFacets(), loadLineage()])
   } catch (e: unknown) {
     console.error(e)
   } finally {
@@ -103,6 +95,7 @@ async function reload() {
 
 async function onTab(name: string | number) {
   tab.value = String(name)
+  if (tab.value === 'lineage' || tab.value === 'detail') return
   await reload()
 }
 
@@ -235,44 +228,7 @@ onBeforeUnmount(() => {
       </div>
 
       <div v-if="tab === 'lineage'">
-        <el-form inline class="portal-inline-form portal-inline-form--block">
-          <el-form-item label="项目" class="portal-field-xl">
-            <el-select v-model="projectId" clearable placeholder="默认首个项目" @change="loadLineage">
-              <el-option v-for="p in projects" :key="String(p.id)" :label="String(p.name)" :value="p.id as number" />
-            </el-select>
-          </el-form-item>
-          <el-form-item class="portal-form-actions">
-            <el-button type="primary" @click="loadLineage">刷新血缘</el-button>
-            <el-button @click="router.push({ path: '/exchange/ingestion', query: { system: 'register', module: 'm047' } })">打开登记侧血缘页</el-button>
-          </el-form-item>
-        </el-form>
-        <el-descriptions v-if="lineage" :column="3" border size="small" class="mb">
-          <el-descriptions-item label="模式">{{ statusLabel(String(lineage.mode)) }}</el-descriptions-item>
-          <el-descriptions-item label="节点">{{ lineageNodes.length }}</el-descriptions-item>
-          <el-descriptions-item label="边">{{ lineageEdges.length }}</el-descriptions-item>
-        </el-descriptions>
-        <el-row :gutter="16">
-          <el-col :span="12">
-            <div class="block-title">节点（最多展示）</div>
-            <el-table :data="lineageNodes.slice(0, 40)" size="small" max-height="360" stripe>
-              <el-table-column prop="id" label="ID" width="120" show-overflow-tooltip />
-              <el-table-column label="类型" width="90">
-                <template #default="{ row }">{{ statusLabel(row.type) }}</template>
-              </el-table-column>
-              <el-table-column prop="label" label="名称" min-width="140" show-overflow-tooltip />
-            </el-table>
-          </el-col>
-          <el-col :span="12">
-            <div class="block-title">边</div>
-            <el-table :data="lineageEdges.slice(0, 40)" size="small" max-height="360" stripe>
-              <el-table-column prop="fromNode" label="从" width="120" show-overflow-tooltip />
-              <el-table-column prop="toNode" label="到" width="120" show-overflow-tooltip />
-              <el-table-column label="类型" width="100">
-                <template #default="{ row }">{{ statusLabel(row.edgeType || row.label) }}</template>
-              </el-table-column>
-            </el-table>
-          </el-col>
-        </el-row>
+        <AssetFishboneView embedded />
       </div>
 
       <div v-if="tab === 'detail' && detail">
@@ -304,7 +260,6 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
-.hint { color: var(--el-text-color-secondary); margin: 0 0 12px; line-height: 1.5; }
 .mb { margin-bottom: 12px; }
 .mt { margin-top: 12px; }
 .mr { margin-right: 8px; margin-bottom: 8px; }

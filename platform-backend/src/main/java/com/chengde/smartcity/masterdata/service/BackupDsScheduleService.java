@@ -67,54 +67,32 @@ public class BackupDsScheduleService {
 
     @Transactional
     public Map<String, Object> startSchedule(UserPrincipal operator, Long policyId) {
-        RcStoragePolicy p = requireBackupPolicy(policyId);
+        RcStoragePolicy p = requirePolicy(policyId);
         if (p.getScheduleCron() == null || p.getScheduleCron().isBlank()) {
             throw new BusinessException(400, "请先配置执行周期后再启动调度");
         }
         p.setScheduleEnabled(1);
         p.setStatus("ACTIVE");
         p.setNextRunAt(LocalDateTime.now().plusMinutes(1));
-
+        p.setDsPublishStatus("LOCAL");
+        policyMapper.updateById(p);
         Map<String, Object> out = new LinkedHashMap<>();
         out.put("policyId", policyId);
         out.put("scheduleEnabled", 1);
         out.put("scheduleCron", p.getScheduleCron());
-
-        if (isDsAvailable()) {
-            offlineQuiet(p);
-            long projectCode = dsClient.ensureProject(BACKUP_PROJECT);
-            String tenant = dsClient.resolveTenant();
-            String defName = "数据备份_" + safeName(p.getPolicyName()) + "_" + policyId;
-            String script = buildTriggerScript(policyId);
-            long definitionCode = dsClient.createAndReleaseShellChain(
-                    projectCode, defName, List.of("逻辑备份执行"), List.of(script), tenant);
-            int scheduleId = dsClient.createAndOnlineSchedule(projectCode, definitionCode, p.getScheduleCron());
-            p.setDsProjectCode(projectCode);
-            p.setDsDefinitionCode(definitionCode);
-            p.setDsScheduleId(scheduleId);
-            p.setDsPublishStatus("PUBLISHED");
-            out.put("dsPublished", true);
-            out.put("projectCode", projectCode);
-            out.put("definitionCode", definitionCode);
-            out.put("scheduleId", scheduleId);
-            out.put("message", "已发布到 DolphinScheduler 并上线调度");
-        } else {
-            p.setDsPublishStatus("DRAFT");
-            out.put("dsPublished", false);
-            out.put("message", "DolphinScheduler 不可用，已启用应用内定时调度");
-        }
-        policyMapper.updateById(p);
+        out.put("dsPublished", false);
+        out.put("message", "已启用应用内定时调度");
         auditService.log(operator != null ? operator.getUserId() : null,
                 operator != null ? operator.getUsername() : "system",
                 operator != null ? operator.getOrgId() : null,
-                "RC_BACKUP_DS_START", "rc_storage_policy", String.valueOf(policyId),
-                String.valueOf(out.get("message")));
+                "RC_POLICY_SCHEDULE_START", "rc_storage_policy", String.valueOf(policyId),
+                p.getScheduleCron());
         return out;
     }
 
     @Transactional
     public Map<String, Object> stopSchedule(UserPrincipal operator, Long policyId) {
-        RcStoragePolicy p = requireBackupPolicy(policyId);
+        RcStoragePolicy p = requirePolicy(policyId);
         offlineQuiet(p);
         p.setScheduleEnabled(0);
         p.setNextRunAt(null);
@@ -144,13 +122,10 @@ public class BackupDsScheduleService {
         }
     }
 
-    private RcStoragePolicy requireBackupPolicy(Long id) {
+    private RcStoragePolicy requirePolicy(Long id) {
         RcStoragePolicy p = policyMapper.selectById(id);
         if (p == null) {
             throw new BusinessException(404, "策略不存在");
-        }
-        if (!"BACKUP".equalsIgnoreCase(p.getActionType())) {
-            throw new BusinessException(400, "仅备份策略支持 DS 调度启停");
         }
         return p;
     }

@@ -8,8 +8,8 @@ import { statusLabel } from '@/utils/status-label'
 const props = defineProps<{ domain: string }>()
 
 interface TaskRow {
-  id: number
-  groupId: number
+  id: string
+  groupId: string
   taskName: string
   execCycle: string
   scheduleStatus: string
@@ -23,7 +23,7 @@ interface TaskRow {
 }
 
 interface IndicatorRow {
-  id: number
+  id: string
   indicatorName: string
   fieldName?: string
   resultField?: string

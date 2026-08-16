@@ -123,7 +123,7 @@ async function reload() {
 
 function openCreate() {
   resetForm()
-  channelName.value = `${props.title}-${new Date().toISOString().slice(0, 10)}`
+  channelName.value = ''
   dialogVisible.value = true
   void loadTableOptionsIfNeeded()
 }
@@ -330,7 +330,6 @@ onMounted(reload)
         <el-form-item label="任务名称" required>
           <el-input
             v-model="channelName"
-            :placeholder="isFtp ? '如：人社局日报 FTP' : '如：共享盘日增目录'"
             maxlength="80"
           />
         </el-form-item>
@@ -348,7 +347,6 @@ onMounted(reload)
             default-first-option
             clearable
             :loading="tablesLoading"
-            :placeholder="f.hint || '输入表名筛选，或选择/新建'"
             style="width: 100%"
           >
             <el-option v-for="t in tableOptions" :key="t" :label="t" :value="t" />
@@ -358,7 +356,6 @@ onMounted(reload)
             v-model="channelForm[f.key]"
             :type="f.secret ? 'password' : 'text'"
             :show-password="!!f.secret"
-            :placeholder="f.hint || ''"
             autocomplete="off"
           />
         </el-form-item>

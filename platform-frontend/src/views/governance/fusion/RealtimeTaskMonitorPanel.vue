@@ -29,6 +29,8 @@ interface InstanceRow {
   priority?: string
   projectCode?: number
   stateBucket?: string
+  virtual?: boolean
+  lastMessage?: string
 }
 
 interface PipelinePri {
@@ -108,6 +110,9 @@ async function loadInstances() {
     })).data || {}
     rows.value = res.records || []
     total.value = res.total || 0
+    if (res.message && !(res.records || []).length) {
+      overview.value = { ...overview.value, message: String(res.message) }
+    }
   } catch {
     rows.value = []
     total.value = 0
@@ -154,6 +159,10 @@ async function savePriority(row: PipelinePri) {
 }
 
 async function openLog(row: InstanceRow, type: 'PROCESS' | 'ERROR' | 'CLUSTER') {
+  if (row.virtual || !row.id || row.id <= 0) {
+    ElMessage.info('该流水线已发布但尚未运行，请到「跨模块流水线」点击「执行」')
+    return
+  }
   currentRow.value = row
   logType.value = type
   logTitle.value = type === 'CLUSTER'
@@ -183,6 +192,10 @@ async function fetchLog() {
 }
 
 async function control(row: InstanceRow, action: string) {
+  if (row.virtual || !row.id || row.id <= 0) {
+    ElMessage.info('尚未产生运行实例，请先在「跨模块流水线」点击「执行」')
+    return
+  }
   try {
     await api.post(`/governance/cross-pipelines/monitor/instances/${row.id}/control`, {
       projectCode: row.projectCode,
@@ -278,6 +291,15 @@ onUnmounted(() => {
       </div>
     </template>
 
+    <el-alert
+      v-if="overview.message"
+      :title="overview.message"
+      type="warning"
+      show-icon
+      :closable="false"
+      style="margin-bottom: 12px"
+    />
+
     <div v-loading="overviewLoading" class="kpi-row">
       <div class="kpi">
         <div class="kpi__label">今日应执行</div>
@@ -307,6 +329,7 @@ onUnmounted(() => {
       </el-form-item>
       <el-form-item label="状态" class="portal-field-md">
         <el-select v-model="query.stateType" clearable placeholder="全部">
+          <el-option label="待执行" value="WAITING" />
           <el-option label="成功" value="SUCCESS" />
           <el-option label="失败" value="FAILURE" />
           <el-option label="执行中" value="RUNNING_EXECUTION" />
@@ -328,11 +351,13 @@ onUnmounted(() => {
       </el-form-item>
     </el-form>
 
-    <el-table v-loading="listLoading" class="portal-table" :data="rows" stripe>
+    <el-table v-loading="listLoading" class="portal-table" :data="rows" stripe empty-text="暂无数据：发布后会出现待执行记录；点「执行」后才会有运行实例">
       <el-table-column label="流水线" min-width="160" show-overflow-tooltip>
         <template #default="{ row }">{{ row.pipelineName || row.name || '—' }}</template>
       </el-table-column>
-      <el-table-column label="实例 ID" width="100" prop="id" />
+      <el-table-column label="实例 ID" width="110">
+        <template #default="{ row }">{{ row.virtual || !row.id || row.id <= 0 ? '未运行' : row.id }}</template>
+      </el-table-column>
       <el-table-column label="优先级" width="90">
         <template #default="{ row }">
           <el-tag :type="statusTagType(row.priority)" size="small" effect="light">
@@ -356,14 +381,19 @@ onUnmounted(() => {
       <el-table-column label="操作" width="360" fixed="right">
         <template #default="{ row }">
           <div class="op-row">
-            <el-button link type="primary" @click="openLog(row, 'PROCESS')">过程日志</el-button>
-            <el-button link type="danger" @click="openLog(row, 'ERROR')">错误日志</el-button>
-            <el-button link @click="openLog(row, 'CLUSTER')">集群日志</el-button>
-            <el-button link type="warning" @click="notifyRow(row)">告警</el-button>
-            <el-button link @click="control(row, 'RETRY')">重跑</el-button>
-            <el-button link @click="control(row, 'PAUSE')">暂停</el-button>
-            <el-button link @click="control(row, 'RESUME')">恢复</el-button>
-            <el-button link type="danger" @click="control(row, 'STOP')">停止</el-button>
+            <template v-if="row.virtual || !row.id || row.id <= 0">
+              <el-button link type="primary" disabled>待执行（请先点执行）</el-button>
+            </template>
+            <template v-else>
+              <el-button link type="primary" @click="openLog(row, 'PROCESS')">过程日志</el-button>
+              <el-button link type="danger" @click="openLog(row, 'ERROR')">错误日志</el-button>
+              <el-button link @click="openLog(row, 'CLUSTER')">集群日志</el-button>
+              <el-button link type="warning" @click="notifyRow(row)">告警</el-button>
+              <el-button link @click="control(row, 'RETRY')">重跑</el-button>
+              <el-button link @click="control(row, 'PAUSE')">暂停</el-button>
+              <el-button link @click="control(row, 'RESUME')">恢复</el-button>
+              <el-button link type="danger" @click="control(row, 'STOP')">停止</el-button>
+            </template>
           </div>
         </template>
       </el-table-column>

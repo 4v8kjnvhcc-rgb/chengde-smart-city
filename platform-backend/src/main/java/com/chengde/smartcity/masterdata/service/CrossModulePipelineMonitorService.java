@@ -19,6 +19,7 @@ import java.time.Duration;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
@@ -65,126 +66,190 @@ public class CrossModulePipelineMonitorService {
     }
 
     public Map<String, Object> todayOverview() {
-        if (!isDsAvailable()) {
-            return emptyOverview("DolphinScheduler 不可用，无法拉取今日实例统计");
-        }
-        try {
-            long projectCode = resolveProjectCode();
-            LocalDate today = LocalDate.now();
-            String start = today.atStartOfDay().format(DS_DT);
-            String end = today.atTime(LocalTime.MAX).format(DS_DT);
-            Map<String, Object> page = dsClient.listProcessInstances(projectCode, 1, 100, start, end, null, null);
-            @SuppressWarnings("unchecked")
-            List<Map<String, Object>> rows = (List<Map<String, Object>>) page.getOrDefault("totalList", List.of());
+        List<GovCrossPipeline> published = listPublished();
+        int publishedCount = published.size();
+        int dsCompleted = 0;
+        int dsRunning = 0;
+        int dsWaiting = 0;
+        int dsFailed = 0;
+        int dsRows = 0;
+        boolean dsOk = isDsAvailable();
+        String message = null;
+        Long projectCode = null;
+        long durationSumMs = 0L;
+        int durationCount = 0;
 
-            int completed = 0;
-            int running = 0;
-            int waiting = 0;
-            int failed = 0;
-            long durationSumMs = 0L;
-            int durationCount = 0;
-            for (Map<String, Object> row : rows) {
-                String state = str(row.get("state"));
-                String bucket = bucket(state);
-                switch (bucket) {
-                    case "COMPLETED" -> completed++;
-                    case "RUNNING" -> running++;
-                    case "WAITING" -> waiting++;
-                    case "FAILED" -> failed++;
-                    default -> waiting++;
+        if (dsOk) {
+            try {
+                projectCode = resolveProjectCode();
+                LocalDate today = LocalDate.now();
+                String start = today.atStartOfDay().format(DS_DT);
+                String end = today.atTime(LocalTime.of(23, 59, 59)).format(DS_DT);
+                Map<String, Object> page = dsClient.listProcessInstances(projectCode, 1, 100, start, end, null, null);
+                @SuppressWarnings("unchecked")
+                List<Map<String, Object>> rows = (List<Map<String, Object>>) page.getOrDefault("totalList", List.of());
+                dsRows = rows.size();
+                for (Map<String, Object> row : rows) {
+                    String bucket = bucket(str(row.get("state")));
+                    switch (bucket) {
+                        case "COMPLETED" -> dsCompleted++;
+                        case "RUNNING" -> dsRunning++;
+                        case "WAITING" -> dsWaiting++;
+                        case "FAILED" -> dsFailed++;
+                        default -> dsWaiting++;
+                    }
+                    Long ms = parseDurationMs(row);
+                    if (ms != null && ms > 0 && "COMPLETED".equals(bucket)) {
+                        durationSumMs += ms;
+                        durationCount++;
+                    }
                 }
-                Long ms = parseDurationMs(row);
-                if (ms != null && ms > 0 && "COMPLETED".equals(bucket)) {
-                    durationSumMs += ms;
-                    durationCount++;
-                }
+            } catch (BusinessException e) {
+                dsOk = false;
+                message = e.getMessage();
+            } catch (Exception e) {
+                log.warn("todayOverview failed: {}", e.getMessage());
+                dsOk = false;
+                message = "拉取 DS 实例失败: " + e.getMessage();
             }
-
-            int planned = estimatePlannedToday();
-            int totalExpected = Math.max(planned, rows.size());
-            int pendingPlan = Math.max(0, totalExpected - rows.size());
-            waiting += pendingPlan;
-
-            long avgMs = durationCount > 0 ? durationSumMs / durationCount : 15 * 60_000L;
-            int remain = waiting + running;
-            LocalDateTime eta = LocalDateTime.now().plus(Duration.ofMillis(avgMs * Math.max(remain, 0)));
-
-            Map<String, Object> out = new LinkedHashMap<>();
-            out.put("date", today.toString());
-            out.put("totalExpected", totalExpected);
-            out.put("completed", completed);
-            out.put("running", running);
-            out.put("waiting", waiting);
-            out.put("failed", failed);
-            out.put("avgDurationMs", avgMs);
-            out.put("estimatedFinishAt", eta.format(DS_DT));
-            out.put("dsAvailable", true);
-            out.put("projectCode", projectCode);
-            return out;
-        } catch (BusinessException e) {
-            return emptyOverview(e.getMessage());
-        } catch (Exception e) {
-            log.warn("todayOverview failed: {}", e.getMessage());
-            return emptyOverview("拉取今日统计失败: " + e.getMessage());
+        } else {
+            message = "DolphinScheduler 不可用，已展示本地已发布流水线";
         }
+
+        int planned = estimatePlannedToday();
+        int waitingPublished = Math.max(0, publishedCount - dsRows);
+        int waiting = dsWaiting + waitingPublished;
+        int totalExpected = Math.max(publishedCount, Math.max(planned, dsRows));
+        if (totalExpected == 0) {
+            totalExpected = publishedCount;
+        }
+
+        long avgMs = durationCount > 0 ? durationSumMs / durationCount : 15 * 60_000L;
+        int remain = waiting + dsRunning;
+        LocalDateTime eta = remain > 0
+                ? LocalDateTime.now().plus(Duration.ofMillis(avgMs * Math.max(remain, 0)))
+                : null;
+
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("date", LocalDate.now().toString());
+        out.put("totalExpected", totalExpected);
+        out.put("completed", dsCompleted);
+        out.put("running", dsRunning);
+        out.put("waiting", waiting);
+        out.put("failed", dsFailed);
+        out.put("publishedCount", publishedCount);
+        out.put("avgDurationMs", avgMs);
+        out.put("estimatedFinishAt", eta == null ? null : eta.format(DS_DT));
+        out.put("dsAvailable", dsOk);
+        out.put("projectCode", projectCode);
+        if (message != null) {
+            out.put("message", message);
+        } else if (dsRows == 0 && publishedCount > 0) {
+            out.put("message", "已发布 " + publishedCount + " 条流水线，今日尚无运行实例（发布不会自动执行，可点「执行」或启动定时）");
+        }
+        return out;
     }
 
     public Map<String, Object> listInstances(String keyword, String stateType, String priority,
                                              int pageNo, int pageSize) {
-        if (!isDsAvailable()) {
-            return emptyInstances("DolphinScheduler 不可用，无法查询实例");
-        }
-        try {
-            long projectCode = resolveProjectCode();
-            LocalDate today = LocalDate.now();
-            String start = today.atStartOfDay().format(DS_DT);
-            String end = today.atTime(LocalTime.MAX).format(DS_DT);
-            Map<String, Object> page = dsClient.listProcessInstances(
-                    projectCode, 1, 100, start, end, keyword, blankToNull(stateType));
-            @SuppressWarnings("unchecked")
-            List<Map<String, Object>> raw = (List<Map<String, Object>>) page.getOrDefault("totalList", List.of());
-            Map<Long, GovCrossPipeline> byDef = indexByDefinition();
-            List<Map<String, Object>> enriched = new ArrayList<>();
-            for (Map<String, Object> row : raw) {
-                long defCode = toLong(row.get("processDefinitionCode"));
-                GovCrossPipeline p = byDef.get(defCode);
-                String pipePriority = p == null || p.getPriority() == null ? "MEDIUM" : p.getPriority();
-                String dsPriority = str(row.get("processInstancePriority"));
-                if (dsPriority == null || dsPriority.isBlank()) {
-                    dsPriority = pipePriority;
+        List<Map<String, Object>> enriched = new ArrayList<>();
+        Set<Long> seenDefs = new HashSet<>();
+        boolean dsOk = isDsAvailable();
+        String message = null;
+        Long projectCode = null;
+
+        if (dsOk) {
+            try {
+                projectCode = resolveProjectCode();
+                LocalDate today = LocalDate.now();
+                String start = today.minusDays(7).atStartOfDay().format(DS_DT);
+                String end = today.atTime(LocalTime.of(23, 59, 59)).format(DS_DT);
+                Map<String, Object> page = dsClient.listProcessInstances(
+                        projectCode, 1, 100, start, end, blankToNull(keyword), blankToNull(stateType));
+                @SuppressWarnings("unchecked")
+                List<Map<String, Object>> raw = (List<Map<String, Object>>) page.getOrDefault("totalList", List.of());
+                if (raw.isEmpty()) {
+                    page = dsClient.listProcessInstances(
+                            projectCode, 1, 100, null, null, blankToNull(keyword), blankToNull(stateType));
+                    raw = (List<Map<String, Object>>) page.getOrDefault("totalList", List.of());
                 }
-                if (priority != null && !priority.isBlank()
-                        && !priority.equalsIgnoreCase(dsPriority)
-                        && !priority.equalsIgnoreCase(pipePriority)) {
+                Map<Long, GovCrossPipeline> byDef = indexByDefinition();
+                for (Map<String, Object> row : raw) {
+                    long defCode = toLong(row.get("processDefinitionCode"));
+                    if (defCode > 0) {
+                        seenDefs.add(defCode);
+                    }
+                    GovCrossPipeline p = byDef.get(defCode);
+                    String pipePriority = p == null || p.getPriority() == null ? "MEDIUM" : p.getPriority();
+                    String dsPriority = str(row.get("processInstancePriority"));
+                    if (dsPriority == null || dsPriority.isBlank()) {
+                        dsPriority = pipePriority;
+                    }
+                    if (priority != null && !priority.isBlank()
+                            && !priority.equalsIgnoreCase(dsPriority)
+                            && !priority.equalsIgnoreCase(pipePriority)) {
+                        continue;
+                    }
+                    Map<String, Object> m = new LinkedHashMap<>(row);
+                    m.put("pipelineId", p == null ? null : p.getId());
+                    m.put("pipelineName", p == null ? str(row.get("name")) : p.getPipelineName());
+                    m.put("priority", DolphinSchedulerClient.normalizePriority(dsPriority));
+                    m.put("projectCode", projectCode);
+                    m.put("stateBucket", bucket(str(row.get("state"))));
+                    m.put("virtual", false);
+                    enriched.add(m);
+                }
+            } catch (BusinessException e) {
+                dsOk = false;
+                message = e.getMessage();
+            } catch (Exception e) {
+                log.warn("listInstances failed: {}", e.getMessage());
+                dsOk = false;
+                message = "查询 DS 实例失败: " + e.getMessage();
+            }
+        } else {
+            message = "DolphinScheduler 不可用，已展示本地已发布流水线";
+        }
+
+        boolean wantWaiting = stateType == null || stateType.isBlank()
+                || "WAITING".equalsIgnoreCase(stateType)
+                || "WAITING_DEPEND".equalsIgnoreCase(stateType);
+        if (wantWaiting) {
+            for (GovCrossPipeline p : listPublished()) {
+                if (p.getDsDefinitionCode() != null && seenDefs.contains(p.getDsDefinitionCode())) {
                     continue;
                 }
-                Map<String, Object> m = new LinkedHashMap<>(row);
-                m.put("pipelineId", p == null ? null : p.getId());
-                m.put("pipelineName", p == null ? null : p.getPipelineName());
-                m.put("priority", DolphinSchedulerClient.normalizePriority(dsPriority));
-                m.put("projectCode", projectCode);
-                m.put("stateBucket", bucket(str(row.get("state"))));
-                enriched.add(m);
+                if (keyword != null && !keyword.isBlank()) {
+                    String hay = ((p.getPipelineName() == null ? "" : p.getPipelineName())
+                            + " " + (p.getLastMessage() == null ? "" : p.getLastMessage())).toLowerCase(Locale.ROOT);
+                    if (!hay.contains(keyword.trim().toLowerCase(Locale.ROOT))) {
+                        continue;
+                    }
+                }
+                String pipePriority = p.getPriority() == null ? "MEDIUM" : p.getPriority();
+                if (priority != null && !priority.isBlank() && !priority.equalsIgnoreCase(pipePriority)) {
+                    continue;
+                }
+                enriched.add(virtualWaitingRow(p, projectCode));
             }
-            enriched.sort((a, b) -> Integer.compare(
-                    priorityRank(str(b.get("priority"))),
-                    priorityRank(str(a.get("priority")))));
-            int total = enriched.size();
-            int from = Math.max(0, (Math.max(1, pageNo) - 1) * Math.max(1, pageSize));
-            int to = Math.min(total, from + Math.max(1, pageSize));
-            List<Map<String, Object>> slice = from >= total ? List.of() : enriched.subList(from, to);
-            Map<String, Object> out = new LinkedHashMap<>();
-            out.put("total", total);
-            out.put("records", slice);
-            out.put("dsAvailable", true);
-            out.put("projectCode", projectCode);
-            return out;
-        } catch (BusinessException e) {
-            return emptyInstances(e.getMessage());
-        } catch (Exception e) {
-            log.warn("listInstances failed: {}", e.getMessage());
-            return emptyInstances("查询实例失败: " + e.getMessage());
         }
+
+        enriched.sort((a, b) -> Integer.compare(
+                priorityRank(str(b.get("priority"))),
+                priorityRank(str(a.get("priority")))));
+        int total = enriched.size();
+        int from = Math.max(0, (Math.max(1, pageNo) - 1) * Math.max(1, pageSize));
+        int to = Math.min(total, from + Math.max(1, pageSize));
+        List<Map<String, Object>> slice = from >= total ? List.of() : enriched.subList(from, to);
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("total", total);
+        out.put("records", slice);
+        out.put("dsAvailable", dsOk);
+        out.put("projectCode", projectCode);
+        if (message != null) {
+            out.put("message", message);
+        }
+        return out;
     }
 
     @Transactional
@@ -200,6 +265,13 @@ public class CrossModulePipelineMonitorService {
     }
 
     public Map<String, Object> instanceLogs(Long projectCode, Long instanceId, String logType) {
+        if (instanceId == null || instanceId <= 0) {
+            Map<String, Object> out = new LinkedHashMap<>();
+            out.put("logType", logType);
+            out.put("content", "该流水线已发布但尚未产生运行实例。请到「跨模块流水线」点击「执行」，或配置周期后启动定时。");
+            out.put("tasks", List.of());
+            return out;
+        }
         requireDs();
         long pc = projectCode == null ? resolveProjectCode() : projectCode;
         String type = logType == null ? "PROCESS" : logType.trim().toUpperCase(Locale.ROOT);
@@ -243,6 +315,9 @@ public class CrossModulePipelineMonitorService {
     }
 
     public Map<String, Object> control(UserPrincipal operator, Long projectCode, Long instanceId, String action) {
+        if (instanceId == null || instanceId <= 0) {
+            throw new BusinessException(400, "尚未产生运行实例，请先在「跨模块流水线」点击执行");
+        }
         requireDs();
         long pc = projectCode == null ? resolveProjectCode() : projectCode;
         String act = action == null ? "" : action.trim().toUpperCase(Locale.ROOT);
@@ -382,6 +457,29 @@ public class CrossModulePipelineMonitorService {
             out.add(m);
         }
         return out;
+    }
+
+    private List<GovCrossPipeline> listPublished() {
+        return pipelineMapper.selectList(new LambdaQueryWrapper<GovCrossPipeline>()
+                .eq(GovCrossPipeline::getPublishStatus, "SUCCESS")
+                .orderByDesc(GovCrossPipeline::getId));
+    }
+
+    private Map<String, Object> virtualWaitingRow(GovCrossPipeline p, Long projectCode) {
+        Map<String, Object> m = new LinkedHashMap<>();
+        m.put("id", -p.getId());
+        m.put("name", p.getPipelineName());
+        m.put("state", "WAITING");
+        m.put("startTime", p.getLastRunAt() == null ? null : p.getLastRunAt().format(DS_DT));
+        m.put("endTime", null);
+        m.put("pipelineId", p.getId());
+        m.put("pipelineName", p.getPipelineName());
+        m.put("priority", p.getPriority() == null ? "MEDIUM" : p.getPriority());
+        m.put("projectCode", projectCode != null ? projectCode : p.getDsProjectCode());
+        m.put("stateBucket", "WAITING");
+        m.put("virtual", true);
+        m.put("lastMessage", p.getLastMessage());
+        return m;
     }
 
     private int estimatePlannedToday() {

@@ -1059,12 +1059,10 @@ async function saveSchedule() {
     return
   }
   const res = await api.put(`/resource-center/platform/policies/${scheduleEdit.policyId}/schedule`, {
-    scheduleEnabled: scheduleEdit.scheduleEnabled,
+    scheduleEnabled: true,
     scheduleCron: scheduleEdit.scheduleCron,
   })
-  ElMessage.success(scheduleEdit.scheduleEnabled
-    ? `调度已启用，下次执行 ${res.data?.nextRunAt || '-'}`
-    : '调度已关闭')
+  ElMessage.success(`调度已启用，下次执行 ${res.data?.nextRunAt || '-'}`)
   await loadPolicies()
 }
 
@@ -1411,7 +1409,7 @@ onMounted(() => {
                   </el-table-column>
                 </el-table>
               </template>
-              <el-divider content-position="left">纳管表快捷备份（归档/销毁走存储策略）</el-divider>
+              <el-divider content-position="left">纳管表（备份请到「数据备份」配置定时策略）</el-divider>
               <el-table :data="managedTables" stripe size="small">
                 <el-table-column prop="physicalTable" label="物理表" min-width="140" />
                 <el-table-column label="资产类型" width="110">
@@ -1420,11 +1418,6 @@ onMounted(() => {
                 <el-table-column prop="libName" label="所属库" width="140" show-overflow-tooltip />
                 <el-table-column prop="themeName" label="模块/主题" width="140" show-overflow-tooltip />
                 <el-table-column prop="recordCount" label="行数" width="90" />
-                <el-table-column label="操作" width="100">
-                  <template #default="{ row }">
-                    <el-button link type="primary" @click="backupManaged(row.id)">备份</el-button>
-                  </template>
-                </el-table-column>
               </el-table>
             </template>
           </el-tab-pane>
@@ -2019,63 +2012,7 @@ onMounted(() => {
             <RcStorageLifecyclePanel mode="destroy" />
           </el-tab-pane>
           <el-tab-pane label="执行策略管理" name="policy">
-<el-form inline class="portal-inline-form portal-inline-form--block">
-              <el-form-item label="策略名" class="portal-field-md">
-                <el-input v-model="policyForm.policyName" placeholder="生命周期策略名称" />
-              </el-form-item>
-              <el-form-item label="动作" class="portal-field-sm">
-                <el-select v-model="policyForm.actionType">
-                  <el-option :label="statusLabel('BACKUP')" value="BACKUP" />
-                  <el-option :label="statusLabel('ARCHIVE')" value="ARCHIVE" />
-                  <el-option :label="statusLabel('DESTROY')" value="DESTROY" />
-                </el-select>
-              </el-form-item>
-              <el-form-item label="纳管表" class="portal-field-lg">
-                <el-select v-model="policyForm.managedTableId" filterable clearable placeholder="输入表名筛选">
-                  <el-option v-for="t in managedTables" :key="t.id" :label="t.physicalTable" :value="t.id" />
-                </el-select>
-              </el-form-item>
-              <el-form-item v-if="policyForm.actionType !== 'DESTROY'" label="保存天数" class="portal-field-xs">
-                <el-input-number v-model="policyForm.retentionDays" :min="1" :max="3650" controls-position="right" />
-              </el-form-item>
-              <el-form-item v-if="policyForm.actionType === 'BACKUP'" label="存储策略" class="portal-field-sm">
-                <el-select v-model="policyForm.storageStrategy">
-                  <el-option :label="statusLabel('LOCAL')" value="LOCAL" />
-                  <el-option :label="statusLabel('NAS')" value="NAS" />
-                  <el-option :label="statusLabel('OBJECT')" value="OBJECT" />
-                </el-select>
-              </el-form-item>
-              <el-form-item v-if="policyForm.actionType === 'BACKUP'" label="备份库" class="portal-field-lg">
-                <el-select v-model="policyForm.backupLibraryId" filterable clearable placeholder="选择备份库">
-                  <el-option
-                    v-for="l in allLibraries"
-                    :key="l.id"
-                    :label="`${l.libName}（${statusLabel(l.libType)}）`"
-                    :value="l.id"
-                  />
-                </el-select>
-              </el-form-item>
-              <el-form-item v-if="policyForm.actionType === 'BACKUP'" label="表规则" class="portal-field-xl">
-                <el-input v-model="policyForm.tableRule" placeholder="备份表规则说明" />
-              </el-form-item>
-              <el-form-item v-if="policyForm.actionType === 'ARCHIVE'" label="压缩" class="portal-field-xs">
-                <el-switch v-model="policyForm.compressEnabled" />
-              </el-form-item>
-              <el-form-item v-if="policyForm.actionType === 'DESTROY'" label="销毁规则" class="portal-field-xl">
-                <el-input v-model="policyForm.destroyRule" placeholder="销毁规则说明" />
-              </el-form-item>
-              <el-form-item label="周期调度" class="portal-field-xs">
-                <el-switch v-model="policyForm.scheduleEnabled" />
-              </el-form-item>
-              <el-form-item v-if="policyForm.scheduleEnabled" label="执行周期" class="portal-field-cron">
-                <ExecCycleSelect v-model="policyForm.scheduleCron" />
-              </el-form-item>
-              <el-form-item class="portal-form-actions">
-                <el-button type="primary" @click="createPolicy">创建策略</el-button>
-              </el-form-item>
-            </el-form>
-
-            <el-divider content-position="left">调度调整</el-divider>
+            <el-alert type="info" :closable="false" show-icon style="margin-bottom:12px" title="备份 / 归档 / 销毁请在对应 Tab 新增策略并启动周期调度，此处仅查看与调整启停。" />
             <el-form inline class="portal-inline-form portal-inline-form--block">
               <el-form-item label="策略" class="portal-field-lg">
                 <el-select v-model="scheduleEdit.policyId" filterable clearable placeholder="选择已有策略" @change="() => {
@@ -2085,14 +2022,11 @@ onMounted(() => {
                   <el-option v-for="p in policies" :key="p.id" :label="`${p.policyName}（${statusLabel(p.actionType)}）`" :value="p.id" />
                 </el-select>
               </el-form-item>
-              <el-form-item label="启用" class="portal-field-xs">
-                <el-switch v-model="scheduleEdit.scheduleEnabled" />
-              </el-form-item>
               <el-form-item label="执行周期" class="portal-field-cron">
                 <ExecCycleSelect v-model="scheduleEdit.scheduleCron" />
               </el-form-item>
               <el-form-item class="portal-form-actions">
-                <el-button type="primary" @click="saveSchedule">保存调度</el-button>
+                <el-button type="primary" @click="saveSchedule">保存并启用调度</el-button>
               </el-form-item>
             </el-form>
 
@@ -2102,14 +2036,11 @@ onMounted(() => {
               <el-table-column label="动作" width="90">
                 <template #default="{ row }">{{ statusLabel(row.actionType) }}</template>
               </el-table-column>
-              <el-table-column label="纳管表" min-width="140" show-overflow-tooltip>
-                <template #default="{ row }">{{ managedTableLabel(row.managedTableId) }}</template>
-              </el-table-column>
               <el-table-column prop="retentionDays" label="保存天数" width="90" />
-              <el-table-column label="调度" width="150" show-overflow-tooltip>
+              <el-table-column label="执行周期" width="180" show-overflow-tooltip>
                 <template #default="{ row }">
                   <span v-if="row.scheduleEnabled">{{ cycleLabel(row.scheduleCron) }}</span>
-                  <span v-else>手动</span>
+                  <span v-else>-</span>
                 </template>
               </el-table-column>
               <el-table-column label="下次执行" width="170">
@@ -2120,10 +2051,9 @@ onMounted(() => {
                   <el-tag :type="statusTagType(row.status)" size="small">{{ statusLabel(row.status) }}</el-tag>
                 </template>
               </el-table-column>
-              <el-table-column label="操作" width="120" fixed="right">
+              <el-table-column label="操作" width="100" fixed="right">
                 <template #default="{ row }">
                   <el-button link type="primary" @click="pickSchedule(row)">调调度</el-button>
-                  <el-button link type="primary" @click="runPolicy(row.id)">执行</el-button>
                 </template>
               </el-table-column>
             </el-table>

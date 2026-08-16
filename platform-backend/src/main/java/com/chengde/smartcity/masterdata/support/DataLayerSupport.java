@@ -1,5 +1,6 @@
 package com.chengde.smartcity.masterdata.support;
 
+import java.util.List;
 import java.util.Locale;
 import java.util.Set;
 
@@ -14,7 +15,14 @@ public final class DataLayerSupport {
     public static final String DWS = "smart_city_dws";
     public static final String ADS = "smart_city_ads";
 
+    public static final String CONTROL_BAK = "smart_city_bak";
+    public static final String ODS_BAK = "smart_city_ods_bak";
+    public static final String DWD_BAK = "smart_city_dwd_bak";
+    public static final String DWS_BAK = "smart_city_dws_bak";
+    public static final String ADS_BAK = "smart_city_ads_bak";
+
     private static final Set<String> PLATFORM_DBS = Set.of(CONTROL, ODS, DWD, DWS, ADS);
+    private static final Set<String> BACKUP_DBS = Set.of(CONTROL_BAK, ODS_BAK, DWD_BAK, DWS_BAK, ADS_BAK);
 
     private DataLayerSupport() {
     }
@@ -76,6 +84,41 @@ public final class DataLayerSupport {
             return false;
         }
         return PLATFORM_DBS.contains(db.trim().toLowerCase(Locale.ROOT));
+    }
+
+    public static boolean isBackupDatabase(String db) {
+        if (db == null || db.isBlank()) {
+            return false;
+        }
+        return BACKUP_DBS.contains(db.trim().toLowerCase(Locale.ROOT));
+    }
+
+    /** 源库 → 同机备份库名（smart_city_ods → smart_city_ods_bak） */
+    public static String backupDatabaseFor(String sourceDb) {
+        String src = sourceDatabaseOf(sourceDb);
+        if (!isPlatformLayerDb(src)) {
+            throw new IllegalArgumentException("不支持的源库: " + sourceDb);
+        }
+        return src + "_bak";
+    }
+
+    /** 备份库或源库 → 源库名 */
+    public static String sourceDatabaseOf(String dbOrBak) {
+        if (dbOrBak == null || dbOrBak.isBlank()) {
+            return ODS;
+        }
+        String d = dbOrBak.trim().toLowerCase(Locale.ROOT);
+        if (isBackupDatabase(d) && d.endsWith("_bak")) {
+            return d.substring(0, d.length() - 4);
+        }
+        if (isPlatformLayerDb(d)) {
+            return d;
+        }
+        return d;
+    }
+
+    public static List<String> platformSourceDatabases() {
+        return List.of(CONTROL, ODS, DWD, DWS, ADS);
     }
 
     /** 控制面库（smart_city）：平台自身表，不作为数据资产目录内容 */

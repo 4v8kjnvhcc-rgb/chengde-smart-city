@@ -54,6 +54,13 @@ const TYPE_COLOR: Record<string, string> = {
 
 const { loading, loadError, withLoad } = useIngestionLoading()
 
+const props = withDefaults(defineProps<{
+  /** 嵌在其它 PageCard 内时不重复套标题卡片 */
+  embedded?: boolean
+}>(), {
+  embedded: false,
+})
+
 const mode = ref<'PLATFORM' | 'DEPT'>('DEPT')
 const rootOrg = ref<{ id: number | null; orgName: string } | null>(null)
 const orgs = ref<Array<{ id: number; orgName: string; orgCode?: string }>>([])
@@ -66,6 +73,13 @@ const layoutNodes = ref<LayoutNode[]>([])
 const layoutEdges = ref<LayoutEdge[]>([])
 const svgW = ref(1200)
 const svgH = ref(560)
+
+const hintText = computed(() => {
+  if (mode.value === 'PLATFORM' && selectedOrgId.value == null) {
+    return '中心为「承德市高新区」，周围为各部门；点击部门后向右展开部门 → 项目 → 系统 → 数据库 → 数据表 → 数据项 → 数据字典（有关联时）鱼骨图，可用 +/- 展开或折叠。'
+  }
+  return '鱼骨图从左到右：部门 → 项目 → 系统 → 数据库 → 数据表 → 数据项 → 数据字典（若数据项已关联字典）。点击节点旁 +/- 展开或折叠。'
+})
 
 const selectedOrgName = computed(() => {
   if (selectedOrg.value?.orgName) return selectedOrg.value.orgName
@@ -319,7 +333,8 @@ onMounted(() => {
 
 <template>
   <div class="fishbone-page" v-loading="loading">
-    <PageCard title="数据资产图谱分析">
+    <component :is="embedded ? 'div' : PageCard" v-bind="embedded ? {} : { title: '数据资产图谱分析' }">
+      <p class="hint">{{ hintText }}</p>
       <div v-if="loadError" class="error">{{ loadError }}</div>
 
       <div class="toolbar">
@@ -401,7 +416,7 @@ onMounted(() => {
           </g>
         </svg>
       </div>
-    </PageCard>
+    </component>
   </div>
 </template>
 

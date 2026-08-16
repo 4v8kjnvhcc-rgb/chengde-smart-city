@@ -165,6 +165,7 @@ const relationForm = reactive({
   toEntityId: undefined as number | undefined, relationType: 'ONE_TO_MANY',
 })
 const physicalForm = reactive({
+  entityId: undefined as number | undefined,
   physicalCode: '',
   tableName: '',
   datasourceId: -3 as number | undefined,
@@ -243,6 +244,11 @@ function selectDomain(row: DomainRow) {
 
 function selectEntity(row: EntityRow | undefined) {
   selectedEntityId.value = row?.id ?? null
+}
+
+function onPickLogicalEntity(id: number | null) {
+  selectedEntityId.value = id
+  void nextTick(() => syncEntityCurrentRow())
 }
 
 function syncEntityCurrentRow() {
@@ -399,6 +405,7 @@ async function reloadTables() {
 }
 
 async function openPhysicalCreate() {
+  physicalForm.entityId = selectedEntityId.value ?? undefined
   physicalForm.physicalCode = ''
   physicalForm.tableName = ''
   physicalForm.datasourceId = -3
@@ -422,7 +429,11 @@ function onPhysicalTablePick(name: string) {
 }
 
 async function savePhysical() {
-  if (!selectedEntityId.value) return
+  const entityId = physicalForm.entityId ?? selectedEntityId.value
+  if (!entityId) {
+    ElMessage.warning('请选择逻辑实体')
+    return
+  }
   if (!physicalForm.physicalCode.trim() || !physicalForm.tableName.trim()) {
     ElMessage.warning('请填写物理编码并选择表')
     return
@@ -431,12 +442,13 @@ async function savePhysical() {
     ElMessage.warning('请选择来源库')
     return
   }
+  onPickLogicalEntity(entityId)
   await api.post('/governance/fusion/models/physical', {
     physicalCode: physicalForm.physicalCode,
     tableName: physicalForm.tableName,
     datasourceId: physicalForm.datasourceId,
     ddlSql: physicalForm.ddlSql || null,
-    entityId: selectedEntityId.value,
+    entityId,
   })
   physicalDlg.value = false
   ElMessage.success('物理映射已创建')
@@ -444,12 +456,17 @@ async function savePhysical() {
 }
 
 async function importFieldsFromPhysicalForm() {
-  if (!selectedEntityId.value) return
+  const entityId = physicalForm.entityId ?? selectedEntityId.value
+  if (!entityId) {
+    ElMessage.warning('请选择逻辑实体')
+    return
+  }
   if (!physicalForm.tableName || physicalForm.datasourceId == null) {
     ElMessage.warning('请先选择来源库与表')
     return
   }
-  const res = await api.post(`/governance/fusion/models/entities/${selectedEntityId.value}/import-fields`, {
+  onPickLogicalEntity(entityId)
+  const res = await api.post(`/governance/fusion/models/entities/${entityId}/import-fields`, {
     datasourceId: physicalForm.datasourceId,
     tableName: physicalForm.tableName,
   })
@@ -714,60 +731,33 @@ onMounted(async () => {
                 </div>
               </el-tab-pane>
 
-              <el-tab-pane name="fields">
-                <template #label>
-                  <span>字段<span v-if="fields.length" class="tab-count">{{ fields.length }}</span></span>
-                </template>
-                <div v-if="!selectedEntityId" class="pane-empty pane-empty--center">
-                  <el-empty description="请先在「逻辑实体」中选中一个实体" :image-size="64">
-                    <el-button type="primary" @click="detailTab = 'entities'">去选择实体</el-button>
-                  </el-empty>
-                </div>
-                <div v-else class="tab-panel">
-                  <el-form inline class="portal-inline-form portal-inline-form--block">
-                    <el-form-item label="名称/编码" class="portal-field-lg">
-                      <el-input v-model="fieldQuery.keyword" clearable placeholder="字段名称或编码" />
-                    </el-form-item>
-                    <el-form-item label="类型" class="portal-field-md">
-                      <el-select v-model="fieldQuery.dataType" clearable placeholder="全部" filterable allow-create>
-                        <el-option label="VARCHAR" value="VARCHAR" />
-                        <el-option label="BIGINT" value="BIGINT" />
-                        <el-option label="DECIMAL" value="DECIMAL" />
-                        <el-option label="DATETIME" value="DATETIME" />
-                        <el-option label="TEXT" value="TEXT" />
-                      </el-select>
-                    </el-form-item>
-                    <el-form-item class="portal-form-actions">
-                      <el-button type="primary" plain @click="openFieldCreate">新增字段</el-button>
-                    </el-form-item>
-                  </el-form>
-                  <el-table :data="filteredFields" stripe size="small" empty-text="暂无字段，可手工新增或从物理表导入">
-                    <el-table-column prop="fieldCode" label="编码" min-width="120" show-overflow-tooltip />
-                    <el-table-column prop="fieldName" label="名称" min-width="120" show-overflow-tooltip />
-                    <el-table-column prop="dataType" label="类型" width="100" />
-                    <el-table-column label="主键" width="70">
-                      <template #default="{ row }">{{ row.pkFlag ? '是' : '—' }}</template>
-                    </el-table-column>
-                    <el-table-column label="操作" width="88" fixed="right">
-                      <template #default="{ row }">
-                        <el-button link type="danger" @click="removeField(row)">删除</el-button>
-                      </template>
-                    </el-table-column>
-                  </el-table>
-                </div>
-              </el-tab-pane>
-
               <el-tab-pane name="physical">
                 <template #label>
                   <span>物理映射<span v-if="physicals.length" class="tab-count">{{ physicals.length }}</span></span>
                 </template>
-                <div v-if="!selectedEntityId" class="pane-empty pane-empty--center">
-                  <el-empty description="请先在「逻辑实体」中选中一个实体" :image-size="64">
-                    <el-button type="primary" @click="detailTab = 'entities'">去选择实体</el-button>
+                <div v-if="!entities.length" class="pane-empty pane-empty--center">
+                  <el-empty description="请先新增逻辑实体" :image-size="64">
+                    <el-button type="primary" @click="detailTab = 'entities'">去新增实体</el-button>
                   </el-empty>
                 </div>
                 <div v-else class="tab-panel">
                   <el-form inline class="portal-inline-form portal-inline-form--block">
+                    <el-form-item label="逻辑实体" class="portal-field-xl">
+                      <el-select
+                        :model-value="selectedEntityId"
+                        filterable
+                        placeholder="选择逻辑实体"
+                        style="width: 100%"
+                        @change="onPickLogicalEntity"
+                      >
+                        <el-option
+                          v-for="e in entities"
+                          :key="e.id"
+                          :label="`${e.entityName}（${e.entityCode}）`"
+                          :value="e.id"
+                        />
+                      </el-select>
+                    </el-form-item>
                     <el-form-item label="表名/编码" class="portal-field-lg">
                       <el-input v-model="physicalQuery.keyword" clearable placeholder="物理表或编码" />
                     </el-form-item>
@@ -814,6 +804,65 @@ onMounted(async () => {
                     v-model:page-size="physicalPageSize"
                     :total="physicalTotal"
                   />
+                </div>
+              </el-tab-pane>
+
+              <el-tab-pane name="fields">
+                <template #label>
+                  <span>字段<span v-if="fields.length" class="tab-count">{{ fields.length }}</span></span>
+                </template>
+                <div v-if="!entities.length" class="pane-empty pane-empty--center">
+                  <el-empty description="请先新增逻辑实体" :image-size="64">
+                    <el-button type="primary" @click="detailTab = 'entities'">去新增实体</el-button>
+                  </el-empty>
+                </div>
+                <div v-else class="tab-panel">
+                  <el-form inline class="portal-inline-form portal-inline-form--block">
+                    <el-form-item label="逻辑实体" class="portal-field-xl">
+                      <el-select
+                        :model-value="selectedEntityId"
+                        filterable
+                        placeholder="选择逻辑实体"
+                        style="width: 100%"
+                        @change="onPickLogicalEntity"
+                      >
+                        <el-option
+                          v-for="e in entities"
+                          :key="e.id"
+                          :label="`${e.entityName}（${e.entityCode}）`"
+                          :value="e.id"
+                        />
+                      </el-select>
+                    </el-form-item>
+                    <el-form-item label="名称/编码" class="portal-field-lg">
+                      <el-input v-model="fieldQuery.keyword" clearable placeholder="字段名称或编码" />
+                    </el-form-item>
+                    <el-form-item label="类型" class="portal-field-md">
+                      <el-select v-model="fieldQuery.dataType" clearable placeholder="全部" filterable allow-create>
+                        <el-option label="VARCHAR" value="VARCHAR" />
+                        <el-option label="BIGINT" value="BIGINT" />
+                        <el-option label="DECIMAL" value="DECIMAL" />
+                        <el-option label="DATETIME" value="DATETIME" />
+                        <el-option label="TEXT" value="TEXT" />
+                      </el-select>
+                    </el-form-item>
+                    <el-form-item class="portal-form-actions">
+                      <el-button type="primary" plain @click="openFieldCreate">新增字段</el-button>
+                    </el-form-item>
+                  </el-form>
+                  <el-table :data="filteredFields" stripe size="small" empty-text="暂无字段，可手工新增或从物理表导入">
+                    <el-table-column prop="fieldCode" label="编码" min-width="120" show-overflow-tooltip />
+                    <el-table-column prop="fieldName" label="名称" min-width="120" show-overflow-tooltip />
+                    <el-table-column prop="dataType" label="类型" width="100" />
+                    <el-table-column label="主键" width="70">
+                      <template #default="{ row }">{{ row.pkFlag ? '是' : '—' }}</template>
+                    </el-table-column>
+                    <el-table-column label="操作" width="88" fixed="right">
+                      <template #default="{ row }">
+                        <el-button link type="danger" @click="removeField(row)">删除</el-button>
+                      </template>
+                    </el-table-column>
+                  </el-table>
                 </div>
               </el-tab-pane>
             </el-tabs>
@@ -889,6 +938,16 @@ onMounted(async () => {
 
     <el-dialog v-model="physicalDlg" title="物理映射" width="520px">
       <el-form label-width="88px">
+        <el-form-item label="逻辑实体" required>
+          <el-select v-model="physicalForm.entityId" filterable style="width: 100%" placeholder="选择已新增的逻辑实体">
+            <el-option
+              v-for="e in entities"
+              :key="e.id"
+              :label="`${e.entityName}（${e.entityCode}）`"
+              :value="e.id"
+            />
+          </el-select>
+        </el-form-item>
         <el-form-item label="来源库" required>
           <el-select v-model="physicalForm.datasourceId" filterable style="width: 100%" placeholder="主题库优先选 DWS/ADS">
             <el-option-group v-for="g in sourceGroups" :key="g.role" :label="g.label">

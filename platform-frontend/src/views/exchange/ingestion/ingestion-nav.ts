@@ -127,7 +127,7 @@ export const REGISTER_MODULES: IngestionModuleMeta[] = [
   { key: 'm045', mCode: 'M045', label: '数据资产标签管理', subLabel: '标签体系', system: 'register', permission: 'hub:ingestion:register:m045' },
   { key: 'asset-catalog-mgmt', mCode: 'ACM', label: '资产目录管理', subLabel: '查看审核', system: 'register', permission: 'hub:ingestion:register:asset-catalog-mgmt' },
   { key: 'm046', mCode: 'M046', label: '数据资产报告', subLabel: '资产大屏', system: 'register', permission: 'hub:ingestion:register:m046' },
-  { key: 'm047', mCode: 'M047', label: '数据资产图谱分析', subLabel: '表血缘 / 鱼骨图谱', system: 'register', permission: 'hub:ingestion:register:m047' },
+  { key: 'm047', mCode: 'M047', label: '数据资产图谱分析', subLabel: '组织鱼骨图谱', system: 'register', permission: 'hub:ingestion:register:m047' },
   { key: 'm048', mCode: 'M048', label: '访问控制管理', subLabel: '功能/资源/数据权限', system: 'register', permission: 'hub:ingestion:register:m048' },
   { key: 'm049', mCode: 'M049', label: '系统维护管理', subLabel: '外观/邮箱/账号安全', system: 'register', permission: 'hub:ingestion:register:m049' },
   { key: 'm050', mCode: 'M050', label: '数据字典管理', subLabel: '字典管理', system: 'register', permission: 'hub:ingestion:register:m050' },

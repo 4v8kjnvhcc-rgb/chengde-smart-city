@@ -1,7 +1,7 @@
 package com.chengde.smartcity.analysis.service;
 
-import com.chengde.smartcity.analysis.entity.AnaIndicatorTask;
-import com.chengde.smartcity.analysis.mapper.AnaIndicatorTaskMapper;
+import com.chengde.smartcity.analysis.entity.IndJob;
+import com.chengde.smartcity.analysis.mapper.IndJobMapper;
 import com.chengde.smartcity.audit.AuditService;
 import com.chengde.smartcity.common.exception.BusinessException;
 import com.chengde.smartcity.integration.config.IntegrationProperties;
@@ -16,9 +16,6 @@ import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
-/**
- * 指标任务 DolphinScheduler 定时：启动=调度上线，停止=调度下线；到期回调平台执行指标 SQL。
- */
 @Service
 public class IndicatorTaskDsScheduleService {
 
@@ -26,16 +23,16 @@ public class IndicatorTaskDsScheduleService {
     private static final String DS_PROJECT = "chengde_indicator_calc";
 
     private final DolphinSchedulerClient dsClient;
-    private final AnaIndicatorTaskMapper taskMapper;
+    private final IndJobMapper jobMapper;
     private final IntegrationProperties integrationProperties;
     private final AuditService auditService;
 
     public IndicatorTaskDsScheduleService(DolphinSchedulerClient dsClient,
-                                          AnaIndicatorTaskMapper taskMapper,
+                                          IndJobMapper jobMapper,
                                           IntegrationProperties integrationProperties,
                                           AuditService auditService) {
         this.dsClient = dsClient;
-        this.taskMapper = taskMapper;
+        this.jobMapper = jobMapper;
         this.integrationProperties = integrationProperties;
         this.auditService = auditService;
     }
@@ -61,8 +58,9 @@ public class IndicatorTaskDsScheduleService {
     }
 
     @Transactional
-    public Map<String, Object> startSchedule(UserPrincipal operator, AnaIndicatorTask task) {
-        if (task.getScheduleCron() == null || task.getScheduleCron().isBlank()) {
+    public Map<String, Object> startSchedule(UserPrincipal operator, IndJob task) {
+        String cron = resolveCron(task);
+        if (cron == null || cron.isBlank()) {
             throw new BusinessException(400, "请先配置执行周期后再启动");
         }
         if (!"PUBLISHED".equalsIgnoreCase(task.getPublishStatus())) {
@@ -79,19 +77,20 @@ public class IndicatorTaskDsScheduleService {
         String script = buildTriggerScript(task.getId());
         long definitionCode = dsClient.createAndReleaseShellChain(
                 projectCode, defName, List.of("指标计算执行"), List.of(script), tenant);
-        int scheduleId = dsClient.createAndOnlineSchedule(projectCode, definitionCode, task.getScheduleCron());
+        int scheduleId = dsClient.createAndOnlineSchedule(projectCode, definitionCode, cron);
 
         task.setDsProjectCode(projectCode);
         task.setDsDefinitionCode(definitionCode);
         task.setDsScheduleId(scheduleId);
-        task.setScheduleStatus("STARTED");
-        task.setUpdatedAt(LocalDateTime.now());
-        taskMapper.updateById(task);
+        task.setScheduleCron(cron);
+        task.setStatus(3);
+        task.setUpdateTime(LocalDateTime.now());
+        jobMapper.updateById(task);
 
         auditService.log(operator != null ? operator.getUserId() : null,
                 operator != null ? operator.getUsername() : "system",
                 operator != null ? operator.getOrgId() : null,
-                "ANA_IND_TASK_DS_START", "ana_indicator_task", String.valueOf(task.getId()),
+                "ANA_IND_TASK_DS_START", "ind_job", task.getId(),
                 "project=" + projectCode + " def=" + definitionCode + " schedule=" + scheduleId);
 
         Map<String, Object> out = new LinkedHashMap<>();
@@ -104,26 +103,24 @@ public class IndicatorTaskDsScheduleService {
     }
 
     @Transactional
-    public Map<String, Object> stopSchedule(UserPrincipal operator, AnaIndicatorTask task) {
+    public Map<String, Object> stopSchedule(UserPrincipal operator, IndJob task) {
         offlineScheduleQuiet(task);
-        task.setScheduleStatus("STOPPED");
-        task.setUpdatedAt(LocalDateTime.now());
-        taskMapper.updateById(task);
+        task.setStatus(2);
+        task.setUpdateTime(LocalDateTime.now());
+        jobMapper.updateById(task);
         auditService.log(operator != null ? operator.getUserId() : null,
                 operator != null ? operator.getUsername() : "system",
                 operator != null ? operator.getOrgId() : null,
-                "ANA_IND_TASK_DS_STOP", "ana_indicator_task", String.valueOf(task.getId()), "offline");
+                "ANA_IND_TASK_DS_STOP", "ind_job", task.getId(), "offline");
         return Map.of("taskId", task.getId(), "scheduleStatus", "STOPPED");
     }
 
-    /** 手动触发一次 DS 流程实例（不依赖调度上线）。 */
     @Transactional
-    public Map<String, Object> startOnce(UserPrincipal operator, AnaIndicatorTask task) {
+    public Map<String, Object> startOnce(UserPrincipal operator, IndJob task) {
         if (!isDsAvailable()) {
             throw new BusinessException(502, "DolphinScheduler 不可用");
         }
         if (task.getDsProjectCode() == null || task.getDsDefinitionCode() == null) {
-            // 尚未启动过调度：先建流程定义，不上线调度
             long projectCode = dsClient.ensureProject(DS_PROJECT);
             String tenant = dsClient.resolveTenant();
             String defName = "指标计算_" + safeName(task.getTaskName()) + "_" + task.getId();
@@ -132,22 +129,22 @@ public class IndicatorTaskDsScheduleService {
                     projectCode, defName, List.of("指标计算执行"), List.of(script), tenant);
             task.setDsProjectCode(projectCode);
             task.setDsDefinitionCode(definitionCode);
-            task.setUpdatedAt(LocalDateTime.now());
-            taskMapper.updateById(task);
+            task.setUpdateTime(LocalDateTime.now());
+            jobMapper.updateById(task);
         }
         long instanceId = dsClient.startInstance(task.getDsProjectCode(), task.getDsDefinitionCode());
         task.setDsInstanceId(instanceId);
-        task.setUpdatedAt(LocalDateTime.now());
-        taskMapper.updateById(task);
+        task.setUpdateTime(LocalDateTime.now());
+        jobMapper.updateById(task);
         auditService.log(operator != null ? operator.getUserId() : null,
                 operator != null ? operator.getUsername() : "system",
                 operator != null ? operator.getOrgId() : null,
-                "ANA_IND_TASK_DS_RUN", "ana_indicator_task", String.valueOf(task.getId()),
+                "ANA_IND_TASK_DS_RUN", "ind_job", task.getId(),
                 "instance=" + instanceId);
         return Map.of("taskId", task.getId(), "dsInstanceId", instanceId);
     }
 
-    public void offlineScheduleQuiet(AnaIndicatorTask task) {
+    public void offlineScheduleQuiet(IndJob task) {
         if (task.getDsProjectCode() != null && task.getDsScheduleId() != null && isDsAvailable()) {
             try {
                 dsClient.offlineSchedule(task.getDsProjectCode(), task.getDsScheduleId());
@@ -157,7 +154,7 @@ public class IndicatorTaskDsScheduleService {
         }
     }
 
-    public String buildTriggerScript(Long taskId) {
+    public String buildTriggerScript(String taskId) {
         String base = integrationProperties.getDs().getCallbackBaseUrl();
         if (base == null || base.isBlank()) {
             throw new BusinessException(500, "未配置 app.integration.ds.callback-base-url");
@@ -172,6 +169,16 @@ public class IndicatorTaskDsScheduleService {
                 + "-H \"Content-Type: application/json\" "
                 + "-d \"{\\\"dsInstanceId\\\":${system.task.instance.id}}\" "
                 + "|| exit 1";
+    }
+
+    static String resolveCron(IndJob task) {
+        if (task.getScheduleCron() != null && !task.getScheduleCron().isBlank()) {
+            return task.getScheduleCron().trim();
+        }
+        if (task.getCronCodeId() != null && task.getCronCodeId() == 1) {
+            return "0 0 2 * * ?";
+        }
+        return "0 0 2 1 * ?";
     }
 
     private String safeName(String name) {

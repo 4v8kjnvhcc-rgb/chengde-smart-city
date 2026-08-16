@@ -1,7 +1,7 @@
 -- 手工补丁：认证中心说明文案去一期/扩展位/M 码等内部标注
 -- 目标库：smart_city（控制面）
--- 可重复执行；与 Flyway V230__clean_auth_config_labels.sql 同内容
--- 若环境已跑过 V230，无需再手工执行
+-- 可重复执行；与 Flyway V232__clean_auth_config_labels.sql 同内容
+-- 若环境已跑过 V232，无需再手工执行
 
 UPDATE sys_dict_item i
 INNER JOIN sys_dict d ON d.id = i.dict_id AND d.dict_code = 'AUTH'

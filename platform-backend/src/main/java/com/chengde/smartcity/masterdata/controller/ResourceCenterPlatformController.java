@@ -127,7 +127,8 @@ public class ResourceCenterPlatformController {
         if (body != null && body.get("retentionDays") != null) {
             days = Integer.valueOf(String.valueOf(body.get("retentionDays")));
         }
-        return ApiResponse.ok(service.runLogicalBackup(principal, id, days));
+        throw new com.chengde.smartcity.common.exception.BusinessException(400,
+                "请到「数据备份」配置定时策略，不再支持对纳管表立即备份");
     }
 
     @GetMapping("/partition/overview")
@@ -241,7 +242,20 @@ public class ResourceCenterPlatformController {
     @PreAuthorize("isAuthenticated()")
     public ApiResponse<Map<String, Object>> executePolicy(@AuthenticationPrincipal UserPrincipal principal,
                                                           @PathVariable Long id) {
-        return ApiResponse.ok(service.executePolicy(principal, id));
+        throw new com.chengde.smartcity.common.exception.BusinessException(400,
+                "备份/归档/销毁仅支持定时执行，请配置执行周期并启动调度");
+    }
+
+    @GetMapping("/lifecycle/databases")
+    @PreAuthorize("isAuthenticated()")
+    public ApiResponse<List<Map<String, String>>> lifecycleDatabases() {
+        return ApiResponse.ok(service.listLifecycleDatabases());
+    }
+
+    @GetMapping("/lifecycle/tables")
+    @PreAuthorize("isAuthenticated()")
+    public ApiResponse<List<String>> lifecycleTables(@RequestParam String database) {
+        return ApiResponse.ok(service.listLifecycleTables(database));
     }
 
     @PostMapping("/policies/{id}/schedule/start")

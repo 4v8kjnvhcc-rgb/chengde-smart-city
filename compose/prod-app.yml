@@ -80,12 +80,18 @@ services:
       JAVA_OPTS: ${BACKEND_JAVA_OPTS:--Xms1g -Xmx3g}
       # 容器内路径；必须与下方宿主机绑定挂载目标一致
       APP_UPLOAD_DIR: ${APP_UPLOAD_DIR:-/data/uploads}
+      APP_ARCHIVE_DIR: ${APP_ARCHIVE_DIR:-/data/archives}
+      ARCHIVE_HOST_DIR: ${ARCHIVE_HOST_DIR:-/data/smart-city/archives}
     ports:
       - "${BACKEND_PUBLISH_PORT:-8080}:8080"
     volumes:
       # 宿主机磁盘永久落盘（勿用仅容器内路径；重建容器不丢文件）
-      # .57 上先: mkdir -p /data/smart-city/uploads && chmod 755 /data/smart-city/uploads
+      # .57 上先 mkdir，并 chown 10001:10001（backend USER appuser，非 root）
+      # mkdir -p /data/smart-city/uploads /data/smart-city/archives
+      # chown 10001:10001 /data/smart-city/uploads /data/smart-city/archives
       - ${UPLOAD_HOST_DIR:-/data/smart-city/uploads}:/data/uploads
+      # 归档文件落宿主机盘（勿写容器可写层）
+      - ${ARCHIVE_HOST_DIR:-/data/smart-city/archives}:/data/archives
     healthcheck:
       test: ["CMD-SHELL", "curl -sf http://127.0.0.1:8080/actuator/health || exit 1"]
       interval: 20s

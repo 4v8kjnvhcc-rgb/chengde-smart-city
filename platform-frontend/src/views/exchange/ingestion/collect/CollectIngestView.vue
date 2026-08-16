@@ -330,11 +330,11 @@ function configFields(type: string) {
 
         { key: 'url', label: '接口地址', defaultValue: '', hint: 'https://example.com/api/data', required: true },
 
-        { key: 'method', label: '请求方式', defaultValue: 'GET', hint: 'GET / POST' },
+        { key: 'method', label: '请求方式', defaultValue: '', hint: 'GET / POST' },
 
         { key: 'authHeader', label: '鉴权头', defaultValue: '', hint: '可选，如 Bearer token' },
 
-        { key: 'retryCount', label: '失败重试', defaultValue: '3' },
+        { key: 'retryCount', label: '失败重试', defaultValue: '', hint: '如 3' },
 
       ]
 
@@ -356,9 +356,9 @@ function configFields(type: string) {
 
         { key: 'ftpHost', label: '文件主机', defaultValue: '', hint: 'FTP/对象存储入口' },
 
-        { key: 'storagePath', label: '存储路径', defaultValue: '/data/unstruct', required: true },
+        { key: 'storagePath', label: '存储路径', defaultValue: '', hint: '如 /data/unstruct', required: true },
 
-        { key: 'filePattern', label: '文件匹配', defaultValue: '*.*', hint: '如 *.pdf / *.jpg' },
+        { key: 'filePattern', label: '文件匹配', defaultValue: '', hint: '如 *.pdf / *.jpg' },
 
       ]
 
@@ -370,7 +370,7 @@ function configFields(type: string) {
 
         { key: 'topic', label: 'Topic', defaultValue: '', required: true },
 
-        { key: 'dataFormat', label: '数据格式', defaultValue: 'json', hint: 'json / xml' },
+        { key: 'dataFormat', label: '数据格式', defaultValue: '', hint: 'json / xml' },
 
       ]
 

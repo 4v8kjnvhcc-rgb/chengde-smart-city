@@ -75,10 +75,11 @@ public class LayerJdbcSupport {
     }
 
     private LayerDatabaseProperties.Endpoint inheritEndpoint(String db) {
-        if (DataLayerSupport.DWD.equals(db)) {
+        String src = DataLayerSupport.sourceDatabaseOf(db);
+        if (DataLayerSupport.DWD.equals(src)) {
             return layerProps.getOds();
         }
-        if (DataLayerSupport.ADS.equals(db)) {
+        if (DataLayerSupport.ADS.equals(src)) {
             return layerProps.getDws();
         }
         return new LayerDatabaseProperties.Endpoint();
@@ -250,8 +251,10 @@ public class LayerJdbcSupport {
             return DataLayerSupport.ODS;
         }
         String t = databaseOrLayer.trim();
-        if (DataLayerSupport.isPlatformLayerDb(t) || DataLayerSupport.CONTROL.equalsIgnoreCase(t)) {
-            return t.toLowerCase(Locale.ROOT);
+        String lower = t.toLowerCase(Locale.ROOT);
+        if (DataLayerSupport.isPlatformLayerDb(lower) || DataLayerSupport.isBackupDatabase(lower)
+                || DataLayerSupport.CONTROL.equalsIgnoreCase(t)) {
+            return lower;
         }
         String upper = t.toUpperCase(Locale.ROOT);
         if ("ODS".equals(upper) || "DWD".equals(upper) || "DWS".equals(upper)
@@ -259,6 +262,45 @@ public class LayerJdbcSupport {
             return DataLayerSupport.databaseForLayer(upper);
         }
         return DataLayerSupport.databaseForLayer(DataLayerSupport.layerForTableName(t));
+    }
+
+    public List<String> listBaseTables(String database) {
+        String db = normalizeDatabase(database);
+        List<String> names = new ArrayList<>();
+        try (Connection conn = open(db);
+             PreparedStatement ps = conn.prepareStatement(
+                     "SELECT TABLE_NAME FROM information_schema.TABLES "
+                             + "WHERE TABLE_SCHEMA = ? AND TABLE_TYPE = 'BASE TABLE' "
+                             + "AND TABLE_NAME NOT LIKE 'rc_restore_%' "
+                             + "ORDER BY TABLE_NAME")) {
+            ps.setString(1, db);
+            try (ResultSet rs = ps.executeQuery()) {
+                while (rs.next()) {
+                    names.add(rs.getString(1));
+                }
+            }
+        } catch (BusinessException e) {
+            throw e;
+        } catch (Exception e) {
+            throw new BusinessException(502, "列出库表失败 " + db + " — " + e.getMessage());
+        }
+        return names;
+    }
+
+    /** 在同源实例上 CREATE DATABASE（备份库尚未存在时不能先 open 备份库名）。 */
+    public void ensureDatabase(String database) {
+        String db = normalizeDatabase(database);
+        String peer = DataLayerSupport.isBackupDatabase(db)
+                ? DataLayerSupport.sourceDatabaseOf(db)
+                : db;
+        try (Connection conn = open(peer); Statement st = conn.createStatement()) {
+            st.execute("CREATE DATABASE IF NOT EXISTS `" + sanitizeIdent(db)
+                    + "` DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci");
+        } catch (BusinessException e) {
+            throw e;
+        } catch (Exception e) {
+            throw new BusinessException(500, "创建库失败 " + db + " — " + e.getMessage());
+        }
     }
 
     private Fallback fallback() {

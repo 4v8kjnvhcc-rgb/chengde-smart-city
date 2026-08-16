@@ -47,6 +47,7 @@ const STATUS_ZH: Record<string, string> = {
   CONFIGURED: '已配置',
   RUNNING: '运行中',
   SUCCESS: '成功',
+  DESTROYED: '已销毁',
   ALL_SUCCESS: '全部成功',
   PARTIAL: '部分成功',
   NONE: '未执行',
@@ -350,6 +351,8 @@ const STATUS_ZH: Record<string, string> = {
   SELECT: '查询',
   FORM: '表单',
   LIST: '列表',
+  UNIT: '单元',
+  COMPOSITE: '复合',
   // 供需清单
   SUPPLY: '供给',
   DEMAND: '需求',
@@ -574,7 +577,7 @@ export function statusTagType(value: unknown): 'success' | 'warning' | 'info' | 
   if (['REJECTED', 'FAILED', 'ERROR', 'FATAL', 'CANCELLED', 'ABNORMAL', 'EXPIRED', 'RETURNED', 'STOPPED', 'UNMAPPED', 'UNMATCHED', 'CRITICAL', 'BLOCKED', 'MISSING', 'HIGH', 'DOWN', 'FAIL', 'NEGATIVE', 'PROBLEM', 'ABANDONED'].includes(key)) {
     return 'danger'
   }
-  if (['INACTIVE', 'DISABLED', 'OFFLINE', 'CLOSED', 'WITHDRAWN', 'ARCHIVED', 'STUB', 'EXTERNAL', 'SKIPPED', 'UNTESTED', 'LOW'].includes(key)) {
+  if (['INACTIVE', 'DISABLED', 'OFFLINE', 'CLOSED', 'WITHDRAWN', 'ARCHIVED', 'DESTROYED', 'STUB', 'EXTERNAL', 'SKIPPED', 'UNTESTED', 'LOW'].includes(key)) {
     return 'info'
   }
   return 'info'

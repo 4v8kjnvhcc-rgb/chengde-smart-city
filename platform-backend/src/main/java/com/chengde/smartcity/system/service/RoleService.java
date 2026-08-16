@@ -10,7 +10,9 @@ import com.chengde.smartcity.system.dto.RoleMenuAssignRequest;
 import com.chengde.smartcity.system.dto.RoleUpdateRequest;
 import com.chengde.smartcity.system.entity.SysRole;
 import com.chengde.smartcity.system.mapper.SysRoleMapper;
+import java.util.HashSet;
 import java.util.List;
+import java.util.Set;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.jdbc.core.JdbcTemplate;
@@ -129,8 +131,14 @@ public class RoleService {
                     roleId);
             log.info("SYSTEM_ADMIN menus forced to full set by {}", operator.getUsername());
         } else {
+            // 只持久化叶子/空目录：全选时前端可能把有下级的父 id 一并提交；
+            // 父节点若 visible=0（Hub 壳），用户菜单树含该父后侧栏会按血缘整枝裁掉。
+            Set<Long> parentsWithChildren = new HashSet<>(jdbcTemplate.queryForList(
+                    "SELECT DISTINCT parent_id FROM sys_menu WHERE parent_id IS NOT NULL AND parent_id <> 0 "
+                            + "AND IFNULL(status,1) <> 0",
+                    Long.class));
             for (Long menuId : request.menuIds()) {
-                if (menuId == null) {
+                if (menuId == null || parentsWithChildren.contains(menuId)) {
                     continue;
                 }
                 jdbcTemplate.update("INSERT INTO sys_role_menu (role_id, menu_id) VALUES (?, ?)", roleId, menuId);
