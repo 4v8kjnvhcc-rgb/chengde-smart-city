@@ -8,6 +8,7 @@ import PortalPagination from '@/components/common/PortalPagination.vue'
 import { useClientPager } from '@/composables/useClientPager'
 import { statusLabel } from '@/utils/status-label'
 import { leafKeysForTreeCheck } from '@/utils/menu-tree-check'
+import { useAuthStore } from '@/stores/auth'
 
 interface Role {
   id: number
@@ -32,6 +33,7 @@ interface TreeNode {
   children?: TreeNode[]
 }
 
+const auth = useAuthStore()
 const roles = ref<Role[]>([])
 const loading = ref(false)
 const keyword = ref('')
@@ -227,6 +229,7 @@ async function saveMenus() {
     // 只存叶子/空目录；全选时 Element 会把有下级的父 id 一并返回，入库后 Hub 祖先 visible=0 会裁掉子项
     const menuIds = leafKeysForTreeCheck(menuFlatRows.value, checked)
     await api.put(`/system/roles/${currentRoleId.value}/menus`, { menuIds })
+    await auth.fetchProfile()
     ElMessage.success('菜单权限已保存')
     menuDialogVisible.value = false
   } catch (e: unknown) {

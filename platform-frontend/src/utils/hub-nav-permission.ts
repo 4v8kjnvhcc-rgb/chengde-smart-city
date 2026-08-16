@@ -3,9 +3,9 @@ import type { MenuNode } from '@/stores/auth'
 
 /**
  * 按角色 permission 过滤 Hub 侧栏，使展示与「配置菜单」勾选一致。
- * - 叶子：须命中 permissionMap[key]，或任意前缀匹配（如父级 permission）
+ * - 叶子：必须命中 permissionMap[key]（未映射则隐藏）
  * - 分组：任一子项可见则保留
- * - 无映射的叶子：有任一同前缀 permission 时可见（宽松兜底）；完全无 map 则对超管外隐藏
+ * - 超级管理员（sys_admin）不裁剪
  */
 export function filterHubNavByPermissions(
   items: HubNavItem[],
@@ -20,10 +20,7 @@ export function filterHubNavByPermissions(
   const allowed = (key: string): boolean => {
     const mapped = permissionByNavKey[key]
     if (mapped == null) {
-      // 未配置映射：若存在同 key 尾缀的 permission 则放行（兼容扩展）
-      for (const p of perms) {
-        if (p.endsWith(`:${key}`) || p.includes(`:${key}:`) || p.includes(`.${key}`)) return true
-      }
+      // 未配置映射的叶子不放行，避免「勾选其它项却多出侧栏」
       return false
     }
     const codes = Array.isArray(mapped) ? mapped : [mapped]
@@ -51,9 +48,10 @@ export function filterHubNavByPermissions(
 }
 
 /**
- * 按 sys_menu.visible 过滤 Hub 侧栏（对超管同样生效）。
- * 叶子命中 path?tab=key 或 permission 映射；叶子自身 visible=0 则隐藏。
- * Hub 页壳 / Hub 分组目录 visible=0 仅表示不进门户顶栏，祖先隐藏不阻断侧栏子项。
+ * 按用户已授权菜单树过滤 Hub 侧栏（对超管同样生效）。
+ * - 叶子必须出现在 menus/me（角色勾选入库的菜单）中，否则隐藏——避免权限码被 UNION/缓存放大后侧栏多出未勾选项
+ * - 叶子命中 path?tab=key 或 permission 映射；叶子自身 visible=0 则隐藏
+ * - Hub 页壳 / Hub 分组目录 visible=0 仅表示不进门户顶栏，祖先隐藏不阻断侧栏子项
  */
 export function filterHubNavByMenuVisible(
   items: HubNavItem[],
@@ -73,14 +71,16 @@ export function filterHubNavByMenuVisible(
   }
   walkMenu(menus)
 
-  /** Hub 顶栏壳 / 分组：visible=0 不进门户，不参与 Hub 侧栏血缘隐藏 */
+  /** Hub 顶栏壳 / 分组 / 带 tab 的侧栏叶子：visible=0 不进门户，侧栏显隐由角色勾选决定 */
   const isHubChromeOnly = (node: MenuNode | undefined): boolean => {
     if (!node || node.integrationType !== 'hub') return false
     if (node.id === 13 || node.id === 14) return true
     if (node.menuType === 1) return true
-    const base = (node.path || '').split('?')[0]?.split('#')[0] || ''
-    const q = (node.path || '').includes('?')
-    if (q) return false
+    const p = node.path || ''
+    if (p.includes('?tab=') || p.includes('&tab=') || p.includes('?module=') || p.includes('&module=')) {
+      return true
+    }
+    const base = p.split('?')[0]?.split('#')[0] || ''
     return (
       /^\/(governance|resource|unstructured|ingestion|analytics\/(support|bi|population|legal-entity|macro|key-domains))$/.test(
         base,
@@ -115,7 +115,12 @@ export function filterHubNavByMenuVisible(
     return flat.find((m) => !!m.permission && codes.includes(m.permission))
   }
 
-  const isHidden = (key: string): boolean => lineageHidden(resolveMenu(key))
+  const isHidden = (key: string): boolean => {
+    const node = resolveMenu(key)
+    // 用户菜单树里没有对应项 = 角色未勾选，即使 permission 列表里有同名码也不进侧栏
+    if (!node) return true
+    return lineageHidden(node)
+  }
 
   const walk = (nodes: HubNavItem[]): HubNavItem[] => {
     const out: HubNavItem[] = []
@@ -196,6 +201,7 @@ export const SUPPORT_NAV_PERMISSIONS: Record<string, string | string[]> = {
   'sys.tags': 'hub:analytics:support:sys:tags',
   'sys.builtin': 'hub:analytics:support:sys:builtin',
   'audit.log': 'hub:analytics:support:audit:log',
+  'audit.runtime': 'hub:analytics:support:audit:runtime',
   'audit.access': 'hub:analytics:support:audit:access',
   'audit.security': 'hub:analytics:support:audit:security',
 }

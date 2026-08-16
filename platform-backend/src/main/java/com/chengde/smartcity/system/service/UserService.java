@@ -5,12 +5,14 @@ import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.chengde.smartcity.audit.AuditService;
 import com.chengde.smartcity.auth.TransportCryptoService;
 import com.chengde.smartcity.common.exception.BusinessException;
+import com.chengde.smartcity.security.SecurityUserDetailsService;
 import com.chengde.smartcity.security.UserPrincipal;
 import com.chengde.smartcity.system.dto.UserCreateRequest;
 import com.chengde.smartcity.system.dto.UserListItem;
 import com.chengde.smartcity.system.dto.UserUpdateRequest;
 import com.chengde.smartcity.system.entity.SysUser;
 import com.chengde.smartcity.system.mapper.SysUserMapper;
+import org.springframework.context.annotation.Lazy;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
@@ -30,15 +32,18 @@ public class UserService {
     private final AuditService auditService;
     private final JdbcTemplate jdbcTemplate;
     private final TransportCryptoService transportCryptoService;
+    private final SecurityUserDetailsService userDetailsService;
 
     public UserService(SysUserMapper userMapper, PasswordEncoder passwordEncoder,
                        AuditService auditService, JdbcTemplate jdbcTemplate,
-                       TransportCryptoService transportCryptoService) {
+                       TransportCryptoService transportCryptoService,
+                       @Lazy SecurityUserDetailsService userDetailsService) {
         this.userMapper = userMapper;
         this.passwordEncoder = passwordEncoder;
         this.auditService = auditService;
         this.jdbcTemplate = jdbcTemplate;
         this.transportCryptoService = transportCryptoService;
+        this.userDetailsService = userDetailsService;
     }
 
     public Page<SysUser> page(UserPrincipal operator, int page, int size, String keyword) {
@@ -132,6 +137,7 @@ public class UserService {
         }
         auditService.log(operator.getUserId(), operator.getUsername(), operator.getOrgId(),
                 "USER_CREATE", "sys_user", String.valueOf(user.getId()), req.username());
+        userDetailsService.evictPrincipalCache(user.getId());
         return user.getId();
     }
 
@@ -160,6 +166,7 @@ public class UserService {
         }
         auditService.log(operator.getUserId(), operator.getUsername(), operator.getOrgId(),
                 "USER_UPDATE", "sys_user", String.valueOf(id), user.getUsername());
+        userDetailsService.evictPrincipalCache(id);
     }
 
     @Transactional
@@ -213,6 +220,7 @@ public class UserService {
         userMapper.deleteById(id);
         auditService.log(operator.getUserId(), operator.getUsername(), operator.getOrgId(),
                 "USER_DELETE", "sys_user", String.valueOf(id), user.getUsername());
+        userDetailsService.evictPrincipalCache(id);
     }
 
     public void assertOrgAccess(UserPrincipal operator, Long targetOrgId) {
