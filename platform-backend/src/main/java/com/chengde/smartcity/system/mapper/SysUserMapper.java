@@ -35,7 +35,6 @@ public interface SysUserMapper extends BaseMapper<SysUser> {
                 AND b.menu_type = 3
                 AND b.permission IS NOT NULL AND b.permission <> ''
               UNION
-              -- 旧 UUM / system:* 按钮权：有通用支撑对应页时仍放行（兼容 @PreAuthorize）
               SELECT map.old_perm AS permission
               FROM sys_role_menu rm
               JOIN sys_user_role ur ON rm.role_id = ur.role_id
@@ -63,20 +62,6 @@ public interface SysUserMapper extends BaseMapper<SysUser> {
                 SELECT 'system:exchange:assessment-config', 'hub:application:assessment:config'
               ) map ON map.new_perm = m.permission
               WHERE ur.user_id = #{userId}
-              UNION
-              -- 勾选「平台管理」一级入口：等同进入统一用户管理系统（侧栏 permission）
-              SELECT m.permission AS permission
-              FROM sys_menu m
-              WHERE m.status = 1
-                AND m.permission IS NOT NULL AND m.permission <> ''
-                AND m.permission LIKE 'hub:analytics:support%'
-                AND EXISTS (
-                  SELECT 1
-                  FROM sys_role_menu rm
-                  JOIN sys_user_role ur ON rm.role_id = ur.role_id
-                  WHERE ur.user_id = #{userId}
-                    AND rm.menu_id = 19
-                )
             ) x
             """)
     List<String> findPermissionsByUserId(Long userId);

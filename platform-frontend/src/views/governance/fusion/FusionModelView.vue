@@ -508,12 +508,11 @@ async function importFieldsFromRow(row: PhysicalRow) {
   await loadEntityDetail()
 }
 
-/** 真实落主题库：委托加工共享黄金路径（非本页第三引擎） */
+/** 真实落主题库：跳转融合任务运行（加工/直通共享黄金路径页已下线） */
 async function goProcessedShare(row?: PhysicalRow) {
   const q: Record<string, string> = {
     tab: 'model',
     mSub: 'execute',
-    execTab: 'processed-share',
   }
   if (row?.tableName) q.hintTable = row.tableName
   await router.push({ path: '/governance', query: q })

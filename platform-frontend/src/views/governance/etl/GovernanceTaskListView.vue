@@ -7,6 +7,7 @@ import PageCard from '@/components/common/PageCard.vue'
 import PortalPagination from '@/components/common/PortalPagination.vue'
 import { useClientPager } from '@/composables/useClientPager'
 import { statusLabel, statusTagType } from '@/utils/status-label'
+import { formatDateTime } from '@/utils/datetime'
 import ExecCycleSelect from '@/views/system/ExecCycleSelect.vue'
 import MetaDataSourcePickerDialog from '@/components/common/MetaDataSourcePickerDialog.vue'
 import type { MetaBindSource } from '@/utils/meta-datasource-conn'
@@ -641,6 +642,46 @@ async function batchDelete() {
   }
 }
 
+const batchScheduleLoading = ref(false)
+
+async function batchScheduleAction(action: 'start' | 'stop') {
+  if (!selectedIds.value.length) {
+    ElMessage.warning('请先勾选任务')
+    return
+  }
+  const label = action === 'start' ? '启动' : '暂停'
+  await ElMessageBox.confirm(
+    `确认对选中的 ${selectedIds.value.length} 个任务批量${label}定时？`,
+    `批量${label}`,
+    { type: 'warning' },
+  )
+  batchScheduleLoading.value = true
+  let ok = 0
+  let fail = 0
+  let firstError = ''
+  const path = action === 'start' ? 'start' : 'stop'
+  for (const id of [...selectedIds.value]) {
+    const row = tasks.value.find((t) => t.id === id)
+    const name = row?.taskName || String(id)
+    try {
+      await api.post(`/governance/gov-tasks/${id}/schedule/${path}`)
+      ok++
+    } catch (e: unknown) {
+      fail++
+      const msg = (e as { response?: { data?: { message?: string } } })?.response?.data?.message
+      if (!firstError) firstError = `${name}：${msg || '失败'}`
+    }
+  }
+  batchScheduleLoading.value = false
+  selectedIds.value = []
+  if (fail > 0) {
+    ElMessage.warning(`批量${label}完成：成功 ${ok}，失败 ${fail}${firstError ? `；${firstError}` : ''}`)
+  } else {
+    ElMessage.success(`批量${label}成功（${ok}）`)
+  }
+  await load()
+}
+
 function openSchedule(row: TaskRow) {
   scheduleId.value = row.id
   scheduleForm.scheduleEnabled = !!row.scheduleEnabled
@@ -742,6 +783,7 @@ watch(() => props.mode, () => {
   listQuery.keyword = ''
   listQuery.status = ''
   listQuery.scheduleFlag = ''
+  selectedIds.value = []
   resetTaskPage()
 })
 
@@ -793,6 +835,26 @@ defineExpose({ reload: load })
         >
           批量删除 ({{ selectedIds.length }})
         </el-button>
+        <el-button
+          v-if="mode === 'schedule'"
+          type="success"
+          plain
+          :disabled="selectedIds.length === 0"
+          :loading="batchScheduleLoading"
+          @click="batchScheduleAction('start')"
+        >
+          批量启动
+        </el-button>
+        <el-button
+          v-if="mode === 'schedule'"
+          type="warning"
+          plain
+          :disabled="selectedIds.length === 0"
+          :loading="batchScheduleLoading"
+          @click="batchScheduleAction('stop')"
+        >
+          批量暂停
+        </el-button>
       </el-form-item>
     </el-form>
 
@@ -803,7 +865,7 @@ defineExpose({ reload: load })
       size="small"
       @selection-change="(val: TaskRow[]) => selectedIds = val.map(r => r.id)"
     >
-      <el-table-column v-if="mode === 'mgmt'" type="selection" width="48" />
+      <el-table-column v-if="mode === 'mgmt' || mode === 'schedule'" type="selection" width="48" />
       <el-table-column prop="taskName" label="任务名称" min-width="140" />
       <el-table-column v-if="mode === 'mgmt'" prop="description" label="描述" min-width="120" show-overflow-tooltip />
       <el-table-column v-if="mode === 'mgmt' || mode === 'run'" label="查看数据" width="100">
@@ -853,8 +915,8 @@ defineExpose({ reload: load })
       <el-table-column v-if="mode === 'schedule'" label="调度计划" min-width="160">
         <template #default="{ row }">{{ scheduleModeLabel(row) }}</template>
       </el-table-column>
-      <el-table-column v-if="mode === 'schedule'" prop="nextRunAt" label="下次执行" width="160">
-        <template #default="{ row }">{{ row.nextRunAt || '—' }}</template>
+      <el-table-column v-if="mode === 'schedule'" prop="nextRunAt" label="下次执行" width="170">
+        <template #default="{ row }">{{ formatDateTime(row.nextRunAt) }}</template>
       </el-table-column>
 
       <el-table-column label="操作" :width="mode === 'mgmt' ? 360 : mode === 'run' ? 220 : 160" fixed="right">
@@ -1090,7 +1152,7 @@ defineExpose({ reload: load })
           </el-form-item>
         </template>
         <el-form-item v-if="scheduleForm.nextRunAt" label="下次运行">
-          <span>{{ scheduleForm.nextRunAt }}</span>
+          <span>{{ formatDateTime(scheduleForm.nextRunAt) }}</span>
         </el-form-item>
       </el-form>
       <template #footer>

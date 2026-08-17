@@ -5,12 +5,14 @@ import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.chengde.smartcity.audit.AuditService;
 import com.chengde.smartcity.auth.TransportCryptoService;
 import com.chengde.smartcity.common.exception.BusinessException;
+import com.chengde.smartcity.security.SecurityUserDetailsService;
 import com.chengde.smartcity.security.UserPrincipal;
 import com.chengde.smartcity.system.dto.UserCreateRequest;
 import com.chengde.smartcity.system.dto.UserListItem;
 import com.chengde.smartcity.system.dto.UserUpdateRequest;
 import com.chengde.smartcity.system.entity.SysUser;
 import com.chengde.smartcity.system.mapper.SysUserMapper;
+import org.springframework.context.annotation.Lazy;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.security.crypto.password.PasswordEncoder;
 import org.springframework.stereotype.Service;
@@ -20,25 +22,33 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
 @Service
 public class UserService {
+
+    /** 手机号或国内座机（与前端联系方式校验对齐）。 */
+    private static final Pattern CONTACT_PHONE_PATTERN =
+            Pattern.compile("^(1[3-9]\\d{9}|0\\d{2,3}-?\\d{7,8})$");
 
     private final SysUserMapper userMapper;
     private final PasswordEncoder passwordEncoder;
     private final AuditService auditService;
     private final JdbcTemplate jdbcTemplate;
     private final TransportCryptoService transportCryptoService;
+    private final SecurityUserDetailsService userDetailsService;
 
     public UserService(SysUserMapper userMapper, PasswordEncoder passwordEncoder,
                        AuditService auditService, JdbcTemplate jdbcTemplate,
-                       TransportCryptoService transportCryptoService) {
+                       TransportCryptoService transportCryptoService,
+                       @Lazy SecurityUserDetailsService userDetailsService) {
         this.userMapper = userMapper;
         this.passwordEncoder = passwordEncoder;
         this.auditService = auditService;
         this.jdbcTemplate = jdbcTemplate;
         this.transportCryptoService = transportCryptoService;
+        this.userDetailsService = userDetailsService;
     }
 
     public Page<SysUser> page(UserPrincipal operator, int page, int size, String keyword) {
@@ -115,11 +125,13 @@ public class UserService {
         if (req.phone() == null || req.phone().isBlank()) {
             throw new BusinessException(400, "联系方式不能为空");
         }
+        String phone = req.phone().trim();
+        validateContactPhone(phone);
         SysUser user = new SysUser();
         user.setUsername(req.username());
         user.setPasswordHash(passwordEncoder.encode(plainPassword));
         user.setDisplayName(req.displayName());
-        user.setPhone(req.phone().trim());
+        user.setPhone(phone);
         user.setOrgId(req.orgId());
         user.setStatus(1);
         user.setPasswordChangedAt(LocalDateTime.now());
@@ -132,6 +144,7 @@ public class UserService {
         }
         auditService.log(operator.getUserId(), operator.getUsername(), operator.getOrgId(),
                 "USER_CREATE", "sys_user", String.valueOf(user.getId()), req.username());
+        userDetailsService.evictPrincipalCache(user.getId());
         return user.getId();
     }
 
@@ -160,6 +173,7 @@ public class UserService {
         }
         auditService.log(operator.getUserId(), operator.getUsername(), operator.getOrgId(),
                 "USER_UPDATE", "sys_user", String.valueOf(id), user.getUsername());
+        userDetailsService.evictPrincipalCache(id);
     }
 
     @Transactional
@@ -213,6 +227,7 @@ public class UserService {
         userMapper.deleteById(id);
         auditService.log(operator.getUserId(), operator.getUsername(), operator.getOrgId(),
                 "USER_DELETE", "sys_user", String.valueOf(id), user.getUsername());
+        userDetailsService.evictPrincipalCache(id);
     }
 
     public void assertOrgAccess(UserPrincipal operator, Long targetOrgId) {
@@ -232,6 +247,16 @@ public class UserService {
         boolean hasDigit = password.matches(".*\\d.*");
         if (!hasLetter || !hasDigit) {
             throw new BusinessException(400, "密码须包含字母和数字");
+        }
+    }
+
+    /** 联系方式：手机号或座机。更新接口当前无 phone 字段，创建必校验。 */
+    public void validateContactPhone(String phone) {
+        if (phone == null || phone.isBlank()) {
+            throw new BusinessException(400, "联系方式不能为空");
+        }
+        if (!CONTACT_PHONE_PATTERN.matcher(phone.trim()).matches()) {
+            throw new BusinessException(400, "联系电话格式不对");
         }
     }
 

@@ -303,6 +303,12 @@ public class ResourceCenterPlatformController {
         return ApiResponse.ok(service.listArtifacts(managedTableId));
     }
 
+    @PostMapping("/lifecycle/sync-artifacts")
+    @PreAuthorize("isAuthenticated()")
+    public ApiResponse<Map<String, Object>> syncLifecycleArtifacts() {
+        return ApiResponse.ok(service.syncLifecycleArtifacts());
+    }
+
     @PutMapping("/backups/artifacts/{id}")
     @PreAuthorize("isAuthenticated()")
     public ApiResponse<Void> updateArtifact(@AuthenticationPrincipal UserPrincipal principal,

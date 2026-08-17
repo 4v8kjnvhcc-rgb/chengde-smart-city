@@ -4,7 +4,6 @@ import com.chengde.smartcity.common.api.ApiResponse;
 import com.chengde.smartcity.masterdata.entity.UnsCleanRule;
 import com.chengde.smartcity.masterdata.entity.UnsDocCategory;
 import com.chengde.smartcity.masterdata.entity.UnsDocPipeline;
-import com.chengde.smartcity.masterdata.entity.UnsDocument;
 import com.chengde.smartcity.masterdata.entity.UnsExternalPlatform;
 import com.chengde.smartcity.masterdata.service.UnstructuredCleanService;
 import com.chengde.smartcity.masterdata.service.UnstructuredPlatformService;
@@ -111,10 +110,11 @@ public class UnstructuredPlatformController {
 
     @GetMapping("/documents")
     @PreAuthorize("isAuthenticated()")
-    public ApiResponse<List<UnsDocument>> documents(@RequestParam(required = false) String keyword,
-                                                    @RequestParam(required = false) String publishStatus,
-                                                    @RequestParam(required = false) String categoryCode) {
-        return ApiResponse.ok(service.listDocuments(keyword, publishStatus, categoryCode));
+    public ApiResponse<List<Map<String, Object>>> documents(@RequestParam(required = false) String keyword,
+                                                            @RequestParam(required = false) String publishStatus,
+                                                            @RequestParam(required = false) String categoryCode,
+                                                            @RequestParam(required = false) String sourceType) {
+        return ApiResponse.ok(service.listDocuments(keyword, publishStatus, categoryCode, sourceType));
     }
 
     @PostMapping("/documents")

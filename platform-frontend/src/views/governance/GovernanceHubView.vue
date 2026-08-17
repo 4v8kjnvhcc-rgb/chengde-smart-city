@@ -83,7 +83,7 @@ const NAV_BASE: HubNavItem[] = [
           { key: 'model.clean', label: '数据清洗', subLabel: '多表融合加工→DWS/ADS' },
           { key: 'model.schedule', label: '工作流定时' },
           { key: 'model.workflow', label: '工作流调度' },
-          { key: 'model.execute', label: '任务执行', subLabel: '加工/直通共享' },
+          { key: 'model.execute', label: '任务执行', subLabel: '融合任务运行' },
           { key: 'model.version', label: '版本管理' },
         ],
       },
@@ -288,8 +288,9 @@ function resolveFromRoute() {
     if (raw === 'direct-share' || raw === 'processed-share') {
       activeNav.value = 'model.execute'
       nextTick(() => {
-        const q = { ...route.query, tab: 'model', mSub: 'execute', execTab: raw } as Record<string, string>
+        const q = { ...route.query, tab: 'model', mSub: 'execute' } as Record<string, string>
         delete (q as Record<string, unknown>).procTab
+        delete (q as Record<string, unknown>).execTab
         router.replace({ query: q })
       })
     } else {

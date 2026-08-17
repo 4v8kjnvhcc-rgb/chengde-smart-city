@@ -70,6 +70,7 @@ interface Doc {
   sourceType?: string
   sourceSystem?: string
   sourceUrl?: string
+  landed?: boolean
   indexStatus: string
   publishStatus: string
   processStatus?: string
@@ -146,6 +147,7 @@ interface SearchHit {
   sourceType?: string
   sourceSystem?: string
   sourceUrl?: string
+  landed?: boolean
   createdAt?: string
   updatedAt?: string
   source?: string
@@ -210,7 +212,16 @@ const {
   resetPage: resetCatPage,
 } = useClientPager(categories)
 const docs = ref<Doc[]>([])
-const { page: docPage, pageSize: docPageSize, paged: pagedDocs, total: docTotal, resetPage: resetDocPage } = useClientPager(docs)
+const uploadDocs = computed(() => docs.value.filter((d) => d.sourceType !== 'EXTERNAL'))
+const externalDocs = computed(() => docs.value.filter((d) => d.sourceType === 'EXTERNAL'))
+const { page: docPage, pageSize: docPageSize, paged: pagedDocs, total: docTotal, resetPage: resetDocPage } = useClientPager(uploadDocs)
+const {
+  page: extDocPage,
+  pageSize: extDocPageSize,
+  paged: pagedExternalDocs,
+  total: extDocTotal,
+  resetPage: resetExtDocPage,
+} = useClientPager(externalDocs)
 const metaQuery = reactive({ keyword: '', mediaHint: '', metaStatus: '' })
 const metaFilteredDocs = computed(() => {
   let list = docs.value
@@ -283,7 +294,10 @@ const docForm = reactive({
 const selectedFile = ref<File | null>(null)
 const uploadFileList = ref<UploadUserFile[]>([])
 const filesSourceTab = ref<'upload' | 'external'>('upload')
+/** 外部平台 Tab 内：外部文件 / 平台连接 */
+const extInnerTab = ref<'files' | 'platforms'>('files')
 const docQuery = reactive({ keyword: '', categoryCode: '' })
+const extDocQuery = reactive({ keyword: '', categoryCode: '' })
 const docCreateVisible = ref(false)
 const docCreating = ref(false)
 const externalPlatforms = ref<ExternalPlatform[]>([])
@@ -334,7 +348,9 @@ const docEditing = reactive({
   categoryCode: '',
   description: '',
   tagText: '',
+  sourceType: 'UPLOAD',
   sourceSystem: '',
+  sourceUrl: '',
 })
 const detailVisible = ref(false)
 const detailLoading = ref(false)
@@ -461,13 +477,21 @@ async function loadCategories() {
 }
 
 async function loadDocuments() {
+  const forFiles = activeNav.value === 'files'
+  const useExtQuery = forFiles && filesSourceTab.value === 'external'
   docs.value = (await api.get('/unstructured/platform/documents', {
     params: {
-      keyword: docQuery.keyword || undefined,
-      categoryCode: docQuery.categoryCode || undefined,
+      keyword: forFiles
+        ? ((useExtQuery ? extDocQuery.keyword : docQuery.keyword) || undefined)
+        : undefined,
+      categoryCode: forFiles
+        ? ((useExtQuery ? extDocQuery.categoryCode : docQuery.categoryCode) || undefined)
+        : undefined,
+      sourceType: forFiles ? (useExtQuery ? 'EXTERNAL' : 'UPLOAD') : undefined,
     },
   })).data || []
   resetDocPage()
+  resetExtDocPage()
   resetMetaPage()
   resetProcessDocPage()
 }
@@ -476,6 +500,13 @@ function onResetDocuments() {
   docQuery.keyword = ''
   docQuery.categoryCode = ''
   resetDocPage()
+  void loadDocuments()
+}
+
+function onResetExternalDocuments() {
+  extDocQuery.keyword = ''
+  extDocQuery.categoryCode = ''
+  resetExtDocPage()
   void loadDocuments()
 }
 
@@ -663,9 +694,21 @@ async function deleteExternalPlatform(row: ExternalPlatform) {
 
 async function onFilesSourceTabChange(tab: string | number) {
   if (tab === 'external') {
-    await loadExternalPlatforms()
-  } else if (!docs.value.length || !categories.value.length) {
+    if (extInnerTab.value === 'platforms') {
+      await loadExternalPlatforms()
+    } else {
+      await Promise.all([loadDocuments(), loadCategories(), loadExternalPlatforms()])
+    }
+  } else {
     await Promise.all([loadDocuments(), loadCategories()])
+  }
+}
+
+async function onExtInnerTabChange(tab: string | number) {
+  if (tab === 'platforms') {
+    await loadExternalPlatforms()
+  } else {
+    await Promise.all([loadDocuments(), loadCategories(), loadExternalPlatforms()])
   }
 }
 
@@ -705,7 +748,11 @@ async function loadTabData() {
       await loadCategories()
     } else if (nav === 'files') {
       if (filesSourceTab.value === 'external') {
-        await loadExternalPlatforms()
+        if (extInnerTab.value === 'platforms') {
+          await loadExternalPlatforms()
+        } else {
+          await Promise.all([loadDocuments(), loadCategories(), loadExternalPlatforms()])
+        }
       } else {
         await Promise.all([loadDocuments(), loadCategories()])
       }
@@ -823,7 +870,7 @@ function resetDocForm() {
     contentType: 'application/pdf',
     description: '',
     tagText: '',
-    sourceType: 'UPLOAD',
+    sourceType: filesSourceTab.value === 'external' ? 'EXTERNAL' : 'UPLOAD',
     sourceSystem: '',
     sourceUrl: '',
   })
@@ -831,8 +878,14 @@ function resetDocForm() {
   uploadFileList.value = []
 }
 
-function openDocCreate() {
+async function openDocCreate() {
   resetDocForm()
+  if (filesSourceTab.value === 'external' && !externalPlatforms.value.length) {
+    await loadExternalPlatforms()
+  }
+  if (!categories.value.length) {
+    await loadCategories()
+  }
   docCreateVisible.value = true
 }
 
@@ -895,51 +948,106 @@ async function registerDoc() {
     ElMessage.warning('请选择文件分类')
     return
   }
-  if (!selectedFile.value) {
+  const isExternal = docForm.sourceType === 'EXTERNAL' || filesSourceTab.value === 'external'
+  if (isExternal) {
+    if (!docForm.sourceSystem.trim()) {
+      ElMessage.warning('请选择来源平台')
+      return
+    }
+    if (!docForm.sourceUrl.trim()) {
+      ElMessage.warning('请填写资源地址')
+      return
+    }
+  } else if (!selectedFile.value) {
     ElMessage.warning('请选择要上传的文件')
     return
   }
   docCreating.value = true
   try {
-    const form = new FormData()
-    form.append('file', selectedFile.value)
-    form.append('title', docForm.title.trim())
-    form.append('categoryCode', docForm.categoryCode)
-    form.append('description', docForm.description.trim())
-    form.append('tagJson', tagsToJson(docForm.tagText))
-    form.append('sourceSystem', docForm.sourceSystem.trim())
-    await api.post('/unstructured/platform/documents/upload', form)
+    if (isExternal) {
+      const platform = externalPlatforms.value.find((p) => p.platformName === docForm.sourceSystem.trim())
+      await api.post('/unstructured/platform/documents', {
+        title: docForm.title.trim(),
+        categoryCode: docForm.categoryCode,
+        contentType: docForm.contentType,
+        description: docForm.description.trim() || undefined,
+        tagJson: tagsToJson(docForm.tagText),
+        platformId: platform?.id,
+        sourceSystem: docForm.sourceSystem.trim(),
+        sourceUrl: docForm.sourceUrl.trim(),
+        sourceType: 'EXTERNAL',
+      })
+    } else {
+      const form = new FormData()
+      form.append('file', selectedFile.value!)
+      form.append('title', docForm.title.trim())
+      form.append('categoryCode', docForm.categoryCode)
+      form.append('description', docForm.description.trim())
+      form.append('tagJson', tagsToJson(docForm.tagText))
+      await api.post('/unstructured/platform/documents/upload', form)
+    }
     ElMessage.success('文件资源已登记')
     docCreateVisible.value = false
     resetDocForm()
+    if (isExternal) {
+      filesSourceTab.value = 'external'
+      extInnerTab.value = 'files'
+    }
     await loadDocuments()
     overviewLoaded = false
     await loadOverview()
+  } catch (e) {
+    ElMessage.error(e instanceof Error ? e.message : '登记失败')
   } finally {
     docCreating.value = false
   }
 }
 
-function openDocEdit(row: Doc) {
+async function openDocEdit(row: Doc) {
   Object.assign(docEditing, {
     id: row.id,
     title: row.title,
     categoryCode: row.categoryCode || '',
     description: row.description || '',
     tagText: tagsLabel(row.tagJson) === '—' ? '' : tagsLabel(row.tagJson),
+    sourceType: row.sourceType || 'UPLOAD',
     sourceSystem: row.sourceSystem || '',
+    sourceUrl: row.sourceUrl || '',
   })
+  if (row.sourceType === 'EXTERNAL' && !externalPlatforms.value.length) {
+    await loadExternalPlatforms()
+  }
   docDialogVisible.value = true
 }
 
 async function saveDocEdit() {
-  await api.put(`/unstructured/platform/documents/${docEditing.id}`, {
+  if (!docEditing.title.trim()) {
+    ElMessage.warning('请填写文档标题')
+    return
+  }
+  if (!docEditing.categoryCode) {
+    ElMessage.warning('请选择文件分类')
+    return
+  }
+  const body: Record<string, string> = {
     title: docEditing.title.trim(),
     categoryCode: docEditing.categoryCode,
     description: docEditing.description.trim(),
     tagJson: tagsToJson(docEditing.tagText),
-    sourceSystem: docEditing.sourceSystem.trim(),
-  })
+  }
+  if (docEditing.sourceType === 'EXTERNAL') {
+    if (!docEditing.sourceSystem.trim()) {
+      ElMessage.warning('请选择来源平台')
+      return
+    }
+    if (!docEditing.sourceUrl.trim()) {
+      ElMessage.warning('请填写资源地址')
+      return
+    }
+    body.sourceSystem = docEditing.sourceSystem.trim()
+    body.sourceUrl = docEditing.sourceUrl.trim()
+  }
+  await api.put(`/unstructured/platform/documents/${docEditing.id}`, body)
   ElMessage.success('文件资源已更新')
   docDialogVisible.value = false
   await loadDocuments()
@@ -964,9 +1072,20 @@ async function openDetail(id: number) {
   }
 }
 
+function isDocLanded(row: Doc | SearchHit) {
+  if (typeof row.landed === 'boolean') return row.landed
+  const key = row.storageKey || ''
+  return !!key && !key.startsWith('external://')
+}
+
+function sourceLabel(row: Doc | SearchHit) {
+  if (row.sourceType === 'EXTERNAL') return row.sourceSystem || '外部平台'
+  return '本地上传'
+}
+
 async function accessFile(row: Doc | SearchHit, download = false) {
-  if (row.sourceType === 'EXTERNAL' && row.sourceUrl) {
-    window.open(row.sourceUrl, '_blank', 'noopener,noreferrer')
+  if (!isDocLanded(row)) {
+    ElMessage.warning('还未落盘')
     return
   }
   try {
@@ -975,6 +1094,20 @@ async function accessFile(row: Doc | SearchHit, download = false) {
       responseType: 'blob',
     })
     const blob = res.data instanceof Blob ? res.data : new Blob([res.data], { type: row.contentType })
+    // 后端业务错误可能以 JSON blob 返回
+    if (blob.type && blob.type.includes('application/json')) {
+      const text = await blob.text()
+      try {
+        const parsed = JSON.parse(text) as { message?: string; msg?: string }
+        const msg = parsed.message || parsed.msg || ''
+        if (msg.includes('还未落盘')) {
+          ElMessage.warning('还未落盘')
+          return
+        }
+      } catch { /* ignore */ }
+      ElMessage.error(download ? '下载失败' : '当前文件格式无法预览或内容不可用')
+      return
+    }
     const url = URL.createObjectURL(blob)
     if (download) {
       const a = document.createElement('a')
@@ -1418,7 +1551,7 @@ onMounted(() => {
                 <template #default="{ row }">{{ mediaLabel(row.contentType) }}</template>
               </el-table-column>
               <el-table-column label="来源" min-width="120" show-overflow-tooltip>
-                <template #default="{ row }">{{ row.sourceSystem || (row.sourceType === 'EXTERNAL' ? '外部平台' : '平台上传') }}</template>
+                <template #default>本地上传</template>
               </el-table-column>
               <el-table-column label="更新时间" width="170">
                 <template #default="{ row }">{{ formatDateTime(row.updatedAt || row.createdAt) }}</template>
@@ -1434,7 +1567,7 @@ onMounted(() => {
               </el-table-column>
             </el-table>
             <PortalPagination
-              v-if="docs.length"
+              v-if="uploadDocs.length"
               v-model:page="docPage"
               v-model:page-size="docPageSize"
               :total="docTotal"
@@ -1442,48 +1575,108 @@ onMounted(() => {
           </el-tab-pane>
 
           <el-tab-pane label="外部平台" name="external">
-            <el-form inline class="portal-inline-form portal-inline-form--block">
-              <el-form-item label="平台名称" class="portal-field-xl">
-                <el-input
-                  v-model="extPlatQuery.platformName"
-                  clearable
-                  placeholder="请输入平台名称"
-                  @keyup.enter="loadExternalPlatforms"
+            <el-tabs v-model="extInnerTab" type="card" class="uns-ext-inner-tabs" @tab-change="onExtInnerTabChange">
+              <el-tab-pane label="外部文件" name="files">
+                <el-form inline class="portal-inline-form portal-inline-form--block">
+                  <el-form-item label="关键词" class="portal-field-lg">
+                    <el-input v-model="extDocQuery.keyword" clearable placeholder="标题或文件名" @keyup.enter="loadDocuments" />
+                  </el-form-item>
+                  <el-form-item label="分类" class="portal-field-md">
+                    <el-select v-model="extDocQuery.categoryCode" clearable placeholder="全部">
+                      <el-option v-for="c in categories" :key="c.id" :label="c.categoryName" :value="c.categoryCode" />
+                    </el-select>
+                  </el-form-item>
+                  <el-form-item class="portal-form-actions">
+                    <el-button type="primary" @click="loadDocuments">查询</el-button>
+                    <el-button @click="onResetExternalDocuments">重置</el-button>
+                    <el-button @click="openDocCreate">新增</el-button>
+                  </el-form-item>
+                </el-form>
+                <el-table :data="pagedExternalDocs" stripe border class="portal-table" size="small">
+                  <el-table-column label="文件资源" min-width="190" show-overflow-tooltip>
+                    <template #default="{ row }">
+                      <el-button link type="primary" @click="openDetail(row.id)">{{ row.title }}</el-button>
+                      <div class="uns-file-sub">{{ row.originalFileName || row.docCode }} · {{ formatSize(row.fileSize) }}</div>
+                    </template>
+                  </el-table-column>
+                  <el-table-column label="分类" width="130" show-overflow-tooltip>
+                    <template #default="{ row }">
+                      {{ categories.find((c) => c.categoryCode === row.categoryCode)?.categoryName || row.categoryCode || '—' }}
+                    </template>
+                  </el-table-column>
+                  <el-table-column label="媒介" width="80">
+                    <template #default="{ row }">{{ mediaLabel(row.contentType) }}</template>
+                  </el-table-column>
+                  <el-table-column label="来源平台" min-width="140" show-overflow-tooltip>
+                    <template #default="{ row }">{{ row.sourceSystem || '—' }}</template>
+                  </el-table-column>
+                  <el-table-column label="更新时间" width="170">
+                    <template #default="{ row }">{{ formatDateTime(row.updatedAt || row.createdAt) }}</template>
+                  </el-table-column>
+                  <el-table-column label="操作" width="300" fixed="right">
+                    <template #default="{ row }">
+                      <el-button link type="primary" size="small" @click="openDetail(row.id)">详情</el-button>
+                      <el-button link type="primary" size="small" @click="openDocEdit(row)">编辑</el-button>
+                      <el-button link type="primary" size="small" @click="accessFile(row, false)">预览</el-button>
+                      <el-button link type="primary" size="small" @click="accessFile(row, true)">下载</el-button>
+                      <el-button link type="danger" size="small" @click="deleteDoc(row)">删除</el-button>
+                    </template>
+                  </el-table-column>
+                </el-table>
+                <el-empty v-if="!externalDocs.length" description="暂无外部文件，请点击「新增」登记" :image-size="72" />
+                <PortalPagination
+                  v-if="externalDocs.length"
+                  v-model:page="extDocPage"
+                  v-model:page-size="extDocPageSize"
+                  :total="extDocTotal"
                 />
-              </el-form-item>
-              <el-form-item class="portal-form-actions">
-                <el-button type="primary" @click="loadExternalPlatforms">查询</el-button>
-                <el-button @click="onResetExternalPlatforms">重置</el-button>
-                <el-button type="primary" @click="openExtPlatCreate">新增</el-button>
-              </el-form-item>
-            </el-form>
-            <el-table :data="pagedExtPlatforms" stripe border class="portal-table" size="small">
-              <el-table-column type="index" label="序号" width="70" :index="extPlatIndex" />
-              <el-table-column prop="platformName" label="平台名称" min-width="180" show-overflow-tooltip />
-              <el-table-column label="对接方式" width="140">
-                <template #default="{ row }">{{ statusLabel(row.connectType) }}</template>
-              </el-table-column>
-              <el-table-column label="同步频率" width="110">
-                <template #default="{ row }">{{ statusLabel(row.syncFrequency) }}</template>
-              </el-table-column>
-              <el-table-column label="状态" width="100">
-                <template #default="{ row }">
-                  <el-tag :type="statusTagType(row.status)" size="small">{{ statusLabel(row.status) }}</el-tag>
-                </template>
-              </el-table-column>
-              <el-table-column label="操作" width="140" fixed="right">
-                <template #default="{ row }">
-                  <el-button link type="primary" @click="openExtPlatEdit(row)">编辑</el-button>
-                  <el-button link type="danger" @click="deleteExternalPlatform(row)">删除</el-button>
-                </template>
-              </el-table-column>
-            </el-table>
-            <PortalPagination
-              v-if="externalPlatforms.length"
-              v-model:page="extPlatPage"
-              v-model:page-size="extPlatPageSize"
-              :total="extPlatTotal"
-            />
+              </el-tab-pane>
+
+              <el-tab-pane label="平台连接" name="platforms">
+                <el-form inline class="portal-inline-form portal-inline-form--block">
+                  <el-form-item label="平台名称" class="portal-field-xl">
+                    <el-input
+                      v-model="extPlatQuery.platformName"
+                      clearable
+                      placeholder="请输入平台名称"
+                      @keyup.enter="loadExternalPlatforms"
+                    />
+                  </el-form-item>
+                  <el-form-item class="portal-form-actions">
+                    <el-button type="primary" @click="loadExternalPlatforms">查询</el-button>
+                    <el-button @click="onResetExternalPlatforms">重置</el-button>
+                    <el-button type="primary" @click="openExtPlatCreate">新增</el-button>
+                  </el-form-item>
+                </el-form>
+                <el-table :data="pagedExtPlatforms" stripe border class="portal-table" size="small">
+                  <el-table-column type="index" label="序号" width="70" :index="extPlatIndex" />
+                  <el-table-column prop="platformName" label="平台名称" min-width="180" show-overflow-tooltip />
+                  <el-table-column label="对接方式" width="140">
+                    <template #default="{ row }">{{ statusLabel(row.connectType) }}</template>
+                  </el-table-column>
+                  <el-table-column label="同步频率" width="110">
+                    <template #default="{ row }">{{ statusLabel(row.syncFrequency) }}</template>
+                  </el-table-column>
+                  <el-table-column label="状态" width="100">
+                    <template #default="{ row }">
+                      <el-tag :type="statusTagType(row.status)" size="small">{{ statusLabel(row.status) }}</el-tag>
+                    </template>
+                  </el-table-column>
+                  <el-table-column label="操作" width="140" fixed="right">
+                    <template #default="{ row }">
+                      <el-button link type="primary" @click="openExtPlatEdit(row)">编辑</el-button>
+                      <el-button link type="danger" @click="deleteExternalPlatform(row)">删除</el-button>
+                    </template>
+                  </el-table-column>
+                </el-table>
+                <PortalPagination
+                  v-if="externalPlatforms.length"
+                  v-model:page="extPlatPage"
+                  v-model:page-size="extPlatPageSize"
+                  :total="extPlatTotal"
+                />
+              </el-tab-pane>
+            </el-tabs>
           </el-tab-pane>
         </el-tabs>
 
@@ -1615,7 +1808,7 @@ onMounted(() => {
 
         <el-dialog
           v-model="docCreateVisible"
-          title="新增本地文件"
+          :title="docForm.sourceType === 'EXTERNAL' ? '新增外部文件' : '新增本地文件'"
           width="620px"
           destroy-on-close
           @closed="resetDocForm"
@@ -1634,10 +1827,38 @@ onMounted(() => {
                 <el-option v-for="m in MEDIA_OPTIONS" :key="m.value" :label="m.label" :value="m.value" />
               </el-select>
             </el-form-item>
-            <el-form-item label="来源平台">
-              <el-input v-model="docForm.sourceSystem" placeholder="可选，如 OA 系统" />
-            </el-form-item>
-            <el-form-item label="选择文件" required>
+            <template v-if="docForm.sourceType === 'EXTERNAL'">
+              <el-form-item label="来源平台" required>
+                <el-select
+                  v-model="docForm.sourceSystem"
+                  placeholder="选择已登记外部平台"
+                  filterable
+                  style="width:100%"
+                >
+                  <el-option
+                    v-for="p in externalPlatforms.filter((x) => !x.status || x.status === 'ACTIVE')"
+                    :key="p.id"
+                    :label="p.platformName"
+                    :value="p.platformName"
+                  />
+                </el-select>
+              </el-form-item>
+              <el-form-item label="资源地址" required>
+                <el-input
+                  v-model="docForm.sourceUrl"
+                  placeholder="外部资源地址或业务键（未落盘亦可登记）"
+                />
+              </el-form-item>
+              <el-alert
+                v-if="!externalPlatforms.length"
+                type="warning"
+                :closable="false"
+                show-icon
+                title="暂无可用平台，请先在「平台连接」中登记外部平台"
+                style="margin-bottom:12px"
+              />
+            </template>
+            <el-form-item v-else label="选择文件" required>
               <el-upload
                 action="#"
                 :auto-upload="false"
@@ -1670,7 +1891,21 @@ onMounted(() => {
                 <el-option v-for="c in categories" :key="c.id" :label="c.categoryName" :value="c.categoryCode" />
               </el-select>
             </el-form-item>
-            <el-form-item label="来源平台"><el-input v-model="docEditing.sourceSystem" /></el-form-item>
+            <template v-if="docEditing.sourceType === 'EXTERNAL'">
+              <el-form-item label="来源平台" required>
+                <el-select v-model="docEditing.sourceSystem" filterable style="width:100%">
+                  <el-option
+                    v-for="p in externalPlatforms.filter((x) => !x.status || x.status === 'ACTIVE')"
+                    :key="p.id"
+                    :label="p.platformName"
+                    :value="p.platformName"
+                  />
+                </el-select>
+              </el-form-item>
+              <el-form-item label="资源地址" required>
+                <el-input v-model="docEditing.sourceUrl" placeholder="外部资源地址或业务键" />
+              </el-form-item>
+            </template>
             <el-form-item label="标签"><el-input v-model="docEditing.tagText" placeholder="多个标签用逗号分隔" /></el-form-item>
             <el-form-item label="描述"><el-input v-model="docEditing.description" type="textarea" :rows="3" /></el-form-item>
           </el-form>
@@ -1769,8 +2004,12 @@ onMounted(() => {
             <el-table-column label="大小" width="100">
               <template #default="{ row }">{{ formatSize(row.fileSize) }}</template>
             </el-table-column>
-            <el-table-column prop="createdAt" label="创建时间" width="160" />
-            <el-table-column prop="updatedAt" label="更新时间" width="160" />
+            <el-table-column label="创建时间" width="170">
+              <template #default="{ row }">{{ formatDateTime(row.createdAt) }}</template>
+            </el-table-column>
+            <el-table-column label="更新时间" width="170">
+              <template #default="{ row }">{{ formatDateTime(row.updatedAt) }}</template>
+            </el-table-column>
             <el-table-column label="发布" width="100">
               <template #default="{ row }">
                 <el-tag :type="statusTagType(row.publishStatus)" size="small">{{ statusLabel(row.publishStatus) }}</el-tag>
@@ -2352,13 +2591,13 @@ onMounted(() => {
               <el-descriptions-item label="文件分类">{{ docDetail.categoryName || docDetail.categoryCode || '—' }}</el-descriptions-item>
               <el-descriptions-item label="文件类型">{{ mediaLabel(docDetail.contentType) }}（{{ docDetail.contentType }}）</el-descriptions-item>
               <el-descriptions-item label="文件大小">{{ formatSize(docDetail.fileSize) }}</el-descriptions-item>
-              <el-descriptions-item label="资源来源">{{ docDetail.sourceSystem || (docDetail.sourceType === 'EXTERNAL' ? '外部平台' : '平台上传') }}</el-descriptions-item>
+              <el-descriptions-item label="资源来源">{{ sourceLabel(docDetail) }}</el-descriptions-item>
               <el-descriptions-item label="发布状态">{{ statusLabel(docDetail.publishStatus) }}</el-descriptions-item>
               <el-descriptions-item label="索引状态">{{ statusLabel(docDetail.indexStatus) }}</el-descriptions-item>
               <el-descriptions-item label="关联标签">{{ tagsLabel(docDetail.tagJson) }}</el-descriptions-item>
               <el-descriptions-item label="文件描述">{{ docDetail.description || '—' }}</el-descriptions-item>
-              <el-descriptions-item label="创建时间">{{ docDetail.createdAt || '—' }}</el-descriptions-item>
-              <el-descriptions-item label="更新时间">{{ docDetail.updatedAt || '—' }}</el-descriptions-item>
+              <el-descriptions-item label="创建时间">{{ formatDateTime(docDetail.createdAt) }}</el-descriptions-item>
+              <el-descriptions-item label="更新时间">{{ formatDateTime(docDetail.updatedAt) }}</el-descriptions-item>
             </el-descriptions>
             <div class="uns-detail-actions">
               <el-button type="primary" @click="accessFile(docDetail, false)">预览文件</el-button>
@@ -2377,6 +2616,12 @@ onMounted(() => {
   min-height: 0;
 }
 .uns-alert {
+  margin-bottom: 12px;
+}
+.uns-ext-inner-tabs {
+  margin-top: 4px;
+}
+.uns-ext-inner-tabs :deep(.el-tabs__header) {
   margin-bottom: 12px;
 }
 .uns-section-bar {

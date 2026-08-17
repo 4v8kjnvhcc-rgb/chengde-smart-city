@@ -99,6 +99,19 @@ public class StorageIntegrationClient {
         }
     }
 
+    /** 是否已在本地落盘（可预览/下载）。外部引用键或无法解析的键视为未落盘。 */
+    public boolean documentExists(String storageKey) {
+        if (storageKey == null || storageKey.isBlank() || storageKey.startsWith("external://")) {
+            return false;
+        }
+        try {
+            Path local = resolveDocumentLocalPath(storageKey);
+            return Files.exists(local) && Files.isRegularFile(local);
+        } catch (Exception e) {
+            return false;
+        }
+    }
+
     public void deleteDocument(String storageKey) {
         if (storageKey == null || storageKey.isBlank() || storageKey.startsWith("external://")) {
             return;

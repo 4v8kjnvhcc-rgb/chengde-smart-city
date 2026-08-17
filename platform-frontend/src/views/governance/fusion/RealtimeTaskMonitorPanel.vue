@@ -4,7 +4,9 @@ import { ElMessage } from 'element-plus'
 import api from '@/api/http'
 import PageCard from '@/components/common/PageCard.vue'
 import PortalPagination from '@/components/common/PortalPagination.vue'
+import { formatDateTime } from '@/utils/datetime'
 import { statusLabel, statusTagType } from '@/utils/status-label'
+import { isEmailList, isMobilePhoneList } from '@/utils/validators'
 
 interface Overview {
   date?: string
@@ -83,7 +85,7 @@ const alertForm = reactive({
 
 let timer: ReturnType<typeof setInterval> | null = null
 
-const etaText = computed(() => overview.value.estimatedFinishAt || '—')
+const etaText = computed(() => formatDateTime(overview.value.estimatedFinishAt))
 
 async function loadOverview() {
   overviewLoading.value = true
@@ -158,16 +160,19 @@ async function savePriority(row: PipelinePri) {
   }
 }
 
+/** 行操作「查看日志」：默认打开过程日志；抽屉内可切换错误/集群日志 */
+function openViewLog(row: InstanceRow) {
+  void openLog(row, 'PROCESS')
+}
+
 async function openLog(row: InstanceRow, type: 'PROCESS' | 'ERROR' | 'CLUSTER') {
   if (row.virtual || !row.id || row.id <= 0) {
-    ElMessage.info('该流水线已发布但尚未运行，请到「跨模块流水线」点击「执行」')
+    ElMessage.warning('暂无运行日志：该流水线尚未产生实例，请先到「跨模块流水线」点击「执行」')
     return
   }
   currentRow.value = row
   logType.value = type
-  logTitle.value = type === 'CLUSTER'
-    ? '集群日志'
-    : `${row.pipelineName || row.name || '实例'} · ${type === 'ERROR' ? '错误日志' : '过程日志'}`
+  logTitle.value = `${row.pipelineName || row.name || '实例'} · 运行日志`
   logVisible.value = true
   await fetchLog()
 }
@@ -232,6 +237,14 @@ async function openAlert() {
 }
 
 async function saveAlert() {
+  if (alertForm.mailReceivers.trim() && !isEmailList(alertForm.mailReceivers)) {
+    ElMessage.warning('邮箱格式不对')
+    return
+  }
+  if (alertForm.smsPhones.trim() && !isMobilePhoneList(alertForm.smsPhones)) {
+    ElMessage.warning('手机号格式不对')
+    return
+  }
   alertSaving.value = true
   try {
     await api.put('/governance/cross-pipelines/monitor/alert/channel', { ...alertForm })
@@ -373,21 +386,20 @@ onUnmounted(() => {
         </template>
       </el-table-column>
       <el-table-column label="开始时间" min-width="160" show-overflow-tooltip>
-        <template #default="{ row }">{{ row.startTime || '—' }}</template>
+        <template #default="{ row }">{{ formatDateTime(row.startTime) }}</template>
       </el-table-column>
       <el-table-column label="结束时间" min-width="160" show-overflow-tooltip>
-        <template #default="{ row }">{{ row.endTime || '—' }}</template>
+        <template #default="{ row }">{{ formatDateTime(row.endTime) }}</template>
       </el-table-column>
-      <el-table-column label="操作" width="360" fixed="right">
+      <el-table-column label="操作" width="300" fixed="right">
         <template #default="{ row }">
           <div class="op-row">
             <template v-if="row.virtual || !row.id || row.id <= 0">
-              <el-button link type="primary" disabled>待执行（请先点执行）</el-button>
+              <el-button link type="primary" @click="openViewLog(row)">查看日志</el-button>
+              <el-button link type="info" disabled>待执行（请先点执行）</el-button>
             </template>
             <template v-else>
-              <el-button link type="primary" @click="openLog(row, 'PROCESS')">过程日志</el-button>
-              <el-button link type="danger" @click="openLog(row, 'ERROR')">错误日志</el-button>
-              <el-button link @click="openLog(row, 'CLUSTER')">集群日志</el-button>
+              <el-button link type="primary" @click="openViewLog(row)">查看日志</el-button>
               <el-button link type="warning" @click="notifyRow(row)">告警</el-button>
               <el-button link @click="control(row, 'RETRY')">重跑</el-button>
               <el-button link @click="control(row, 'PAUSE')">暂停</el-button>
@@ -486,7 +498,9 @@ onUnmounted(() => {
           <el-table-column label="状态" width="80">
             <template #default="{ row }">{{ statusLabel(row.status) }}</template>
           </el-table-column>
-          <el-table-column prop="createdAt" label="时间" width="150" show-overflow-tooltip />
+          <el-table-column label="时间" width="170" show-overflow-tooltip>
+            <template #default="{ row }">{{ formatDateTime(row.createdAt) }}</template>
+          </el-table-column>
         </el-table>
       </div>
     </el-drawer>

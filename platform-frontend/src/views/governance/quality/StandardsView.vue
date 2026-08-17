@@ -7,6 +7,7 @@ import PageCard from '@/components/common/PageCard.vue'
 import PortalPagination from '@/components/common/PortalPagination.vue'
 import { useClientPager } from '@/composables/useClientPager'
 import { statusLabel, statusTagType } from '@/utils/status-label'
+import { formatDateTime } from '@/utils/datetime'
 import { ingestionApi, type DataSource } from '@/views/exchange/ingestion/useIngestionHub'
 import { fetchDataSourceTableNames } from '@/utils/layer-tables'
 
@@ -162,6 +163,10 @@ const fileForm = reactive({
   businessDefinition: '',
 })
 const fileEditId = ref<number | null>(null)
+const fileDialogVisible = ref(false)
+const elementDialogVisible = ref(false)
+const codeDialogVisible = ref(false)
+const namingDialogVisible = ref(false)
 
 // ---- codebook ----
 const codeItems = ref<StandardItem[]>([])
@@ -300,6 +305,11 @@ function resetFileForm() {
   fileForm.businessDefinition = ''
 }
 
+function openFileCreate() {
+  resetFileForm()
+  fileDialogVisible.value = true
+}
+
 function startFileEdit(row: StandardItem) {
   if (row.publishStatus === 'PUBLISHED') {
     ElMessage.warning('已发布不可编辑，请先下线')
@@ -311,6 +321,7 @@ function startFileEdit(row: StandardItem) {
   fileForm.category = row.category || '其它'
   fileForm.referenceStandard = row.referenceStandard || row.standardRef || ''
   fileForm.businessDefinition = row.businessDefinition || ''
+  fileDialogVisible.value = true
 }
 
 async function saveFile() {
@@ -333,6 +344,7 @@ async function saveFile() {
     await api.post('/governance/standards', body)
     ElMessage.success('已新建标准文件')
   }
+  fileDialogVisible.value = false
   resetFileForm()
   await loadFiles()
 }
@@ -349,9 +361,14 @@ async function offlineFile(id: number) {
   await loadFiles()
 }
 
-async function removeFile(id: number) {
-  await ElMessageBox.confirm('确认删除该标准文件？', '提示', { type: 'warning' })
-  await api.delete(`/governance/standards/${id}`)
+async function removeFile(row: StandardItem) {
+  if (row.publishStatus === 'PUBLISHED') {
+    await ElMessageBox.confirm('已发布标准文件将先下线再删除，是否继续？', '删除确认', { type: 'warning' })
+    await api.post(`/governance/standards/${row.id}/offline`)
+  } else {
+    await ElMessageBox.confirm('确认删除该标准文件？', '提示', { type: 'warning' })
+  }
+  await api.delete(`/governance/standards/${row.id}`)
   ElMessage.success('已删除')
   await loadFiles()
 }
@@ -379,6 +396,11 @@ function resetForm() {
   form.sensitivity = 'L2'
 }
 
+function openElementCreate() {
+  resetForm()
+  elementDialogVisible.value = true
+}
+
 function startEdit(row: StandardItem) {
   if (row.publishStatus === 'PUBLISHED') {
     ElMessage.warning('已发布不可编辑，请先下线')
@@ -397,12 +419,14 @@ function startEdit(row: StandardItem) {
   form.referenceStandard = row.referenceStandard || ''
   form.category = row.category || ''
   form.sensitivity = row.sensitivity || 'L2'
+  elementDialogVisible.value = true
 }
 
 async function create() {
   if (!form.itemName) return
   await api.post('/governance/standards', { ...form })
   ElMessage.success('已创建（草稿）')
+  elementDialogVisible.value = false
   resetForm()
   await load()
 }
@@ -411,6 +435,7 @@ async function saveEdit() {
   if (!editingId.value || !form.itemName) return
   await api.put(`/governance/standards/${editingId.value}`, { ...form })
   ElMessage.success('已保存')
+  elementDialogVisible.value = false
   resetForm()
   await load()
 }
@@ -427,9 +452,14 @@ async function offline(id: number) {
   await load()
 }
 
-async function remove(id: number) {
-  await ElMessageBox.confirm('确认删除该草稿数据元？', '删除确认', { type: 'warning' })
-  await api.delete(`/governance/standards/${id}`)
+async function remove(row: StandardItem) {
+  if (row.publishStatus === 'PUBLISHED') {
+    await ElMessageBox.confirm('已发布数据元将先下线再删除，是否继续？', '删除确认', { type: 'warning' })
+    await api.post(`/governance/standards/${row.id}/offline`)
+  } else {
+    await ElMessageBox.confirm('确认删除该数据元？', '删除确认', { type: 'warning' })
+  }
+  await api.delete(`/governance/standards/${row.id}`)
   ElMessage.success('已删除')
   await load()
 }
@@ -474,6 +504,13 @@ async function loadCodebook() {
   }
 }
 
+function openCodeCreate() {
+  codeForm.itemCode = ''
+  codeForm.itemName = ''
+  codeForm.referenceStandard = ''
+  codeDialogVisible.value = true
+}
+
 async function createCodeItem() {
   if (!codeForm.itemName) return
   const id = (await api.post('/governance/standards', {
@@ -486,6 +523,7 @@ async function createCodeItem() {
   codeForm.itemCode = ''
   codeForm.itemName = ''
   codeForm.referenceStandard = ''
+  codeDialogVisible.value = false
   await loadCodeItems()
   selectedCodeItemId.value = id
   await loadCodebook()
@@ -597,12 +635,21 @@ async function loadNaming() {
   }
 }
 
+function openNamingCreate() {
+  namingForm.namingType = 'TABLE'
+  namingForm.namingName = ''
+  namingForm.standardContent = '^[a-z][a-z0-9_]*$'
+  namingForm.description = ''
+  namingDialogVisible.value = true
+}
+
 async function createNaming() {
   if (!namingForm.namingName || !namingForm.standardContent) return
   await api.post('/governance/standards/naming', { ...namingForm })
   ElMessage.success('已创建')
   namingForm.namingName = ''
   namingForm.description = ''
+  namingDialogVisible.value = false
   await loadNaming()
 }
 
@@ -707,30 +754,7 @@ onMounted(() => {
             </el-form-item>
             <el-form-item class="portal-form-actions">
               <el-button type="primary" @click="loadFiles">查询</el-button>
-            </el-form-item>
-          </el-form>
-
-          <el-form inline class="portal-inline-form portal-inline-form--block">
-            <el-form-item label="编码" class="portal-field-md">
-              <el-input v-model="fileForm.itemCode" :disabled="!!fileEditId" placeholder="可空自动生成" />
-            </el-form-item>
-            <el-form-item label="名称" class="portal-field-lg">
-              <el-input v-model="fileForm.itemName" placeholder="规范文件名称" />
-            </el-form-item>
-            <el-form-item label="分类" class="portal-field-lg">
-              <el-select v-model="fileForm.category">
-                <el-option v-for="c in FILE_CATEGORIES" :key="c" :label="c" :value="c" />
-              </el-select>
-            </el-form-item>
-            <el-form-item label="引用标准" class="portal-field-md">
-              <el-input v-model="fileForm.referenceStandard" placeholder="国标/行标/企标" />
-            </el-form-item>
-            <el-form-item label="说明" class="portal-field-xl">
-              <el-input v-model="fileForm.businessDefinition" placeholder="适用范围与要点" />
-            </el-form-item>
-            <el-form-item class="portal-form-actions">
-              <el-button type="primary" @click="saveFile">{{ fileEditId ? '保存' : '新建' }}</el-button>
-              <el-button v-if="fileEditId" @click="resetFileForm">取消</el-button>
+              <el-button type="primary" @click="openFileCreate">新增</el-button>
             </el-form-item>
           </el-form>
 
@@ -747,13 +771,13 @@ onMounted(() => {
               </template>
             </el-table-column>
             <el-table-column prop="versionNo" label="版本" width="70" />
-            <el-table-column label="操作" width="240" fixed="right">
+            <el-table-column label="操作" width="260" fixed="right">
               <template #default="{ row }">
                 <el-button link type="primary" @click="startFileEdit(row)">编辑</el-button>
                 <el-button v-if="row.publishStatus !== 'PUBLISHED'" link type="success" @click="publishFile(row.id)">发布</el-button>
                 <el-button v-if="row.publishStatus === 'PUBLISHED'" link @click="offlineFile(row.id)">下线</el-button>
                 <el-button link @click="openVersions(row)">版本</el-button>
-                <el-button v-if="row.publishStatus === 'DRAFT'" link type="danger" @click="removeFile(row.id)">删除</el-button>
+                <el-button link type="danger" @click="removeFile(row)">删除</el-button>
               </template>
             </el-table-column>
           </el-table>
@@ -777,30 +801,7 @@ onMounted(() => {
             <el-form-item class="portal-form-actions">
               <el-button type="primary" @click="load">查询</el-button>
               <el-button @click="onReset">重置</el-button>
-            </el-form-item>
-          </el-form>
-
-          <el-form inline class="portal-inline-form portal-inline-form--block">
-            <el-form-item label="编码" class="portal-field-md"><el-input v-model="form.itemCode" :disabled="editMode" placeholder="可空自动生成" /></el-form-item>
-            <el-form-item label="名称" class="portal-field-lg"><el-input v-model="form.itemName" /></el-form-item>
-            <el-form-item label="数据类型" class="portal-field-sm">
-              <el-select v-model="form.dataType">
-                <el-option label="VARCHAR" value="VARCHAR" />
-                <el-option label="INT" value="INT" />
-                <el-option label="DATE" value="DATE" />
-                <el-option label="DECIMAL" value="DECIMAL" />
-                <el-option label="DATETIME" value="DATETIME" />
-                <el-option label="BOOLEAN" value="BOOLEAN" />
-              </el-select>
-            </el-form-item>
-            <el-form-item label="格式" class="portal-field-sm"><el-input v-model="form.dataFormat" /></el-form-item>
-            <el-form-item label="引用标准" class="portal-field-md"><el-input v-model="form.referenceStandard" /></el-form-item>
-            <el-form-item label="分类" class="portal-field-sm"><el-input v-model="form.category" /></el-form-item>
-            <el-form-item label="业务定义" class="portal-field-xl"><el-input v-model="form.businessDefinition" /></el-form-item>
-            <el-form-item class="portal-form-actions">
-              <el-button v-if="!editMode" type="primary" @click="create">新建</el-button>
-              <el-button v-else type="primary" @click="saveEdit">保存</el-button>
-              <el-button v-if="editMode" @click="resetForm">取消</el-button>
+              <el-button type="primary" @click="openElementCreate">新增</el-button>
             </el-form-item>
           </el-form>
 
@@ -815,14 +816,14 @@ onMounted(() => {
               </template>
             </el-table-column>
             <el-table-column prop="versionNo" label="版本" width="70" />
-            <el-table-column label="操作" width="320" fixed="right">
+            <el-table-column label="操作" width="380" fixed="right">
               <template #default="{ row }">
                 <el-button link type="primary" @click="startEdit(row)">编辑</el-button>
                 <el-button v-if="row.publishStatus !== 'PUBLISHED'" link type="success" @click="publish(row.id)">发布</el-button>
                 <el-button v-if="row.publishStatus === 'PUBLISHED'" link @click="offline(row.id)">下线</el-button>
                 <el-button link @click="openVersions(row)">版本</el-button>
                 <el-button link type="warning" @click="openMapping(row)">对标</el-button>
-                <el-button v-if="row.publishStatus === 'DRAFT'" link type="danger" @click="remove(row.id)">删除</el-button>
+                <el-button link type="danger" @click="remove(row)">删除</el-button>
               </template>
             </el-table-column>
           </el-table>
@@ -837,15 +838,6 @@ onMounted(() => {
       <el-tab-pane label="数据编码规范" name="code" lazy>
         <div class="std-pane">
           <el-form inline class="portal-inline-form portal-inline-form--block">
-            <el-form-item label="编码" class="portal-field-md"><el-input v-model="codeForm.itemCode" placeholder="可空" /></el-form-item>
-            <el-form-item label="名称" class="portal-field-lg"><el-input v-model="codeForm.itemName" /></el-form-item>
-            <el-form-item label="引用标准" class="portal-field-md"><el-input v-model="codeForm.referenceStandard" /></el-form-item>
-            <el-form-item class="portal-form-actions">
-              <el-button type="primary" @click="createCodeItem">新建编码标准</el-button>
-            </el-form-item>
-          </el-form>
-
-          <el-form inline class="portal-inline-form portal-inline-form--block">
             <el-form-item label="当前标准" class="portal-field-xl">
               <el-select v-model="selectedCodeItemId" placeholder="选择编码标准" filterable>
                 <el-option v-for="c in codeItems" :key="c.id" :label="`${c.itemName} (${c.itemCode})`" :value="c.id" />
@@ -855,6 +847,7 @@ onMounted(() => {
               <el-button @click="doExport">导出 JSON</el-button>
               <el-button @click="doImport">导入 JSON</el-button>
               <el-button @click="openFromDict">从字典导入</el-button>
+              <el-button type="primary" @click="openCodeCreate">新增</el-button>
             </el-form-item>
           </el-form>
 
@@ -874,7 +867,7 @@ onMounted(() => {
             <el-table-column prop="codeName" label="名称" min-width="140" />
             <el-table-column prop="codeDesc" label="说明" min-width="160" />
             <el-table-column prop="sortOrder" label="排序" width="70" />
-            <el-table-column label="操作" width="80">
+            <el-table-column label="操作" width="80" fixed="right">
               <template #default="{ row }">
                 <el-button link type="danger" @click="removeCodebook(row.id)">删除</el-button>
               </template>
@@ -891,22 +884,8 @@ onMounted(() => {
       <el-tab-pane label="命名规范" name="naming" lazy>
         <div class="std-pane">
           <el-form inline class="portal-inline-form portal-inline-form--block">
-            <el-form-item label="类型" class="portal-field-sm">
-              <el-select v-model="namingForm.namingType">
-                <el-option label="表" value="TABLE" />
-                <el-option label="字段" value="COLUMN" />
-                <el-option label="脚本" value="SCRIPT" />
-                <el-option label="工作流" value="WORKFLOW" />
-                <el-option label="任务" value="TASK" />
-                <el-option label="API" value="API" />
-                <el-option label="其它" value="OTHER" />
-              </el-select>
-            </el-form-item>
-            <el-form-item label="名称" class="portal-field-md"><el-input v-model="namingForm.namingName" /></el-form-item>
-            <el-form-item label="正则/规则" class="portal-field-xl"><el-input v-model="namingForm.standardContent" /></el-form-item>
-            <el-form-item label="说明" class="portal-field-md"><el-input v-model="namingForm.description" /></el-form-item>
             <el-form-item class="portal-form-actions">
-              <el-button type="primary" @click="createNaming">新建</el-button>
+              <el-button type="primary" @click="openNamingCreate">新增</el-button>
             </el-form-item>
           </el-form>
 
@@ -934,7 +913,7 @@ onMounted(() => {
                 <el-tag :type="statusTagType(row.status)" size="small">{{ statusLabel(row.status) }}</el-tag>
               </template>
             </el-table-column>
-            <el-table-column label="操作" width="80">
+            <el-table-column label="操作" width="80" fixed="right">
               <template #default="{ row }">
                 <el-button link type="danger" @click="removeNaming(row.id)">删除</el-button>
               </template>
@@ -955,11 +934,146 @@ onMounted(() => {
         <el-table-column prop="versionNo" label="版本" width="70" />
         <el-table-column prop="changeSummary" label="说明" />
         <el-table-column prop="publishedBy" label="发布人" width="90" />
-        <el-table-column prop="publishedAt" label="时间" width="160" />
+        <el-table-column label="时间" width="170">
+          <template #default="{ row }">{{ formatDateTime(row.publishedAt) }}</template>
+        </el-table-column>
       </el-table>
       <el-divider>快照</el-divider>
       <pre style="white-space:pre-wrap;font-size:12px;max-height:280px;overflow:auto">{{ versionDetail || '点击版本行查看快照' }}</pre>
     </el-drawer>
+
+    <el-dialog
+      v-model="fileDialogVisible"
+      :title="fileEditId ? '编辑标准文件' : '新增标准文件'"
+      width="560px"
+      destroy-on-close
+      @closed="resetFileForm"
+    >
+      <el-form label-width="100px">
+        <el-form-item label="编码">
+          <el-input v-model="fileForm.itemCode" :disabled="!!fileEditId" placeholder="可空自动生成" />
+        </el-form-item>
+        <el-form-item label="名称">
+          <el-input v-model="fileForm.itemName" placeholder="规范文件名称" />
+        </el-form-item>
+        <el-form-item label="分类">
+          <el-select v-model="fileForm.category" style="width:100%">
+            <el-option v-for="c in FILE_CATEGORIES" :key="c" :label="c" :value="c" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="引用标准">
+          <el-input v-model="fileForm.referenceStandard" placeholder="国标/行标/企标" />
+        </el-form-item>
+        <el-form-item label="说明">
+          <el-input v-model="fileForm.businessDefinition" type="textarea" :rows="3" placeholder="适用范围与要点" />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="fileDialogVisible = false">取消</el-button>
+        <el-button type="primary" @click="saveFile">{{ fileEditId ? '保存' : '确定' }}</el-button>
+      </template>
+    </el-dialog>
+
+    <el-dialog
+      v-model="elementDialogVisible"
+      :title="editMode ? '编辑数据元' : '新增数据元'"
+      width="640px"
+      destroy-on-close
+      @closed="resetForm"
+    >
+      <el-form label-width="100px">
+        <el-form-item label="编码">
+          <el-input v-model="form.itemCode" :disabled="editMode" placeholder="可空自动生成" />
+        </el-form-item>
+        <el-form-item label="名称">
+          <el-input v-model="form.itemName" />
+        </el-form-item>
+        <el-form-item label="数据类型">
+          <el-select v-model="form.dataType" style="width:100%">
+            <el-option label="VARCHAR" value="VARCHAR" />
+            <el-option label="INT" value="INT" />
+            <el-option label="DATE" value="DATE" />
+            <el-option label="DECIMAL" value="DECIMAL" />
+            <el-option label="DATETIME" value="DATETIME" />
+            <el-option label="BOOLEAN" value="BOOLEAN" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="格式">
+          <el-input v-model="form.dataFormat" />
+        </el-form-item>
+        <el-form-item label="引用标准">
+          <el-input v-model="form.referenceStandard" />
+        </el-form-item>
+        <el-form-item label="分类">
+          <el-input v-model="form.category" />
+        </el-form-item>
+        <el-form-item label="业务定义">
+          <el-input v-model="form.businessDefinition" type="textarea" :rows="3" />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="elementDialogVisible = false">取消</el-button>
+        <el-button v-if="!editMode" type="primary" @click="create">确定</el-button>
+        <el-button v-else type="primary" @click="saveEdit">保存</el-button>
+      </template>
+    </el-dialog>
+
+    <el-dialog
+      v-model="codeDialogVisible"
+      title="新增编码标准"
+      width="520px"
+      destroy-on-close
+    >
+      <el-form label-width="100px">
+        <el-form-item label="编码">
+          <el-input v-model="codeForm.itemCode" placeholder="可空" />
+        </el-form-item>
+        <el-form-item label="名称">
+          <el-input v-model="codeForm.itemName" />
+        </el-form-item>
+        <el-form-item label="引用标准">
+          <el-input v-model="codeForm.referenceStandard" />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="codeDialogVisible = false">取消</el-button>
+        <el-button type="primary" @click="createCodeItem">确定</el-button>
+      </template>
+    </el-dialog>
+
+    <el-dialog
+      v-model="namingDialogVisible"
+      title="新增命名规范"
+      width="560px"
+      destroy-on-close
+    >
+      <el-form label-width="100px">
+        <el-form-item label="类型">
+          <el-select v-model="namingForm.namingType" style="width:100%">
+            <el-option label="表" value="TABLE" />
+            <el-option label="字段" value="COLUMN" />
+            <el-option label="脚本" value="SCRIPT" />
+            <el-option label="工作流" value="WORKFLOW" />
+            <el-option label="任务" value="TASK" />
+            <el-option label="API" value="API" />
+            <el-option label="其它" value="OTHER" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="名称">
+          <el-input v-model="namingForm.namingName" />
+        </el-form-item>
+        <el-form-item label="正则/规则">
+          <el-input v-model="namingForm.standardContent" />
+        </el-form-item>
+        <el-form-item label="说明">
+          <el-input v-model="namingForm.description" type="textarea" :rows="2" />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="namingDialogVisible = false">取消</el-button>
+        <el-button type="primary" @click="createNaming">确定</el-button>
+      </template>
+    </el-dialog>
 
     <el-dialog v-model="fromDictVisible" title="从数据字典导入" width="520px">
       <el-form label-width="100px">

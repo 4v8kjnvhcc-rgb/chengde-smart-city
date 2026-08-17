@@ -5,6 +5,7 @@ import { ElMessage, type UploadRequestOptions } from 'element-plus'
 import { Plus } from '@element-plus/icons-vue'
 import { useAuthStore } from '@/stores/auth'
 import { statusLabel } from '@/utils/status-label'
+import { isContactPhone, isEmail } from '@/utils/validators'
 import type { DemandAttachment, DemandFormModel } from './demand-apply-model'
 import { normalizeAttachments, normalizeDataItems } from './demand-apply-model'
 
@@ -397,6 +398,14 @@ function validate(strict: boolean): boolean {
   }
   if (strict && !form.contactPhone.trim()) {
     ElMessage.warning('请填写联系电话')
+    return false
+  }
+  if (form.contactPhone.trim() && !isContactPhone(form.contactPhone)) {
+    ElMessage.warning('联系电话格式不对')
+    return false
+  }
+  if (form.contactEmail.trim() && !isEmail(form.contactEmail)) {
+    ElMessage.warning('邮箱格式不对')
     return false
   }
   return true

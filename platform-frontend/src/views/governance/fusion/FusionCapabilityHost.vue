@@ -6,8 +6,6 @@ import CrossModulePipelinePanel from './CrossModulePipelinePanel.vue'
 
 const FusionScriptView = defineAsyncComponent(() => import('./FusionScriptView.vue'))
 const FusionVersionView = defineAsyncComponent(() => import('./FusionVersionView.vue'))
-const DirectShareGoldenPathView = defineAsyncComponent(() => import('../DirectShareGoldenPathView.vue'))
-const ProcessedShareGoldenPathView = defineAsyncComponent(() => import('../ProcessedShareGoldenPathView.vue'))
 const RealtimeTaskMonitorPanel = defineAsyncComponent(() => import('./RealtimeTaskMonitorPanel.vue'))
 
 const props = defineProps<{
@@ -23,31 +21,6 @@ const emit = defineEmits<{
 
 const route = useRoute()
 const router = useRouter()
-
-const executeTab = ref('processed-share')
-watch(
-  () => route.query.execTab,
-  (v) => {
-    const s = String(v || 'processed-share')
-    executeTab.value = ['run', 'direct-share', 'processed-share'].includes(s) ? s : 'processed-share'
-  },
-  { immediate: true },
-)
-
-watch(
-  () => props.capability,
-  () => {
-    if (props.capability !== 'execute') executeTab.value = 'processed-share'
-  },
-)
-
-function onExecTab(name: string | number) {
-  const tab = String(name)
-  executeTab.value = tab
-  router.replace({
-    query: { ...route.query, tab: 'model', mSub: 'execute', execTab: tab },
-  })
-}
 
 const workflowTab = ref('pipeline')
 watch(
@@ -119,24 +92,15 @@ const taskId = computed(() => props.etlTaskId ?? null)
       @monitor="emit('monitor', $event)"
     />
 
-    <div v-else-if="capability === 'execute'">
-      <el-tabs :model-value="executeTab" @tab-change="onExecTab" style="margin-bottom: 8px">
-        <el-tab-pane label="加工共享（主题/专题落库）" name="processed-share" />
-        <el-tab-pane label="直通共享（源资源）" name="direct-share" />
-        <el-tab-pane label="融合任务运行" name="run" />
-      </el-tabs>
-      <GovernanceEtlPanel
-        v-if="executeTab === 'run'"
-        :sub="etlSub"
-        :view="view"
-        :task-id="taskId"
-        task-domain="FUSION"
-        @design="emit('design', $event)"
-        @monitor="emit('monitor', $event)"
-      />
-      <DirectShareGoldenPathView v-else-if="executeTab === 'direct-share'" />
-      <ProcessedShareGoldenPathView v-else-if="executeTab === 'processed-share'" />
-    </div>
+    <GovernanceEtlPanel
+      v-else-if="capability === 'execute'"
+      :sub="etlSub"
+      :view="view"
+      :task-id="taskId"
+      task-domain="FUSION"
+      @design="emit('design', $event)"
+      @monitor="emit('monitor', $event)"
+    />
   </div>
 </template>
 

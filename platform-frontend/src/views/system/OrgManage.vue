@@ -9,6 +9,7 @@ import PageCard from '@/components/common/PageCard.vue'
 import { statusLabel } from '@/utils/status-label'
 import { leafKeysForTreeCheck } from '@/utils/menu-tree-check'
 import { encryptTransportPayload } from '@/utils/transport-crypto'
+import { isContactPhone } from '@/utils/validators'
 
 interface Org {
   id: number
@@ -348,6 +349,10 @@ async function openEditUser(row: UserRow) {
 async function submitCreateUser() {
   if (!userForm.username || !userForm.password || !userForm.displayName || !userForm.phone?.trim() || !userForm.orgId) {
     ElMessage.warning('请填写完整信息（含联系方式）')
+    return
+  }
+  if (!isContactPhone(userForm.phone)) {
+    ElMessage.warning('联系电话格式不对')
     return
   }
   submitting.value = true
