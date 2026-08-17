@@ -15,6 +15,8 @@ logging:
     com.chengde.smartcity: DEBUG
 
 app:
+  upload:
+    dir: ${APP_UPLOAD_DIR:./data/uploads}
   security:
     credential-key: ${CREDENTIAL_KEY:chengde-smartcity-credential-key}
   lifecycle:

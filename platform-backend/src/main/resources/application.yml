@@ -33,6 +33,8 @@ app:
     secret: change-me-in-production-use-256bit-secret-key-here
     access-token-minutes: 30
     refresh-token-hours: 8
+  upload:
+    dir: ${APP_UPLOAD_DIR:./data/uploads}
   security:
     session-idle-minutes: 30
     login-max-failures: 5

@@ -12,6 +12,16 @@ import { formatDateTime } from '@/utils/datetime'
 import { useAuthStore } from '@/stores/auth'
 import { filterHubNavByPermissions, filterHubNavByMenuVisible, UNSTRUCT_NAV_PERMISSIONS } from '@/utils/hub-nav-permission'
 
+const props = withDefaults(
+  defineProps<{
+    /** 嵌入归集「非结构化数据接入」：只展示与文件资源管理·本地上传相同的界面与数据 */
+    embedLocalOnly?: boolean
+    /** 嵌入时 PageCard 标题，默认与文件资源管理一致 */
+    embedTitle?: string
+  }>(),
+  { embedLocalOnly: false, embedTitle: '文件资源管理' },
+)
+
 const auth = useAuthStore()
 
 const NAV_BASE: HubNavItem[] = [
@@ -445,6 +455,11 @@ const pageTitle = computed(() => {
 const categoryNameById = computed(() => new Map(categories.value.map((c) => [c.id, c.categoryName])))
 
 function resolveFromRoute() {
+  if (props.embedLocalOnly) {
+    activeNav.value = 'files'
+    filesSourceTab.value = 'upload'
+    return
+  }
   applyingRoute = true
   const q = String(route.query.tab || DEFAULT_NAV).toLowerCase()
   activeNav.value = tabMap[q] || DEFAULT_NAV
@@ -453,6 +468,7 @@ function resolveFromRoute() {
 }
 
 function syncQuery() {
+  if (props.embedLocalOnly) return
   const q: Record<string, string> = {}
   for (const [k, v] of Object.entries(route.query)) {
     if (v == null || k === 'tab') continue
@@ -1437,8 +1453,8 @@ onMounted(() => {
 </script>
 
 <template>
-  <div class="uns-hub-root">
-    <HubSideLayout v-model="activeNav" :items="navItems">
+  <div class="uns-hub-root" :class="{ 'uns-hub-root--embed': embedLocalOnly }">
+    <HubSideLayout v-model="activeNav" :items="embedLocalOnly ? [] : navItems">
       <PageCard v-if="activeNav === 'classify'" title="数据分类管理">
         <div class="uns-toolbar">
           <div class="uns-list-header uns-list-header--inline">
@@ -1517,8 +1533,13 @@ onMounted(() => {
         </el-dialog>
       </PageCard>
 
-      <PageCard v-else-if="activeNav === 'files'" title="文件资源管理">
-        <el-tabs v-model="filesSourceTab" class="uns-files-tabs" @tab-change="onFilesSourceTabChange">
+      <PageCard v-else-if="activeNav === 'files'" :title="embedLocalOnly ? embedTitle : '文件资源管理'">
+        <el-tabs
+          v-model="filesSourceTab"
+          class="uns-files-tabs"
+          :class="{ 'uns-files-tabs--no-header': embedLocalOnly }"
+          @tab-change="onFilesSourceTabChange"
+        >
           <el-tab-pane label="本地上传" name="upload">
             <el-form inline class="portal-inline-form portal-inline-form--block">
               <el-form-item label="关键词" class="portal-field-lg">
@@ -1574,7 +1595,7 @@ onMounted(() => {
             />
           </el-tab-pane>
 
-          <el-tab-pane label="外部平台" name="external">
+          <el-tab-pane v-if="!embedLocalOnly" label="外部平台" name="external">
             <el-tabs v-model="extInnerTab" type="card" class="uns-ext-inner-tabs" @tab-change="onExtInnerTabChange">
               <el-tab-pane label="外部文件" name="files">
                 <el-form inline class="portal-inline-form portal-inline-form--block">
@@ -2796,5 +2817,22 @@ onMounted(() => {
 }
 .uns-files-tabs :deep(.el-tabs__header) {
   margin-bottom: 14px;
+}
+.uns-files-tabs--no-header :deep(.el-tabs__header) {
+  display: none;
+}
+.uns-files-tabs--no-header :deep(.el-tabs__content) {
+  padding-top: 0;
+}
+.uns-hub-root--embed :deep(.hub-side-layout__aside) {
+  display: none;
+}
+.uns-hub-root--embed :deep(.hub-side-layout) {
+  min-height: 0;
+}
+.uns-hub-root--embed :deep(.hub-side-layout__main) {
+  margin-left: 0;
+  width: 100%;
+  max-width: 100%;
 }
 </style>
