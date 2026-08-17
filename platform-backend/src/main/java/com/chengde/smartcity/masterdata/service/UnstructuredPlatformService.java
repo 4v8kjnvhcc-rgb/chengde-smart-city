@@ -15,7 +15,6 @@ import com.chengde.smartcity.masterdata.mapper.UnsExternalPlatformMapper;
 import com.chengde.smartcity.security.UserPrincipal;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
-import java.net.URI;
 import java.nio.charset.StandardCharsets;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
@@ -259,10 +258,12 @@ public class UnstructuredPlatformService {
                 "UNS_CATEGORY_DELETE", "uns_doc_category", String.valueOf(id), c.getCategoryCode());
     }
 
-    public List<UnsDocument> listDocuments(String keyword, String publishStatus, String categoryCode) {
+    public List<Map<String, Object>> listDocuments(String keyword, String publishStatus,
+                                                   String categoryCode, String sourceType) {
         LambdaQueryWrapper<UnsDocument> q = new LambdaQueryWrapper<UnsDocument>().orderByDesc(UnsDocument::getId);
         if (keyword != null && !keyword.isBlank()) {
-            q.like(UnsDocument::getTitle, keyword);
+            q.and(w -> w.like(UnsDocument::getTitle, keyword.trim())
+                    .or().like(UnsDocument::getOriginalFileName, keyword.trim()));
         }
         if (publishStatus != null && !publishStatus.isBlank()) {
             q.eq(UnsDocument::getPublishStatus, publishStatus);
@@ -270,7 +271,24 @@ public class UnstructuredPlatformService {
         if (categoryCode != null && !categoryCode.isBlank()) {
             q.eq(UnsDocument::getCategoryCode, categoryCode.trim());
         }
-        return documentMapper.selectList(q);
+        if (sourceType != null && !sourceType.isBlank()) {
+            String st = sourceType.trim().toUpperCase(Locale.ROOT);
+            if ("LOCAL".equals(st) || "UPLOAD".equals(st)) {
+                q.and(w -> w.eq(UnsDocument::getSourceType, "UPLOAD")
+                        .or().eq(UnsDocument::getSourceType, "LOCAL")
+                        .or().isNull(UnsDocument::getSourceType));
+            } else if ("EXTERNAL".equals(st)) {
+                q.eq(UnsDocument::getSourceType, "EXTERNAL");
+            } else {
+                q.eq(UnsDocument::getSourceType, st);
+            }
+        }
+        Map<String, String> categoryNames = categoryNameMap();
+        List<Map<String, Object>> rows = new ArrayList<>();
+        for (UnsDocument d : documentMapper.selectList(q)) {
+            rows.add(documentRow(d, categoryNames));
+        }
+        return rows;
     }
 
     @Transactional
@@ -285,9 +303,10 @@ public class UnstructuredPlatformService {
         if (cat == null) {
             throw new BusinessException(400, "分类不存在，请先在「数据分类管理」创建：" + categoryCode);
         }
+        String sourceSystem = resolveExternalSourceSystem(body);
         String sourceUrl = str(body.get("sourceUrl"), null);
-        if (sourceUrl == null) {
-            throw new BusinessException(400, "请选择本地文件上传；对接其他文件平台时须填写资源地址");
+        if (sourceUrl == null || sourceUrl.isBlank()) {
+            throw new BusinessException(400, "外部文件须填写资源地址");
         }
         validateExternalUrl(sourceUrl);
         UnsDocument doc = new UnsDocument();
@@ -299,7 +318,7 @@ public class UnstructuredPlatformService {
         doc.setFileSize(Math.max(0L, longValue(body.get("fileSize"), 0L)));
         doc.setDescription(str(body.get("description"), null));
         doc.setSourceType("EXTERNAL");
-        doc.setSourceSystem(str(body.get("sourceSystem"), "外部文件平台"));
+        doc.setSourceSystem(sourceSystem);
         doc.setSourceUrl(sourceUrl);
         doc.setCategoryCode(categoryCode);
         doc.setTagJson(str(body.get("tagJson"), "[]"));
@@ -340,7 +359,8 @@ public class UnstructuredPlatformService {
             doc.setFileSize(file.getSize());
             doc.setDescription(str(description, null));
             doc.setSourceType("UPLOAD");
-            doc.setSourceSystem(str(sourceSystem, "非结构数据融合治理平台"));
+            // 本地上传固定来源文案，忽略客户端传入的 sourceSystem
+            doc.setSourceSystem("本地上传");
             doc.setCategoryCode(categoryCode);
             doc.setTagJson(str(tagJson, "[]"));
             doc.setIndexStatus("PENDING");
@@ -369,6 +389,7 @@ public class UnstructuredPlatformService {
     @Transactional
     public void updateDocument(UserPrincipal operator, Long id, Map<String, Object> body) {
         UnsDocument doc = getDoc(id);
+        boolean external = isExternalSource(doc.getSourceType());
         if (body.containsKey("title")) {
             doc.setTitle(required(body.get("title"), "title").toString().trim());
         }
@@ -383,9 +404,23 @@ public class UnstructuredPlatformService {
         if (body.containsKey("tagJson")) {
             doc.setTagJson(str(body.get("tagJson"), "[]"));
         }
-        if (body.containsKey("sourceSystem")) {
-            doc.setSourceSystem(str(body.get("sourceSystem"), null));
+        if (external) {
+            if (body.containsKey("sourceSystem") || body.containsKey("platformId")) {
+                doc.setSourceSystem(resolveExternalSourceSystem(body));
+            }
+            if (body.containsKey("sourceUrl")) {
+                String sourceUrl = str(body.get("sourceUrl"), null);
+                if (sourceUrl == null || sourceUrl.isBlank()) {
+                    throw new BusinessException(400, "外部文件须填写资源地址");
+                }
+                validateExternalUrl(sourceUrl);
+                doc.setSourceUrl(sourceUrl);
+                if (!isLanded(doc)) {
+                    doc.setStorageKey("external://" + sourceUrl);
+                }
+            }
         }
+        // 本地上传不接受修改来源平台
         doc.setIndexStatus("PENDING");
         documentMapper.updateById(doc);
         auditService.log(operator.getUserId(), operator.getUsername(), operator.getOrgId(),
@@ -395,7 +430,7 @@ public class UnstructuredPlatformService {
     @Transactional
     public void deleteDocument(UserPrincipal operator, Long id) {
         UnsDocument doc = getDoc(id);
-        if (!"EXTERNAL".equalsIgnoreCase(doc.getSourceType())) {
+        if (!isExternalSource(doc.getSourceType()) && isLanded(doc)) {
             storageClient.deleteDocument(doc.getStorageKey());
         }
         documentMapper.deleteById(id);
@@ -405,13 +440,13 @@ public class UnstructuredPlatformService {
 
     public byte[] documentContent(Long id) {
         UnsDocument doc = getDoc(id);
-        if ("EXTERNAL".equalsIgnoreCase(doc.getSourceType())) {
-            throw new BusinessException(400, "外部文件请通过来源地址访问");
+        if (!isLanded(doc)) {
+            throw new BusinessException(400, "还未落盘");
         }
         try {
             return storageClient.readDocument(doc.getStorageKey());
         } catch (Exception e) {
-            throw new BusinessException(404, "文件内容不可用：" + e.getMessage());
+            throw new BusinessException(400, "还未落盘");
         }
     }
 
@@ -895,7 +930,9 @@ public class UnstructuredPlatformService {
         row.put("fingerprint", d.getFingerprint());
         row.put("metaStatus", str(d.getMetaStatus(), "RAW"));
         row.put("sourceType", d.getSourceType());
-        row.put("sourceSystem", d.getSourceSystem());
+        row.put("sourceSystem", isExternalSource(d.getSourceType())
+                ? d.getSourceSystem()
+                : "本地上传");
         row.put("sourceUrl", d.getSourceUrl());
         row.put("categoryCode", d.getCategoryCode());
         row.put("categoryName", categoryNames.getOrDefault(d.getCategoryCode(), d.getCategoryCode()));
@@ -917,8 +954,48 @@ public class UnstructuredPlatformService {
         row.put("createdBy", d.getCreatedBy());
         row.put("createdAt", d.getCreatedAt());
         row.put("updatedAt", d.getUpdatedAt());
-        row.put("accessMode", "EXTERNAL".equalsIgnoreCase(d.getSourceType()) ? "EXTERNAL" : "PLATFORM");
+        boolean landed = isLanded(d);
+        row.put("landed", landed);
+        row.put("accessMode", isExternalSource(d.getSourceType()) ? "EXTERNAL" : "PLATFORM");
         return row;
+    }
+
+    private boolean isExternalSource(String sourceType) {
+        return "EXTERNAL".equalsIgnoreCase(str(sourceType, ""));
+    }
+
+    private boolean isLanded(UnsDocument doc) {
+        if (doc == null) {
+            return false;
+        }
+        return storageClient.documentExists(doc.getStorageKey());
+    }
+
+    private String resolveExternalSourceSystem(Map<String, Object> body) {
+        Long platformId = longValue(body.get("platformId"));
+        if (platformId != null) {
+            UnsExternalPlatform platform = externalPlatformMapper.selectById(platformId);
+            if (platform == null) {
+                throw new BusinessException(400, "来源平台不存在");
+            }
+            if (platform.getStatus() != null && !"ACTIVE".equalsIgnoreCase(platform.getStatus())) {
+                throw new BusinessException(400, "来源平台已停用");
+            }
+            return platform.getPlatformName();
+        }
+        String sourceSystem = str(body.get("sourceSystem"), null);
+        if (sourceSystem == null || sourceSystem.isBlank()) {
+            throw new BusinessException(400, "请选择来源平台");
+        }
+        String name = sourceSystem.trim();
+        List<UnsExternalPlatform> platforms = listExternalPlatforms(null);
+        boolean matched = platforms.stream()
+                .anyMatch(p -> name.equals(p.getPlatformName())
+                        && (p.getStatus() == null || "ACTIVE".equalsIgnoreCase(p.getStatus())));
+        if (!matched) {
+            throw new BusinessException(400, "来源平台未登记，请先在「平台连接」中新增");
+        }
+        return name;
     }
 
     private Map<String, String> categoryNameMap() {
@@ -1024,17 +1101,26 @@ public class UnstructuredPlatformService {
         return category;
     }
 
+    /**
+     * 外部文件为台账引用：允许任意非空地址（HTTP/FTP/路径/业务键等）。
+     * 若带协议，仅拦截明显非法空白；不强制 HTTP，因多数外部源尚未落盘。
+     */
     private void validateExternalUrl(String sourceUrl) {
-        try {
-            URI uri = URI.create(sourceUrl);
-            String scheme = uri.getScheme();
-            if (!"http".equalsIgnoreCase(scheme) && !"https".equalsIgnoreCase(scheme)) {
-                throw new BusinessException(400, "外部资源地址仅支持 HTTP/HTTPS");
+        if (sourceUrl == null || sourceUrl.isBlank()) {
+            throw new BusinessException(400, "外部文件须填写资源地址");
+        }
+        String trimmed = sourceUrl.trim();
+        if (trimmed.length() > 2000) {
+            throw new BusinessException(400, "资源地址过长");
+        }
+        int schemeIdx = trimmed.indexOf("://");
+        if (schemeIdx > 0) {
+            String scheme = trimmed.substring(0, schemeIdx).toLowerCase(Locale.ROOT);
+            if (!(scheme.equals("http") || scheme.equals("https")
+                    || scheme.equals("ftp") || scheme.equals("sftp")
+                    || scheme.equals("file"))) {
+                throw new BusinessException(400, "资源地址协议不支持：" + scheme);
             }
-        } catch (BusinessException e) {
-            throw e;
-        } catch (Exception e) {
-            throw new BusinessException(400, "外部资源地址格式不正确");
         }
     }
 

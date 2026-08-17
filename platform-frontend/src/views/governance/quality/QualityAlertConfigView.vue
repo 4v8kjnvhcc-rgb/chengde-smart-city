@@ -5,6 +5,7 @@
 import { onMounted, reactive, ref } from 'vue'
 import api from '@/api/http'
 import { ElMessage } from 'element-plus'
+import { isEmailList, isMobilePhoneList } from '@/utils/validators'
 
 const saving = ref(false)
 const loading = ref(false)
@@ -44,6 +45,14 @@ async function load() {
 }
 
 async function save() {
+  if (mail.defaultReceivers.trim() && !isEmailList(mail.defaultReceivers)) {
+    ElMessage.warning('邮箱格式不对')
+    return
+  }
+  if (sms.defaultPhones.trim() && !isMobilePhoneList(sms.defaultPhones)) {
+    ElMessage.warning('手机号格式不对')
+    return
+  }
   saving.value = true
   try {
     await api.put('/governance/quality/alerts/channel', {

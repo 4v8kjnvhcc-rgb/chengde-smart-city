@@ -6,6 +6,7 @@ import { useAuthStore } from '@/stores/auth'
 import PageHeader from '@/components/common/PageHeader.vue'
 import PageCard from '@/components/common/PageCard.vue'
 import { encryptTransportPayload } from '@/utils/transport-crypto'
+import { isContactPhone } from '@/utils/validators'
 
 interface UserRow {
   id: number
@@ -120,6 +121,10 @@ async function openEdit(row: UserRow) {
 async function submitCreate() {
   if (!form.username || !form.password || !form.displayName || !form.phone?.trim() || !form.orgId) {
     ElMessage.warning('请填写完整信息（含联系方式）')
+    return
+  }
+  if (!isContactPhone(form.phone)) {
+    ElMessage.warning('联系电话格式不对')
     return
   }
   submitting.value = true

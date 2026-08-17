@@ -120,8 +120,9 @@ public class StandardItemService {
     @Transactional
     public void delete(UserPrincipal operator, Long id) {
         GovStandardItem item = require(id);
-        if (!"DRAFT".equalsIgnoreCase(item.getPublishStatus())) {
-            throw new BusinessException(400, "仅草稿状态可删除");
+        String st = item.getPublishStatus() == null ? "" : item.getPublishStatus();
+        if ("PUBLISHED".equalsIgnoreCase(st)) {
+            throw new BusinessException(400, "已发布不可直接删除，请先下线");
         }
         codebookMapper.delete(new LambdaQueryWrapper<GovStandardCodebook>()
                 .eq(GovStandardCodebook::getStandardItemId, id));

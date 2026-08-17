@@ -370,6 +370,7 @@ const pretestResult = ref<Record<string, unknown> | null>(null)
 const verifyResult = ref<Record<string, unknown> | null>(null)
 const partitionColumns = ref<PartitionColumn[]>([])
 const partitionEditId = ref<number | undefined>()
+const partitionDialogVisible = ref(false)
 const livePartitionResult = ref<Record<string, unknown> | null>(null)
 const monitorTableId = ref<number | undefined>()
 const partitionOps = ref<PartitionOp[]>([])
@@ -877,8 +878,14 @@ async function createPartition() {
     await api.post('/resource-center/platform/partitions', body)
     ElMessage.success('分区策略已创建')
   }
+  partitionDialogVisible.value = false
   resetPartitionForm()
   await loadPartitionOverview()
+}
+
+function openPartitionCreate() {
+  resetPartitionForm()
+  partitionDialogVisible.value = true
 }
 
 function resetPartitionForm() {
@@ -902,6 +909,7 @@ function editPartition(row: Partition) {
   partitionForm.remark = row.remark || ''
   if (partitionForm.tableName) loadPartitionColumnsByTable(partitionForm.tableName)
   partitionTab.value = 'design'
+  partitionDialogVisible.value = true
 }
 
 async function onPartitionTableChange(tableName: string) {
@@ -1686,54 +1694,8 @@ onMounted(() => {
 <el-tabs v-model="partitionTab">
           <el-tab-pane label="策略设计" name="design">
             <el-form inline class="portal-inline-form portal-inline-form--block">
-              <el-form-item label="策略名" class="portal-field-md">
-                <el-input v-model="partitionForm.partitionName" placeholder="分区策略名称" />
-              </el-form-item>
-              <el-form-item label="类型" class="portal-field-sm">
-                <el-select v-model="partitionForm.partitionType">
-                  <el-option :label="statusLabel('RANGE')" value="RANGE" />
-                  <el-option :label="statusLabel('HASH')" value="HASH" />
-                  <el-option :label="statusLabel('LIST')" value="LIST" />
-                </el-select>
-              </el-form-item>
-              <el-form-item label="目标表" class="portal-field-lg">
-                <el-select
-                  v-model="partitionForm.tableName"
-                  placeholder="输入表名筛选"
-                  filterable
-                  @change="onPartitionTableChange"
-                >
-                  <el-option
-                    v-for="t in managedTables"
-                    :key="t.id"
-                    :label="t.physicalTable"
-                    :value="t.physicalTable"
-                  />
-                </el-select>
-              </el-form-item>
-              <el-form-item label="分区键" class="portal-field-md">
-                <el-select
-                  v-model="partitionForm.partitionColumn"
-                  placeholder="选择分区列"
-                  filterable
-                  :disabled="!partitionForm.tableName"
-                >
-                  <el-option
-                    v-for="c in partitionColumns"
-                    :key="c.columnName"
-                    :label="`${c.columnName}${c.dataType ? ' (' + c.dataType + ')' : ''}`"
-                    :value="c.columnName"
-                  />
-                </el-select>
-              </el-form-item>
-              <el-form-item label="表达式" class="portal-field-xl">
-                <el-input v-model="partitionForm.expressionText" :placeholder="expressionPlaceholder" />
-              </el-form-item>
               <el-form-item class="portal-form-actions">
-                <el-button type="primary" @click="createPartition">
-                  {{ partitionEditId ? '保存修改' : '新增策略' }}
-                </el-button>
-                <el-button v-if="partitionEditId" @click="resetPartitionForm">取消编辑</el-button>
+                <el-button type="primary" @click="openPartitionCreate">新增</el-button>
               </el-form-item>
             </el-form>
             <el-table :data="partitionList" stripe size="small">
@@ -1769,6 +1731,67 @@ onMounted(() => {
             >
               <pre style="white-space:pre-wrap;margin:8px 0 0">{{ pretestResult.previewDdl }}</pre>
             </el-alert>
+            <el-dialog
+              v-model="partitionDialogVisible"
+              :title="partitionEditId ? '编辑分区策略' : '新增分区策略'"
+              width="560px"
+              destroy-on-close
+              @closed="resetPartitionForm"
+            >
+              <el-form label-width="88px">
+                <el-form-item label="策略名" required>
+                  <el-input v-model="partitionForm.partitionName" placeholder="分区策略名称" />
+                </el-form-item>
+                <el-form-item label="类型" required>
+                  <el-select v-model="partitionForm.partitionType" style="width:100%">
+                    <el-option :label="statusLabel('RANGE')" value="RANGE" />
+                    <el-option :label="statusLabel('HASH')" value="HASH" />
+                    <el-option :label="statusLabel('LIST')" value="LIST" />
+                  </el-select>
+                </el-form-item>
+                <el-form-item label="目标表" required>
+                  <el-select
+                    v-model="partitionForm.tableName"
+                    placeholder="输入表名筛选"
+                    filterable
+                    style="width:100%"
+                    @change="onPartitionTableChange"
+                  >
+                    <el-option
+                      v-for="t in managedTables"
+                      :key="t.id"
+                      :label="t.physicalTable"
+                      :value="t.physicalTable"
+                    />
+                  </el-select>
+                </el-form-item>
+                <el-form-item label="分区键" required>
+                  <el-select
+                    v-model="partitionForm.partitionColumn"
+                    placeholder="选择分区列"
+                    filterable
+                    style="width:100%"
+                    :disabled="!partitionForm.tableName"
+                  >
+                    <el-option
+                      v-for="c in partitionColumns"
+                      :key="c.columnName"
+                      :label="`${c.columnName}${c.dataType ? ' (' + c.dataType + ')' : ''}`"
+                      :value="c.columnName"
+                    />
+                  </el-select>
+                </el-form-item>
+                <el-form-item label="表达式">
+                  <el-input v-model="partitionForm.expressionText" :placeholder="expressionPlaceholder" />
+                </el-form-item>
+              </el-form>
+              <template #footer>
+                <el-button @click="partitionDialogVisible = false">取消</el-button>
+                <el-button type="primary" @click="createPartition">
+                  {{ partitionEditId ? '保存' : '确定' }}
+                </el-button>
+              </template>
+            </el-dialog>
           </el-tab-pane>
 
           <el-tab-pane label="分区监控" name="monitor">

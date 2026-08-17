@@ -2,7 +2,7 @@
 /**
  * V3.0「数据融合处理」子能力入口：
  * 脚本开发 / 数据清洗 / 工作流调度 / 任务执行 / 版本管理
- * （框架能力复用数据治理 ETL + 融合脚本；黄金路径挂在任务执行下）
+ * （框架能力复用数据治理 ETL + 融合脚本）
  */
 import { defineAsyncComponent, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
@@ -10,21 +10,17 @@ import PageCard from '@/components/common/PageCard.vue'
 
 const FusionScriptView = defineAsyncComponent(() => import('./FusionScriptView.vue'))
 const FusionVersionView = defineAsyncComponent(() => import('./FusionVersionView.vue'))
-const DirectShareGoldenPathView = defineAsyncComponent(() => import('../DirectShareGoldenPathView.vue'))
-const ProcessedShareGoldenPathView = defineAsyncComponent(() => import('../ProcessedShareGoldenPathView.vue'))
 
 const route = useRoute()
 const router = useRouter()
 
-/** 与 V3.0 正文小节一致 */
+/** 与 V3.0 正文子弹一致 */
 const VALID = [
   'script',
   'clean',
   'schedule',
   'execute',
   'version',
-  'direct-share',
-  'processed-share',
 ] as const
 type ProcTab = (typeof VALID)[number]
 
@@ -32,9 +28,9 @@ const active = ref<ProcTab>('script')
 
 function resolveTab(raw: unknown): ProcTab {
   const s = String(raw || 'script')
+  // 旧黄金路径 Tab 已下线，落到任务执行
+  if (s === 'direct-share' || s === 'processed-share' || s === 'direct' || s === 'processed') return 'execute'
   if ((VALID as readonly string[]).includes(s)) return s as ProcTab
-  if (s === 'direct') return 'direct-share'
-  if (s === 'processed') return 'processed-share'
   if (s === 'runs') return 'execute'
   return 'script'
 }
@@ -83,8 +79,6 @@ function goFusionComponents() {
       <el-tab-pane label="工作流调度" name="schedule" />
       <el-tab-pane label="任务执行" name="execute" />
       <el-tab-pane label="版本管理" name="version" />
-      <el-tab-pane label="直通共享" name="direct-share" />
-      <el-tab-pane label="加工共享" name="processed-share" />
     </el-tabs>
 
     <!-- 脚本开发：本模块已实现 -->
@@ -122,22 +116,16 @@ function goFusionComponents() {
       </el-space>
     </div>
 
-    <!-- 任务执行：复用任务运行 + 黄金路径场景 -->
+    <!-- 任务执行：复用任务运行 -->
     <div v-else-if="active === 'execute'" class="map-panel">
       <el-descriptions title="与已实现能力的对应" :column="1" border size="small">
         <el-descriptions-item label="V3.0 要求">任务提交、重跑/暂停、优先级、执行监控与日志</el-descriptions-item>
-        <el-descriptions-item label="当前落地">数据治理「任务运行 / ETL监控」；加工共享融合入库走 Kettle/SQL 真实落库</el-descriptions-item>
-        <el-descriptions-item label="场景路径">直通共享 / 加工共享（工程黄金路径，挂在本模块便于验收）</el-descriptions-item>
+        <el-descriptions-item label="当前落地">数据治理「任务运行 / ETL监控」；融合加工入库走 Kettle/SQL 真实落库</el-descriptions-item>
       </el-descriptions>
       <el-space style="margin-top: 16px" wrap>
         <el-button type="primary" @click="goEtl('task-run')">打开任务运行</el-button>
-        <el-button @click="onTab('processed-share')">加工共享落库</el-button>
-        <el-button @click="onTab('direct-share')">直通共享</el-button>
       </el-space>
     </div>
-
-    <DirectShareGoldenPathView v-else-if="active === 'direct-share'" />
-    <ProcessedShareGoldenPathView v-else-if="active === 'processed-share'" />
   </PageCard>
 </template>
 

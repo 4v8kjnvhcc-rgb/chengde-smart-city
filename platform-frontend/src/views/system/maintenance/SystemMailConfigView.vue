@@ -4,6 +4,7 @@ import api from '@/api/http'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import PageCard from '@/components/common/PageCard.vue'
 import { withPasswordTransport } from '@/utils/transport-crypto'
+import { isEmail } from '@/utils/validators'
 
 defineProps<{ embed?: boolean }>()
 
@@ -70,8 +71,11 @@ async function sendTest() {
     const { value } = await ElMessageBox.prompt('请输入测试收件人邮箱', '发送测试邮件', {
       confirmButtonText: '发送',
       cancelButtonText: '取消',
-      inputPattern: /.+@.+\..+/,
-      inputErrorMessage: '请输入有效邮箱',
+      inputValidator: (val) => {
+        if (!String(val || '').trim()) return '请输入有效邮箱'
+        if (!isEmail(String(val))) return '邮箱格式不对'
+        return true
+      },
     })
     await api.post('/system/mail-config/test', { to: value })
     ElMessage.success('测试邮件已发送，请查收')

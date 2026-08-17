@@ -4,6 +4,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import PageCard from '@/components/common/PageCard.vue'
 import api from '@/api/http'
 import { statusLabel } from '@/utils/status-label'
+import { isMobilePhone } from '@/utils/validators'
 
 const tab = ref('rules')
 const loading = ref(false)
@@ -317,6 +318,10 @@ async function saveCrypto() {
 }
 
 async function runApply(preview: boolean) {
+  if (applyForm.phone.trim() && !isMobilePhone(applyForm.phone)) {
+    ElMessage.warning('手机号格式不对')
+    return
+  }
   applyResult.value = (
     await api.post(`/exchange/ingestion/mask-policy/${preview ? 'preview' : 'apply'}`, {
       sceneCode: applyForm.sceneCode,

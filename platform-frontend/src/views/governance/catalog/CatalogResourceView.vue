@@ -15,6 +15,7 @@ import {
 } from '@/utils/status-label'
 import { ingestionApi } from '@/views/exchange/ingestion/useIngestionHub'
 import { withPasswordTransport } from '@/utils/transport-crypto'
+import { isContactPhone, isEmail } from '@/utils/validators'
 
 const router = useRouter()
 const auth = useAuthStore()
@@ -1045,6 +1046,14 @@ function validateStep1(): boolean {
   }
   if (form.openType === 'NOT_OPEN' && !form.notOpenReason?.trim()) {
     ElMessage.warning('不开放须填写不开放理由')
+    return false
+  }
+  if (form.contactPhone?.trim() && !isContactPhone(form.contactPhone)) {
+    ElMessage.warning('联系电话格式不对')
+    return false
+  }
+  if (form.contactEmail?.trim() && !isEmail(form.contactEmail)) {
+    ElMessage.warning('邮箱格式不对')
     return false
   }
   return true

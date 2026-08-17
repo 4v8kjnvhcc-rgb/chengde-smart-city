@@ -22,10 +22,15 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 
 @Service
 public class UserService {
+
+    /** 手机号或国内座机（与前端联系方式校验对齐）。 */
+    private static final Pattern CONTACT_PHONE_PATTERN =
+            Pattern.compile("^(1[3-9]\\d{9}|0\\d{2,3}-?\\d{7,8})$");
 
     private final SysUserMapper userMapper;
     private final PasswordEncoder passwordEncoder;
@@ -120,11 +125,13 @@ public class UserService {
         if (req.phone() == null || req.phone().isBlank()) {
             throw new BusinessException(400, "联系方式不能为空");
         }
+        String phone = req.phone().trim();
+        validateContactPhone(phone);
         SysUser user = new SysUser();
         user.setUsername(req.username());
         user.setPasswordHash(passwordEncoder.encode(plainPassword));
         user.setDisplayName(req.displayName());
-        user.setPhone(req.phone().trim());
+        user.setPhone(phone);
         user.setOrgId(req.orgId());
         user.setStatus(1);
         user.setPasswordChangedAt(LocalDateTime.now());
@@ -240,6 +247,16 @@ public class UserService {
         boolean hasDigit = password.matches(".*\\d.*");
         if (!hasLetter || !hasDigit) {
             throw new BusinessException(400, "密码须包含字母和数字");
+        }
+    }
+
+    /** 联系方式：手机号或座机。更新接口当前无 phone 字段，创建必校验。 */
+    public void validateContactPhone(String phone) {
+        if (phone == null || phone.isBlank()) {
+            throw new BusinessException(400, "联系方式不能为空");
+        }
+        if (!CONTACT_PHONE_PATTERN.matcher(phone.trim()).matches()) {
+            throw new BusinessException(400, "联系电话格式不对");
         }
     }
 

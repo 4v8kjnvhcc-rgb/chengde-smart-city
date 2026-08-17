@@ -2,6 +2,7 @@ package com.chengde.smartcity.masterdata.service;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
+import com.baomidou.mybatisplus.core.conditions.update.LambdaUpdateWrapper;
 import com.chengde.smartcity.audit.AuditService;
 import com.chengde.smartcity.common.exception.BusinessException;
 import com.chengde.smartcity.integration.storage.StorageIntegrationClient;
@@ -1262,8 +1263,11 @@ public class ResourceCenterPlatformService {
     public void refreshNextRunAfterExecute(Long policyId) {
         RcStoragePolicy p = policyMapper.selectById(policyId);
         if (p == null || p.getScheduleEnabled() == null || p.getScheduleEnabled() != 1) return;
-        p.setNextRunAt(computeNextRun(p.getScheduleCron(), LocalDateTime.now().plusSeconds(1)));
-        policyMapper.updateById(p);
+        LocalDateTime next = computeNextRun(p.getScheduleCron(), LocalDateTime.now().plusSeconds(1));
+        // 只改 next_run_at，避免整行 update 覆盖刚写入的 last_run_* 
+        policyMapper.update(null, new LambdaUpdateWrapper<RcStoragePolicy>()
+                .eq(RcStoragePolicy::getId, policyId)
+                .set(RcStoragePolicy::getNextRunAt, next));
     }
 
     public List<RcStoragePolicy> listDuePolicies(LocalDateTime now) {
@@ -1278,7 +1282,7 @@ public class ResourceCenterPlatformService {
         LambdaQueryWrapper<RcPolicyRunLog> q = new LambdaQueryWrapper<RcPolicyRunLog>()
                 .orderByDesc(RcPolicyRunLog::getId);
         if (policyId != null) q.eq(RcPolicyRunLog::getPolicyId, policyId);
-        return policyRunLogMapper.selectList(q.last("LIMIT 100"));
+        return policyRunLogMapper.selectList(q.last("LIMIT 200"));
     }
 
     public Map<String, Object> restoreArtifact(UserPrincipal operator, Long artifactId) {
@@ -1613,6 +1617,10 @@ public class ResourceCenterPlatformService {
                 .orderByDesc(RcBackupArtifact::getId);
         if (managedTableId != null) q.eq(RcBackupArtifact::getManagedTableId, managedTableId);
         return backupArtifactMapper.selectList(q.last("LIMIT 500"));
+    }
+
+    public Map<String, Object> syncLifecycleArtifacts() {
+        return storageLifecycleService.syncLifecycleArtifacts();
     }
 
     @Transactional
