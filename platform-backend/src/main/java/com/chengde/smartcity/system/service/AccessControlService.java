@@ -90,10 +90,10 @@ public class AccessControlService {
         return out;
     }
 
-    /** 部门管理员可写资源/数据授权；系统管理员禁止直接授信息访问权。 */
+    /** 部门管理员与系统管理员均可写资源/数据授权（系统管理员全量放行）。 */
     public void assertCanGrantResourceOrData(UserPrincipal operator) {
-        if (operator.isSystemAdmin() && !operator.isDeptAdmin()) {
-            throw new BusinessException(403, "系统管理员不能直接授予项目或数据访问权，请由部门管理员授权或走跨部门审批");
+        if (operator.isSystemAdmin()) {
+            return;
         }
         if (!operator.isDeptAdmin()) {
             throw new BusinessException(403, "仅部门管理员可授予项目或数据访问权");
@@ -362,46 +362,36 @@ public class AccessControlService {
     }
 
     /**
-     * 可被项目授权的用户：启用账号，具备数据资产登记相关权限；
-     * 仅本部门用户，且不包含当前登录账号（「其他用户」）。
-     * 优先按项目绑定机构过滤；否则按操作者所属机构过滤。
+     * 可被授权的用户列表（项目授权 / 数据权限下拉共用）。
+     * 系统管理员：全量启用用户；部门管理员：本机构启用用户。
+     * 不再要求「登记菜单权限」，也不排除当前登录人（避免下拉为空）。
      */
     public List<Map<String, Object>> listUsersForProjectGrant(UserPrincipal operator) {
         return listUsersForProjectGrant(operator, null);
     }
 
     public List<Map<String, Object>> listUsersForProjectGrant(UserPrincipal operator, Long projectId) {
-        Long orgId = resolveGrantOrgId(operator, projectId);
-        Long excludeUserId = operator != null ? operator.getUserId() : null;
+        boolean sysAdmin = operator != null && operator.isSystemAdmin();
+        Long orgId = null;
+        if (!sysAdmin) {
+            orgId = resolveGrantOrgId(operator, projectId);
+        } else if (projectId != null) {
+            // 系统管理员按项目绑机构筛时仍可用；无项目则看全量
+            IngProject project = projectMapper.selectById(projectId);
+            if (project != null && project.getBoundOrgId() != null) {
+                orgId = project.getBoundOrgId();
+            }
+        }
         String sql = """
-                SELECT DISTINCT u.id, u.username, u.display_name AS displayName, u.org_id AS orgId,
+                SELECT u.id, u.username, u.display_name AS displayName, u.org_id AS orgId,
                        COALESCE(o.org_name, '未分配机构') AS orgName
                 FROM sys_user u
                 LEFT JOIN sys_org o ON o.id = u.org_id
                 WHERE u.status = 1
                   AND (? IS NULL OR u.org_id = ?)
-                  AND (? IS NULL OR u.id <> ?)
-                  AND (
-                    EXISTS (
-                      SELECT 1 FROM sys_user_role ur
-                      INNER JOIN sys_role r ON r.id = ur.role_id
-                      WHERE ur.user_id = u.id AND UPPER(r.role_code) = 'SYSTEM_ADMIN'
-                    )
-                    OR EXISTS (
-                      SELECT 1 FROM sys_user_role ur
-                      INNER JOIN sys_role_menu rm ON rm.role_id = ur.role_id
-                      INNER JOIN sys_menu m ON m.id = rm.menu_id
-                      WHERE ur.user_id = u.id
-                        AND (
-                          m.id = 7000
-                          OR m.parent_id = 7000
-                          OR (m.permission IS NOT NULL AND m.permission LIKE 'hub:ingestion:register%')
-                        )
-                    )
-                  )
                 ORDER BY orgName, displayName, username
                 """;
-        List<Map<String, Object>> rows = jdbcTemplate.queryForList(sql, orgId, orgId, excludeUserId, excludeUserId);
+        List<Map<String, Object>> rows = jdbcTemplate.queryForList(sql, orgId, orgId);
         List<Map<String, Object>> out = new ArrayList<>();
         for (Map<String, Object> row : rows) {
             Map<String, Object> m = new LinkedHashMap<>();
@@ -554,14 +544,27 @@ public class AccessControlService {
         Long granteeId = longVal(body.get("granteeId"));
         String perm = str(body.get("perm"), "READ").toUpperCase(Locale.ROOT);
         if (scopeId == null || granteeId == null) throw new BusinessException(400, "scopeId/granteeId required");
-        assertScopeInOrg(scopeType, scopeId, operator.getOrgId());
+        boolean sysAdmin = operator.isSystemAdmin();
+        if (!sysAdmin) {
+            assertScopeInOrg(scopeType, scopeId, operator.getOrgId());
+        }
         if ("USER".equals(granteeType) || "ROLE".equals(granteeType)) {
-            validateGrantee(granteeType, granteeId, operator.getOrgId());
-        } else if ("ORG".equals(granteeType) && !Objects.equals(granteeId, operator.getOrgId())) {
+            if (sysAdmin) {
+                if ("USER".equals(granteeType)) {
+                    SysUser u = userMapper.selectById(granteeId);
+                    if (u == null) throw new BusinessException(404, "用户不存在");
+                } else {
+                    SysRole r = roleMapper.selectById(granteeId);
+                    if (r == null) throw new BusinessException(404, "角色不存在");
+                }
+            } else {
+                validateGrantee(granteeType, granteeId, operator.getOrgId());
+            }
+        } else if ("ORG".equals(granteeType) && !sysAdmin && !Objects.equals(granteeId, operator.getOrgId())) {
             throw new BusinessException(403, "只能授给本机构");
         } else if ("PROJECT".equals(granteeType)) {
             IngProject p = projectMapper.selectById(granteeId);
-            if (p == null || !Objects.equals(p.getBoundOrgId(), operator.getOrgId())) {
+            if (p == null || (!sysAdmin && !Objects.equals(p.getBoundOrgId(), operator.getOrgId()))) {
                 throw new BusinessException(403, "只能授给本机构项目");
             }
         }
@@ -582,7 +585,12 @@ public class AccessControlService {
         g.setScopeId(scopeId);
         g.setGranteeType(granteeType);
         g.setGranteeId(granteeId);
-        g.setOrgId(operator.getOrgId());
+        Long grantOrgId = operator.getOrgId();
+        if (grantOrgId == null && "USER".equals(granteeType)) {
+            SysUser gu = userMapper.selectById(granteeId);
+            if (gu != null) grantOrgId = gu.getOrgId();
+        }
+        g.setOrgId(grantOrgId);
         g.setPerm(perm);
         g.setGrantedBy(operator.getUserId());
         g.setCreatedAt(LocalDateTime.now());
@@ -595,7 +603,7 @@ public class AccessControlService {
         assertCanGrantResourceOrData(operator);
         SysDataGrant g = dataGrantMapper.selectById(id);
         if (g == null) throw new BusinessException(404, "授权不存在");
-        if (!Objects.equals(g.getOrgId(), operator.getOrgId())) {
+        if (!operator.isSystemAdmin() && !Objects.equals(g.getOrgId(), operator.getOrgId())) {
             throw new BusinessException(403, "只能删除本机构授权");
         }
         dataGrantMapper.deleteById(id);

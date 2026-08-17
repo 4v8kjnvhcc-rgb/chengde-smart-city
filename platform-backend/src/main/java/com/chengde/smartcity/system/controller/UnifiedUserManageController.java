@@ -173,8 +173,35 @@ public class UnifiedUserManageController {
 
     @GetMapping("/integrations")
     @PreAuthorize("isAuthenticated()")
-    public ApiResponse<List<AnaPlatformIntegration>> integrations() {
-        return ApiResponse.ok(uumService.integrations());
+    public ApiResponse<List<AnaPlatformIntegration>> integrations(
+            @RequestParam(required = false) String integrationCode,
+            @RequestParam(required = false) String integrationName,
+            @RequestParam(required = false) String targetSystem) {
+        return ApiResponse.ok(analyticsPlatformService.listIntegrations(integrationCode, integrationName, targetSystem));
+    }
+
+    @PostMapping("/integrations")
+    @PreAuthorize("hasAuthority('system:uum:integration') or hasAuthority('system:uum:view') or hasAuthority('system:user:list')")
+    public ApiResponse<Long> createIntegration(@AuthenticationPrincipal UserPrincipal principal,
+                                               @RequestBody Map<String, Object> body) {
+        return ApiResponse.ok(analyticsPlatformService.createIntegration(principal, body));
+    }
+
+    @PutMapping("/integrations/{id}")
+    @PreAuthorize("hasAuthority('system:uum:integration') or hasAuthority('system:uum:view') or hasAuthority('system:user:list')")
+    public ApiResponse<Void> updateIntegration(@AuthenticationPrincipal UserPrincipal principal,
+                                               @PathVariable Long id,
+                                               @RequestBody Map<String, Object> body) {
+        analyticsPlatformService.updateIntegration(principal, id, body);
+        return ApiResponse.ok(null);
+    }
+
+    @DeleteMapping("/integrations/{id}")
+    @PreAuthorize("hasAuthority('system:uum:integration') or hasAuthority('system:uum:view') or hasAuthority('system:user:list')")
+    public ApiResponse<Void> deleteIntegration(@AuthenticationPrincipal UserPrincipal principal,
+                                               @PathVariable Long id) {
+        analyticsPlatformService.deleteIntegration(principal, id);
+        return ApiResponse.ok(null);
     }
 
     @PostMapping("/integrations/{id}/test")

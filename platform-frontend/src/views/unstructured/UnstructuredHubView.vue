@@ -1803,14 +1803,6 @@ onMounted(() => {
       </PageCard>
 
       <PageCard v-else-if="activeNav === 'metadata'" title="非结构化元数据管理">
-        <el-alert
-          type="info"
-          :closable="false"
-          show-icon
-          class="uns-meta-flow"
-          title="治理流程：基本特征提取 → 内容理解（关键词/主题/情感或多媒体关键信息）→ 标签化与相似性检索/连接 → 元数据落地维护"
-          description="覆盖文档、图片、音频、视频。提取与理解结果写入元数据库（feature_json / content_json / tag_json），供检索与消费；相似连接写入关联文档便于关联浏览。"
-        />
         <el-row :gutter="12" class="uns-meta-kpi">
           <el-col :span="6">
             <div class="uns-kpi uns-kpi--blue">

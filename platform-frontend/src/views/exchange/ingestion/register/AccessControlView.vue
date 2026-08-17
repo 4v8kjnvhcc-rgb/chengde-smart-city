@@ -190,10 +190,17 @@ async function loadOrgs() {
 
 async function loadUsers() {
   try {
+    // 访问控制专用候选用户（系统管理员看全量启用账号）
     const res = await api.get('/system/access/users-for-project-grant')
-    users.value = (res.data || []) as typeof users.value
-  } catch {
+    users.value = ((res.data || []) as typeof users.value).filter((u) => u && u.id != null)
+    if (!users.value.length) {
+      // 兜底：用户管理分页接口
+      const fallback = await api.get('/system/users', { params: { page: 1, size: 500 } })
+      users.value = ((fallback.data?.records || []) as typeof users.value).filter((u) => u && u.id != null)
+    }
+  } catch (e: unknown) {
     users.value = []
+    ElMessage.error(e instanceof Error ? e.message : '加载用户列表失败')
   }
 }
 
@@ -331,6 +338,11 @@ onMounted(async () => {
   const tab = applyTabFromQuery()
   if (tab && tab !== 'overview') {
     activeTab.value = tab
+    // watch(activeTab) 会拉取；此处再兜底一次，避免未触发时下拉无数据
+    if (tab === 'data') await Promise.all([loadTables(), loadUsers(), loadDataGrants()])
+    else if (tab === 'resource') await Promise.all([loadProjects(), loadUsers(), loadProjectGrants(), loadRoles()])
+    else if (tab === 'function') await loadFunctionRoles()
+    else if (tab === 'cross') await Promise.all([loadOrgs(), loadCross()])
     return
   }
   await loadOverview()
@@ -433,10 +445,21 @@ onMounted(async () => {
               </el-select>
             </el-form-item>
             <el-form-item label="对象" class="portal-field-lg">
-              <el-select v-if="projectGrantForm.granteeType === 'USER'" v-model="projectGrantForm.granteeId" filterable>
-                <el-option v-for="u in users" :key="u.id" :label="u.displayName || u.username" :value="u.id" />
+              <el-select
+                v-if="projectGrantForm.granteeType === 'USER'"
+                v-model="projectGrantForm.granteeId"
+                filterable
+                clearable
+                placeholder="请选择用户"
+              >
+                <el-option
+                  v-for="u in users"
+                  :key="u.id"
+                  :label="`${u.displayName || u.username}（${u.username}）`"
+                  :value="u.id"
+                />
               </el-select>
-              <el-select v-else v-model="projectGrantForm.granteeId" filterable>
+              <el-select v-else v-model="projectGrantForm.granteeId" filterable clearable placeholder="请选择角色">
                 <el-option v-for="r in roles" :key="r.id" :label="r.roleName" :value="r.id" />
               </el-select>
             </el-form-item>
@@ -491,8 +514,18 @@ onMounted(async () => {
               </el-select>
             </el-form-item>
             <el-form-item label="授权给" class="portal-field-lg">
-              <el-select v-model="dataGrantForm.granteeId" filterable>
-                <el-option v-for="u in users" :key="u.id" :label="u.displayName || u.username" :value="u.id" />
+              <el-select
+                v-model="dataGrantForm.granteeId"
+                filterable
+                clearable
+                placeholder="请选择用户"
+              >
+                <el-option
+                  v-for="u in users"
+                  :key="u.id"
+                  :label="`${u.displayName || u.username}（${u.username}）`"
+                  :value="u.id"
+                />
               </el-select>
             </el-form-item>
             <el-form-item class="portal-form-actions">

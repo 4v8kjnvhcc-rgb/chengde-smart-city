@@ -7,6 +7,7 @@ import PageCard from '@/components/common/PageCard.vue'
 import HubSideLayout, { type HubNavGroup } from '@/components/common/HubSideLayout.vue'
 import DomainIndicatorSqlLibrary from '@/views/analytics/DomainIndicatorSqlLibrary.vue'
 import DomainIndicatorGroupManage from '@/views/analytics/DomainIndicatorGroupManage.vue'
+import DomainIndicatorTaskPanel from '@/views/analytics/DomainIndicatorTaskPanel.vue'
 import { statusLabel, statusTagType } from '@/utils/status-label'
 import { ingestionApi } from '@/views/exchange/ingestion/useIngestionHub'
 import { fetchDataSourceTableNames } from '@/utils/layer-tables'
@@ -102,6 +103,25 @@ interface Indicator {
   unitLabel?: string
   description?: string
   status: string
+}
+
+interface IndicatorGroupOption {
+  id: string
+  groupName: string
+  targetTable: string
+  indicatorDomainId?: string
+  indicatorDomainName?: string
+  status?: string
+}
+
+interface IndicatorTablePreview {
+  groupId: string
+  groupName: string
+  targetTable: string
+  columns: string[]
+  rows: Record<string, unknown>[]
+  message?: string
+  loading?: boolean
 }
 
 interface AnalysisModel {
@@ -265,90 +285,6 @@ const POPULATION_ZONE_DIMS: Record<string, DimItem[]> = {
   ],
 }
 
-const GOVERN_MECHANISM_CARDS = [
-  {
-    code: 'M155',
-    title: '更新维护',
-    points: [
-      '户籍基准由公安定时维护；各部门负责本域基础数据增改',
-      '平台主动采集至 ODS，再经治理/融合进入 DWS',
-      '技术落点复用归集定时（DS + Kettle），人口域不自建调度',
-    ],
-  },
-  {
-    code: 'M156',
-    title: '信息校核',
-    points: [
-      '入原始库后做检查与基准校核，使业务信息与人员基础信息对应',
-      '覆盖注销人员、出生未申报户口、婚姻状况等多源场景',
-      '质量问题反馈提供单位更正后再入链；不在核心区静默篡改权威值',
-    ],
-  },
-]
-
-const SHARE_SERVICE_CARDS = [
-  {
-    code: 'M159',
-    title: '服务接口',
-    points: [
-      '适用小数据量：应用校核、核查比对、基准叠加',
-      '政务外网向共建单位应用提供',
-      '现网：本页说明 + 接口交换深链；生产 API 属后续工程',
-    ],
-  },
-  {
-    code: 'M160',
-    title: '大批量应用',
-    points: [
-      '适用大数据量：共建单位前置批量库 ↔ 交换系统 ↔ 共享平台结果库',
-      '批量结果库按交换周期清理或归档',
-      '现网：批量台账 LEDGER + 应用/交换深链；全链路属后续工程',
-    ],
-  },
-]
-
-const COLLECT_SOURCE_CHANNELS = [
-  { dept: '公安局', channel: '库表/API', latency: '高时效+档案', remark: '户籍基准与人员主数据' },
-  { dept: '民政局', channel: '库表/文件', latency: '月更为主', remark: '婚姻、救助等' },
-  { dept: '法院', channel: '文件/API', latency: '按案件周期', remark: '裁判文书等结构化抽取' },
-  { dept: '教育局', channel: '库表', latency: '学期/年', remark: '学籍与学历' },
-  { dept: '人社局', channel: '库表/API', latency: '月更', remark: '社保就业' },
-  { dept: '卫健委', channel: '库表/文件', latency: '日/月', remark: '出生死亡等' },
-]
-
-const DUAL_AUTH_CARDS = [
-  {
-    code: 'M158',
-    title: '双重授权边界',
-    points: [
-      '高敏人口基础数据独立服务边界；消费核心区权威数据',
-      '系统管理员可授部门管理员角色，不可直接授跨部门数据访问权',
-      '跨部门数据权走申请审批；对齐全局 M048/M211',
-    ],
-  },
-  {
-    code: 'M048',
-    title: '平台授权能力（复用）',
-    points: [
-      '项目授权 / 数据授权 / 跨部门审批在归集登记「访问控制」',
-      '人口内部区不另造授权引擎，深链复用现网 RBAC',
-      '主题表数据权扩展到 DWS 查询路径属生产强化项',
-    ],
-  },
-]
-
-const STORAGE_DESIGN_CARDS = [
-  {
-    code: 'M157',
-    title: '存储管理设计',
-    points: [
-      '垂直分片：相片等与基础信息分库（逻辑）',
-      '水平分区：按区县/时间等切分；历史与审计近线',
-      '现网：资源中心分区策略 LEDGER；真正 ALTER 需运维窗口',
-    ],
-  },
-]
-
 function modelRowClassName({ row }: { row: AnalysisModel }) {
   return highlightModelCode.value && row.mCode === highlightModelCode.value ? 'row-hl' : ''
 }
@@ -358,7 +294,7 @@ const ZONE_DEFS: Record<string, ZoneDef[]> = {
     { key: 'zone.collect', zoneCode: 'collect', label: '人口数据采集区设计', mCodes: ['M152'], deepLink: '/exchange/ingestion', deepLabel: '打开数据归集' },
     { key: 'zone.govern', zoneCode: 'govern', label: '人口数据治理及反馈区设计', mCodes: ['M153', 'M155', 'M156'], deepLink: '/governance', deepLabel: '打开数据治理' },
     { key: 'zone.core', zoneCode: 'core', label: '人口核心数据区设计', mCodes: ['M157'], deepLink: '/resource-center', deepLabel: '打开资源中心' },
-    { key: 'zone.internal', zoneCode: 'internal', label: '人口数据内部服务区设计', mCodes: ['M158'], deepLink: '/exchange/ingestion?system=register&module=m048', deepLabel: '打开双重授权(M048)' },
+    { key: 'zone.internal', zoneCode: 'internal', label: '人口数据内部服务区设计', mCodes: ['M158'], deepLink: '/exchange/ingestion?system=register&module=m048', deepLabel: '打开访问控制' },
     { key: 'zone.share', zoneCode: 'share', label: '人口数据共享服务区设计', mCodes: ['M154', 'M159', 'M160', 'M161', 'M162', 'M163', 'M164', 'M165', 'M166', 'M167', 'M168', 'M169', 'M170', 'M171', 'M172', 'M173', 'M174'], deepLink: '/catalog', deepLabel: '打开资源目录' },
   ],
   legal: [
@@ -409,18 +345,20 @@ const indicatorScopeName = computed(() => INDICATOR_SCOPE_NAME[meta.value.domain
 
 const dataEaseHealthy = ref(false)
 const activeNav = ref('')
-const shareTab = ref<'mount' | 'catalog' | 'api' | 'indicators' | 'models'>('mount')
-const governTab = ref<'mount' | 'mechanism' | 'verify'>('mount')
-const collectTab = ref<'mount' | 'sources'>('mount')
+const shareTab = ref<'mount' | 'api' | 'indicators' | 'tasks' | 'models'>('mount')
+const governTab = ref<'mount' | 'verify'>('mount')
+const collectTab = ref<'mount'>('mount')
 const coreTab = ref<'mount' | 'storage'>('mount')
-const internalTab = ref<'mount' | 'auth'>('mount')
+const internalTab = ref<'mount'>('mount')
 const highlightModelCode = ref('')
 
 const bindings = ref<Binding[]>([])
 const candidates = ref<Candidate[]>([])
 const indicators = ref<Indicator[]>([])
+const indicatorGroups = ref<IndicatorGroupOption[]>([])
 const models = ref<AnalysisModel[]>([])
 const modelSamples = ref<ModelSample[]>([])
+const indicatorTablePreviews = ref<IndicatorTablePreview[]>([])
 const samplesLoading = ref(false)
 const verifyRows = ref<VerifyLedgerRow[]>([])
 const verifyLoading = ref(false)
@@ -429,7 +367,6 @@ const serviceLoading = ref(false)
 const invokeResult = ref('')
 const batchRows = ref<BatchLedgerRow[]>([])
 const batchLoading = ref(false)
-const accessOverview = ref<Record<string, unknown> | null>(null)
 const storageSummary = ref<Record<string, unknown> | null>(null)
 const storageLoading = ref(false)
 const verifyForm = ref({
@@ -547,6 +484,7 @@ const modelForm = ref({
   dimensionJson: '',
   description: '',
   indicatorIds: [] as number[],
+  indicatorGroupIds: [] as string[],
 })
 const iframeSrc = ref('')
 const embedMode = ref<'LIVE' | 'LEDGER' | ''>('')
@@ -629,7 +567,7 @@ function pickDefaultNav() {
     activeNav.value = zones.value[0].key
   } else {
     activeNav.value = 'designer'
-    if (shareTab.value === 'mount' || shareTab.value === 'catalog' || shareTab.value === 'api') {
+    if (shareTab.value === 'mount' || shareTab.value === 'api') {
       shareTab.value = 'indicators'
     }
   }
@@ -641,14 +579,14 @@ function resolveFromRoute() {
   highlightModelCode.value = ''
   if (!q) {
     pickDefaultNav()
-  } else if (q === 'designer' || q === 'models' || q === 'indicators') {
+  } else if (q === 'designer' || q === 'models' || q === 'indicators' || q === 'tasks') {
     if (hasZones.value) {
       const share = zones.value.find((z) => z.zoneCode === 'share')
       activeNav.value = share?.key || zones.value[0]?.key || ''
-      shareTab.value = q === 'indicators' ? 'indicators' : q === 'models' ? 'models' : 'mount'
+      shareTab.value = q === 'indicators' ? 'indicators' : q === 'tasks' ? 'tasks' : q === 'models' ? 'models' : 'mount'
     } else {
       activeNav.value = 'designer'
-      shareTab.value = q === 'indicators' ? 'indicators' : 'models'
+      shareTab.value = q === 'indicators' ? 'indicators' : q === 'tasks' ? 'tasks' : 'models'
     }
   } else if (q.startsWith('zone.')) {
     const hit = zones.value.find((z) => z.key === q)
@@ -661,20 +599,20 @@ function resolveFromRoute() {
       if (parentZone.zoneCode === 'share') {
         if (code === 'M159' || code === 'M160') {
           shareTab.value = 'api'
-        } else if (code === 'M154') {
-          shareTab.value = 'catalog'
+        } else if (code === 'M154' || code === 'M177') {
+          shareTab.value = 'mount'
         } else {
           shareTab.value = 'models'
           highlightModelCode.value = code
         }
-      } else if (parentZone.zoneCode === 'govern' && (code === 'M155' || code === 'M156')) {
+      } else if (parentZone.zoneCode === 'govern' && (code === 'M155' || code === 'M156' || code === 'M178' || code === 'M179')) {
         governTab.value = 'verify'
-      } else if (parentZone.zoneCode === 'core' && code === 'M157') {
+      } else if (parentZone.zoneCode === 'core' && (code === 'M157' || code === 'M180')) {
         coreTab.value = 'storage'
-      } else if (parentZone.zoneCode === 'internal' && code === 'M158') {
-        internalTab.value = 'auth'
-      } else if (parentZone.zoneCode === 'collect' && code === 'M152') {
-        collectTab.value = 'sources'
+      } else if (parentZone.zoneCode === 'internal' && (code === 'M158' || code === 'M181')) {
+        internalTab.value = 'mount'
+      } else if (parentZone.zoneCode === 'collect' && (code === 'M152' || code === 'M175')) {
+        collectTab.value = 'mount'
       }
     } else if (hasZones.value) {
       pickDefaultNav()
@@ -721,12 +659,29 @@ async function loadBindings(force = false) {
 
 async function loadDesigner(force = false) {
   if (designerLoaded.value && !force) return
-  const [iRes, mRes] = await Promise.all([
+  const reqs: Promise<unknown>[] = [
     api.get(`/analytics/domain/${meta.value.domain}/indicators`),
     api.get(`/analytics/domain/${meta.value.domain}/models`),
-  ])
+  ]
+  if (useGroupIndicatorLib.value) {
+    reqs.push(api.get(`/analytics/domain/${meta.value.domain}/indicator-groups`))
+  }
+  const results = await Promise.all(reqs)
+  const iRes = results[0] as { data?: Indicator[] }
+  const mRes = results[1] as { data?: AnalysisModel[] }
   indicators.value = iRes.data || []
   models.value = mRes.data || []
+  if (useGroupIndicatorLib.value) {
+    const gRes = results[2] as { data?: IndicatorGroupOption[] }
+    let groups = gRes.data || []
+    const scope = indicatorScopeName.value.trim()
+    if (scope) {
+      groups = groups.filter((g) => String(g.indicatorDomainName || '').includes(scope))
+    }
+    indicatorGroups.value = groups
+  } else {
+    indicatorGroups.value = []
+  }
   designerLoaded.value = true
 }
 
@@ -742,8 +697,88 @@ async function loadModelSamples(modelId: number) {
   }
 }
 
+function parseIndicatorGroupIds(dimensionJson?: string): string[] {
+  if (!dimensionJson?.trim()) return []
+  try {
+    const parsed = JSON.parse(dimensionJson)
+    if (Array.isArray(parsed?.indicatorGroupIds)) {
+      return parsed.indicatorGroupIds.map((x: unknown) => String(x || '').trim()).filter(Boolean)
+    }
+  } catch {
+    /* ignore */
+  }
+  return []
+}
+
+function buildDimensionJsonWithGroups(groupIds: string[]): string {
+  return JSON.stringify({ indicatorGroupIds: groupIds })
+}
+
+function modelLinkedLabel(row: AnalysisModel): string {
+  const ids = parseIndicatorGroupIds(row.dimensionJson)
+  if (ids.length) {
+    const map = new Map(indicatorGroups.value.map((g) => [g.id, g.groupName]))
+    return ids.map((id) => map.get(id) || id).join('、') || '—'
+  }
+  return (row.indicators || []).map((i) => i.indicatorName).join('、') || '—'
+}
+
+async function loadIndicatorTablePreviews() {
+  const ids = modelForm.value.indicatorGroupIds || []
+  if (!ids.length) {
+    indicatorTablePreviews.value = []
+    return
+  }
+  samplesLoading.value = true
+  indicatorTablePreviews.value = ids.map((id) => {
+    const g = indicatorGroups.value.find((x) => x.id === id)
+    return {
+      groupId: id,
+      groupName: g?.groupName || id,
+      targetTable: g?.targetTable || '',
+      columns: [],
+      rows: [],
+      loading: true,
+    }
+  })
+  try {
+    const results = await Promise.all(
+      ids.map(async (id) => {
+        try {
+          const res = await api.get(`/analytics/domain/indicator-groups/${id}/result-data`, {
+            params: { limit: 200 },
+          })
+          const data = res.data || {}
+          return {
+            groupId: id,
+            groupName: String(data.groupName || indicatorGroups.value.find((x) => x.id === id)?.groupName || id),
+            targetTable: String(data.targetTable || ''),
+            columns: (data.columns || []) as string[],
+            rows: (data.rows || []) as Record<string, unknown>[],
+            message: String(data.message || ''),
+            loading: false,
+          } satisfies IndicatorTablePreview
+        } catch (e: unknown) {
+          return {
+            groupId: id,
+            groupName: indicatorGroups.value.find((x) => x.id === id)?.groupName || id,
+            targetTable: indicatorGroups.value.find((x) => x.id === id)?.targetTable || '',
+            columns: [],
+            rows: [],
+            message: e instanceof Error ? e.message : '加载失败',
+            loading: false,
+          } satisfies IndicatorTablePreview
+        }
+      }),
+    )
+    indicatorTablePreviews.value = results
+  } finally {
+    samplesLoading.value = false
+  }
+}
+
 async function loadVerifyLedger() {
-  if (!isPopulation.value) return
+  if (!isPopulation.value && !isLegal.value) return
   verifyLoading.value = true
   try {
     const res = await api.get(`/analytics/domain/${meta.value.domain}/verify-ledger`)
@@ -782,7 +817,7 @@ async function loadBatchLedger() {
 }
 
 async function loadStorageSummary() {
-  if (!isPopulation.value) return
+  if (!isPopulation.value && !isLegal.value) return
   storageLoading.value = true
   try {
     const res = await api.get(`/analytics/domain/${meta.value.domain}/storage-summary`)
@@ -791,16 +826,6 @@ async function loadStorageSummary() {
     ElMessage.error(e instanceof Error ? e.message : '加载存储摘要失败')
   } finally {
     storageLoading.value = false
-  }
-}
-
-async function loadAccessOverview() {
-  if (!isPopulation.value) return
-  try {
-    const res = await api.get('/system/access/overview')
-    accessOverview.value = res.data || null
-  } catch {
-    accessOverview.value = null
   }
 }
 
@@ -860,20 +885,17 @@ async function loadCurrentView() {
   embedUrl.value = ''
   if (activeZone.value) {
     await loadBindings()
-    if (isShare.value || shareTab.value === 'indicators' || shareTab.value === 'models') {
+    if (isShare.value || shareTab.value === 'indicators' || shareTab.value === 'tasks' || shareTab.value === 'models') {
       await loadDesigner()
     }
     if (isPopulation.value && isShare.value && shareTab.value === 'api') {
       await Promise.all([loadServiceContracts(), loadBatchLedger()])
     }
-    if (isPopulation.value && isGovern.value && governTab.value === 'verify') {
+    if ((isPopulation.value || isLegal.value) && isGovern.value && governTab.value === 'verify') {
       await loadVerifyLedger()
     }
-    if (isPopulation.value && isCore.value && coreTab.value === 'storage') {
+    if ((isPopulation.value || isLegal.value) && isCore.value && coreTab.value === 'storage') {
       await loadStorageSummary()
-    }
-    if (isPopulation.value && isInternal.value && internalTab.value === 'auth') {
-      await loadAccessOverview()
     }
   } else if (isDesignerOnly.value) {
     await loadDesigner()
@@ -1182,20 +1204,27 @@ function openPortalPreview() {
 function openModelDesign(row: AnalysisModel) {
   editingModel.value = row
   const dims = defaultDimensionJson(row.mCode || row.modelCode || '')
+  const groupIds = parseIndicatorGroupIds(row.dimensionJson)
   modelForm.value = {
     modelName: row.modelName || '',
     deDashboardId: '',
     dimensionJson: row.dimensionJson?.trim() ? row.dimensionJson : dims,
     description: row.description || '',
     indicatorIds: (row.indicators || []).map((i) => i.id),
+    indicatorGroupIds: groupIds,
   }
   iframeSrc.value = ''
   embedMode.value = ''
   embedMessage.value = ''
   embedUrl.value = ''
   modelSamples.value = []
+  indicatorTablePreviews.value = []
   modelDrawer.value = true
-  void loadModelSamples(row.id)
+  if (useGroupIndicatorLib.value) {
+    void loadIndicatorTablePreviews()
+  } else {
+    void loadModelSamples(row.id)
+  }
 }
 
 /** 按模块码给出默认可编辑维度（无库内 JSON 时展示有效信息） */
@@ -1224,15 +1253,23 @@ async function saveModelDesign() {
   if (!editingModel.value) return
   const body: Record<string, unknown> = {
     modelName: modelForm.value.modelName,
-    dimensionJson: modelForm.value.dimensionJson,
     description: modelForm.value.description,
-    indicatorIds: modelForm.value.indicatorIds,
+  }
+  if (useGroupIndicatorLib.value) {
+    body.dimensionJson = buildDimensionJsonWithGroups(modelForm.value.indicatorGroupIds || [])
+  } else {
+    body.dimensionJson = modelForm.value.dimensionJson
+    body.indicatorIds = modelForm.value.indicatorIds
   }
   await api.put(`/analytics/domain/models/${editingModel.value.id}`, body)
   ElMessage.success('模型设计已保存')
   await loadDesigner(true)
   const fresh = models.value.find((m) => m.id === editingModel.value?.id)
   if (fresh) editingModel.value = fresh
+  if (useGroupIndicatorLib.value) {
+    modelForm.value.indicatorGroupIds = parseIndicatorGroupIds(fresh?.dimensionJson)
+    await loadIndicatorTablePreviews()
+  }
 }
 
 async function issueModelEmbed() {
@@ -1258,6 +1295,7 @@ watch(() => route.path, async () => {
   designerLoaded.value = false
   bindings.value = []
   indicators.value = []
+  indicatorGroups.value = []
   models.value = []
   await loadOverviewLite()
   resolveFromRoute()
@@ -1271,8 +1309,8 @@ watch(() => route.query.tab, async () => {
 })
 
 watch(shareTab, async (t) => {
-  if ((t === 'indicators' || t === 'models' || t === 'mount') && (isShare.value || isDesignerOnly.value)) {
-    if (t === 'models' || t === 'indicators') await loadDesigner()
+  if ((t === 'indicators' || t === 'tasks' || t === 'models' || t === 'mount') && (isShare.value || isDesignerOnly.value)) {
+    if (t === 'models' || t === 'indicators' || t === 'tasks') await loadDesigner()
     if (t === 'mount' && activeZone.value) await loadBindings()
   }
   // 进入指标库时默认落在指标组管理（与治理侧最终版能力一致）
@@ -1282,7 +1320,7 @@ watch(shareTab, async (t) => {
 })
 
 watch(governTab, async (t) => {
-  if (!isPopulation.value || !isGovern.value) return
+  if ((!isPopulation.value && !isLegal.value) || !isGovern.value) return
   if (t === 'mount') await loadBindings()
   if (t === 'verify') await loadVerifyLedger()
 })
@@ -1293,15 +1331,14 @@ watch(collectTab, async (t) => {
 })
 
 watch(coreTab, async (t) => {
-  if (!isPopulation.value || !isCore.value) return
+  if ((!isPopulation.value && !isLegal.value) || !isCore.value) return
   if (t === 'mount') await loadBindings()
   if (t === 'storage') await loadStorageSummary()
 })
 
 watch(internalTab, async (t) => {
-  if (!isPopulation.value || !isInternal.value) return
+  if ((!isPopulation.value && !isLegal.value) || !isInternal.value) return
   if (t === 'mount') await loadBindings()
-  if (t === 'auth') await loadAccessOverview()
 })
 
 onMounted(async () => {
@@ -1364,19 +1401,7 @@ onMounted(async () => {
                 </el-table-column>
               </el-table>
             </el-tab-pane>
-            <el-tab-pane v-if="isPopulation" label="更新/校核机制" name="mechanism">
-              <div class="mech-grid">
-                <div v-for="c in GOVERN_MECHANISM_CARDS" :key="c.code" class="mech-card">
-                  <div class="mech-title"><el-tag size="small" type="warning">{{ c.code }}</el-tag> {{ c.title }}</div>
-                  <ul class="mech-list">
-                    <li v-for="(p, i) in c.points" :key="i">{{ p }}</li>
-                  </ul>
-                </div>
-              </div>
-              <el-button type="primary" @click="$router.push('/governance')">打开数据治理</el-button>
-            </el-tab-pane>
-            <el-tab-pane v-if="isPopulation" label="校核台账" name="verify">
-              <p class="hint">M155/M156 设计台账（LEDGER）：登记问题与反馈状态，不在此运行真实校核引擎。</p>
+            <el-tab-pane v-if="isPopulation || isLegal" label="校核台账" name="verify">
               <el-form inline class="portal-inline-form">
                 <el-form-item class="portal-form-actions">
                   <el-button type="primary" @click="verifyDialog = true">登记台账</el-button>
@@ -1408,52 +1433,38 @@ onMounted(async () => {
         </template>
 
         <template v-else-if="useFiveZoneMount && isCollect">
-          <el-tabs v-model="collectTab">
-            <el-tab-pane label="资产挂载" name="mount">
-              <el-form inline class="portal-inline-form portal-inline-form--block">
-                <el-form-item class="portal-form-actions">
-                  <el-button type="primary" @click="openBindDialog">选型挂载</el-button>
-                  <el-button @click="$router.push(activeZone.deepLink)">{{ activeZone.deepLabel }}</el-button>
-                  <el-button @click="loadBindings(true)">刷新</el-button>
-                </el-form-item>
-              </el-form>
-              <el-table :data="bindings" stripe size="small" empty-text="尚未挂载资产，请从候选中选型">
-                <el-table-column prop="assetName" label="资产名称" min-width="160" />
-                <el-table-column label="维度分组" width="110">
-                  <template #default="{ row }">{{ dimGroupLabel(row.dimGroup) }}</template>
-                </el-table-column>
-                <el-table-column label="接入方式" width="140">
-                  <template #default="{ row }">{{ accessModeLabel(row.accessMode) }}</template>
-                </el-table-column>
-                <el-table-column label="来源类型" width="110">
-                  <template #default="{ row }">{{ assetTypeLabel(row.assetType) }}</template>
-                </el-table-column>
-                <el-table-column prop="physicalTable" label="物理表/引用" min-width="140" show-overflow-tooltip />
-                <el-table-column prop="dataLayer" label="分层" width="90" />
-                <el-table-column label="状态" width="90">
-                  <template #default="{ row }">
-                    <el-tag :type="statusTagType(row.status)" size="small">{{ statusLabel(row.status) }}</el-tag>
-                  </template>
-                </el-table-column>
-                <el-table-column prop="createdAt" label="挂载时间" width="170" />
-                <el-table-column label="操作" width="90">
-                  <template #default="{ row }">
-                    <el-button link type="danger" @click="unbind(row)">解除</el-button>
-                  </template>
-                </el-table-column>
-              </el-table>
-            </el-tab-pane>
-            <el-tab-pane label="多源通道清单" name="sources">
-              <p class="hint">采集区通道设计清单（演示）：真正抽数在数据归集（Kettle + DS），本页不伪造调度成功。</p>
-              <el-table :data="COLLECT_SOURCE_CHANNELS" stripe size="small">
-                <el-table-column prop="dept" label="来源部门" width="120" />
-                <el-table-column prop="channel" label="通道类型" width="120" />
-                <el-table-column prop="latency" label="时效" width="140" />
-                <el-table-column prop="remark" label="说明" min-width="180" />
-              </el-table>
-              <el-button type="primary" style="margin-top:12px" @click="$router.push('/exchange/ingestion')">打开数据归集</el-button>
-            </el-tab-pane>
-          </el-tabs>
+          <el-form inline class="portal-inline-form portal-inline-form--block">
+            <el-form-item class="portal-form-actions">
+              <el-button type="primary" @click="openBindDialog">选型挂载</el-button>
+              <el-button @click="$router.push(activeZone.deepLink)">{{ activeZone.deepLabel }}</el-button>
+              <el-button @click="loadBindings(true)">刷新</el-button>
+            </el-form-item>
+          </el-form>
+          <el-table :data="bindings" stripe size="small" empty-text="尚未挂载资产，请从候选中选型">
+            <el-table-column prop="assetName" label="资产名称" min-width="160" />
+            <el-table-column label="维度分组" width="110">
+              <template #default="{ row }">{{ dimGroupLabel(row.dimGroup) }}</template>
+            </el-table-column>
+            <el-table-column label="接入方式" width="140">
+              <template #default="{ row }">{{ accessModeLabel(row.accessMode) }}</template>
+            </el-table-column>
+            <el-table-column label="来源类型" width="110">
+              <template #default="{ row }">{{ assetTypeLabel(row.assetType) }}</template>
+            </el-table-column>
+            <el-table-column prop="physicalTable" label="物理表/引用" min-width="140" show-overflow-tooltip />
+            <el-table-column prop="dataLayer" label="分层" width="90" />
+            <el-table-column label="状态" width="90">
+              <template #default="{ row }">
+                <el-tag :type="statusTagType(row.status)" size="small">{{ statusLabel(row.status) }}</el-tag>
+              </template>
+            </el-table-column>
+            <el-table-column prop="createdAt" label="挂载时间" width="170" />
+            <el-table-column label="操作" width="90">
+              <template #default="{ row }">
+                <el-button link type="danger" @click="unbind(row)">解除</el-button>
+              </template>
+            </el-table-column>
+          </el-table>
         </template>
 
         <template v-else-if="useFiveZoneMount && isCore">
@@ -1492,17 +1503,7 @@ onMounted(async () => {
                 </el-table-column>
               </el-table>
             </el-tab-pane>
-            <el-tab-pane v-if="isPopulation" label="存储/分区" name="storage">
-              <div class="mech-grid">
-                <div v-for="c in STORAGE_DESIGN_CARDS" :key="c.code" class="mech-card">
-                  <div class="mech-title"><el-tag size="small" type="success">{{ c.code }}</el-tag> {{ c.title }}</div>
-                  <ul class="mech-list">
-                    <li v-for="(p, i) in c.points" :key="i">{{ p }}</li>
-                  </ul>
-                </div>
-              </div>
-              <p class="hint">{{ String(storageSummary?.message || '预检通过 ≠ 已物理分区') }}</p>
-              <el-button :loading="storageLoading" @click="loadStorageSummary">刷新摘要</el-button>
+            <el-tab-pane v-if="isPopulation || isLegal" label="存储/分区" name="storage">
               <el-button type="primary" @click="$router.push('/resource-center')">打开资源中心</el-button>
               <h4 class="sub-title">纳管表</h4>
               <el-table :data="storageManaged" stripe size="small" empty-text="暂无（需 V190）">
@@ -1567,24 +1568,44 @@ onMounted(async () => {
                 </el-table-column>
               </el-table>
             </el-tab-pane>
-            <el-tab-pane v-if="isPopulation" label="双重授权" name="auth">
-              <div class="mech-grid">
-                <div v-for="c in DUAL_AUTH_CARDS" :key="c.code" class="mech-card">
-                  <div class="mech-title"><el-tag size="small" type="danger">{{ c.code }}</el-tag> {{ c.title }}</div>
-                  <ul class="mech-list">
-                    <li v-for="(p, i) in c.points" :key="i">{{ p }}</li>
-                  </ul>
-                </div>
-              </div>
-              <p class="hint">复用平台访问控制概览（只读）；授权操作请进入 M048。</p>
-              <el-button type="primary" @click="$router.push(activeZone.deepLink)">打开双重授权(M048)</el-button>
-              <el-button @click="loadAccessOverview">刷新概览</el-button>
-              <el-descriptions v-if="accessOverview" :column="2" border size="small" style="margin-top:12px">
-                <el-descriptions-item v-for="(v, k) in accessOverview" :key="String(k)" :label="String(k)">
-                  {{ typeof v === 'object' ? JSON.stringify(v) : v }}
-                </el-descriptions-item>
-              </el-descriptions>
-              <el-empty v-else description="暂无概览（需登录且访问控制可用）" />
+          </el-tabs>
+        </template>
+
+        <template v-else-if="useFiveZoneMount && isInternal">
+          <el-tabs v-model="internalTab">
+            <el-tab-pane label="资产挂载" name="mount">
+              <el-form inline class="portal-inline-form portal-inline-form--block">
+                <el-form-item class="portal-form-actions">
+                  <el-button type="primary" @click="openBindDialog">选型挂载</el-button>
+                  <el-button @click="$router.push(activeZone.deepLink)">{{ activeZone.deepLabel }}</el-button>
+                  <el-button @click="loadBindings(true)">刷新</el-button>
+                </el-form-item>
+              </el-form>
+              <el-table :data="bindings" stripe size="small" empty-text="尚未挂载资产，请从候选中选型">
+                <el-table-column prop="assetName" label="资产名称" min-width="160" />
+                <el-table-column label="维度分组" width="110">
+                  <template #default="{ row }">{{ dimGroupLabel(row.dimGroup) }}</template>
+                </el-table-column>
+                <el-table-column label="接入方式" width="140">
+                  <template #default="{ row }">{{ accessModeLabel(row.accessMode) }}</template>
+                </el-table-column>
+                <el-table-column label="来源类型" width="110">
+                  <template #default="{ row }">{{ assetTypeLabel(row.assetType) }}</template>
+                </el-table-column>
+                <el-table-column prop="physicalTable" label="物理表/引用" min-width="140" show-overflow-tooltip />
+                <el-table-column prop="dataLayer" label="分层" width="90" />
+                <el-table-column label="状态" width="90">
+                  <template #default="{ row }">
+                    <el-tag :type="statusTagType(row.status)" size="small">{{ statusLabel(row.status) }}</el-tag>
+                  </template>
+                </el-table-column>
+                <el-table-column prop="createdAt" label="挂载时间" width="170" />
+                <el-table-column label="操作" width="90">
+                  <template #default="{ row }">
+                    <el-button link type="danger" @click="unbind(row)">解除</el-button>
+                  </template>
+                </el-table-column>
+              </el-table>
             </el-tab-pane>
           </el-tabs>
         </template>
@@ -1646,24 +1667,11 @@ onMounted(async () => {
               </el-table-column>
             </el-table>
           </el-tab-pane>
-          <el-tab-pane label="目录深链" name="catalog">
-            <p class="hint">共享目录编制、审批与门户在数据目录管理系统完成；此处仅作区设计入口（M154）。</p>
-            <el-button type="primary" @click="$router.push('/catalog')">打开资源目录</el-button>
-          </el-tab-pane>
           <el-tab-pane label="接口/批量" name="api">
             <template v-if="isPopulation">
-              <div class="mech-grid">
-                <div v-for="c in SHARE_SERVICE_CARDS" :key="c.code" class="mech-card">
-                  <div class="mech-title"><el-tag size="small">{{ c.code }}</el-tag> {{ c.title }}</div>
-                  <ul class="mech-list">
-                    <li v-for="(p, i) in c.points" :key="i">{{ p }}</li>
-                  </ul>
-                </div>
-              </div>
               <h4 class="sub-title">M159 接口契约（LEDGER 试调）</h4>
               <el-form inline class="portal-inline-form">
                 <el-form-item class="portal-form-actions">
-                  <el-button :loading="serviceLoading" @click="loadServiceContracts">刷新契约</el-button>
                   <el-button type="primary" @click="$router.push('/exchange/esb')">打开接口交换</el-button>
                 </el-form-item>
               </el-form>
@@ -1735,7 +1743,6 @@ onMounted(async () => {
               v-if="useGroupIndicatorLib"
               :domain="meta.domain"
               :active="shareTab === 'indicators'"
-              embed-task-actions
               :scope-domain-name="indicatorScopeName"
             />
             <DomainIndicatorSqlLibrary
@@ -1743,6 +1750,15 @@ onMounted(async () => {
               :domain="meta.domain"
               @refreshed="onIndicatorsRefreshed"
             />
+          </el-tab-pane>
+          <el-tab-pane label="指标任务" name="tasks">
+            <DomainIndicatorTaskPanel
+              v-if="useGroupIndicatorLib"
+              :domain="meta.domain"
+              :active="shareTab === 'tasks'"
+              :scope-domain-name="indicatorScopeName"
+            />
+            <el-empty v-else description="当前域未配置指标任务" />
           </el-tab-pane>
           <el-tab-pane label="分析模型" name="models">
             <p class="hint">
@@ -1761,7 +1777,7 @@ onMounted(async () => {
               <el-table-column prop="modelCode" label="编码" width="120" />
               <el-table-column label="关联指标" min-width="160">
                 <template #default="{ row }">
-                  {{ (row.indicators || []).map((i: Indicator) => i.indicatorName).join('、') || '—' }}
+                  {{ modelLinkedLabel(row) }}
                 </template>
               </el-table-column>
               <el-table-column label="状态" width="90">
@@ -1787,7 +1803,6 @@ onMounted(async () => {
               v-if="useGroupIndicatorLib"
               :domain="meta.domain"
               :active="shareTab === 'indicators'"
-              embed-task-actions
               :scope-domain-name="indicatorScopeName"
             />
             <DomainIndicatorSqlLibrary
@@ -1796,6 +1811,15 @@ onMounted(async () => {
               @refreshed="onIndicatorsRefreshed"
             />
           </el-tab-pane>
+          <el-tab-pane label="指标任务" name="tasks">
+            <DomainIndicatorTaskPanel
+              v-if="useGroupIndicatorLib"
+              :domain="meta.domain"
+              :active="shareTab === 'tasks'"
+              :scope-domain-name="indicatorScopeName"
+            />
+            <el-empty v-else description="当前域未配置指标任务" />
+          </el-tab-pane>
           <el-tab-pane label="分析模型" name="models">
             <p class="hint">分析模型 = 场景包（多指标 + 维度 + 自研结果表）。指标 ≠ 模型。不接 DataEase 看板。</p>
             <el-table :data="models" stripe size="small">
@@ -1803,7 +1827,7 @@ onMounted(async () => {
               <el-table-column prop="modelCode" label="编码" width="120" />
               <el-table-column label="关联指标" min-width="160">
                 <template #default="{ row }">
-                  {{ (row.indicators || []).map((i: Indicator) => i.indicatorName).join('、') || '—' }}
+                  {{ modelLinkedLabel(row) }}
                 </template>
               </el-table-column>
               <el-table-column label="状态" width="90">
@@ -2143,30 +2167,36 @@ onMounted(async () => {
       </template>
     </el-dialog>
 
-    <el-drawer v-model="modelDrawer" size="640px" :title="editingModel ? `设计：${editingModel.modelName}` : '分析模型'" destroy-on-close>
+    <el-drawer v-model="modelDrawer" size="720px" :title="editingModel ? `设计：${editingModel.modelName}` : '分析模型'" destroy-on-close>
       <el-form v-if="editingModel" label-width="100px">
         <el-form-item label="模型名称">
           <el-input v-model="modelForm.modelName" />
         </el-form-item>
         <el-form-item label="关联指标">
-          <el-select v-model="modelForm.indicatorIds" multiple filterable style="width:100%" placeholder="选择指标">
+          <el-select
+            v-if="useGroupIndicatorLib"
+            v-model="modelForm.indicatorGroupIds"
+            multiple
+            filterable
+            style="width:100%"
+            placeholder="选择指标（指标库中的指标组）"
+          >
+            <el-option
+              v-for="g in indicatorGroups"
+              :key="g.id"
+              :label="`${g.groupName}（${g.targetTable}）`"
+              :value="g.id"
+            />
+          </el-select>
+          <el-select v-else v-model="modelForm.indicatorIds" multiple filterable style="width:100%" placeholder="选择指标">
             <el-option v-for="i in indicators" :key="i.id" :label="i.indicatorName" :value="i.id" />
           </el-select>
-        </el-form-item>
-        <el-form-item label="维度 JSON">
-          <el-input v-model="modelForm.dimensionJson" type="textarea" :rows="3" placeholder='例如 ["区县","年龄段"]' />
         </el-form-item>
         <el-form-item v-if="!useSelfBuiltAnalysisModel" label="看板标识">
           <el-input
             v-model="modelForm.deDashboardId"
             placeholder="填预览地址中的 dvId，如 1280620734217064448（勿填公共分享码）"
           />
-        </el-form-item>
-        <el-form-item label="编码">
-          <el-input :model-value="editingModel.modelCode" disabled />
-        </el-form-item>
-        <el-form-item label="状态">
-          <el-tag :type="statusTagType(editingModel.status)" size="small">{{ statusLabel(editingModel.status) }}</el-tag>
         </el-form-item>
         <el-form-item label="说明">
           <el-input v-model="modelForm.description" type="textarea" :rows="2" />
@@ -2180,13 +2210,43 @@ onMounted(async () => {
           <el-button
             v-else
             :loading="samplesLoading"
-            @click="editingModel && loadModelSamples(editingModel.id)"
-          >刷新样例</el-button>
+            @click="useGroupIndicatorLib ? loadIndicatorTablePreviews() : (editingModel && loadModelSamples(editingModel.id))"
+          >刷新</el-button>
         </el-form-item>
       </el-form>
 
-      <template v-if="useSelfBuiltAnalysisModel">
-        <p class="hint" style="margin: 8px 0 12px">结果样例（自研落库，非 DataEase 嵌入）</p>
+      <template v-if="useSelfBuiltAnalysisModel && useGroupIndicatorLib">
+        <div v-loading="samplesLoading" class="ind-table-stack">
+          <el-empty
+            v-if="!indicatorTablePreviews.length"
+            description="请先选择关联指标，再点「刷新」查看指标表数据"
+          />
+          <div v-for="t in indicatorTablePreviews" :key="t.groupId" class="ind-table-block">
+            <div class="ind-table-title">
+              {{ t.groupName }}
+              <span v-if="t.targetTable" class="ind-table-sub">（{{ t.targetTable }}）</span>
+            </div>
+            <el-alert
+              v-if="t.message"
+              type="warning"
+              :closable="false"
+              :title="t.message"
+              style="margin-bottom: 8px"
+            />
+            <el-table :data="t.rows" stripe size="small" max-height="280" empty-text="暂无数据">
+              <el-table-column
+                v-for="col in t.columns"
+                :key="col"
+                :prop="col"
+                :label="col"
+                min-width="120"
+                show-overflow-tooltip
+              />
+            </el-table>
+          </div>
+        </div>
+      </template>
+      <template v-else-if="useSelfBuiltAnalysisModel">
         <el-table v-loading="samplesLoading" :data="modelSamples" stripe size="small" max-height="360" empty-text="暂无样例">
           <el-table-column prop="rowNo" label="#" width="60" />
           <el-table-column prop="dim1" label="维度1" min-width="100" />
@@ -2301,5 +2361,21 @@ onMounted(async () => {
 .bind-pager { margin-top: 10px; display: flex; justify-content: flex-end; }
 .indicator-lib-tabs :deep(.el-tabs__header) {
   margin-bottom: 12px;
+}
+.ind-table-stack {
+  margin-top: 8px;
+  min-height: 120px;
+}
+.ind-table-block {
+  margin-bottom: 16px;
+}
+.ind-table-title {
+  font-weight: 600;
+  font-size: 13px;
+  margin-bottom: 8px;
+}
+.ind-table-sub {
+  font-weight: 400;
+  color: var(--el-text-color-secondary);
 }
 </style>

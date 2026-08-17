@@ -278,14 +278,6 @@ onMounted(() => {
 
 <template>
   <div class="fusion-version">
-    <el-alert
-      type="info"
-      :closable="false"
-      show-icon
-      class="hint"
-      title="版本管理：脚本与工作流均可锁定防冲突；开发/生产环境隔离；支持回滚；一键发布部署到生产调度（DolphinScheduler）。"
-    />
-
     <el-tabs v-model="activeTab" @tab-change="onTabChange">
       <el-tab-pane label="脚本版本" name="scripts" />
       <el-tab-pane label="工作流版本" name="workflows" />
@@ -520,9 +512,6 @@ onMounted(() => {
 </template>
 
 <style scoped>
-.hint {
-  margin-bottom: 12px;
-}
 .muted {
   color: var(--el-text-color-secondary);
   font-size: 12px;

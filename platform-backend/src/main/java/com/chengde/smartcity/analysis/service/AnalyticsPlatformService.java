@@ -96,6 +96,100 @@ public class AnalyticsPlatformService {
     }
 
     @Transactional
+    public Long createIntegration(UserPrincipal operator, Map<String, Object> body) {
+        String code = str(body.get("integrationCode"), "").trim();
+        if (code.isEmpty()) {
+            code = "INT_" + System.currentTimeMillis();
+        }
+        Long dup = integrationMapper.selectCount(new LambdaQueryWrapper<AnaPlatformIntegration>()
+                .eq(AnaPlatformIntegration::getIntegrationCode, code));
+        if (dup != null && dup > 0) {
+            throw new BusinessException(400, "对接编码已存在");
+        }
+        AnaPlatformIntegration row = new AnaPlatformIntegration();
+        row.setIntegrationCode(code);
+        row.setIntegrationName(required(body.get("integrationName"), "integrationName").toString().trim());
+        row.setTargetSystem(required(body.get("targetSystem"), "targetSystem").toString().trim());
+        row.setEndpoint(required(body.get("endpoint"), "endpoint").toString().trim());
+        row.setStatus(str(body.get("status"), "ACTIVE"));
+        row.setLastMessage(str(body.get("lastMessage"), null));
+        row.setMCode(str(body.get("mCode"), "M145"));
+        integrationMapper.insert(row);
+        auditService.log(operator.getUserId(), operator.getUsername(), operator.getOrgId(),
+                "ANA_INT_CREATE", "ana_platform_integration", String.valueOf(row.getId()), row.getIntegrationName());
+        return row.getId();
+    }
+
+    @Transactional
+    public void updateIntegration(UserPrincipal operator, Long id, Map<String, Object> body) {
+        AnaPlatformIntegration row = integrationMapper.selectById(id);
+        if (row == null) {
+            throw new BusinessException(404, "对接配置不存在");
+        }
+        if (body.get("integrationCode") != null) {
+            String code = String.valueOf(body.get("integrationCode")).trim();
+            if (code.isEmpty()) throw new BusinessException(400, "integrationCode required");
+            Long dup = integrationMapper.selectCount(new LambdaQueryWrapper<AnaPlatformIntegration>()
+                    .eq(AnaPlatformIntegration::getIntegrationCode, code)
+                    .ne(AnaPlatformIntegration::getId, id));
+            if (dup != null && dup > 0) {
+                throw new BusinessException(400, "对接编码已存在");
+            }
+            row.setIntegrationCode(code);
+        }
+        if (body.get("integrationName") != null) {
+            String name = String.valueOf(body.get("integrationName")).trim();
+            if (name.isEmpty()) throw new BusinessException(400, "integrationName required");
+            row.setIntegrationName(name);
+        }
+        if (body.get("targetSystem") != null) {
+            String target = String.valueOf(body.get("targetSystem")).trim();
+            if (target.isEmpty()) throw new BusinessException(400, "targetSystem required");
+            row.setTargetSystem(target);
+        }
+        if (body.get("endpoint") != null) {
+            String endpoint = String.valueOf(body.get("endpoint")).trim();
+            if (endpoint.isEmpty()) throw new BusinessException(400, "endpoint required");
+            row.setEndpoint(endpoint);
+        }
+        if (body.get("status") != null && !String.valueOf(body.get("status")).isBlank()) {
+            row.setStatus(String.valueOf(body.get("status")).trim());
+        }
+        if (body.containsKey("lastMessage")) {
+            row.setLastMessage(str(body.get("lastMessage"), null));
+        }
+        integrationMapper.updateById(row);
+        auditService.log(operator.getUserId(), operator.getUsername(), operator.getOrgId(),
+                "ANA_INT_UPDATE", "ana_platform_integration", String.valueOf(id), row.getIntegrationName());
+    }
+
+    @Transactional
+    public void deleteIntegration(UserPrincipal operator, Long id) {
+        AnaPlatformIntegration row = integrationMapper.selectById(id);
+        if (row == null) {
+            throw new BusinessException(404, "对接配置不存在");
+        }
+        integrationMapper.deleteById(id);
+        auditService.log(operator.getUserId(), operator.getUsername(), operator.getOrgId(),
+                "ANA_INT_DELETE", "ana_platform_integration", String.valueOf(id), row.getIntegrationName());
+    }
+
+    public List<AnaPlatformIntegration> listIntegrations(String integrationCode, String integrationName, String targetSystem) {
+        LambdaQueryWrapper<AnaPlatformIntegration> q = new LambdaQueryWrapper<AnaPlatformIntegration>()
+                .orderByAsc(AnaPlatformIntegration::getId);
+        if (integrationCode != null && !integrationCode.isBlank()) {
+            q.like(AnaPlatformIntegration::getIntegrationCode, integrationCode.trim());
+        }
+        if (integrationName != null && !integrationName.isBlank()) {
+            q.like(AnaPlatformIntegration::getIntegrationName, integrationName.trim());
+        }
+        if (targetSystem != null && !targetSystem.isBlank()) {
+            q.like(AnaPlatformIntegration::getTargetSystem, targetSystem.trim());
+        }
+        return integrationMapper.selectList(q);
+    }
+
+    @Transactional
     public Map<String, Object> testIntegration(UserPrincipal operator, Long id) {
         AnaPlatformIntegration row = integrationMapper.selectById(id);
         if (row == null) {

@@ -23,7 +23,7 @@ import org.springframework.stereotype.Component;
 /**
  * 指标结果库：建库/建表/补列，任务执行时写入查询结果。
  * <ul>
- *   <li>库：{@code CREATE DATABASE IF NOT EXISTS}</li>
+ *   <li>库：指标域新增/保存时 {@code CREATE DATABASE IF NOT EXISTS}；任务执行时再幂等校验</li>
  *   <li>表：已存在则跳过建表，仅 {@code ADD COLUMN} 补缺字段；去掉历史多余列 task_id / trigger_type</li>
  *   <li>落数：仅指标任务执行（手动执行或发布后的调度）写入；保存/预览不落结果表</li>
  *   <li>主表只保留本批；若主表已有数据，先追加进 {@code {table}_history}（保留原 calc_at），再写入本批</li>
@@ -83,7 +83,7 @@ public class IndicatorJdbcSupport {
             return;
         }
         try (Connection conn = openServer(); Statement st = conn.createStatement()) {
-            st.execute("CREATE DATABASE IF NOT EXISTS `" + db + "` DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci");
+            st.execute("CREATE DATABASE IF NOT EXISTS `" + db + "` DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_general_ci");
             log.info("指标库新建 db={} @{}", db, endpointLabel());
         } catch (SQLException e) {
             throw new BusinessException(500, "创建指标库失败 " + db + " — " + e.getMessage());
@@ -144,7 +144,7 @@ public class IndicatorJdbcSupport {
             ddl.append("`").append(e.getKey()).append("` ").append(e.getValue()).append(" NULL,");
         }
         ddl.append("PRIMARY KEY (`id`), KEY `idx_calc_at` (`calc_at`)");
-        ddl.append(") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+        ddl.append(") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci");
         return ddl.toString();
     }
 
@@ -463,7 +463,7 @@ public class IndicatorJdbcSupport {
         if (t.contains("日期") || t.equals("date")) {
             return "DATE";
         }
-        int len = length == null || length <= 0 ? 255 : Math.min(Math.max(length, 1), 4000);
+        int len = length == null || length <= 0 ? 100 : Math.min(Math.max(length, 1), 4000);
         if (len > 1000) {
             return "TEXT";
         }
@@ -518,5 +518,67 @@ public class IndicatorJdbcSupport {
 
     private static String nullToEmpty(String s) {
         return s == null ? "" : s;
+    }
+
+    /**
+     * 预览指标结果表数据（只读，最多 limit 行）。
+     * 表不存在时返回空列/空行，不抛错（任务尚未执行落数时常见）。
+     */
+    public Map<String, Object> previewResultRows(String database, String tableName, int limit) {
+        String db = sanitizeDbName(database);
+        String table = sanitizeTableName(tableName);
+        int lim = Math.max(1, Math.min(limit <= 0 ? 200 : limit, 500));
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("database", db);
+        out.put("tableName", table);
+        out.put("columns", List.of());
+        out.put("rows", List.of());
+        out.put("rowCount", 0);
+        out.put("truncated", false);
+        out.put("message", "");
+        try (Connection conn = openDatabase(db)) {
+            if (!tableExists(conn, db, table)) {
+                out.put("message", "结果表尚未创建，请先发布指标并执行指标任务");
+                return out;
+            }
+            List<String> columns = new ArrayList<>();
+            try (PreparedStatement ps = conn.prepareStatement(
+                    "SELECT COLUMN_NAME FROM information_schema.COLUMNS WHERE TABLE_SCHEMA=? AND TABLE_NAME=? ORDER BY ORDINAL_POSITION")) {
+                ps.setString(1, db);
+                ps.setString(2, table);
+                try (ResultSet rs = ps.executeQuery()) {
+                    while (rs.next()) {
+                        columns.add(rs.getString(1));
+                    }
+                }
+            }
+            out.put("columns", columns);
+            if (columns.isEmpty()) {
+                out.put("message", "结果表无列");
+                return out;
+            }
+            String sql = "SELECT * FROM `" + table + "` ORDER BY `id` DESC LIMIT " + lim;
+            List<Map<String, Object>> rows = new ArrayList<>();
+            try (Statement st = conn.createStatement(); ResultSet rs = st.executeQuery(sql)) {
+                while (rs.next()) {
+                    Map<String, Object> row = new LinkedHashMap<>();
+                    for (String col : columns) {
+                        Object v = rs.getObject(col);
+                        if (v instanceof Timestamp ts) {
+                            row.put(col, ts.toLocalDateTime().toString().replace('T', ' '));
+                        } else {
+                            row.put(col, v);
+                        }
+                    }
+                    rows.add(row);
+                }
+            }
+            out.put("rows", rows);
+            out.put("rowCount", rows.size());
+            out.put("truncated", rows.size() >= lim);
+            return out;
+        } catch (SQLException e) {
+            throw new BusinessException(500, "读取指标结果表失败 " + db + "." + table + " — " + e.getMessage());
+        }
     }
 }

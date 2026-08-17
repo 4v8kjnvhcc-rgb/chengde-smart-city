@@ -81,8 +81,8 @@ public class IndicatorTaskService {
         this.auditService = auditService;
     }
 
-    public List<IndJob> list(String domain, String taskName, String scheduleStatus,
-                             String execStatus, String calcResult) {
+    public List<IndJob> list(String domain, String taskName, String targetTable, String indicatorDomainName,
+                             String scheduleStatus, String execStatus, String calcResult) {
         String d = normalizeDomain(domain);
         List<IndJob> all = jobMapper.selectList(new LambdaQueryWrapper<IndJob>()
                 .orderByDesc(IndJob::getCreateTime)
@@ -97,6 +97,15 @@ public class IndicatorTaskService {
                     && (job.getName() == null || !job.getName().contains(taskName.trim()))) {
                 continue;
             }
+            if (targetTable != null && !targetTable.isBlank()
+                    && (job.getTargetTable() == null || !job.getTargetTable().contains(targetTable.trim()))) {
+                continue;
+            }
+            if (indicatorDomainName != null && !indicatorDomainName.isBlank()
+                    && (job.getIndicatorDomainName() == null
+                    || !job.getIndicatorDomainName().contains(indicatorDomainName.trim()))) {
+                continue;
+            }
             if (scheduleStatus != null && !scheduleStatus.isBlank()
                     && !scheduleStatus.trim().equalsIgnoreCase(job.getScheduleStatus())) {
                 continue;
@@ -106,7 +115,7 @@ public class IndicatorTaskService {
                 continue;
             }
             if (calcResult != null && !calcResult.isBlank()
-                    && !calcResult.trim().equalsIgnoreCase(job.getCalcResult())) {
+                    && !calcResult.trim().equalsIgnoreCase(job.getCalcResultLabel())) {
                 continue;
             }
             out.add(job);
@@ -148,9 +157,12 @@ public class IndicatorTaskService {
 
         IndJob existing = jobMapper.selectOne(new LambdaQueryWrapper<IndJob>()
                 .eq(IndJob::getGroupId, group.getUuid())
-                .apply("publish_status <> {0}", 2)
+                .orderByDesc(IndJob::getUpdateTime)
                 .last("LIMIT 1"));
-        int cronCode = "DAILY".equalsIgnoreCase(cycle) ? 1 : 2;
+        if (existing != null && existing.getPublishStatus() != null && existing.getPublishStatus() == 1) {
+            throw new BusinessException(400, "已发布任务请先下线后再发布");
+        }
+        int cronCode = cronCodeOf(cycle);
         if (existing == null) {
             IndJob t = new IndJob();
             t.setUuid(UUID.randomUUID().toString());
@@ -195,6 +207,14 @@ public class IndicatorTaskService {
         return existing;
     }
 
+    private static int cronCodeOf(String cycle) {
+        if (cycle == null) return 2;
+        String c = cycle.trim().toUpperCase(Locale.ROOT);
+        if ("DAILY".equals(c)) return 1;
+        if ("MONTHLY".equals(c)) return 2;
+        return 0;
+    }
+
     private static String cronOfCycle(String cycle) {
         return "DAILY".equals(cycle) ? DEFAULT_CRON_DAILY : DEFAULT_CRON_MONTHLY;
     }
@@ -214,9 +234,7 @@ public class IndicatorTaskService {
     @Transactional
     public Map<String, Object> execute(UserPrincipal operator, String id) {
         IndJob task = require(id);
-        if ("OFFLINE".equalsIgnoreCase(task.getPublishStatus())) {
-            throw new BusinessException(400, "已下线任务不可执行");
-        }
+        assertPublished(task, "执行");
         if (dsScheduleService.isDsAvailable()) {
             try {
                 Map<String, Object> ds = dsScheduleService.startOnce(operator, task);
@@ -236,7 +254,9 @@ public class IndicatorTaskService {
 
     @Transactional
     public Map<String, Object> start(UserPrincipal operator, String id) {
-        return dsScheduleService.startSchedule(operator, require(id));
+        IndJob task = require(id);
+        assertPublished(task, "启动");
+        return dsScheduleService.startSchedule(operator, task);
     }
 
     @Transactional
@@ -247,6 +267,9 @@ public class IndicatorTaskService {
     @Transactional
     public Map<String, Object> offline(UserPrincipal operator, String id) {
         IndJob task = require(id);
+        if (task.getPublishStatus() == null || task.getPublishStatus() != 1) {
+            throw new BusinessException(400, "仅已发布任务可下线");
+        }
         dsScheduleService.stopSchedule(operator, task);
         task = require(id);
         task.setPublishStatus(2);
@@ -256,6 +279,49 @@ public class IndicatorTaskService {
         auditService.log(operator.getUserId(), operator.getUsername(), operator.getOrgId(),
                 "ANA_IND_TASK_OFFLINE", task.getOwnerDomainCode(), id, task.getTaskName());
         return Map.of("taskId", id, "publishStatus", "OFFLINE", "scheduleStatus", "STOPPED");
+    }
+
+    /** 已下线任务重新发布（沿用原周期；可覆盖 cron）。 */
+    @Transactional
+    public Map<String, Object> publish(UserPrincipal operator, String id, Map<String, Object> body) {
+        IndJob task = require(id);
+        if (task.getPublishStatus() == null || task.getPublishStatus() != 2) {
+            throw new BusinessException(400, "仅已下线任务可发布");
+        }
+        Map<String, Object> opts = body != null ? body : Map.of();
+        String cron = opts.get("cronExpr") == null ? null : String.valueOf(opts.get("cronExpr")).trim();
+        if (cron != null && !cron.isBlank()) {
+            task.setScheduleCron(cron);
+        } else if (task.getScheduleCron() == null || task.getScheduleCron().isBlank()) {
+            throw new BusinessException(400, "缺少执行周期，请先配置 Cron");
+        }
+        String taskName = opts.get("taskName") == null ? null : String.valueOf(opts.get("taskName")).trim();
+        if (taskName != null && !taskName.isBlank()) {
+            task.setName(taskName);
+        }
+        LocalDateTime now = LocalDateTime.now();
+        task.setPublishStatus(1);
+        task.setPublishTime(now);
+        task.setPublishBy(operator != null ? operator.getUsername() : "system");
+        task.setStatus(2);
+        task.setUpdateTime(now);
+        jobMapper.updateById(task);
+        IndGroup g = groupMapper.selectById(task.getGroupId());
+        if (g != null) {
+            g.setPublishStatus(1);
+            g.setPublishTime(now);
+            g.setPublishBy(operator != null ? operator.getUsername() : "system");
+            groupMapper.updateById(g);
+        }
+        auditService.log(operator.getUserId(), operator.getUsername(), operator.getOrgId(),
+                "ANA_IND_TASK_PUBLISH", task.getOwnerDomainCode(), id, task.getTaskName());
+        return Map.of("taskId", id, "publishStatus", "PUBLISHED");
+    }
+
+    private static void assertPublished(IndJob task, String action) {
+        if (task.getPublishStatus() == null || task.getPublishStatus() != 1) {
+            throw new BusinessException(400, "仅已发布任务可" + action + "，请先发布");
+        }
     }
 
     @Transactional
@@ -278,7 +344,7 @@ public class IndicatorTaskService {
         out.put("lastRunAt", task.getLastRunAt());
         out.put("lastRunMessage", task.getLastRunMessage());
         out.put("execStatus", task.getExecStatus());
-        out.put("calcResult", task.getCalcResult());
+        out.put("calcResult", task.getCalcResultLabel());
         List<IndJobLog> runs = logMapper.selectList(new LambdaQueryWrapper<IndJobLog>()
                 .eq(IndJobLog::getJobId, id)
                 .orderByDesc(IndJobLog::getId)
@@ -309,7 +375,9 @@ public class IndicatorTaskService {
                     case "EXECUTE" -> execute(operator, id);
                     case "START" -> start(operator, id);
                     case "STOP" -> stop(operator, id);
-                    default -> throw new BusinessException(400, "action 须为 EXECUTE|START|STOP");
+                    case "OFFLINE" -> offline(operator, id);
+                    case "PUBLISH" -> publish(operator, id, Map.of());
+                    default -> throw new BusinessException(400, "action 须为 EXECUTE|START|STOP|OFFLINE|PUBLISH");
                 };
                 results.add(Map.of("taskId", id, "ok", true, "result", one));
                 ok++;
@@ -628,6 +696,12 @@ public class IndicatorTaskService {
         if (job == null) return;
         IndGroup g = job.getGroupId() == null ? null : groupMapper.selectById(job.getGroupId());
         IndArea a = g == null || g.getAreaId() == null ? null : areaMapper.selectById(g.getAreaId());
+        if (g != null) {
+            job.setTargetTable(g.getTableName());
+        }
+        if (a != null) {
+            job.setIndicatorDomainName(a.getName());
+        }
         String name = a == null ? job.getName() : a.getName();
         String schema = a == null ? "" : a.getDbSchema();
         job.setOwnerDomainCode(IndicatorOwnerCodes.derive(name, schema));

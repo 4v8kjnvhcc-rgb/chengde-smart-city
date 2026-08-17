@@ -676,9 +676,6 @@ onMounted(reload)
             <el-option label="按区" value="PARTITION" />
           </el-select>
         </el-form-item>
-        <el-form-item v-if="(mode === 'backup' || mode === 'destroy') && form.backupScope === 'PARTITION'">
-          <el-alert type="info" :closable="false" show-icon title="按区仅登记台账，不导出分区、不 DROP PARTITION。" />
-        </el-form-item>
         <el-form-item v-if="mode === 'archive'" label="压缩">
           <el-switch v-model="form.compressEnabled" :disabled="formReadonly" />
         </el-form-item>

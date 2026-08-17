@@ -200,6 +200,14 @@ public class AnalyticsDomainController {
         return ApiResponse.ok(service.listIndicatorsByGroup(id));
     }
 
+    @GetMapping("/indicator-groups/{id}/result-data")
+    @PreAuthorize("isAuthenticated()")
+    public ApiResponse<Map<String, Object>> groupResultData(
+            @PathVariable String id,
+            @RequestParam(required = false) Integer limit) {
+        return ApiResponse.ok(service.previewIndicatorGroupResult(id, limit));
+    }
+
     @GetMapping("/{domain}/indicator-datasource-catalog")
     @PreAuthorize("isAuthenticated()")
     public ApiResponse<List<Map<String, Object>>> indicatorDatasourceCatalog(
@@ -214,10 +222,13 @@ public class AnalyticsDomainController {
     public ApiResponse<List<IndJob>> indicatorTasks(
             @PathVariable String domain,
             @RequestParam(required = false) String taskName,
+            @RequestParam(required = false) String targetTable,
+            @RequestParam(required = false) String indicatorDomainName,
             @RequestParam(required = false) String scheduleStatus,
             @RequestParam(required = false) String execStatus,
             @RequestParam(required = false) String calcResult) {
-        return ApiResponse.ok(indicatorTaskService.list(domain, taskName, scheduleStatus, execStatus, calcResult));
+        return ApiResponse.ok(indicatorTaskService.list(
+                domain, taskName, targetTable, indicatorDomainName, scheduleStatus, execStatus, calcResult));
     }
 
     @PostMapping("/indicator-tasks/batch")
@@ -262,6 +273,22 @@ public class AnalyticsDomainController {
     public ApiResponse<Map<String, Object>> offlineIndicatorTask(@AuthenticationPrincipal UserPrincipal principal,
                                                                  @PathVariable String id) {
         return ApiResponse.ok(indicatorTaskService.offline(principal, id));
+    }
+
+    @PostMapping("/indicator-tasks/{id}/publish")
+    @PreAuthorize("isAuthenticated()")
+    public ApiResponse<Map<String, Object>> publishIndicatorTask(@AuthenticationPrincipal UserPrincipal principal,
+                                                                 @PathVariable String id,
+                                                                 @RequestBody(required = false) Map<String, Object> body) {
+        return ApiResponse.ok(indicatorTaskService.publish(principal, id, body));
+    }
+
+    @PostMapping("/indicator-groups/batch-publish")
+    @PreAuthorize("isAuthenticated()")
+    public ApiResponse<Map<String, Object>> batchPublishIndicatorGroups(
+            @AuthenticationPrincipal UserPrincipal principal,
+            @RequestBody Map<String, Object> body) {
+        return ApiResponse.ok(service.batchPublishIndicatorGroups(principal, body));
     }
 
     @GetMapping("/indicator-tasks/{id}/log")

@@ -76,7 +76,9 @@ public class CredentialCipher {
             cipher.init(Cipher.DECRYPT_MODE, key, new GCMParameterSpec(TAG_BITS, iv));
             return new String(cipher.doFinal(ct), StandardCharsets.UTF_8);
         } catch (Exception e) {
-            throw new IllegalStateException("解密凭据失败", e);
+            throw new IllegalStateException(
+                    "解密凭据失败：当前 CREDENTIAL_KEY 与加密时不一致，请到数据源管理重新填写并保存密码，或在 local.env / 环境变量中配置正确的 CREDENTIAL_KEY",
+                    e);
         }
     }
 }

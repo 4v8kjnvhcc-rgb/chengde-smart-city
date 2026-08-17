@@ -9,6 +9,7 @@ import com.chengde.smartcity.analysis.mapper.IndAreaMapper;
 import com.chengde.smartcity.analysis.mapper.IndFieldMapper;
 import com.chengde.smartcity.analysis.mapper.IndGroupMapper;
 import com.chengde.smartcity.analysis.mapper.IndSqlMapper;
+import com.chengde.smartcity.analysis.support.IndicatorJdbcSupport;
 import com.chengde.smartcity.analysis.support.IndicatorOwnerCodes;
 import com.chengde.smartcity.audit.AuditService;
 import com.chengde.smartcity.common.exception.BusinessException;
@@ -38,6 +39,7 @@ public class IndicatorLedgerService {
     private final IndFieldMapper fieldMapper;
     private final IndSqlMapper sqlMapper;
     private final IndicatorTaskService indicatorTaskService;
+    private final IndicatorJdbcSupport indicatorJdbcSupport;
     private final AuditService auditService;
 
     public IndicatorLedgerService(IndAreaMapper areaMapper,
@@ -45,12 +47,14 @@ public class IndicatorLedgerService {
                                   IndFieldMapper fieldMapper,
                                   IndSqlMapper sqlMapper,
                                   @Lazy IndicatorTaskService indicatorTaskService,
+                                  IndicatorJdbcSupport indicatorJdbcSupport,
                                   AuditService auditService) {
         this.areaMapper = areaMapper;
         this.groupMapper = groupMapper;
         this.fieldMapper = fieldMapper;
         this.sqlMapper = sqlMapper;
         this.indicatorTaskService = indicatorTaskService;
+        this.indicatorJdbcSupport = indicatorJdbcSupport;
         this.auditService = auditService;
     }
 
@@ -61,6 +65,7 @@ public class IndicatorLedgerService {
     public List<IndArea> listDomains(String domain, String domainName, String domainDbName) {
         String d = norm(domain);
         List<IndArea> all = areaMapper.selectList(new LambdaQueryWrapper<IndArea>().orderByAsc(IndArea::getName));
+        Map<String, Long> groupCntByArea = countActiveGroupsByArea();
         List<IndArea> out = new ArrayList<>();
         for (IndArea row : all) {
             decorate(row);
@@ -69,6 +74,8 @@ public class IndicatorLedgerService {
                     && (row.getName() == null || !row.getName().contains(domainName.trim()))) continue;
             if (domainDbName != null && !domainDbName.isBlank()
                     && (row.getDbSchema() == null || !row.getDbSchema().contains(domainDbName.trim()))) continue;
+            long cnt = groupCntByArea.getOrDefault(row.getUuid(), 0L);
+            row.setHasIndicators(cnt > 0);
             out.add(row);
         }
         return out;
@@ -77,18 +84,21 @@ public class IndicatorLedgerService {
     @Transactional
     public String createDomain(UserPrincipal operator, String domain, Map<String, Object> body) {
         String d = norm(domain);
-        if (isUnified(d)) {
-            String owner = str(body.get("ownerDomainCode"), null);
-            if (owner == null || !BIZ_OWNER_DOMAINS.contains(owner.trim().toLowerCase(Locale.ROOT))) {
-                throw new BusinessException(400, "请选择所属业务支撑系统（population|legal|macro|key）");
-            }
-            d = owner.trim().toLowerCase(Locale.ROOT);
-        }
         String name = required(body.get("domainName"), "domainName").toString().trim();
         String dbName = required(body.get("domainDbName"), "domainDbName").toString().trim().toLowerCase(Locale.ROOT);
+        if (isUnified(d)) {
+            String owner = str(body.get("ownerDomainCode"), null);
+            if (owner != null && BIZ_OWNER_DOMAINS.contains(owner.trim().toLowerCase(Locale.ROOT))) {
+                d = owner.trim().toLowerCase(Locale.ROOT);
+            } else {
+                d = IndicatorOwnerCodes.derive(name, dbName);
+            }
+        }
         validateIndDbName(dbName);
         Long dup = areaMapper.selectCount(new LambdaQueryWrapper<IndArea>().eq(IndArea::getDbSchema, dbName));
         if (dup != null && dup > 0) throw new BusinessException(400, "指标域库名已存在");
+        // 新增指标域即幂等建物理库（结果表仍在任务执行时创建）
+        indicatorJdbcSupport.ensureDatabase(dbName);
         IndArea row = new IndArea();
         row.setUuid(UUID.randomUUID().toString());
         row.setName(name);
@@ -104,6 +114,7 @@ public class IndicatorLedgerService {
     @Transactional
     public void updateDomain(UserPrincipal operator, String id, Map<String, Object> body) {
         IndArea row = requireArea(id);
+        assertDomainMutable(id);
         if (body.get("domainName") != null) {
             String name = String.valueOf(body.get("domainName")).trim();
             if (name.isEmpty()) throw new BusinessException(400, "domainName required");
@@ -116,6 +127,7 @@ public class IndicatorLedgerService {
                     .eq(IndArea::getDbSchema, dbName)
                     .ne(IndArea::getUuid, id));
             if (dup != null && dup > 0) throw new BusinessException(400, "指标域库名已存在");
+            indicatorJdbcSupport.ensureDatabase(dbName);
             row.setDbSchema(dbName);
         }
         if (body.containsKey("remark")) row.setRemark(str(body.get("remark"), null));
@@ -127,12 +139,7 @@ public class IndicatorLedgerService {
     @Transactional
     public void deleteDomain(UserPrincipal operator, String id) {
         IndArea row = requireArea(id);
-        long groupCnt = groupMapper.selectCount(new LambdaQueryWrapper<IndGroup>()
-                .eq(IndGroup::getAreaId, id)
-                .ne(IndGroup::getPublishStatus, 2));
-        if (groupCnt > 0) {
-            throw new BusinessException(400, "该指标域下仍有指标组，请先删除指标组后再删除指标域");
-        }
+        assertDomainMutable(id);
         areaMapper.deleteById(id);
         auditService.log(operator.getUserId(), operator.getUsername(), operator.getOrgId(),
                 "ANA_IND_DOMAIN_DELETE", row.getOwnerDomainCode(), row.getDbSchema(), "DELETED");
@@ -223,6 +230,24 @@ public class IndicatorLedgerService {
         return g;
     }
 
+    /** 预览指标组结果表数据（按指标域库 + 指标表名读取）。 */
+    public Map<String, Object> previewGroupResult(String groupId, int limit) {
+        IndGroup g = getGroup(groupId);
+        IndArea area = areaMapper.selectById(g.getAreaId());
+        if (area == null || area.getDbSchema() == null || area.getDbSchema().isBlank()) {
+            throw new BusinessException(400, "指标域库名缺失，无法读取结果表");
+        }
+        if (g.getTableName() == null || g.getTableName().isBlank()) {
+            throw new BusinessException(400, "指标表名缺失");
+        }
+        Map<String, Object> data = indicatorJdbcSupport.previewResultRows(area.getDbSchema(), g.getTableName(), limit);
+        data.put("groupId", g.getUuid());
+        data.put("groupName", g.getName());
+        data.put("targetTable", g.getTableName());
+        data.put("domainDbName", area.getDbSchema());
+        return data;
+    }
+
     @Transactional
     public String createGroup(UserPrincipal operator, String domain, Map<String, Object> body) {
         String d = norm(domain);
@@ -306,8 +331,62 @@ public class IndicatorLedgerService {
         g.setPublishBy(operator != null ? operator.getUsername() : "system");
         groupMapper.updateById(g);
         indicatorTaskService.ensureFromPublishedGroup(operator, g, taskName, execCycle, cronExpr, remark, executorAddress);
+        // 发布即幂等建结果表；落数仍在任务「执行」或调度触发时写入
+        List<IndField> fields = fieldMapper.selectList(new LambdaQueryWrapper<IndField>()
+                .eq(IndField::getGroupId, id)
+                .orderByAsc(IndField::getFieldPosition)
+                .orderByAsc(IndField::getUuid));
+        IndArea area = areaMapper.selectById(g.getAreaId());
+        String domainDb = area == null ? null : area.getDbSchema();
+        String targetTable = g.getTableName();
+        if (domainDb == null || domainDb.isBlank() || targetTable == null || targetTable.isBlank()) {
+            throw new BusinessException(400, "缺少指标域库名或指标表名，无法建表");
+        }
+        indicatorJdbcSupport.ensureResultTable(domainDb, targetTable, fields);
         auditService.log(operator.getUserId(), operator.getUsername(), operator.getOrgId(),
                 "ANA_IND_GROUP_PUBLISH", g.getOwnerDomainCode(), g.getTableName(), g.getName());
+    }
+
+    @Transactional
+    public Map<String, Object> batchPublishGroups(UserPrincipal operator, Map<String, Object> body) {
+        Map<String, Object> opts = body != null ? body : Map.of();
+        List<String> ids = new ArrayList<>();
+        Object raw = opts.get("ids");
+        if (raw instanceof List<?> list) {
+            for (Object o : list) {
+                if (o != null && !String.valueOf(o).isBlank()) ids.add(String.valueOf(o).trim());
+            }
+        }
+        if (ids.isEmpty()) throw new BusinessException(400, "请先勾选指标");
+        String cronExpr = str(opts.get("cronExpr"), null);
+        String execCycle = str(opts.get("execCycle"), null);
+        if ((cronExpr == null || cronExpr.isBlank()) && (execCycle == null || execCycle.isBlank())) {
+            throw new BusinessException(400, "请选择执行周期");
+        }
+        String cycleName = str(opts.get("cycleName"), null);
+        String cycleKey = (execCycle != null && !execCycle.isBlank())
+                ? execCycle.trim()
+                : (cycleName != null && !cycleName.isBlank() ? cycleName.trim() : "CUSTOM");
+        String remark = str(opts.get("remark"), null);
+        String executorAddress = str(opts.get("executorAddress"), "DEFAULT");
+        int ok = 0;
+        int fail = 0;
+        List<String> messages = new ArrayList<>();
+        for (String id : ids) {
+            try {
+                IndGroup g = getGroup(id);
+                publishGroup(operator, id, g.getName(), cycleKey, cronExpr, remark, executorAddress);
+                ok++;
+            } catch (Exception e) {
+                fail++;
+                messages.add(id + "：" + (e.getMessage() == null ? "失败" : e.getMessage()));
+            }
+        }
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("ok", ok);
+        out.put("fail", fail);
+        out.put("messages", messages);
+        return out;
     }
 
     public List<IndField> listFieldsByGroup(String groupId) {
@@ -380,8 +459,9 @@ public class IndicatorLedgerService {
             ind.setName(str(f.get("indicatorName"), resultField));
             ind.setTag(str(f.get("indicatorFlag"), null));
             ind.setFieldName(str(f.get("fieldName"), "ind_" + resultField));
-            ind.setFieldType(str(f.get("fieldType"), "字符串"));
-            ind.setFieldLength(intVal(f.get("fieldLength")));
+            ind.setFieldType(str(f.get("fieldType"), "VARCHAR"));
+            Integer flen = intVal(f.get("fieldLength"));
+            ind.setFieldLength(flen == null || flen <= 0 ? 100 : flen);
             ind.setFieldPrecision(intVal(f.get("fieldPrecision")));
             ind.setRsColumn(resultField);
             ind.setFieldPosition(++i);
@@ -424,6 +504,27 @@ public class IndicatorLedgerService {
     private void decorate(IndArea row) {
         if (row == null) return;
         row.setOwnerDomainCode(IndicatorOwnerCodes.derive(row.getName(), row.getDbSchema()));
+    }
+
+    private void assertDomainMutable(String areaId) {
+        long groupCnt = groupMapper.selectCount(new LambdaQueryWrapper<IndGroup>()
+                .eq(IndGroup::getAreaId, areaId)
+                .ne(IndGroup::getPublishStatus, 2));
+        if (groupCnt > 0) {
+            throw new BusinessException(400, "该指标域下已有指标，不能修改或删除；请先删除其下全部指标");
+        }
+    }
+
+    private Map<String, Long> countActiveGroupsByArea() {
+        List<IndGroup> groups = groupMapper.selectList(new LambdaQueryWrapper<IndGroup>()
+                .ne(IndGroup::getPublishStatus, 2)
+                .select(IndGroup::getAreaId));
+        Map<String, Long> map = new HashMap<>();
+        for (IndGroup g : groups) {
+            if (g.getAreaId() == null || g.getAreaId().isBlank()) continue;
+            map.merge(g.getAreaId(), 1L, Long::sum);
+        }
+        return map;
     }
 
     private void decorateGroup(IndGroup g) {

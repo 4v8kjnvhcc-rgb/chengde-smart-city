@@ -381,7 +381,6 @@ const assetModules = ref<AssetModule[]>([])
 const fileLibOverview = ref<FileLibOverview | null>(null)
 const fileSubTab = ref('catalog')
 const inventory = ref<Record<string, unknown> | null>(null)
-const lifecycleHints = ref<Record<string, string>>({})
 const classifyAssetType = ref('')
 const queryTableId = ref<number | undefined>()
 const queryKeyword = ref('')
@@ -605,7 +604,6 @@ async function loadLibraryOverview() {
   managedTables.value = (libOverview.value?.managedTables as ManagedTable[]) || []
   assetModules.value = (libOverview.value?.modules as AssetModule[]) || []
   inventory.value = (libOverview.value?.inventory as Record<string, unknown>) || null
-  lifecycleHints.value = (libOverview.value?.lifecycleHints as Record<string, string>) || {}
 }
 
 async function loadCandidates() {
@@ -1358,14 +1356,6 @@ onMounted(() => {
                 {{ inventory.managedTableCount ?? 0 }} 张 / {{ inventory.managedRecordCount ?? 0 }} 行
               </el-descriptions-item>
             </el-descriptions>
-            <el-alert
-              v-if="lifecycleHints.backup"
-              type="warning"
-              :closable="false"
-              show-icon
-              style="margin-bottom:12px"
-              :title="`生命周期：备份 — ${lifecycleHints.backup}；归档 — ${lifecycleHints.archive || '-'}；恢复 — ${lifecycleHints.restore || '-'}；迁移 — ${lifecycleHints.migrate || '-'}`"
-            />
             <el-form inline class="portal-inline-form portal-inline-form--block">
               <el-form-item label="库名" class="portal-field-md">
                 <el-input v-model="libForm.libName" placeholder="库名称" />

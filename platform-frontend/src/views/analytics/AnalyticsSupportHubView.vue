@@ -2,7 +2,8 @@
 import { computed, nextTick, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import api from '@/api/http'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox, type FormInstance, type FormRules } from 'element-plus'
+import { Plus, RefreshRight, Search } from '@element-plus/icons-vue'
 import PageCard from '@/components/common/PageCard.vue'
 import HubSideLayout, { type HubNavItem } from '@/components/common/HubSideLayout.vue'
 import { statusLabel } from '@/utils/status-label'
@@ -136,6 +137,27 @@ const tab = ref(DEFAULT_NAV)
 let applyingRoute = false
 
 const uumIntegrations = ref<Record<string, unknown>[]>([])
+const integrationQuery = reactive({
+  integrationCode: '',
+  integrationName: '',
+  targetSystem: '',
+})
+const integrationDialogVisible = ref(false)
+const integrationSaving = ref(false)
+const integrationEditingId = ref<number | null>(null)
+const integrationFormRef = ref<FormInstance>()
+const integrationForm = reactive({
+  integrationCode: '',
+  integrationName: '',
+  targetSystem: '',
+  endpoint: '',
+})
+const integrationRules: FormRules = {
+  integrationCode: [{ required: true, message: '请填写编码', trigger: 'blur' }],
+  integrationName: [{ required: true, message: '请填写名称', trigger: 'blur' }],
+  targetSystem: [{ required: true, message: '请填写目标系统', trigger: 'blur' }],
+  endpoint: [{ required: true, message: '请填写端点', trigger: 'blur' }],
+}
 const apps = ref<Record<string, unknown>[]>([])
 const appGrants = ref<Record<string, unknown>[]>([])
 const systemConfigs = ref<Record<string, unknown>[]>([])
@@ -227,7 +249,65 @@ async function loadServicesTab() {
 }
 
 async function loadUumIntegrations() {
-  uumIntegrations.value = (await api.get('/system/uum/integrations')).data || []
+  uumIntegrations.value = (await api.get('/system/uum/integrations', {
+    params: {
+      integrationCode: integrationQuery.integrationCode || undefined,
+      integrationName: integrationQuery.integrationName || undefined,
+      targetSystem: integrationQuery.targetSystem || undefined,
+    },
+  })).data || []
+}
+
+function resetIntegrationQuery() {
+  integrationQuery.integrationCode = ''
+  integrationQuery.integrationName = ''
+  integrationQuery.targetSystem = ''
+  void loadUumIntegrations()
+}
+
+function openCreateIntegration() {
+  integrationEditingId.value = null
+  integrationForm.integrationCode = ''
+  integrationForm.integrationName = ''
+  integrationForm.targetSystem = ''
+  integrationForm.endpoint = ''
+  integrationDialogVisible.value = true
+}
+
+function openEditIntegration(row: Record<string, unknown>) {
+  integrationEditingId.value = Number(row.id)
+  integrationForm.integrationCode = String(row.integrationCode || '')
+  integrationForm.integrationName = String(row.integrationName || '')
+  integrationForm.targetSystem = String(row.targetSystem || '')
+  integrationForm.endpoint = String(row.endpoint || '')
+  integrationDialogVisible.value = true
+}
+
+async function submitIntegration() {
+  const ok = await integrationFormRef.value?.validate().catch(() => false)
+  if (!ok) return
+  integrationSaving.value = true
+  try {
+    const body = { ...integrationForm }
+    if (integrationEditingId.value == null) {
+      await api.post('/system/uum/integrations', body)
+      ElMessage.success('已新增对接')
+    } else {
+      await api.put(`/system/uum/integrations/${integrationEditingId.value}`, body)
+      ElMessage.success('已修改对接')
+    }
+    integrationDialogVisible.value = false
+    await loadUumIntegrations()
+  } finally {
+    integrationSaving.value = false
+  }
+}
+
+async function removeIntegration(row: Record<string, unknown>) {
+  await ElMessageBox.confirm(`确认删除对接「${row.integrationName}」？`, '删除确认', { type: 'warning' })
+  await api.delete(`/system/uum/integrations/${row.id}`)
+  ElMessage.success('已删除')
+  await loadUumIntegrations()
 }
 
 async function loadTabData() {
@@ -368,21 +448,68 @@ onMounted(() => {
         </PageCard>
 
         <PageCard v-else-if="tab === 'apps.integration'" title="系统对接">
-          <el-table :data="uumIntegrations" stripe size="small">
+          <el-form inline class="portal-inline-form portal-inline-form--block">
+            <el-form-item label="编码" class="portal-field-md">
+              <el-input v-model="integrationQuery.integrationCode" clearable placeholder="全部" />
+            </el-form-item>
+            <el-form-item label="名称" class="portal-field-lg">
+              <el-input v-model="integrationQuery.integrationName" clearable placeholder="全部" />
+            </el-form-item>
+            <el-form-item label="目标系统" class="portal-field-md">
+              <el-input v-model="integrationQuery.targetSystem" clearable placeholder="全部" />
+            </el-form-item>
+            <el-form-item class="portal-form-actions">
+              <el-button type="primary" :icon="Search" @click="loadUumIntegrations">查询</el-button>
+              <el-button :icon="RefreshRight" @click="resetIntegrationQuery">重置</el-button>
+            </el-form-item>
+          </el-form>
+          <el-form inline class="portal-inline-form">
+            <el-form-item class="portal-form-actions">
+              <el-button type="primary" :icon="Plus" @click="openCreateIntegration">新增</el-button>
+            </el-form-item>
+          </el-form>
+          <el-table :data="uumIntegrations" stripe border class="portal-table" size="small">
             <el-table-column prop="integrationCode" label="编码" width="120" />
-            <el-table-column prop="integrationName" label="名称" />
+            <el-table-column prop="integrationName" label="名称" min-width="140" show-overflow-tooltip />
             <el-table-column prop="targetSystem" label="目标系统" width="140" />
-            <el-table-column prop="endpoint" label="端点" min-width="200" />
+            <el-table-column prop="endpoint" label="端点" min-width="200" show-overflow-tooltip />
             <el-table-column label="状态" width="90">
               <template #default="{ row }">{{ statusLabel(row.status) }}</template>
             </el-table-column>
-            <el-table-column prop="lastMessage" label="最近检测" min-width="140" />
-            <el-table-column label="操作" width="80">
+            <el-table-column prop="lastMessage" label="最近检测" min-width="160" show-overflow-tooltip />
+            <el-table-column label="操作" width="180" fixed="right">
               <template #default="{ row }">
                 <el-button link type="primary" @click="testUumIntegration(row.id as number)">检测</el-button>
+                <el-button link type="primary" @click="openEditIntegration(row)">编辑</el-button>
+                <el-button link type="danger" @click="removeIntegration(row)">删除</el-button>
               </template>
             </el-table-column>
           </el-table>
+          <el-dialog
+            v-model="integrationDialogVisible"
+            :title="integrationEditingId == null ? '新增对接' : '编辑对接'"
+            width="520px"
+            destroy-on-close
+          >
+            <el-form ref="integrationFormRef" :model="integrationForm" :rules="integrationRules" label-width="100px">
+              <el-form-item label="编码" prop="integrationCode">
+                <el-input v-model="integrationForm.integrationCode" placeholder="如 INT_DE" />
+              </el-form-item>
+              <el-form-item label="名称" prop="integrationName">
+                <el-input v-model="integrationForm.integrationName" placeholder="对接名称" />
+              </el-form-item>
+              <el-form-item label="目标系统" prop="targetSystem">
+                <el-input v-model="integrationForm.targetSystem" placeholder="如 DataEase" />
+              </el-form-item>
+              <el-form-item label="端点" prop="endpoint">
+                <el-input v-model="integrationForm.endpoint" placeholder="http://host:port" />
+              </el-form-item>
+            </el-form>
+            <template #footer>
+              <el-button @click="integrationDialogVisible = false">取消</el-button>
+              <el-button type="primary" :loading="integrationSaving" @click="submitIntegration">确定</el-button>
+            </template>
+          </el-dialog>
         </PageCard>
 
         <PageCard v-else-if="tab === 'apps.portal'" title="门户配置">

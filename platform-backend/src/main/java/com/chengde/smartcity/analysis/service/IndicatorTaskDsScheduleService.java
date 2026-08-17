@@ -63,7 +63,7 @@ public class IndicatorTaskDsScheduleService {
         if (cron == null || cron.isBlank()) {
             throw new BusinessException(400, "请先配置执行周期后再启动");
         }
-        if (!"PUBLISHED".equalsIgnoreCase(task.getPublishStatus())) {
+        if (task.getPublishStatus() == null || task.getPublishStatus() != 1) {
             throw new BusinessException(400, "已下线任务不能启动调度，请先发布指标组");
         }
         if (!isDsAvailable()) {

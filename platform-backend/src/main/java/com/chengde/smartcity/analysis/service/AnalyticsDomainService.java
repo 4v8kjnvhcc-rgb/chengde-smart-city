@@ -457,8 +457,18 @@ public class AnalyticsDomainService {
         indicatorLedgerService.publishGroup(operator, id, body);
     }
 
+    @Transactional
+    public Map<String, Object> batchPublishIndicatorGroups(UserPrincipal operator, Map<String, Object> body) {
+        return indicatorLedgerService.batchPublishGroups(operator, body);
+    }
+
     public List<IndField> listIndicatorsByGroup(String groupId) {
         return indicatorLedgerService.listFieldsByGroup(groupId);
+    }
+
+    public Map<String, Object> previewIndicatorGroupResult(String groupId, Integer limit) {
+        int lim = limit == null || limit <= 0 ? 200 : limit;
+        return indicatorLedgerService.previewGroupResult(groupId, lim);
     }
 
     public Map<String, Object> latestGroupSql(String groupId) {
@@ -637,8 +647,9 @@ public class AnalyticsDomainService {
             AnaIndicator ind = new AnaIndicator();
             ind.setDomainCode(d);
             ind.setResultField(resultField);
-            ind.setFieldType(str(f.get("fieldType"), "字符串"));
-            ind.setFieldLength(intVal(f.get("fieldLength")));
+            ind.setFieldType(str(f.get("fieldType"), "VARCHAR"));
+            Integer flen = intVal(f.get("fieldLength"));
+            ind.setFieldLength(flen == null || flen <= 0 ? 100 : flen);
             ind.setFieldPrecision(intVal(f.get("fieldPrecision")));
             ind.setFieldName(fieldName);
             ind.setIndicatorFlag(str(f.get("indicatorFlag"), null));
@@ -754,7 +765,7 @@ public class AnalyticsDomainService {
                 ind.setFieldName(ind.getIndicatorCode());
             }
             if (ind.getFieldType() == null || ind.getFieldType().isBlank()) {
-                ind.setFieldType("字符串");
+                ind.setFieldType("VARCHAR");
             }
         }
     }
@@ -807,9 +818,9 @@ public class AnalyticsDomainService {
             if (alias == null || !names.add(alias)) continue;
             Map<String, Object> row = new LinkedHashMap<>();
             row.put("resultField", alias);
-            row.put("fieldType", guessType(p));
-            row.put("fieldLength", guessType(p).contains("浮") ? 40 : (guessType(p).contains("整") ? 20 : 64));
-            row.put("fieldPrecision", guessType(p).contains("浮") ? 2 : 0);
+            row.put("fieldType", "VARCHAR");
+            row.put("fieldLength", 100);
+            row.put("fieldPrecision", 0);
             row.put("indicatorName", alias);
             row.put("fieldName", "ind_" + alias);
             out.add(row);
@@ -836,15 +847,6 @@ public class AnalyticsDomainService {
         return parts;
     }
 
-    private static String guessType(String expr) {
-        String e = expr.toLowerCase(Locale.ROOT);
-        if (e.contains("count(") || e.contains("sum(") || e.contains("avg(") || e.contains("/") || e.contains("rate")) {
-            return e.contains("/") || e.contains("avg(") || e.contains("rate") ? "浮点数" : "整数";
-        }
-        if (e.contains("date_format") || e.contains("concat") || e.contains("'")) return "字符串";
-        return "字符串";
-    }
-
     private List<Map<String, Object>> enrichFieldsFromMeta(List<String> columns, String sql) {
         List<Map<String, Object>> parsed = extractSelectAliases(sql);
         Map<String, Map<String, Object>> byName = new HashMap<>();
@@ -854,8 +856,8 @@ public class AnalyticsDomainService {
             Map<String, Object> base = byName.getOrDefault(col, new LinkedHashMap<>());
             Map<String, Object> row = new LinkedHashMap<>();
             row.put("resultField", col);
-            row.put("fieldType", base.getOrDefault("fieldType", "字符串"));
-            row.put("fieldLength", base.getOrDefault("fieldLength", 64));
+            row.put("fieldType", base.getOrDefault("fieldType", "VARCHAR"));
+            row.put("fieldLength", base.getOrDefault("fieldLength", 100));
             row.put("fieldPrecision", base.getOrDefault("fieldPrecision", 0));
             row.put("indicatorName", base.getOrDefault("indicatorName", col));
             row.put("fieldName", base.getOrDefault("fieldName", "ind_" + col));

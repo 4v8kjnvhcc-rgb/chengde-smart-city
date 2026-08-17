@@ -39,6 +39,10 @@ public class IndJob {
 
     @TableField(exist = false)
     private String ownerDomainCode;
+    @TableField(exist = false)
+    private String targetTable;
+    @TableField(exist = false)
+    private String indicatorDomainName;
 
     @JsonProperty("id")
     public String getId() { return uuid; }
@@ -79,10 +83,8 @@ public class IndJob {
     public String getUpdateBy() { return updateBy; }
     public void setUpdateBy(String updateBy) { this.updateBy = updateBy; }
     @JsonIgnore
-    public Integer getPublishStatusRaw() { return publishStatus; }
+    public Integer getPublishStatus() { return publishStatus; }
     public void setPublishStatus(Integer publishStatus) { this.publishStatus = publishStatus; }
-    @JsonIgnore
-    public Integer getPublishStatusInt() { return publishStatus; }
     public LocalDateTime getPublishTime() { return publishTime; }
     public void setPublishTime(LocalDateTime publishTime) { this.publishTime = publishTime; }
     public String getPublishBy() { return publishBy; }
@@ -91,7 +93,8 @@ public class IndJob {
     public void setRetryNum(Integer retryNum) { this.retryNum = retryNum; }
     public Integer getStatus() { return status; }
     public void setStatus(Integer status) { this.status = status; }
-    public Integer getCalcResultRaw() { return calcResult; }
+    @JsonIgnore
+    public Integer getCalcResult() { return calcResult; }
     public void setCalcResult(Integer calcResult) { this.calcResult = calcResult; }
     public Long getDsProjectCode() { return dsProjectCode; }
     public void setDsProjectCode(Long dsProjectCode) { this.dsProjectCode = dsProjectCode; }
@@ -108,8 +111,19 @@ public class IndJob {
     public String getOwnerDomainCode() { return ownerDomainCode; }
     public void setOwnerDomainCode(String ownerDomainCode) { this.ownerDomainCode = ownerDomainCode; }
 
+    @JsonProperty("targetTable")
+    public String getTargetTable() { return targetTable; }
+    public void setTargetTable(String targetTable) { this.targetTable = targetTable; }
+
+    @JsonProperty("indicatorDomainName")
+    public String getIndicatorDomainName() { return indicatorDomainName; }
+    public void setIndicatorDomainName(String indicatorDomainName) { this.indicatorDomainName = indicatorDomainName; }
+
     @JsonProperty("execCycle")
     public String getExecCycle() {
+        if (scheduleCron != null && !scheduleCron.isBlank()) {
+            return scheduleCron.trim();
+        }
         return cronCodeId != null && cronCodeId == 1 ? "DAILY" : "MONTHLY";
     }
 
@@ -129,7 +143,7 @@ public class IndJob {
     }
 
     @JsonProperty("calcResult")
-    public String getCalcResult() {
+    public String getCalcResultLabel() {
         if (calcResult == null || calcResult == 0) return "NONE";
         if (calcResult == 1) return "ALL_SUCCESS";
         if (calcResult == 2) return "PARTIAL";
@@ -137,7 +151,7 @@ public class IndJob {
     }
 
     @JsonProperty("publishStatus")
-    public String getPublishStatus() {
+    public String getPublishStatusLabel() {
         if (publishStatus != null && publishStatus == 1) return "PUBLISHED";
         if (publishStatus != null && publishStatus == 2) return "OFFLINE";
         return "DRAFT";

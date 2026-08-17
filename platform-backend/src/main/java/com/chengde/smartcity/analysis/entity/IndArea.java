@@ -19,6 +19,10 @@ public class IndArea {
     @TableField(exist = false)
     private String ownerDomainCode;
 
+    /** 该域下是否已有指标（组）；有则禁止编辑/删除 */
+    @TableField(exist = false)
+    private Boolean hasIndicators;
+
     @JsonProperty("id")
     public String getId() { return uuid; }
     @JsonProperty("id")
@@ -52,4 +56,7 @@ public class IndArea {
     public void setDbMarkId(String dbMarkId) { this.dbMarkId = dbMarkId; }
     public String getOwnerDomainCode() { return ownerDomainCode; }
     public void setOwnerDomainCode(String ownerDomainCode) { this.ownerDomainCode = ownerDomainCode; }
+
+    public Boolean getHasIndicators() { return hasIndicators; }
+    public void setHasIndicators(Boolean hasIndicators) { this.hasIndicators = hasIndicators; }
 }
