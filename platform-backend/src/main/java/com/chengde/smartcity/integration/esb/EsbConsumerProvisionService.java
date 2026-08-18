@@ -128,7 +128,7 @@ public class EsbConsumerProvisionService {
             Map<String, Object> ext = OM.readValue(gov.getExtJson(), new TypeReference<Map<String, Object>>() {});
             Object apiObj = ext.get("api");
             if (apiObj instanceof Map<?, ?> api) {
-                String url = firstNonBlank(str(api.get("apiUrl")), str(api.get("apiPath")));
+                String url = joinApiUrl(str(api.get("apiUrl")), str(api.get("apiPath")));
                 meta.method = firstNonBlank(str(api.get("apiMethod")), "POST");
                 meta.url = qualifyUrl(url);
             }
@@ -136,6 +136,27 @@ public class EsbConsumerProvisionService {
             log.warn("parse catalog api extJson failed: {}", e.getMessage());
         }
         return meta;
+    }
+
+    /** 目标地址 + 请求路径拼接；路径已是完整 URL 或已包含在地址中则不重复拼。 */
+    private static String joinApiUrl(String base, String path) {
+        String b = nz(base).trim();
+        String p = nz(path).trim();
+        if (p.isEmpty()) {
+            return b;
+        }
+        if (p.startsWith("http://") || p.startsWith("https://")) {
+            return p;
+        }
+        if (b.isEmpty()) {
+            return p;
+        }
+        String left = b.replaceAll("/+$", "");
+        String right = p.replaceAll("^/+", "");
+        if (b.endsWith(p) || b.endsWith("/" + right)) {
+            return b;
+        }
+        return left + "/" + right;
     }
 
     private String qualifyUrl(String url) {

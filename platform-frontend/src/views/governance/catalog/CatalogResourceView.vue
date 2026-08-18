@@ -61,7 +61,7 @@ interface CatalogRes {
   themeName?: string
   baseCatalogName?: string
   tags?: string
-  extJson?: string
+  extJson?: string | Record<string, unknown>
   updateCycle?: string
   description?: string
   publishStatus: string
@@ -560,9 +560,13 @@ watch(
     if (v !== 'NOT_OPEN') form.notOpenReason = ''
   },
 )
+/** 查看/编辑回填期间禁止因格式切换清空接口/文件表单 */
+let hydratingForm = false
+
 watch(
   () => form.resourceFormat,
   () => {
+    if (hydratingForm) return
     columnRows.value = []
     requestParams.value = []
     responseParams.value = []
@@ -823,14 +827,33 @@ async function submitBatchCreate() {
   }
 }
 
-function parseExt(row: CatalogRes) {
-  if (!row.extJson) return null
+function parseExt(row: CatalogRes): Record<string, any> | null {
+  const raw = row.extJson as unknown
+  if (raw == null || raw === '') return null
+  if (typeof raw === 'object') return raw as Record<string, any>
+  if (typeof raw !== 'string') return null
   try {
-    return JSON.parse(row.extJson)
+    const parsed = JSON.parse(raw)
+    return parsed && typeof parsed === 'object' ? parsed : null
   } catch {
     return null
   }
 }
+
+/** 目标地址 + 请求路径 → 完整接口 URL（路径已是 http 或已包含在地址中则不重复拼） */
+function joinApiUrl(base: string, path: string): string {
+  const b = (base || '').trim()
+  const p = (path || '').trim()
+  if (!p) return b
+  if (/^https?:\/\//i.test(p)) return p
+  if (!b) return p
+  if (b.endsWith(p) || b.endsWith(`/${p.replace(/^\/+/, '')}`)) return b
+  const left = b.replace(/\/+$/, '')
+  const right = p.replace(/^\/+/, '')
+  return `${left}/${right}`
+}
+
+const fullApiUrl = computed(() => joinApiUrl(apiForm.apiUrl, apiForm.apiPath))
 
 function fillFormFromRow(row: CatalogRes) {
   form.resourceCode = row.resourceCode
@@ -887,29 +910,37 @@ function fillFormFromRow(row: CatalogRes) {
         remark: c.remark || '',
       }))
     }
-    if (ext.api) {
+    let apiBlk = ext.api
+    if (typeof apiBlk === 'string') {
+      try {
+        apiBlk = JSON.parse(apiBlk)
+      } catch {
+        apiBlk = null
+      }
+    }
+    if (apiBlk && typeof apiBlk === 'object') {
       Object.assign(apiForm, {
-        apiName: ext.api.apiName || '',
-        apiUrl: ext.api.apiUrl || '',
-        apiPath: ext.api.apiPath || '',
-        apiMethod: ext.api.apiMethod || 'GET',
-        apiTimeout: ext.api.apiTimeout ?? 3000,
-        apiVersion: ext.api.apiVersion || '',
-        registerAt: ext.api.registerAt || '',
-        expireAt: ext.api.expireAt || '',
-        apiDescription: ext.api.apiDescription || '',
-        apiResultJson: ext.api.apiResultJson || '{}',
+        apiName: apiBlk.apiName || '',
+        apiUrl: apiBlk.apiUrl || '',
+        apiPath: apiBlk.apiPath || '',
+        apiMethod: apiBlk.apiMethod || 'GET',
+        apiTimeout: apiBlk.apiTimeout ?? 3000,
+        apiVersion: apiBlk.apiVersion || '',
+        registerAt: apiBlk.registerAt || '',
+        expireAt: apiBlk.expireAt || '',
+        apiDescription: apiBlk.apiDescription || '',
+        apiResultJson: apiBlk.apiResultJson || '{}',
       })
-      requestParams.value = Array.isArray(ext.api.requestParams)
-        ? ext.api.requestParams.map((p: any) => ({
+      requestParams.value = Array.isArray(apiBlk.requestParams)
+        ? apiBlk.requestParams.map((p: any) => ({
             name: p.name || '',
             type: p.type || '字符串',
             required: !!p.required,
             description: p.description || '',
           }))
         : []
-      responseParams.value = Array.isArray(ext.api.responseParams)
-        ? ext.api.responseParams.map((p: any) => ({
+      responseParams.value = Array.isArray(apiBlk.responseParams)
+        ? apiBlk.responseParams.map((p: any) => ({
             name: p.name || '',
             type: p.type || '字符串',
             required: !!p.required,
@@ -949,16 +980,7 @@ function openEdit(row: CatalogRes) {
     ElMessage.warning('已发布不可编辑，请先下线')
     return
   }
-  resetForm()
-  editMode.value = true
-  viewMode.value = false
-  editingId.value = row.id
-  wizardStep.value = 0
-  void ensureCategoryLoaded()
-  void loadOrgs()
-  fillFormFromRow(row)
-  void loadEligibleMeta(row.metadataEntryCode)
-  dialogVisible.value = true
+  void openResourceDialog(row, 'edit')
 }
 
 interface ApprovalFlowRow {
@@ -997,18 +1019,38 @@ async function loadApprovalFlow(resourceId: number) {
   }
 }
 
-function openView(row: CatalogRes) {
+async function fetchResourceDetail(row: CatalogRes): Promise<CatalogRes> {
+  try {
+    const res = await api.get(`/governance/catalog/resources-mgmt/${row.id}`)
+    return (res.data as CatalogRes) || row
+  } catch {
+    return row
+  }
+}
+
+async function openResourceDialog(row: CatalogRes, mode: 'view' | 'edit') {
+  hydratingForm = true
   resetForm()
-  editMode.value = false
-  viewMode.value = true
+  editMode.value = mode === 'edit'
+  viewMode.value = mode === 'view'
   editingId.value = row.id
   wizardStep.value = 0
   void ensureCategoryLoaded()
   void loadOrgs()
-  fillFormFromRow(row)
   void loadEligibleMeta(row.metadataEntryCode)
-  void loadApprovalFlow(row.id)
-  dialogVisible.value = true
+  if (mode === 'view') void loadApprovalFlow(row.id)
+  try {
+    const detail = await fetchResourceDetail(row)
+    fillFormFromRow(detail)
+    dialogVisible.value = true
+    await nextTick()
+  } finally {
+    hydratingForm = false
+  }
+}
+
+function openView(row: CatalogRes) {
+  void openResourceDialog(row, 'view')
 }
 
 function validateStep1(): boolean {
@@ -1143,7 +1185,7 @@ function goNext() {
   if (!viewMode.value && !validateStep1()) return
   wizardStep.value = 1
   apiTab.value = 'basic'
-  if (form.resourceFormat === 'API') {
+  if (!viewMode.value && form.resourceFormat === 'API') {
     if (!requestParams.value.length) addRequestParam()
     if (!responseParams.value.length) addResponseParam()
   }
@@ -2321,7 +2363,7 @@ onActivated(async () => {
         <template v-else-if="form.resourceFormat === 'API'">
           <el-tabs v-model="apiTab">
             <el-tab-pane label="基本信息" name="basic">
-              <el-form label-width="120px" class="api-basic-form">
+              <el-form label-width="120px" class="api-basic-form" :disabled="viewMode">
                 <el-row :gutter="16">
                   <el-col :span="12">
                     <el-form-item label="接口名称" required>
@@ -2341,6 +2383,7 @@ onActivated(async () => {
                   <el-col :span="12">
                     <el-form-item label="请求路径" required>
                       <el-input v-model="apiForm.apiPath" placeholder="/api/xxx" />
+                      <div v-if="fullApiUrl" class="hint">完整接口地址：{{ fullApiUrl }}</div>
                     </el-form-item>
                   </el-col>
                   <el-col :span="12">
@@ -2384,7 +2427,7 @@ onActivated(async () => {
             <el-tab-pane label="请求参数" name="req">
               <div class="section-head">
                 <span>请求参数</span>
-                <el-button type="primary" size="small" @click="addRequestParam">添加参数</el-button>
+                <el-button v-if="!viewMode" type="primary" size="small" @click="addRequestParam">添加参数</el-button>
               </div>
               <el-table :data="requestParams" size="small" stripe border max-height="360">
                 <el-table-column label="参数名" min-width="140">
@@ -2418,7 +2461,7 @@ onActivated(async () => {
             <el-tab-pane label="响应参数" name="resp">
               <div class="section-head">
                 <span>响应参数</span>
-                <el-button type="primary" size="small" @click="addResponseParam">添加参数</el-button>
+                <el-button v-if="!viewMode" type="primary" size="small" @click="addResponseParam">添加参数</el-button>
               </div>
               <el-table :data="responseParams" size="small" stripe border max-height="360">
                 <el-table-column label="参数名" min-width="140">
