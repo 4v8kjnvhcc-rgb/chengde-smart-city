@@ -109,19 +109,18 @@ onMounted(load)
       <el-option
         v-for="o in options"
         :key="o.id"
-        :label="`${o.cycleName}（${o.cronExpr}）`"
+        :label="o.cycleName"
         :value="o.id"
       />
-      <el-option v-if="allowCustom" label="自定义 Cron 表达式" :value="CUSTOM_ID" />
+      <el-option v-if="allowCustom" label="自定义周期" :value="CUSTOM_ID" />
     </el-select>
     <el-input
       v-if="isCustom"
       v-model="customCron"
       class="custom-cron-input"
-      placeholder="请输入 Quartz Cron，如 0 0 2 * * ?"
+      placeholder="请输入自定义周期表达式"
       clearable
     />
-    <div v-if="modelValue" class="cron-hint">Cron：{{ modelValue }}</div>
   </div>
 </template>
 
@@ -131,10 +130,5 @@ onMounted(load)
 }
 .custom-cron-input {
   margin-top: 8px;
-}
-.cron-hint {
-  margin-top: 6px;
-  font-size: 12px;
-  color: #909399;
 }
 </style>

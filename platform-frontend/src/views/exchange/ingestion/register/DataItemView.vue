@@ -3,6 +3,7 @@ import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage } from 'element-plus'
 import PageCard from '@/components/common/PageCard.vue'
+import { formatDateTime } from '@/utils/datetime'
 import {
   activeProjectId,
   setActiveProjectId,
@@ -72,6 +73,36 @@ const componentOptions = [
   { value: 'TEXTAREA', label: '多行文本' },
 ]
 
+const DATA_TYPE_OPTIONS = [
+  'TINYINT', 'SMALLINT', 'MEDIUMINT', 'INT', 'BIGINT',
+  'FLOAT', 'DOUBLE', 'DECIMAL',
+  'CHAR', 'VARCHAR', 'TEXT', 'ENUM', 'SET', 'BLOB',
+  'DATE', 'TIME', 'DATETIME', 'TIMESTAMP', 'YEAR', 'JSON', 'BOOLEAN',
+] as const
+
+const LENGTH_TYPES = new Set(['CHAR', 'VARCHAR', 'DECIMAL', 'BINARY', 'VARBINARY'])
+
+type CompareDiff = {
+  columnCode: string
+  leftName: string
+  rightName: string
+  leftType: string
+  rightType: string
+  leftLen: string
+  rightLen: string
+  leftNullable: string
+  rightNullable: string
+  diffType: string
+}
+
+const compareVisible = ref(false)
+const compareLoading = ref(false)
+const compareRightTableId = ref<number>()
+const compareRightTables = ref<DataTable[]>([])
+const compareDiffs = ref<CompareDiff[]>([])
+const compareSummary = reactive({ leftCount: 0, rightCount: 0, same: 0, diff: 0, onlyLeft: 0, onlyRight: 0 })
+const compareRanAt = ref('')
+
 const dialogTitle = computed(() => (editingCol.value ? '编辑数据项' : '新建数据项'))
 const isCreate = computed(() => !editingCol.value)
 
@@ -93,6 +124,163 @@ function lengthLabel(row: DataColumn) {
   if (row.lengthVal != null && row.lengthVal > 0) return String(row.lengthVal)
   const m = (row.dataType || '').match(/\((\d+)\)/)
   return m ? m[1] : '—'
+}
+
+function typeNeedsLength(dt: string) {
+  return LENGTH_TYPES.has((dt || '').toUpperCase())
+}
+
+async function openCompare() {
+  if (!selectedTableId.value) {
+    ElMessage.warning('请先选择基准数据表')
+    return
+  }
+  compareVisible.value = true
+  compareDiffs.value = []
+  compareRanAt.value = ''
+  compareRightTableId.value = undefined
+  try {
+    const all = (await ingestionApi.tables(selectedSourceId.value)).data || []
+    compareRightTables.value = all.filter((t) => t.id !== selectedTableId.value)
+    if (!compareRightTables.value.length) {
+      const global = (await ingestionApi.tables()).data || []
+      compareRightTables.value = global.filter((t) => t.id !== selectedTableId.value)
+    }
+  } catch {
+    compareRightTables.value = tables.value.filter((t) => t.id !== selectedTableId.value)
+  }
+}
+
+async function runCompare() {
+  if (!selectedTableId.value || !compareRightTableId.value) {
+    ElMessage.warning('请选择对照表')
+    return
+  }
+  compareLoading.value = true
+  try {
+    const [leftCols, rightCols] = await Promise.all([
+      ingestionApi.columns(selectedTableId.value).then((r) => r.data || []),
+      ingestionApi.columns(compareRightTableId.value).then((r) => r.data || []),
+    ])
+    const leftMap = new Map(leftCols.map((c) => [c.columnCode.toUpperCase(), c]))
+    const rightMap = new Map(rightCols.map((c) => [c.columnCode.toUpperCase(), c]))
+    const codes = new Set([...leftMap.keys(), ...rightMap.keys()])
+    const rows: CompareDiff[] = []
+    let same = 0
+    let diff = 0
+    let onlyLeft = 0
+    let onlyRight = 0
+    for (const code of [...codes].sort()) {
+      const L = leftMap.get(code)
+      const R = rightMap.get(code)
+      if (L && !R) {
+        onlyLeft++
+        rows.push({
+          columnCode: L.columnCode,
+          leftName: L.columnName || '—',
+          rightName: '—',
+          leftType: dataTypeLabel(L),
+          rightType: '—',
+          leftLen: lengthLabel(L),
+          rightLen: '—',
+          leftNullable: L.nullableFlag ? '可空' : '必填',
+          rightNullable: '—',
+          diffType: '仅基准表',
+        })
+        continue
+      }
+      if (!L && R) {
+        onlyRight++
+        rows.push({
+          columnCode: R.columnCode,
+          leftName: '—',
+          rightName: R.columnName || '—',
+          leftType: '—',
+          rightType: dataTypeLabel(R),
+          leftLen: '—',
+          rightLen: lengthLabel(R),
+          leftNullable: '—',
+          rightNullable: R.nullableFlag ? '可空' : '必填',
+          diffType: '仅对照表',
+        })
+        continue
+      }
+      if (!L || !R) continue
+      const typeSame = dataTypeLabel(L) === dataTypeLabel(R)
+      const lenSame = lengthLabel(L) === lengthLabel(R)
+      const nullSame = L.nullableFlag === R.nullableFlag
+      if (typeSame && lenSame && nullSame) {
+        same++
+        rows.push({
+          columnCode: L.columnCode,
+          leftName: L.columnName || '—',
+          rightName: R.columnName || '—',
+          leftType: dataTypeLabel(L),
+          rightType: dataTypeLabel(R),
+          leftLen: lengthLabel(L),
+          rightLen: lengthLabel(R),
+          leftNullable: L.nullableFlag ? '可空' : '必填',
+          rightNullable: R.nullableFlag ? '可空' : '必填',
+          diffType: '一致',
+        })
+      } else {
+        diff++
+        const parts: string[] = []
+        if (!typeSame) parts.push('类型')
+        if (!lenSame) parts.push('长度')
+        if (!nullSame) parts.push('必填')
+        rows.push({
+          columnCode: L.columnCode,
+          leftName: L.columnName || '—',
+          rightName: R.columnName || '—',
+          leftType: dataTypeLabel(L),
+          rightType: dataTypeLabel(R),
+          leftLen: lengthLabel(L),
+          rightLen: lengthLabel(R),
+          leftNullable: L.nullableFlag ? '可空' : '必填',
+          rightNullable: R.nullableFlag ? '可空' : '必填',
+          diffType: `差异（${parts.join('/')}）`,
+        })
+      }
+    }
+    compareDiffs.value = rows
+    compareSummary.leftCount = leftCols.length
+    compareSummary.rightCount = rightCols.length
+    compareSummary.same = same
+    compareSummary.diff = diff
+    compareSummary.onlyLeft = onlyLeft
+    compareSummary.onlyRight = onlyRight
+    compareRanAt.value = formatDateTime(new Date())
+    ElMessage.success(`比对完成：一致 ${same}，差异 ${diff}，仅基准 ${onlyLeft}，仅对照 ${onlyRight}`)
+  } catch {
+    ElMessage.error('模型比对失败')
+  } finally {
+    compareLoading.value = false
+  }
+}
+
+function exportCompareJson() {
+  if (!compareDiffs.value.length) {
+    ElMessage.warning('请先执行比对')
+    return
+  }
+  const leftName = tables.value.find((t) => t.id === selectedTableId.value)?.tableName || String(selectedTableId.value)
+  const rightName = compareRightTables.value.find((t) => t.id === compareRightTableId.value)?.tableName
+    || String(compareRightTableId.value)
+  const blob = new Blob([JSON.stringify({
+    comparedAt: compareRanAt.value,
+    leftTable: leftName,
+    rightTable: rightName,
+    summary: { ...compareSummary },
+    diffs: compareDiffs.value,
+  }, null, 2)], { type: 'application/json' })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = `model-compare-${leftName}-vs-${rightName}.json`
+  a.click()
+  URL.revokeObjectURL(url)
+  ElMessage.success('已导出比对结果')
 }
 
 function parseRouteTableId(): number | undefined {
@@ -414,6 +602,7 @@ onMounted(reload)
         </el-form-item>
         <el-form-item class="portal-form-actions">
           <el-button type="primary" :disabled="!selectedTableId" @click="openCreate">新增</el-button>
+          <el-button :disabled="!selectedTableId" @click="openCompare">模型比对</el-button>
         </el-form-item>
       </el-form>
 
@@ -460,18 +649,24 @@ onMounted(reload)
           />
         </el-form-item>
         <el-form-item label="数据类型" required>
-          <el-input
+          <el-select
             v-model="colForm.dataType"
+            filterable
+            allow-create
+            default-first-option
+            style="width:100%"
             :disabled="!canEditAttr('dataType')"
-            placeholder="如 VARCHAR / BIGINT"
-          />
+            placeholder="选择或输入类型"
+          >
+            <el-option v-for="t in DATA_TYPE_OPTIONS" :key="t" :label="t" :value="t" />
+          </el-select>
         </el-form-item>
         <el-form-item label="长度">
           <el-input-number
             v-model="colForm.lengthVal"
             :min="1"
             style="width:100%"
-            :disabled="!canEditAttr('lengthVal')"
+            :disabled="!canEditAttr('lengthVal') || !typeNeedsLength(colForm.dataType)"
           />
         </el-form-item>
         <el-form-item label="组件类型">
@@ -504,6 +699,57 @@ onMounted(reload)
         <el-button type="primary" :loading="saving" @click="saveColumn">保存</el-button>
       </template>
     </el-dialog>
+
+    <el-drawer v-model="compareVisible" title="模型间检查与比对" size="880px" destroy-on-close>
+      <el-form inline class="portal-inline-form portal-inline-form--block">
+        <el-form-item label="基准表" class="portal-field-lg">
+          <el-input
+            :model-value="tables.find((t) => t.id === selectedTableId)?.tableName || '—'"
+            readonly
+          />
+        </el-form-item>
+        <el-form-item label="对照表" class="portal-field-lg">
+          <el-select
+            v-model="compareRightTableId"
+            filterable
+            placeholder="选择对照模型/表"
+            style="width:100%"
+          >
+            <el-option
+              v-for="t in compareRightTables"
+              :key="t.id"
+              :label="`${t.tableName}（${t.tableCode || t.id}）`"
+              :value="t.id"
+            />
+          </el-select>
+        </el-form-item>
+        <el-form-item class="portal-form-actions">
+          <el-button type="primary" :loading="compareLoading" @click="runCompare">执行比对</el-button>
+          <el-button :disabled="!compareDiffs.length" @click="exportCompareJson">导出结果</el-button>
+        </el-form-item>
+      </el-form>
+      <el-descriptions v-if="compareRanAt" :column="3" size="small" border style="margin-bottom:12px">
+        <el-descriptions-item label="比对时间">{{ compareRanAt }}</el-descriptions-item>
+        <el-descriptions-item label="基准字段数">{{ compareSummary.leftCount }}</el-descriptions-item>
+        <el-descriptions-item label="对照字段数">{{ compareSummary.rightCount }}</el-descriptions-item>
+        <el-descriptions-item label="一致">{{ compareSummary.same }}</el-descriptions-item>
+        <el-descriptions-item label="差异">{{ compareSummary.diff }}</el-descriptions-item>
+        <el-descriptions-item label="仅一侧存在">
+          基准 {{ compareSummary.onlyLeft }} / 对照 {{ compareSummary.onlyRight }}
+        </el-descriptions-item>
+      </el-descriptions>
+      <el-table v-loading="compareLoading" :data="compareDiffs" stripe border max-height="520">
+        <el-table-column prop="columnCode" label="属性代码" width="120" show-overflow-tooltip />
+        <el-table-column prop="leftName" label="基准名称" min-width="100" show-overflow-tooltip />
+        <el-table-column prop="rightName" label="对照名称" min-width="100" show-overflow-tooltip />
+        <el-table-column prop="leftType" label="基准类型" width="90" />
+        <el-table-column prop="rightType" label="对照类型" width="90" />
+        <el-table-column prop="leftLen" label="基准长度" width="80" />
+        <el-table-column prop="rightLen" label="对照长度" width="80" />
+        <el-table-column prop="diffType" label="比对结论" width="120" show-overflow-tooltip />
+      </el-table>
+      <el-empty v-if="!compareLoading && !compareDiffs.length" description="选择对照表后执行比对" />
+    </el-drawer>
   </div>
 </template>
 

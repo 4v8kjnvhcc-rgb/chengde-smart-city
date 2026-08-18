@@ -242,8 +242,7 @@ public class ResourceCenterPlatformController {
     @PreAuthorize("isAuthenticated()")
     public ApiResponse<Map<String, Object>> executePolicy(@AuthenticationPrincipal UserPrincipal principal,
                                                           @PathVariable Long id) {
-        throw new com.chengde.smartcity.common.exception.BusinessException(400,
-                "备份/归档/销毁仅支持定时执行，请配置执行周期并启动调度");
+        return ApiResponse.ok(service.executePolicy(principal, id));
     }
 
     @GetMapping("/lifecycle/databases")

@@ -15,8 +15,11 @@ import { useExecCycleLabel } from '@/utils/exec-cycle-label'
 
 const props = defineProps<{
   mode: 'backup' | 'archive' | 'destroy'
+  /** 嵌入 Hub 顶层 Tab 时只展示策略或产物，隐藏内层 Tab */
+  section?: 'policies' | 'artifacts'
 }>()
 const { label: cycleLabel } = useExecCycleLabel()
+const embedSection = computed(() => props.section)
 
 interface SourceDb {
   database: string
@@ -29,6 +32,7 @@ interface Policy {
   policyCode?: string
   actionType: string
   retentionDays?: number
+  storageStrategy?: string
   managedTableId?: number
   tableRule?: string
   compressEnabled?: number
@@ -54,18 +58,6 @@ interface Artifact {
   message?: string
   createdAt?: string
 }
-interface RunLog {
-  id: number
-  policyId?: number
-  actionType?: string
-  runStatus?: string
-  rowCount?: number
-  artifactId?: number
-  storageLocation?: string
-  message?: string
-  createdBy?: string
-  createdAt?: string
-}
 
 const SOURCE_DB_LABEL: Record<string, string> = {
   smart_city: '控制面 smart_city',
@@ -73,6 +65,18 @@ const SOURCE_DB_LABEL: Record<string, string> = {
   smart_city_dwd: 'DWD smart_city_dwd',
   smart_city_dws: 'DWS smart_city_dws',
   smart_city_ads: 'ADS smart_city_ads',
+}
+
+const STORAGE_STRATEGY_ZH: Record<string, string> = {
+  DB: '备份库快照',
+  LOCAL: '本地目录',
+  NAS: 'NAS存储',
+  OBJECT: '对象存储',
+}
+
+function strategyLabel(code?: string) {
+  if (!code) return '-'
+  return STORAGE_STRATEGY_ZH[code] || statusLabel(code)
 }
 
 const loading = ref(false)
@@ -87,21 +91,29 @@ const dialogVisible = ref(false)
 const dialogMode = ref<'create' | 'edit' | 'view'>('create')
 const editingId = ref<number | null>(null)
 
-const logVisible = ref(false)
-const logLoading = ref(false)
-const logRows = ref<RunLog[]>([])
-const logPolicyName = ref('')
-const logPolicyId = ref<number | null>(null)
-
 const form = reactive({
   policyName: '',
   sourceDb: 'smart_city_ods',
+  backupDatabase: 'smart_city_ods_bak',
   tableNames: [] as string[],
   backupScope: 'TABLE' as 'TABLE' | 'PARTITION',
+  retentionDays: 180,
+  storageStrategy: 'DB' as 'DB' | 'LOCAL' | 'NAS' | 'OBJECT',
   compressEnabled: true,
   compressType: 'GZIP',
+  destroyRule: '仅销毁已备份且已归档、且达到保存天数的日快照与归档文件，源业务表不改',
   scheduleCron: '0 0 2 * * ?',
 })
+
+const backupDbOptions = computed(() => {
+  const d = sourceDbs.value.find((x) => x.database === form.sourceDb)
+  const bak = d?.backupDatabase || (form.sourceDb ? `${form.sourceDb}_bak` : '')
+  return bak ? [{ value: bak, label: bak }] : []
+})
+
+const defaultDestroyRule = computed(
+  () => `仅销毁已备份且已归档、且保存满 ${form.retentionDays || 180} 天的日快照与归档文件，源业务表不改`,
+)
 
 function parseRule(raw?: string): Record<string, unknown> {
   if (!raw || !raw.trim().startsWith('{')) return {}
@@ -133,7 +145,7 @@ function encodeRule(): string {
     sourceDb: form.sourceDb,
     tableNames: form.tableNames,
     tableName: form.tableNames[0] || '',
-    backupDatabase: `${form.sourceDb}_bak`,
+    backupDatabase: form.backupDatabase || `${form.sourceDb}_bak`,
     backupScope: form.backupScope,
   })
 }
@@ -142,10 +154,15 @@ function fillForm(row: Policy) {
   const m = policyMeta(row)
   form.policyName = row.policyName || ''
   form.sourceDb = m.sourceDb || 'smart_city_ods'
+  form.backupDatabase = m.backupDb || `${form.sourceDb}_bak`
   form.tableNames = [...m.tableNames]
   form.backupScope = m.backupScope === 'PARTITION' ? 'PARTITION' : 'TABLE'
+  form.retentionDays = row.retentionDays && row.retentionDays > 0 ? row.retentionDays : 180
+  form.storageStrategy = (row.storageStrategy as typeof form.storageStrategy)
+    || (props.mode === 'archive' ? 'LOCAL' : 'DB')
   form.compressEnabled = row.compressEnabled === 1 || row.compressType === 'GZIP'
   form.compressType = row.compressType || 'GZIP'
+  form.destroyRule = row.destroyRule || defaultDestroyRule.value
   form.scheduleCron = row.scheduleCron || '0 0 2 * * ?'
 }
 
@@ -222,7 +239,7 @@ const dialogTitle = computed(() => {
 })
 
 const formReadonly = computed(() => dialogMode.value === 'view')
-const bakDbLabel = computed(() => (form.sourceDb ? `${form.sourceDb}_bak` : '-'))
+const bakDbLabel = computed(() => form.backupDatabase || (form.sourceDb ? `${form.sourceDb}_bak` : '-'))
 
 async function loadTables(db: string) {
   if (!db) {
@@ -245,16 +262,22 @@ async function loadTables(db: string) {
 }
 
 watch(() => form.sourceDb, (db) => {
+  const match = sourceDbs.value.find((x) => x.database === db)
+  form.backupDatabase = match?.backupDatabase || (db ? `${db}_bak` : '')
   if (dialogVisible.value) loadTables(db)
 })
 
 function resetForm() {
   form.policyName = ''
   form.sourceDb = 'smart_city_ods'
+  form.backupDatabase = 'smart_city_ods_bak'
   form.tableNames = []
   form.backupScope = 'TABLE'
+  form.retentionDays = 180
+  form.storageStrategy = props.mode === 'archive' ? 'LOCAL' : 'DB'
   form.compressEnabled = true
   form.compressType = 'GZIP'
+  form.destroyRule = `仅销毁已备份且已归档、且保存满 180 天的日快照与归档文件，源业务表不改`
   form.scheduleCron = '0 0 2 * * ?'
 }
 
@@ -311,23 +334,6 @@ async function reload() {
   }
 }
 
-async function openLogs(row: Policy) {
-  logPolicyId.value = row.id
-  logPolicyName.value = row.policyName || `策略#${row.id}`
-  logVisible.value = true
-  logLoading.value = true
-  logRows.value = []
-  try {
-    const res = await api.get('/resource-center/platform/policies/runs', { params: { policyId: row.id } })
-    logRows.value = res.data || []
-  } catch (e: unknown) {
-    const msg = (e as { response?: { data?: { message?: string } } })?.response?.data?.message
-    ElMessage.error(msg || '加载日志失败')
-  } finally {
-    logLoading.value = false
-  }
-}
-
 async function openCreate() {
   dialogMode.value = 'create'
   editingId.value = null
@@ -369,25 +375,36 @@ async function submitDialog() {
     ElMessage.warning('请选择执行周期')
     return
   }
+  if (!form.retentionDays || form.retentionDays < 1) {
+    ElMessage.warning('请填写保存天数')
+    return
+  }
+  if (props.mode === 'destroy' && !form.destroyRule.trim()) {
+    ElMessage.warning('请填写销毁规则')
+    return
+  }
   const body = {
     policyName: form.policyName,
     actionType: actionType.value,
-    retentionDays: 180,
+    retentionDays: form.retentionDays,
+    storageStrategy: form.storageStrategy,
     sourceDb: form.sourceDb,
+    backupDatabase: form.backupDatabase || `${form.sourceDb}_bak`,
     tableNames: form.tableNames,
     tableName: form.tableNames[0],
     backupScope: form.backupScope,
     tableRule: encodeRule(),
     compressEnabled: props.mode === 'archive' ? form.compressEnabled : false,
     compressType: props.mode === 'archive' ? form.compressType : 'NONE',
-    scheduleEnabled: true,
+    destroyRule: props.mode === 'destroy' ? form.destroyRule : undefined,
+    scheduleEnabled: false,
     scheduleCron: form.scheduleCron,
   }
   saving.value = true
   try {
     if (dialogMode.value === 'create') {
       await api.post('/resource-center/platform/policies', body)
-      ElMessage.success('策略已创建，请启动调度后按周期执行')
+      ElMessage.success('策略已创建，请到「执行策略管理」发布后按周期执行')
     } else if (editingId.value != null) {
       await api.put(`/resource-center/platform/policies/${editingId.value}`, body)
       ElMessage.success('策略已保存')
@@ -399,32 +416,6 @@ async function submitDialog() {
     ElMessage.error(msg || (e instanceof Error ? e.message : '保存失败'))
   } finally {
     saving.value = false
-  }
-}
-
-async function startSchedule(row: Policy) {
-  try {
-    if (!row.scheduleCron) {
-      ElMessage.warning('请先编辑策略并配置执行周期')
-      return
-    }
-    const res = await api.post(`/resource-center/platform/policies/${row.id}/schedule/start`)
-    ElMessage.success(String(res.data?.message || '调度已启动'))
-    await reload()
-  } catch (e: unknown) {
-    const msg = (e as { response?: { data?: { message?: string } } })?.response?.data?.message
-    ElMessage.error(msg || '启动调度失败')
-  }
-}
-
-async function stopSchedule(row: Policy) {
-  try {
-    const res = await api.post(`/resource-center/platform/policies/${row.id}/schedule/stop`)
-    ElMessage.success(String(res.data?.message || '调度已停止'))
-    await reload()
-  } catch (e: unknown) {
-    const msg = (e as { response?: { data?: { message?: string } } })?.response?.data?.message
-    ElMessage.error(msg || '停止调度失败')
   }
 }
 
@@ -474,14 +465,29 @@ async function removeArtifact(row: Artifact) {
   }
 }
 
-const activeTab = ref<'policies' | 'artifacts'>('policies')
+const activeTab = ref<'policies' | 'artifacts'>(props.section || 'policies')
+
+watch(
+  () => props.section,
+  (s) => {
+    if (s) activeTab.value = s
+  },
+)
+
+watch(
+  () => props.mode,
+  () => {
+    activeTab.value = props.section || 'policies'
+    void reload()
+  },
+)
 
 onMounted(reload)
 </script>
 
 <template>
   <div v-loading="loading">
-    <el-tabs v-model="activeTab" class="backup-tabs">
+    <el-tabs v-if="!embedSection" v-model="activeTab" class="backup-tabs">
       <el-tab-pane
         :label="mode === 'backup' ? '备份策略' : mode === 'archive' ? '归档策略' : '销毁策略'"
         name="policies"
@@ -493,14 +499,6 @@ onMounted(reload)
     </el-tabs>
 
     <div v-show="activeTab === 'policies'">
-      <el-alert
-        v-if="mode === 'archive'"
-        type="info"
-        :closable="false"
-        show-icon
-        style="margin-bottom: 12px"
-        title="归档只处理已备份的日快照表（*_bak.{表}{yyyyMMdd}），未备份的表不会归档。"
-      />
       <el-form inline class="portal-inline-form portal-inline-form--block" @submit.prevent="doPolicyQuery">
         <el-form-item label="关键字" class="portal-field-xl">
           <el-input
@@ -524,28 +522,37 @@ onMounted(reload)
         <el-table-column label="源库" min-width="140" show-overflow-tooltip>
           <template #default="{ row }">{{ policyMeta(row).sourceDb || '-' }}</template>
         </el-table-column>
-        <el-table-column label="表" min-width="180" show-overflow-tooltip>
+        <el-table-column label="表" min-width="160" show-overflow-tooltip>
           <template #default="{ row }">{{ policyMeta(row).tableName || '-' }}</template>
         </el-table-column>
-        <el-table-column v-if="mode === 'backup'" label="备份库" min-width="160" show-overflow-tooltip>
+        <el-table-column v-if="mode === 'backup'" label="备份库" min-width="150" show-overflow-tooltip>
           <template #default="{ row }">{{ policyMeta(row).backupDb || '-' }}</template>
         </el-table-column>
-        <el-table-column v-if="mode === 'backup' || mode === 'destroy'" label="方式" width="110">
+        <el-table-column label="保存天数" width="90">
+          <template #default="{ row }">{{ row.retentionDays ?? '-' }}</template>
+        </el-table-column>
+        <el-table-column label="存储策略" width="110">
+          <template #default="{ row }">{{ strategyLabel(row.storageStrategy) }}</template>
+        </el-table-column>
+        <el-table-column v-if="mode === 'backup' || mode === 'destroy'" label="方式" width="90">
           <template #default="{ row }">{{ policyMeta(row).backupScope === 'PARTITION' ? '按区' : '按表' }}</template>
         </el-table-column>
         <el-table-column v-if="mode === 'archive'" label="压缩" width="90">
           <template #default="{ row }">{{ statusLabel(row.compressType || (row.compressEnabled ? 'GZIP' : 'NONE')) }}</template>
         </el-table-column>
-        <el-table-column label="执行周期" width="180" show-overflow-tooltip>
+        <el-table-column label="执行周期" width="160" show-overflow-tooltip>
           <template #default="{ row }">
             <span v-if="row.scheduleEnabled === 1">{{ cycleLabel(row.scheduleCron) }}</span>
             <span v-else>-</span>
           </template>
         </el-table-column>
-        <el-table-column label="调度" width="90">
-          <template #default="{ row }">{{ row.scheduleEnabled === 1 ? '已启动' : '已停止' }}</template>
+        <el-table-column label="下次执行" width="170">
+          <template #default="{ row }">{{ formatDateTime(row.nextRunAt) || '-' }}</template>
         </el-table-column>
-        <el-table-column label="最近状态" min-width="160">
+        <el-table-column label="发布状态" width="90">
+          <template #default="{ row }">{{ row.scheduleEnabled === 1 ? '已发布' : '未发布' }}</template>
+        </el-table-column>
+        <el-table-column label="最近状态" min-width="150">
           <template #default="{ row }">
             <el-tooltip
               v-if="row.lastRunStatus"
@@ -560,23 +567,10 @@ onMounted(reload)
             <div v-if="row.lastRunMessage" class="run-msg">{{ row.lastRunMessage }}</div>
           </template>
         </el-table-column>
-        <el-table-column label="操作" width="300" fixed="right">
+        <el-table-column label="操作" width="160" fixed="right">
           <template #default="{ row }">
             <el-button link type="primary" @click="openView(row)">查看</el-button>
             <el-button link type="primary" @click="openEdit(row)">编辑</el-button>
-            <el-button link type="primary" @click="openLogs(row)">查看日志</el-button>
-            <el-button
-              v-if="row.scheduleEnabled !== 1"
-              link
-              type="success"
-              @click="startSchedule(row)"
-            >启动</el-button>
-            <el-button
-              v-else
-              link
-              type="warning"
-              @click="stopSchedule(row)"
-            >停止</el-button>
             <el-button link type="danger" @click="removePolicy(row)">删除</el-button>
           </template>
         </el-table-column>
@@ -586,7 +580,7 @@ onMounted(reload)
         v-model:page-size="policyPageSize"
         :total="policyTotal"
       />
-      <el-empty v-if="!loading && !filtered.length" description="暂无策略，请点击新增并启动调度" />
+      <el-empty v-if="!loading && !filtered.length" description="暂无策略，请点击新增；发布请到「执行策略管理」" />
     </div>
 
     <div v-show="activeTab === 'artifacts'">
@@ -610,6 +604,9 @@ onMounted(reload)
         <el-table-column prop="fileName" label="名称" min-width="160" show-overflow-tooltip />
         <el-table-column label="存储位置" min-width="240" show-overflow-tooltip>
           <template #default="{ row }">{{ row.storageLocation || row.filePath || '-' }}</template>
+        </el-table-column>
+        <el-table-column v-if="mode !== 'destroy'" label="类型" width="90">
+          <template #default="{ row }">{{ statusLabel(row.artifactType || (mode === 'archive' ? 'ARCHIVE' : 'BACKUP')) }}</template>
         </el-table-column>
         <el-table-column prop="rowCount" label="行数" width="90" />
         <el-table-column label="状态" width="100">
@@ -664,7 +661,7 @@ onMounted(reload)
             />
           </el-select>
         </el-form-item>
-        <el-form-item label="表" required>
+        <el-form-item label="关联表" required>
           <el-select
             v-model="form.tableNames"
             multiple
@@ -673,14 +670,38 @@ onMounted(reload)
             collapse-tags-tooltip
             :disabled="formReadonly"
             :loading="tablesLoading"
-            placeholder="可多选"
+            placeholder="选择要纳入生命周期的表（可多选）"
             style="width: 100%"
           >
             <el-option v-for="t in tableNames" :key="t" :label="t" :value="t" />
           </el-select>
         </el-form-item>
-        <el-form-item v-if="mode === 'backup'" label="备份库">
-          <el-input :model-value="bakDbLabel" disabled />
+        <el-form-item v-if="mode === 'backup'" label="备份库" required>
+          <el-select v-model="form.backupDatabase" :disabled="formReadonly" filterable style="width: 100%">
+            <el-option
+              v-for="o in backupDbOptions"
+              :key="o.value"
+              :label="o.label"
+              :value="o.value"
+            />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="保存天数" required>
+          <el-input-number
+            v-model="form.retentionDays"
+            :disabled="formReadonly"
+            :min="1"
+            :max="3650"
+            :step="30"
+            controls-position="right"
+            style="width: 100%"
+          />
+        </el-form-item>
+        <el-form-item label="存储策略" required>
+          <el-select v-model="form.storageStrategy" :disabled="formReadonly || mode !== 'archive'" style="width: 100%">
+            <el-option v-if="mode !== 'archive'" :label="STORAGE_STRATEGY_ZH.DB" value="DB" />
+            <el-option v-if="mode === 'archive'" :label="STORAGE_STRATEGY_ZH.LOCAL" value="LOCAL" />
+          </el-select>
         </el-form-item>
         <el-form-item v-if="mode === 'backup' || mode === 'destroy'" label="方式">
           <el-select v-model="form.backupScope" :disabled="formReadonly" style="width: 100%">
@@ -697,45 +718,25 @@ onMounted(reload)
             <el-option :label="statusLabel('NONE')" value="NONE" />
           </el-select>
         </el-form-item>
+        <el-form-item v-if="mode === 'destroy'" label="销毁规则" required>
+          <el-input
+            v-model="form.destroyRule"
+            type="textarea"
+            :rows="3"
+            :disabled="formReadonly"
+            maxlength="500"
+            show-word-limit
+            :placeholder="defaultDestroyRule"
+          />
+        </el-form-item>
         <el-form-item label="执行周期" required>
           <ExecCycleSelect v-if="!formReadonly" v-model="form.scheduleCron" />
-          <span v-else>{{ form.scheduleCron || '-' }}</span>
+          <span v-else>{{ cycleLabel(form.scheduleCron) || '-' }}</span>
         </el-form-item>
       </el-form>
       <template #footer>
         <el-button @click="dialogVisible = false">{{ formReadonly ? '关闭' : '取消' }}</el-button>
         <el-button v-if="!formReadonly" type="primary" :loading="saving" @click="submitDialog">确定</el-button>
-      </template>
-    </el-dialog>
-
-    <el-dialog
-      v-model="logVisible"
-      :title="`执行日志 — ${logPolicyName}`"
-      width="820px"
-      destroy-on-close
-    >
-      <el-table v-loading="logLoading" :data="logRows" stripe border size="small" max-height="420">
-        <el-table-column label="时间" width="170">
-          <template #default="{ row }">{{ formatDateTime(row.createdAt) }}</template>
-        </el-table-column>
-        <el-table-column label="状态" width="100">
-          <template #default="{ row }">
-            <el-tag :type="statusTagType(row.runStatus)" size="small">{{ statusLabel(row.runStatus) }}</el-tag>
-          </template>
-        </el-table-column>
-        <el-table-column prop="rowCount" label="行数" width="80" />
-        <el-table-column prop="createdBy" label="执行人" width="100" show-overflow-tooltip />
-        <el-table-column prop="storageLocation" label="位置" min-width="140" show-overflow-tooltip />
-        <el-table-column prop="message" label="说明" min-width="220" show-overflow-tooltip />
-      </el-table>
-      <el-empty v-if="!logLoading && !logRows.length" description="暂无执行日志" />
-      <template #footer>
-        <el-button @click="logVisible = false">关闭</el-button>
-        <el-button
-          type="primary"
-          :loading="logLoading"
-          @click="logPolicyId != null && openLogs({ id: logPolicyId, policyName: logPolicyName } as Policy)"
-        >刷新</el-button>
       </template>
     </el-dialog>
   </div>

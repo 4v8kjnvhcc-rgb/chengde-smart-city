@@ -6,9 +6,13 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import PageCard from '@/components/common/PageCard.vue'
 import HubSideLayout, { type HubNavItem } from '@/components/common/HubSideLayout.vue'
 import RcStorageLifecyclePanel from '@/views/resource/RcStorageLifecyclePanel.vue'
+import RcStorageSchedulePanel from '@/views/resource/RcStorageSchedulePanel.vue'
+import RcStorageMonitorPanel from '@/views/resource/RcStorageMonitorPanel.vue'
 import RcResourceMonitorPanel from '@/views/resource/RcResourceMonitorPanel.vue'
 import RcStatsAnalysisPanel from '@/views/resource/RcStatsAnalysisPanel.vue'
+import RcDbSearchPanel from '@/views/resource/RcDbSearchPanel.vue'
 import { statusLabel, statusTagType } from '@/utils/status-label'
+import { formatDateTime } from '@/utils/datetime'
 import ExecCycleSelect from '@/views/system/ExecCycleSelect.vue'
 import { useExecCycleLabel } from '@/utils/exec-cycle-label'
 import { useAuthStore } from '@/stores/auth'
@@ -195,6 +199,7 @@ interface Artifact {
   byteSize?: number
   sha256?: string
   status: string
+  message?: string
   createdAt?: string
 }
 interface PolicyRun {
@@ -306,7 +311,18 @@ const assetTabMap: Record<string, string> = {
 }
 
 const storageTabMap: Record<string, string> = {
-  backup: 'backup', archive: 'archive', destroy: 'destroy', policy: 'policy', monitor: 'monitor',
+  backup: 'backup',
+  archive: 'archive',
+  destroy: 'destroy',
+  policy: 'policy',
+  monitor: 'monitor',
+  // 兼容曾用的六 Tab query
+  'backup-policies': 'backup',
+  'backup-artifacts': 'backup',
+  'archive-policies': 'archive',
+  'archive-artifacts': 'archive',
+  'destroy-policies': 'destroy',
+  'destroy-artifacts': 'destroy',
 }
 
 const partitionTabMap: Record<string, string> = {
@@ -485,16 +501,6 @@ const filteredManagedTables = computed(() => {
   return managedTables.value.filter((t) => (t.assetType || 'BASE') === classifyAssetType.value)
 })
 
-const filteredPolicies = computed(() => {
-  const all = policies.value.length
-    ? policies.value
-    : ((partOverview.value?.policies as Policy[]) || [])
-  if (storageTab.value === 'backup') return all.filter((p) => p.actionType === 'BACKUP')
-  if (storageTab.value === 'archive') return all.filter((p) => p.actionType === 'ARCHIVE')
-  if (storageTab.value === 'destroy') return all.filter((p) => p.actionType === 'DESTROY')
-  return all
-})
-
 const artifacts = computed(() => ((partOverview.value?.artifacts as Artifact[]) || []))
 const partitionList = computed(() => ((partOverview.value?.partitions as Partition[]) || []))
 const partitionMonitorSummary = computed(
@@ -568,12 +574,6 @@ function resolveFromRoute() {
   if (at && assetTabMap[at]) assetTab.value = assetTabMap[at]
   else if (q.startsWith('asset.') && assetTabMap[q]) assetTab.value = assetTabMap[q]
   const st = String(route.query.storageTab || '').toLowerCase()
-  if (st === 'backup' || st === 'archive' || st === 'destroy') {
-    const mod = st === 'backup' ? 'asset.backup' : st === 'archive' ? 'asset.archive' : 'asset.destroy'
-    router.replace({ path: '/exchange/ingestion', query: { system: 'collect', module: mod } })
-    applyingRoute = false
-    return
-  }
   if (st && storageTabMap[st]) storageTab.value = storageTabMap[st]
   const pt = String(route.query.partitionTab || '').toLowerCase()
   if (pt && partitionTabMap[pt]) partitionTab.value = partitionTabMap[pt]
@@ -725,12 +725,7 @@ async function loadTabData() {
     } else if (nav === 'partition') {
       await loadPartitionTabData()
     } else if (nav === 'storage') {
-      if (storageTab.value === 'policy') {
-        await Promise.all([loadManagedTablesOnly(), loadPolicies(), loadLibraryOverview()])
-      } else if (storageTab.value === 'monitor') {
-        await Promise.all([loadPartitionOverview(), loadPolicies(), loadPolicyRuns()])
-        await loadManagedTablesOnly()
-      }
+      // backup/archive/destroy/policy/monitor 各子面板自加载
     } else if (nav === 'catalog') {
       await loadCatalogSubsystems()
       if (catalogTab.value === 'register') {
@@ -2012,144 +2007,23 @@ onMounted(() => {
         </el-tabs>
       </PageCard>
 
-      <!-- 数据库存储管理：五 Tab 对齐 V3.0 -->
+      <!-- 数据库存储管理：五 Tab（备份/归档/销毁策略 + 执行策略管理/监控） -->
       <PageCard v-else-if="activeNav === 'storage'" title="数据库存储管理">
         <el-tabs v-model="storageTab" @tab-change="onStorageTabChange">
-          <el-tab-pane label="数据备份" name="backup">
-            <RcStorageLifecyclePanel mode="backup" />
+          <el-tab-pane label="数据备份" name="backup" lazy>
+            <RcStorageLifecyclePanel v-if="storageTab === 'backup'" mode="backup" section="policies" />
           </el-tab-pane>
-          <el-tab-pane label="数据归档" name="archive">
-            <RcStorageLifecyclePanel mode="archive" />
+          <el-tab-pane label="数据归档" name="archive" lazy>
+            <RcStorageLifecyclePanel v-if="storageTab === 'archive'" mode="archive" section="policies" />
           </el-tab-pane>
-          <el-tab-pane label="数据销毁" name="destroy">
-            <RcStorageLifecyclePanel mode="destroy" />
+          <el-tab-pane label="数据销毁" name="destroy" lazy>
+            <RcStorageLifecyclePanel v-if="storageTab === 'destroy'" mode="destroy" section="policies" />
           </el-tab-pane>
-          <el-tab-pane label="执行策略管理" name="policy">
-            <el-alert type="info" :closable="false" show-icon style="margin-bottom:12px" title="备份 / 归档 / 销毁请在对应 Tab 新增策略并启动周期调度，此处仅查看与调整启停。" />
-            <el-form inline class="portal-inline-form portal-inline-form--block">
-              <el-form-item label="策略" class="portal-field-lg">
-                <el-select v-model="scheduleEdit.policyId" filterable clearable placeholder="选择已有策略" @change="() => {
-                  const row = policies.find((p) => p.id === scheduleEdit.policyId)
-                  if (row) pickSchedule(row)
-                }">
-                  <el-option v-for="p in policies" :key="p.id" :label="`${p.policyName}（${statusLabel(p.actionType)}）`" :value="p.id" />
-                </el-select>
-              </el-form-item>
-              <el-form-item label="执行周期" class="portal-field-cron">
-                <ExecCycleSelect v-model="scheduleEdit.scheduleCron" />
-              </el-form-item>
-              <el-form-item class="portal-form-actions">
-                <el-button type="primary" @click="saveSchedule">保存并启用调度</el-button>
-              </el-form-item>
-            </el-form>
-
-            <el-table :data="policies.length ? policies : ((partOverview?.policies as Policy[]) || [])" stripe size="small">
-              <el-table-column prop="policyCode" label="编码" width="140" />
-              <el-table-column prop="policyName" label="策略" min-width="140" />
-              <el-table-column label="动作" width="90">
-                <template #default="{ row }">{{ statusLabel(row.actionType) }}</template>
-              </el-table-column>
-              <el-table-column prop="retentionDays" label="保存天数" width="90" />
-              <el-table-column label="执行周期" width="180" show-overflow-tooltip>
-                <template #default="{ row }">
-                  <span v-if="row.scheduleEnabled">{{ cycleLabel(row.scheduleCron) }}</span>
-                  <span v-else>-</span>
-                </template>
-              </el-table-column>
-              <el-table-column label="下次执行" width="170">
-                <template #default="{ row }">{{ row.nextRunAt || '-' }}</template>
-              </el-table-column>
-              <el-table-column label="状态" width="90">
-                <template #default="{ row }">
-                  <el-tag :type="statusTagType(row.status)" size="small">{{ statusLabel(row.status) }}</el-tag>
-                </template>
-              </el-table-column>
-              <el-table-column label="操作" width="100" fixed="right">
-                <template #default="{ row }">
-                  <el-button link type="primary" @click="pickSchedule(row)">调调度</el-button>
-                </template>
-              </el-table-column>
-            </el-table>
+          <el-tab-pane label="执行策略管理" name="policy" lazy>
+            <RcStorageSchedulePanel v-if="storageTab === 'policy'" />
           </el-tab-pane>
-
-          <el-tab-pane label="执行策略监控" name="monitor">
-            <el-alert
-              v-if="lastPolicyRun"
-              :type="lastPolicyRun.status === 'LEDGER' ? 'warning' : 'success'"
-              :closable="true"
-              style="margin-bottom:12px"
-              :title="`最近执行：${statusLabel(String(lastPolicyRun.actionType || ''))} · ${statusLabel(String(lastPolicyRun.status || ''))}`"
-              @close="lastPolicyRun = null"
-            >
-              {{ lastPolicyRun.message || `产物行数 ${lastPolicyRun.rowCount ?? '-'}` }}
-              <template v-if="lastPolicyRun.storageLocation">；位置 {{ lastPolicyRun.storageLocation }}</template>
-            </el-alert>
-            <el-alert
-              v-if="restoreResult"
-              type="success"
-              :closable="true"
-              style="margin-bottom:12px"
-              :title="`恢复完成：${restoreResult.restoreTable || ''}`"
-              @close="restoreResult = null"
-            >
-              {{ restoreResult.message }}（行数 {{ restoreResult.rowCount ?? '-' }}）
-            </el-alert>
-
-            <el-divider content-position="left">策略运行结果</el-divider>
-            <el-table :data="policyRuns" stripe size="small">
-              <el-table-column label="策略" min-width="140" show-overflow-tooltip>
-                <template #default="{ row }">{{ policyLabel(row.policyId) }}</template>
-              </el-table-column>
-              <el-table-column label="动作" width="90">
-                <template #default="{ row }">{{ statusLabel(row.actionType) }}</template>
-              </el-table-column>
-              <el-table-column label="结果" width="100">
-                <template #default="{ row }">
-                  <el-tag :type="statusTagType(row.runStatus)" size="small">{{ statusLabel(row.runStatus) }}</el-tag>
-                </template>
-              </el-table-column>
-              <el-table-column prop="rowCount" label="行数" width="80" />
-              <el-table-column prop="storageLocation" label="存储位置" min-width="200" show-overflow-tooltip />
-              <el-table-column prop="message" label="说明" min-width="180" show-overflow-tooltip />
-              <el-table-column prop="createdAt" label="时间" width="170" />
-            </el-table>
-
-            <el-divider content-position="left">备份/归档产物与恢复</el-divider>
-            <el-table :data="artifacts" stripe size="small">
-              <el-table-column label="类型" width="90">
-                <template #default="{ row }">{{ statusLabel(row.artifactType || 'BACKUP') }}</template>
-              </el-table-column>
-              <el-table-column prop="physicalTable" label="表" width="160" />
-              <el-table-column prop="fileName" label="文件" min-width="160" show-overflow-tooltip />
-              <el-table-column label="存储位置" min-width="200" show-overflow-tooltip>
-                <template #default="{ row }">{{ row.storageLocation || row.filePath || '-' }}</template>
-              </el-table-column>
-              <el-table-column prop="rowCount" label="行数" width="80" />
-              <el-table-column prop="createdAt" label="时间" width="170" />
-              <el-table-column label="状态" width="90">
-                <template #default="{ row }">
-                  <el-tag :type="statusTagType(row.status)" size="small">{{ statusLabel(row.status) }}</el-tag>
-                </template>
-              </el-table-column>
-              <el-table-column label="操作" width="140" fixed="right">
-                <template #default="{ row }">
-                  <el-button link type="primary" @click="verifyArtifact(row.id)">校验</el-button>
-                  <el-button
-                    v-if="(row.artifactType || 'BACKUP') === 'BACKUP'"
-                    link
-                    type="success"
-                    @click="restoreArtifact(row.id)"
-                  >恢复</el-button>
-                </template>
-              </el-table-column>
-            </el-table>
-            <el-alert
-              v-if="verifyResult"
-              :type="verifyResult.match ? 'success' : 'error'"
-              :closable="false"
-              style="margin-top:12px"
-              :title="verifyResult.match ? 'SHA-256 校验通过' : 'SHA-256 校验失败'"
-            />
+          <el-tab-pane label="执行策略监控" name="monitor" lazy>
+            <RcStorageMonitorPanel v-if="storageTab === 'monitor'" />
           </el-tab-pane>
         </el-tabs>
       </PageCard>
@@ -2350,179 +2224,7 @@ onMounted(() => {
 
       <!-- 数据库检索查询：数据全文检索 / 元数据检索 / 数据查询与下载 -->
       <PageCard v-else-if="activeNav === 'search'" title="数据库检索查询">
-<el-tabs v-model="searchTab">
-          <el-tab-pane label="数据全文检索" name="fulltext">
-<el-form inline class="portal-inline-form portal-inline-form--block">
-              <el-form-item label="关键词" class="portal-field-xl">
-                <el-input
-                  v-model="fulltextQ"
-                  placeholder="姓名 / 身份证号 / 手机号等"
-                  clearable
-                  @keyup.enter="doFulltextSearch"
-                />
-              </el-form-item>
-              <el-form-item class="portal-form-actions">
-                <el-button type="primary" @click="doFulltextSearch">全文检索</el-button>
-              </el-form-item>
-            </el-form>
-            <el-alert
-              v-if="fulltextDone && fulltextHint"
-              type="info"
-              :closable="false"
-              style="margin-bottom:12px"
-              :title="fulltextHint"
-            />
-            <el-table v-if="fulltextDone" :data="fulltextHits" stripe size="small">
-              <el-table-column prop="physicalTable" label="物理表" width="160" show-overflow-tooltip />
-              <el-table-column prop="metaEntryCode" label="元数据码" width="140" show-overflow-tooltip />
-              <el-table-column label="命中字段" width="160" show-overflow-tooltip>
-                <template #default="{ row }">
-                  {{ (row.matchedColumns || []).join('、') || '-' }}
-                </template>
-              </el-table-column>
-              <el-table-column prop="summary" label="命中摘要" min-width="220" show-overflow-tooltip />
-              <el-table-column label="操作" width="200" fixed="right">
-                <template #default="{ row }">
-                  <el-button link type="primary" @click="openFulltextDetail(row)">详情</el-button>
-                  <el-button
-                    link
-                    type="primary"
-                    @click="lockManagedTableAndQuery(row.managedTableId, fulltextQ)"
-                  >
-                    锁定并查询
-                  </el-button>
-                </template>
-              </el-table-column>
-            </el-table>
-            <el-empty v-else description="输入姓名、身份证号或手机号等关键信息后检索" />
-            <el-drawer v-model="fulltextDetailVisible" title="命中详情" size="480px">
-              <template v-if="fulltextDetail">
-                <el-descriptions :column="1" border size="small">
-                  <el-descriptions-item label="物理表">{{ fulltextDetail.physicalTable }}</el-descriptions-item>
-                  <el-descriptions-item label="元数据码">{{ fulltextDetail.metaEntryCode || '-' }}</el-descriptions-item>
-                  <el-descriptions-item label="命中字段">
-                    {{ (fulltextDetail.matchedColumns || []).join('、') || '-' }}
-                  </el-descriptions-item>
-                </el-descriptions>
-                <el-divider content-position="left">行数据</el-divider>
-                <el-descriptions :column="1" border size="small">
-                  <el-descriptions-item
-                    v-for="(val, key) in (fulltextDetail.row || {})"
-                    :key="String(key)"
-                    :label="String(key)"
-                  >
-                    {{ val ?? '-' }}
-                  </el-descriptions-item>
-                </el-descriptions>
-              </template>
-            </el-drawer>
-          </el-tab-pane>
-
-          <el-tab-pane label="元数据检索" name="meta">
-<el-form inline class="portal-inline-form portal-inline-form--block">
-              <el-form-item label="关键词" class="portal-field-md">
-                <el-input v-model="metaQ" placeholder="编码/名称/表名" clearable @keyup.enter="doMetadataSearch" />
-              </el-form-item>
-              <el-form-item label="标签" class="portal-field-sm">
-                <el-input v-model="metaTag" placeholder="标签" clearable @keyup.enter="doMetadataSearch" />
-              </el-form-item>
-              <el-form-item label="业务分类" class="portal-field-md">
-                <el-input v-model="metaDomain" placeholder="域/分层/类型" clearable @keyup.enter="doMetadataSearch" />
-              </el-form-item>
-              <el-form-item label="数据项" class="portal-field-md">
-                <el-input v-model="metaDataItem" placeholder="字段名/数据项" clearable @keyup.enter="doMetadataSearch" />
-              </el-form-item>
-              <el-form-item class="portal-form-actions">
-                <el-button type="primary" @click="doMetadataSearch">元数据检索</el-button>
-              </el-form-item>
-            </el-form>
-            <el-alert
-              v-if="metaDone && metaHint"
-              type="info"
-              :closable="false"
-              style="margin-bottom:12px"
-              :title="metaHint"
-            />
-            <el-table v-if="metaDone" :data="metaHits" stripe size="small">
-              <el-table-column prop="entryCode" label="元数据码" width="150" show-overflow-tooltip />
-              <el-table-column prop="entryName" label="名称" min-width="140" show-overflow-tooltip />
-              <el-table-column prop="physicalTable" label="物理表" width="150" show-overflow-tooltip />
-              <el-table-column label="业务分类" width="120" show-overflow-tooltip>
-                <template #default="{ row }">{{ row.businessDomain || row.dataLayer || '-' }}</template>
-              </el-table-column>
-              <el-table-column prop="tags" label="标签" width="120" show-overflow-tooltip />
-              <el-table-column label="命中数据项" width="140" show-overflow-tooltip>
-                <template #default="{ row }">
-                  {{ (row.matchedDataItems || []).join('、') || '-' }}
-                </template>
-              </el-table-column>
-              <el-table-column label="纳管" width="80">
-                <template #default="{ row }">
-                  <el-tag :type="row.managed ? 'success' : 'info'" size="small">
-                    {{ row.managed ? '已纳管' : '未纳管' }}
-                  </el-tag>
-                </template>
-              </el-table-column>
-              <el-table-column label="操作" width="140" fixed="right">
-                <template #default="{ row }">
-                  <el-button
-                    link
-                    type="primary"
-                    :disabled="!row.managed"
-                    @click="lockManagedTableAndQuery(row.managedTableId)"
-                  >
-                    锁定并查询
-                  </el-button>
-                </template>
-              </el-table-column>
-            </el-table>
-            <el-empty v-else description="按分类、标签、数据项或关键词检索元数据" />
-          </el-tab-pane>
-
-          <el-tab-pane label="数据查询与下载" name="query">
-<el-form inline class="portal-inline-form portal-inline-form--block">
-              <el-form-item label="纳管表" class="portal-field-xl">
-                <el-select v-model="queryTableId" placeholder="输入表名筛选" filterable clearable>
-                  <el-option
-                    v-for="t in managedTables"
-                    :key="t.id"
-                    :label="`${t.physicalTable}${t.metaEntryCode ? ' · ' + t.metaEntryCode : ''}`"
-                    :value="t.id"
-                  />
-                </el-select>
-              </el-form-item>
-              <el-form-item label="查询关键词" class="portal-field-md">
-                <el-input v-model="queryKeyword" placeholder="可选，过滤行" clearable @keyup.enter="doQueryTable" />
-              </el-form-item>
-              <el-form-item label="指定列" class="portal-field-sm">
-                <el-input v-model="queryColumn" placeholder="可选列名" clearable @keyup.enter="doQueryTable" />
-              </el-form-item>
-              <el-form-item class="portal-form-actions">
-                <el-button type="primary" @click="doQueryTable">查询</el-button>
-                <el-button :disabled="!queryResult" @click="downloadQueryCsv">下载 CSV</el-button>
-              </el-form-item>
-            </el-form>
-            <template v-if="queryResult">
-              <el-alert
-                type="info"
-                :closable="false"
-                style="margin-bottom:12px"
-                :title="`表 ${queryResult.physicalTable} · 返回 ${queryResult.rowCount} 行（上限 ${queryResult.limit}）${queryResult.filter ? ' · 条件 ' + queryResult.filter : ''}`"
-              />
-              <el-table :data="(queryResult.rows as Record<string, string>[]) || []" stripe size="small" max-height="420">
-                <el-table-column
-                  v-for="col in ((queryResult.columns as string[]) || [])"
-                  :key="col"
-                  :prop="col"
-                  :label="col"
-                  min-width="120"
-                  show-overflow-tooltip
-                />
-              </el-table>
-            </template>
-            <el-empty v-else description="选择纳管表后查询预览，并可下载 CSV；也可从全文/元数据检索锁定表跳转至此" />
-          </el-tab-pane>
-        </el-tabs>
+        <RcDbSearchPanel v-model:search-tab="searchTab" />
       </PageCard>
 
       <!-- 统计：汇总聚合 / 趋势规律 / 决策支持 -->

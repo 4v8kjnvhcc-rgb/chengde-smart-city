@@ -39,15 +39,56 @@ public class PipelineDesignService {
 
     @Transactional
     public Long saveDefinition(UserPrincipal operator, Map<String, Object> body) {
-        IngDataDefinition d = new IngDataDefinition();
-        d.setDefCode(str(body.get("defCode"), "DEF_" + System.currentTimeMillis()));
+        Long id = body.get("id") == null || String.valueOf(body.get("id")).isBlank()
+                ? null : Long.valueOf(String.valueOf(body.get("id")));
+        IngDataDefinition d = id == null ? new IngDataDefinition() : definitionMapper.selectById(id);
+        if (d == null) {
+            throw new BusinessException(404, "数据定义不存在");
+        }
+        if (id == null) {
+            d.setDefCode(str(body.get("defCode"), "DEF_" + System.currentTimeMillis()));
+            d.setStatus("ACTIVE");
+        }
         d.setDefName(required(body.get("defName"), "defName").toString());
         d.setBusinessDesc(str(body.get("businessDesc"), ""));
-        d.setTechDesc(str(body.get("techDesc"), ""));
-        d.setMetadataJson("{\"items\":8,\"quality\":\"L1\",\"lineage\":\"linked\"}");
-        d.setStatus("ACTIVE");
-        definitionMapper.insert(d);
+        String techDesc = str(body.get("techDesc"), "");
+        if (techDesc.isBlank() && body.get("refTableId") != null) {
+            techDesc = "关联登记表#" + body.get("refTableId");
+        }
+        d.setTechDesc(techDesc);
+        if (d.getMetadataJson() == null || d.getMetadataJson().isBlank()) {
+            d.setMetadataJson("{\"items\":8,\"quality\":\"L1\",\"lineage\":\"linked\"}");
+        }
+        if (id == null) {
+            definitionMapper.insert(d);
+        } else {
+            definitionMapper.updateById(d);
+        }
         return d.getId();
+    }
+
+    @Transactional
+    public void deleteDefinition(Long id) {
+        IngDataDefinition d = definitionMapper.selectById(id);
+        if (d == null) {
+            throw new BusinessException(404, "数据定义不存在");
+        }
+        definitionMapper.deleteById(id);
+    }
+
+    @Transactional
+    public Long createProbeReport(Map<String, Object> body) {
+        IngProbeReport r = new IngProbeReport();
+        r.setReportCode(str(body.get("reportCode"), "PRB_" + System.currentTimeMillis()));
+        r.setSourceName(str(body.get("sourceName"), "未命名源表"));
+        r.setNullRate(new BigDecimal(str(body.get("nullRate"), "0.018")));
+        r.setDomainCheck(str(body.get("domainCheck"), "OK"));
+        r.setEntityType(str(body.get("entityType"), "人名/地名"));
+        r.setMetricsJson(str(body.get("metricsJson"), "{}"));
+        r.setStatus(str(body.get("status"), "DONE"));
+        r.setCreatedAt(java.time.LocalDateTime.now());
+        probeMapper.insert(r);
+        return r.getId();
     }
 
     public List<IngReconcileLog> listReconcileLogs() {
