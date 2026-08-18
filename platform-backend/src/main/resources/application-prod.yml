@@ -63,6 +63,13 @@ app:
       target-password: ${KETTLE_TARGET_PASSWORD:${MYSQL_PASSWORD:smart_city}}
       carte-host: ${KETTLE_CARTE_HOST:kettle-carte}
       carte-port: ${KETTLE_CARTE_PORT:8080}
+    esb:
+      base-url: ${ESB_SMC_BASE:http://10.10.10.61:7000}
+      app-code: ${ESB_APP_CODE:ESB}
+      app-pwd: "${ESB_APP_PWD:encrypt-S214ejBpeFJjcFNlRFpqRnlpWWFCUnhJUFkrclRTYUczU1Z2WldHeUZnLzBjamRab09Vd0YzblorYVA2MG9aMzhjUHlaZ3Q1NjVSdkRoUE55ZDhGNE1uMGJQUGYxYU1LVGhMVVd1NVB4NDFpb2l0dVRZNUFBUjY5NzNPaDg0Y1l5WG9VbmlQZndqbUIyMlNqOFlaZnFTRzRyNnB5MjBtakp2NWZRTXNoN2VnPQ==}"
+      gateway-base: ${ESB_GATEWAY_BASE:}
+      connect-timeout-ms: ${ESB_CONNECT_TIMEOUT_MS:5000}
+      read-timeout-ms: ${ESB_READ_TIMEOUT_MS:10000}
     storage:
       es-url: ${ES_URL:http://oss-elasticsearch:9200}
       seaweed-s3-endpoint: ${SEAWEED_S3_ENDPOINT:http://seaweedfs:8333}

@@ -23,6 +23,11 @@ public class BizPortalSubscription {
     private String createdBy;
     private LocalDateTime createdAt;
     private LocalDateTime updatedAt;
+    private String oauthClientId;
+    private String oauthClientSecret;
+    private String esbCustomerId;
+    private String apiUrl;
+    private String apiMethod;
 
     public Long getId() { return id; }
     public void setId(Long id) { this.id = id; }
@@ -54,4 +59,14 @@ public class BizPortalSubscription {
     public void setCreatedAt(LocalDateTime createdAt) { this.createdAt = createdAt; }
     public LocalDateTime getUpdatedAt() { return updatedAt; }
     public void setUpdatedAt(LocalDateTime updatedAt) { this.updatedAt = updatedAt; }
+    public String getOauthClientId() { return oauthClientId; }
+    public void setOauthClientId(String oauthClientId) { this.oauthClientId = oauthClientId; }
+    public String getOauthClientSecret() { return oauthClientSecret; }
+    public void setOauthClientSecret(String oauthClientSecret) { this.oauthClientSecret = oauthClientSecret; }
+    public String getEsbCustomerId() { return esbCustomerId; }
+    public void setEsbCustomerId(String esbCustomerId) { this.esbCustomerId = esbCustomerId; }
+    public String getApiUrl() { return apiUrl; }
+    public void setApiUrl(String apiUrl) { this.apiUrl = apiUrl; }
+    public String getApiMethod() { return apiMethod; }
+    public void setApiMethod(String apiMethod) { this.apiMethod = apiMethod; }
 }

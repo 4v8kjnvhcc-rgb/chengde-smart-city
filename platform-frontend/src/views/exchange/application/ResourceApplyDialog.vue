@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, reactive, ref, watch } from 'vue'
 import { ElMessage } from 'element-plus'
+import api from '@/api/http'
 import { useAuthStore } from '@/stores/auth'
 
 export interface ApplyResource {
@@ -36,7 +37,16 @@ const SCENE_OPTIONS = ['百项堵点', '政务服务', '行业监管', '辅助�
 const TIME_RANGE_OPTIONS = ['全天（含非工作日）', '工作日（8:00-18:00）']
 const USE_SCOPE_OPTIONS = ['行政依据', '用于数据校验', '工作参考', '其他']
 
+interface MyAppOption {
+  id: number
+  appName: string
+  contactName?: string
+  contactPhone?: string
+}
+
 const submitting = ref(false)
+const myApps = ref<MyAppOption[]>([])
+const myAppsLoading = ref(false)
 const form = reactive({
   applicantOrg: '',
   contactName: '',
@@ -73,6 +83,26 @@ function resolveApplicantOrg() {
   return ''
 }
 
+async function loadMyApps() {
+  myAppsLoading.value = true
+  try {
+    const res = await api.get('/exchange/portal/my-apps')
+    myApps.value = Array.isArray(res.data) ? res.data : []
+  } catch (e: unknown) {
+    myApps.value = []
+    ElMessage.error(e instanceof Error ? e.message : '加载我的应用失败')
+  } finally {
+    myAppsLoading.value = false
+  }
+}
+
+function onSystemNameChange(name: string) {
+  const hit = myApps.value.find((a) => a.appName === name)
+  if (!hit) return
+  if (hit.contactName) form.contactName = hit.contactName
+  if (hit.contactPhone) form.contactPhone = hit.contactPhone
+}
+
 watch(
   () => props.visible,
   (v) => {
@@ -93,6 +123,12 @@ watch(
     form.applyBasis = ''
     form.techReq = ''
     form.purpose = ''
+    void loadMyApps().then(() => {
+      if (myApps.value.length === 1) {
+        form.systemName = myApps.value[0].appName
+        onSystemNameChange(form.systemName)
+      }
+    })
   },
 )
 
@@ -110,7 +146,9 @@ async function onSubmit() {
   if (!form.contactName.trim()) return ElMessage.warning('请填写联系人')
   if (!form.contactPhone.trim()) return ElMessage.warning('请填写联系电话')
   if (!hasText(form.scene)) return ElMessage.warning('请选择或填写使用办事场景')
-  if (!form.systemName.trim()) return ElMessage.warning('请填写应用系统名称')
+  if (!form.systemName.trim()) {
+    return ElMessage.warning(myApps.value.length ? '请选择应用系统名称' : '请先在个人空间「我的应用」中登记应用系统')
+  }
   if (!hasText(form.timeRange)) return ElMessage.warning('请选择或填写使用时间范围')
   if (isApi.value) {
     if (form.callFreq == null) return ElMessage.warning('请填写服务接口调用频次')
@@ -211,7 +249,22 @@ defineExpose({ close })
             </el-select>
           </el-form-item>
           <el-form-item label="应用系统名称" required>
-            <el-input v-model="form.systemName" placeholder="请输入应用系统名称" />
+            <el-select
+              v-model="form.systemName"
+              filterable
+              clearable
+              :loading="myAppsLoading"
+              :placeholder="myApps.length ? '请选择应用系统' : '请先在个人空间登记应用'"
+              style="width: 100%"
+              @change="onSystemNameChange"
+            >
+              <el-option
+                v-for="a in myApps"
+                :key="a.id"
+                :label="a.appName"
+                :value="a.appName"
+              />
+            </el-select>
           </el-form-item>
           <el-form-item label="使用时间范围" required>
             <el-select

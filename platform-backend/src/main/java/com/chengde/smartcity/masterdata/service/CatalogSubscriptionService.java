@@ -7,6 +7,7 @@ import com.chengde.smartcity.exchange.entity.BizCatalogItem;
 import com.chengde.smartcity.exchange.entity.BizPortalSubscription;
 import com.chengde.smartcity.exchange.mapper.BizCatalogItemMapper;
 import com.chengde.smartcity.exchange.mapper.BizPortalSubscriptionMapper;
+import com.chengde.smartcity.integration.esb.EsbConsumerProvisionService;
 import com.chengde.smartcity.masterdata.entity.GovCatalogAuthorization;
 import com.chengde.smartcity.masterdata.entity.GovCatalogResource;
 import com.chengde.smartcity.masterdata.entity.GovCatalogSubscription;
@@ -47,6 +48,7 @@ public class CatalogSubscriptionService {
     private final BizCatalogItemMapper portalCatalogMapper;
     private final AuditService auditService;
     private final SysOrgMapper orgMapper;
+    private final EsbConsumerProvisionService esbConsumerProvisionService;
 
     public CatalogSubscriptionService(GovCatalogSubscriptionMapper subscriptionMapper,
                                       GovCatalogResourceMapper resourceMapper,
@@ -54,7 +56,8 @@ public class CatalogSubscriptionService {
                                       BizPortalSubscriptionMapper portalSubscriptionMapper,
                                       BizCatalogItemMapper portalCatalogMapper,
                                       AuditService auditService,
-                                      SysOrgMapper orgMapper) {
+                                      SysOrgMapper orgMapper,
+                                      EsbConsumerProvisionService esbConsumerProvisionService) {
         this.subscriptionMapper = subscriptionMapper;
         this.resourceMapper = resourceMapper;
         this.authorizationMapper = authorizationMapper;
@@ -62,6 +65,7 @@ public class CatalogSubscriptionService {
         this.portalCatalogMapper = portalCatalogMapper;
         this.auditService = auditService;
         this.orgMapper = orgMapper;
+        this.esbConsumerProvisionService = esbConsumerProvisionService;
     }
 
     public List<Map<String, Object>> listMine(UserPrincipal operator, String status) {
@@ -370,6 +374,10 @@ public class CatalogSubscriptionService {
         GovCatalogAuthorization authorization = ensureAuthorization(operator, sub);
         syncPortalReview(sub, "APPROVED", sub.getReviewComment(), sub.getReviewedBy(),
                 sub.getReviewedAt(), sub.getReviewerContact());
+        if ("API".equalsIgnoreCase(sub.getShareMode()) && sub.getPortalSubscriptionId() != null) {
+            BizPortalSubscription portal = portalSubscriptionMapper.selectById(sub.getPortalSubscriptionId());
+            esbConsumerProvisionService.provisionOnApprove(portal);
+        }
         auditService.log(operator.getUserId(), operator.getUsername(), operator.getOrgId(),
                 "CATALOG_SUBSCRIBE_APPROVE", "gov_catalog_subscription",
                 String.valueOf(id), resource.getResourceName() + " auth=" + authorization.getAuthorizationCode());
@@ -568,6 +576,15 @@ public class CatalogSubscriptionService {
         row.put("updatedAt", sub.getUpdatedAt());
         row.put("applyPayload", parseApplyPayload(sub.getApplyPayload()));
         row.put("portalSubscriptionId", sub.getPortalSubscriptionId());
+        if (sub.getPortalSubscriptionId() != null) {
+            BizPortalSubscription portal = portalSubscriptionMapper.selectById(sub.getPortalSubscriptionId());
+            if (portal != null) {
+                row.put("oauthClientId", portal.getOauthClientId());
+                row.put("oauthClientSecret", portal.getOauthClientSecret());
+                row.put("apiUrl", portal.getApiUrl());
+                row.put("apiMethod", portal.getApiMethod());
+            }
+        }
         GovCatalogResource resource = resourceMapper.selectById(sub.getResourceId());
         if (resource != null) {
             row.put("resourceCode", resource.getResourceCode());

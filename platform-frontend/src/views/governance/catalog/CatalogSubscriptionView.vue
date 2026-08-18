@@ -48,6 +48,10 @@ interface SubRow {
   physicalTableName?: string
   applyPayload?: string | Record<string, unknown>
   approvalFlow?: ApprovalFlowStep[]
+  oauthClientId?: string
+  oauthClientSecret?: string
+  apiUrl?: string
+  apiMethod?: string
   authorization?: {
     authorizationCode?: string
     status?: string
@@ -223,6 +227,14 @@ function flowStatusTag(s?: string) {
   return 'warning'
 }
 
+function reviewApiError(e: unknown): string {
+  const msg = e instanceof Error ? e.message : ''
+  if (/timeout of \d+ms exceeded/i.test(msg) || /timeout/i.test(msg) && /exceeded|aborted/i.test(msg)) {
+    return '审核请求超时，未在限定时间内收到 ESB 网关响应，请稍后重试'
+  }
+  return msg || '审批失败'
+}
+
 async function approve(row: SubRow) {
   if (!reviewForm.reviewerName.trim()) {
     ElMessage.warning('请填写审批人')
@@ -237,12 +249,12 @@ async function approve(row: SubRow) {
       comment: reviewForm.note.trim() || '同意',
       reviewerName: reviewForm.reviewerName.trim(),
       reviewerContact: reviewForm.reviewerContact.trim(),
-    })
+    }, { timeout: 45_000 })
     ElMessage.success('已通过')
     subDetail.visible = false
     await Promise.all([loadPending(), loadReviewed()])
   } catch (e: unknown) {
-    ElMessage.error((e as Error)?.message || '审批失败')
+    ElMessage.error(reviewApiError(e))
   }
 }
 
@@ -618,6 +630,31 @@ onActivated(() => {
             <el-descriptions-item label="数据描述">{{ payloadVal(parsePayload(subDetail.row), 'dataDesc') || '—' }}</el-descriptions-item>
             <el-descriptions-item label="申请依据">{{ payloadVal(parsePayload(subDetail.row), 'applyBasis') || '—' }}</el-descriptions-item>
             <el-descriptions-item label="其他技术需求">{{ payloadVal(parsePayload(subDetail.row), 'techReq') || '—' }}</el-descriptions-item>
+          </el-descriptions>
+        </section>
+
+        <section v-if="subDetail.row.shareMode === 'API'" class="detail-block">
+          <h4>接口信息</h4>
+          <el-descriptions :column="1" border size="small">
+            <el-descriptions-item label="应用系统名称">{{ payloadVal(parsePayload(subDetail.row), 'systemName') || '—' }}</el-descriptions-item>
+            <el-descriptions-item label="接口URL">{{ subDetail.row.apiUrl || payloadVal(parsePayload(subDetail.row), 'apiUrl') || '—' }}</el-descriptions-item>
+            <el-descriptions-item label="接口请求方式">{{ subDetail.row.apiMethod || payloadVal(parsePayload(subDetail.row), 'apiMethod') || 'POST' }}</el-descriptions-item>
+            <el-descriptions-item label="用于Oauth2服务认证的client secret信息">
+              {{ subDetail.row.oauthClientSecret || payloadVal(parsePayload(subDetail.row), 'oauthClientSecret') || '—' }}
+            </el-descriptions-item>
+            <el-descriptions-item label="用于Oauth2服务认证的clientid信息">
+              {{ subDetail.row.oauthClientId || payloadVal(parsePayload(subDetail.row), 'oauthClientId') || '—' }}
+            </el-descriptions-item>
+            <el-descriptions-item label="使用时间范围">{{ payloadVal(parsePayload(subDetail.row), 'timeRange') || '—' }}</el-descriptions-item>
+            <el-descriptions-item label="使用期限">
+              {{ payloadVal(parsePayload(subDetail.row), 'useDays') ? `${payloadVal(parsePayload(subDetail.row), 'useDays')}天` : '—' }}
+            </el-descriptions-item>
+            <el-descriptions-item label="其他技术请求说明">{{ payloadVal(parsePayload(subDetail.row), 'techReq') || '—' }}</el-descriptions-item>
+            <el-descriptions-item label="办事场景">{{ payloadVal(parsePayload(subDetail.row), 'scene') || payloadVal(parsePayload(subDetail.row), 'useScope') || subDetail.row.purpose || '—' }}</el-descriptions-item>
+            <el-descriptions-item label="数据范围">{{ payloadVal(parsePayload(subDetail.row), 'dataDesc') || '—' }}</el-descriptions-item>
+            <el-descriptions-item label="接口调用频次">{{ payloadVal(parsePayload(subDetail.row), 'callFreq') || '—' }}</el-descriptions-item>
+            <el-descriptions-item label="接口峰值频率">{{ payloadVal(parsePayload(subDetail.row), 'peakFreq') || '—' }}</el-descriptions-item>
+            <el-descriptions-item label="申请依据">{{ payloadVal(parsePayload(subDetail.row), 'applyBasis') || '—' }}</el-descriptions-item>
           </el-descriptions>
         </section>
 
