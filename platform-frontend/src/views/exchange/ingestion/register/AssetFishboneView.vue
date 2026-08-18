@@ -491,6 +491,16 @@ function onNodeClick(n: LayoutNode) {
 }
 
 function edgePath(e: LayoutEdge) {
+  if (isRadialOverview.value) {
+    const dx = e.toX - e.fromX
+    const dy = e.toY - e.fromY
+    const len = Math.hypot(dx, dy) || 1
+    // 轻微切向弧度：正上方/正下方不再是零宽度竖线，渐变才能画出来
+    const bulge = Math.min(36, Math.max(14, len * 0.16))
+    const qx = (e.fromX + e.toX) / 2 - (dy / len) * bulge
+    const qy = (e.fromY + e.toY) / 2 + (dx / len) * bulge
+    return `M ${e.fromX} ${e.fromY} Q ${qx} ${qy} ${e.toX} ${e.toY}`
+  }
   const mx = (e.fromX + e.toX) / 2
   return `M ${e.fromX} ${e.fromY} C ${mx} ${e.fromY}, ${mx} ${e.toY}, ${e.toX} ${e.toY}`
 }
@@ -553,9 +563,16 @@ onMounted(() => {
               <stop offset="70%" stop-color="#0b1726" />
               <stop offset="100%" stop-color="#071018" />
             </radialGradient>
-            <linearGradient :id="`${svgUid}-edge`" x1="0%" y1="0%" x2="100%" y2="0%">
+            <linearGradient
+              :id="`${svgUid}-edge`"
+              gradientUnits="userSpaceOnUse"
+              :x1="hubCx || 0"
+              :y1="hubCy || 0"
+              :x2="(hubCx || 0) + (orbitR || svgW)"
+              :y2="(hubCy || 0) + (orbitR || svgH)"
+            >
               <stop offset="0%" stop-color="#22d3ee" stop-opacity="0.95" />
-              <stop offset="100%" stop-color="#38bdf8" stop-opacity="0.35" />
+              <stop offset="100%" stop-color="#38bdf8" stop-opacity="0.45" />
             </linearGradient>
             <radialGradient :id="`${svgUid}-hub`" cx="35%" cy="30%" r="75%">
               <stop offset="0%" stop-color="#38bdf8" />
