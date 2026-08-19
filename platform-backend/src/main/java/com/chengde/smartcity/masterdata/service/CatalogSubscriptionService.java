@@ -374,7 +374,7 @@ public class CatalogSubscriptionService {
         GovCatalogAuthorization authorization = ensureAuthorization(operator, sub);
         syncPortalReview(sub, "APPROVED", sub.getReviewComment(), sub.getReviewedBy(),
                 sub.getReviewedAt(), sub.getReviewerContact());
-        if ("API".equalsIgnoreCase(sub.getShareMode()) && sub.getPortalSubscriptionId() != null) {
+        if (sub.getPortalSubscriptionId() != null) {
             BizPortalSubscription portal = portalSubscriptionMapper.selectById(sub.getPortalSubscriptionId());
             esbConsumerProvisionService.provisionOnApprove(portal);
         }

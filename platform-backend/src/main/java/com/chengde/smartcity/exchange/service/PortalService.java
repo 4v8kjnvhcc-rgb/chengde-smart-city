@@ -714,7 +714,7 @@ public class PortalService {
                 catalogMapper.updateById(catalog);
             }
             log.info("portal subscription {} approved, task {}", id, task.getId());
-            if (esbConsumerProvisionService.isApiSubscription(sub)) {
+            if (esbConsumerProvisionService.needsEsbProvision(sub)) {
                 esbConsumerProvisionService.provisionOnApprove(sub);
                 out.put("oauthClientId", sub.getOauthClientId());
                 out.put("apiUrl", sub.getApiUrl());
@@ -1550,9 +1550,7 @@ public class PortalService {
                     for (Map.Entry<?, ?> e : m.entrySet()) {
                         t.put(String.valueOf(e.getKey()), e.getValue());
                     }
-                    Object cols = t.get("columns");
-                    boolean emptyCols = !(cols instanceof List<?>) || ((List<?>) cols).isEmpty();
-                    if (emptyCols && !columns.isEmpty()) {
+                    if (!columns.isEmpty()) {
                         t.put("columns", columns);
                     }
                     if (blank(str(t.get("summary"), "")) && !columns.isEmpty()) {
@@ -1663,6 +1661,9 @@ public class PortalService {
             if (len == null) {
                 len = m.get("columnLength");
             }
+            if (len == null) {
+                len = m.get("columnSize");
+            }
             col.put("length", len == null || String.valueOf(len).isBlank() ? "" : String.valueOf(len));
             col.put("pk", boolish(m.get("pk")) || boolish(m.get("primaryKey")) || boolish(m.get("isPk")));
             if (m.containsKey("nullable")) {
@@ -1673,6 +1674,8 @@ public class PortalService {
                 col.put("nullable", true);
             }
             col.put("sensitivity", firstNonBlank(str(m.get("sensLevel"), null), str(m.get("sensitivity"), null), ""));
+            col.put("displayFlag", !m.containsKey("displayFlag") || boolish(m.get("displayFlag")));
+            col.put("searchFlag", boolish(m.get("searchFlag")));
             out.add(col);
         }
         return out;

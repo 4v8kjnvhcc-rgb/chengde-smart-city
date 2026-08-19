@@ -19,13 +19,16 @@ import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
 /**
- * 接口类资源审批通过后：调 ESB 创建消费者，把 OAuth 凭证写入申请单。
+ * 接口 / 库表资源审批通过后：调 ESB 创建消费者，把 OAuth 凭证写入申请单。
  */
 @Service
 public class EsbConsumerProvisionService {
 
     private static final Logger log = LoggerFactory.getLogger(EsbConsumerProvisionService.class);
     private static final ObjectMapper OM = new ObjectMapper();
+    /** 库表资源对外调用地址（固定数据服务）。 */
+    static final String TABLE_DATASERVICE_URL =
+            "http://10.216.131.100:7000/External/service/dataservicePost/1776766691032";
 
     private final EsbGatewayClient esbGatewayClient;
     private final IntegrationProperties integrationProperties;
@@ -52,11 +55,25 @@ public class EsbConsumerProvisionService {
         return sub != null && "API".equalsIgnoreCase(nz(sub.getResourceType()));
     }
 
+    public boolean isTableSubscription(BizPortalSubscription sub) {
+        if (sub == null) {
+            return false;
+        }
+        String t = nz(sub.getResourceType()).toUpperCase();
+        return "TABLE".equals(t) || "DATABASE".equals(t) || "DB".equals(t) || "DB_SYNC".equals(t);
+    }
+
+    /** 接口与库表审核通过后均需发放 ESB 消费者凭证。 */
+    public boolean needsEsbProvision(BizPortalSubscription sub) {
+        return isApiSubscription(sub) || isTableSubscription(sub);
+    }
+
     /**
-     * 审批通过后发放凭证。已有 client_id 则跳过。非接口资源直接返回。
+     * 审批通过后发放凭证。已有 client_id 则跳过。文件类资源直接返回。
+     * 库表接口地址固定为数据服务 URL。
      */
     public void provisionOnApprove(BizPortalSubscription sub) {
-        if (!isApiSubscription(sub)) {
+        if (!needsEsbProvision(sub)) {
             return;
         }
         if (notBlank(sub.getOauthClientId()) && notBlank(sub.getOauthClientSecret())) {
@@ -67,16 +84,16 @@ public class EsbConsumerProvisionService {
         String clientName = firstNonBlank(
                 str(payload.get("systemName")),
                 catalog == null ? null : catalog.getTitle(),
-                "API-" + sub.getId());
-        ApiMeta meta = resolveApiMeta(catalog);
+                (isTableSubscription(sub) ? "TABLE-" : "API-") + sub.getId());
+        ApiMeta meta = isTableSubscription(sub) ? tableApiMeta() : resolveApiMeta(catalog);
         EsbGatewayClient.ConsumerCredential cred = esbGatewayClient.createConsumer(clientName);
         sub.setOauthClientId(cred.clientId());
         sub.setOauthClientSecret(cred.clientSecret());
         sub.setEsbCustomerId(cred.customerId());
-        if (notBlank(meta.url) && !notBlank(sub.getApiUrl())) {
+        if (isTableSubscription(sub) || (notBlank(meta.url) && !notBlank(sub.getApiUrl()))) {
             sub.setApiUrl(meta.url);
         }
-        if (notBlank(meta.method) && !notBlank(sub.getApiMethod())) {
+        if (notBlank(meta.method) && (isTableSubscription(sub) || !notBlank(sub.getApiMethod()))) {
             sub.setApiMethod(meta.method);
         }
         payload.put("oauthClientId", cred.clientId());
@@ -112,6 +129,13 @@ public class EsbConsumerProvisionService {
         } catch (Exception e) {
             log.warn("sync gov applyPayload oauth failed: {}", e.getMessage());
         }
+    }
+
+    private static ApiMeta tableApiMeta() {
+        ApiMeta meta = new ApiMeta();
+        meta.url = TABLE_DATASERVICE_URL;
+        meta.method = "POST";
+        return meta;
     }
 
     private ApiMeta resolveApiMeta(BizCatalogItem catalog) {

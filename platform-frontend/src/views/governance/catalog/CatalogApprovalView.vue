@@ -118,6 +118,11 @@ const SHARE_ZH: Record<string, string> = {
   CONDITIONAL: '有条件共享',
   NOT_SHARE: '不予共享',
 }
+const SHARE_LEVEL_ZH: Record<string, string> = {
+  OPEN: '无条件共享',
+  CONDITIONAL: '有条件共享',
+  NOT_SHARE: '不予共享',
+}
 const FORMAT_ZH: Record<string, string> = {
   DATABASE: '库表',
   FILE: '文件',
@@ -493,6 +498,131 @@ const detailTagList = computed((): string[] => {
   return []
 })
 
+function parseExtJson(raw: unknown): Record<string, any> | null {
+  if (raw == null || raw === '') return null
+  if (typeof raw === 'object') return raw as Record<string, any>
+  if (typeof raw !== 'string') return null
+  try {
+    const parsed = JSON.parse(raw)
+    return parsed && typeof parsed === 'object' ? parsed : null
+  } catch {
+    return null
+  }
+}
+
+function joinApiUrl(base: string, path: string): string {
+  const b = (base || '').trim()
+  const p = (path || '').trim()
+  if (!p) return b
+  if (/^https?:\/\//i.test(p)) return p
+  if (!b) return p
+  if (b.endsWith(p) || b.endsWith(`/${p.replace(/^\/+/, '')}`)) return b
+  return `${b.replace(/\/+$/, '')}/${p.replace(/^\/+/, '')}`
+}
+
+const detailExt = computed(() => parseExtJson(detailResource.value?.extJson))
+const detailResourceFormat = computed(() => String(detailResource.value?.resourceFormat || '').toUpperCase())
+
+const detailTableBind = computed(() => {
+  const r = detailResource.value
+  const ext = detailExt.value
+  const path = String(r?.sourcePathType || '')
+  return {
+    sourceName: String(ext?.bindSourceName || '—'),
+    tableName: String(ext?.bindTableName || r?.physicalTableName || '—'),
+    entryCode: String(r?.metadataEntryCode || '—'),
+    sourcePath: path === 'PROCESSED' ? '加工共享' : path ? '直通共享' : '—',
+  }
+})
+
+interface DetailColumnRow {
+  columnName: string
+  columnNameZh: string
+  dataType: string
+  sensLevel: string
+  shareLevel: string
+  displayFlag: boolean
+  searchFlag: boolean
+  statFlag: boolean
+  sortFlag: boolean
+}
+
+const detailColumns = computed((): DetailColumnRow[] => {
+  const list = detailExt.value?.columnList
+  if (!Array.isArray(list)) return []
+  return list.map((c: Record<string, unknown>) => ({
+    columnName: String(c.columnName || ''),
+    columnNameZh: String(c.columnNameZh || c.remark || ''),
+    dataType: String(c.dataTypeZh || c.dataType || ''),
+    sensLevel: String(c.sensLevel || ''),
+    shareLevel: String(c.shareLevel || c.fieldType || ''),
+    displayFlag: c.displayFlag !== false,
+    searchFlag: !!c.searchFlag,
+    statFlag: !!c.statFlag,
+    sortFlag: !!c.sortFlag,
+  }))
+})
+
+const detailApi = computed(() => {
+  let apiBlk = detailExt.value?.api as unknown
+  if (typeof apiBlk === 'string') {
+    try {
+      apiBlk = JSON.parse(apiBlk)
+    } catch {
+      apiBlk = null
+    }
+  }
+  if (!apiBlk || typeof apiBlk !== 'object') return null
+  const api = apiBlk as Record<string, any>
+  const apiUrl = String(api.apiUrl || '')
+  const apiPath = String(api.apiPath || '')
+  const mapParams = (raw: unknown) =>
+    Array.isArray(raw)
+      ? raw.map((p: Record<string, unknown>) => ({
+          name: String(p.name || ''),
+          type: String(p.type || ''),
+          required: !!p.required,
+          description: String(p.description || ''),
+        }))
+      : []
+  return {
+    apiName: String(api.apiName || ''),
+    apiUrl,
+    apiPath,
+    fullUrl: joinApiUrl(apiUrl, apiPath),
+    apiMethod: String(api.apiMethod || ''),
+    apiVersion: String(api.apiVersion || ''),
+    apiTimeout: api.apiTimeout == null || api.apiTimeout === '' ? '—' : String(api.apiTimeout),
+    apiDescription: String(api.apiDescription || ''),
+    requestParams: mapParams(api.requestParams),
+    responseParams: mapParams(api.responseParams),
+  }
+})
+
+const detailFile = computed(() => {
+  const file = detailExt.value?.file
+  if (!file || typeof file !== 'object') return null
+  const f = file as Record<string, any>
+  const cols = Array.isArray(f.columnList)
+    ? f.columnList.map((c: Record<string, unknown>) => ({
+        columnName: String(c.columnName || c.name || ''),
+        columnNameZh: String(c.columnNameZh || ''),
+        dataType: String(c.dataType || c.type || ''),
+        description: String(c.description || ''),
+      }))
+    : []
+  return {
+    fileName: String(f.fileName || ''),
+    fileRemark: String(f.fileRemark || ''),
+    columns: cols,
+  }
+})
+
+function shareLevelLabel(code: string): string {
+  if (!code) return '—'
+  return SHARE_LEVEL_ZH[code] || statusLabel(code) || code
+}
+
 async function submitReview() {
   if (!reviewForm.reviewerName.trim()) {
     ElMessage.warning('请填写审批人')
@@ -717,7 +847,7 @@ onActivated(() => {
     <el-drawer
       v-model="detailVisible"
       :title="detailTitle"
-      size="720px"
+      size="960px"
       destroy-on-close
       append-to-body
     >
@@ -732,23 +862,24 @@ onActivated(() => {
           >
             <el-descriptions-item label="目录名称">{{ detailField('resourceName') }}</el-descriptions-item>
             <el-descriptions-item label="目录编码">{{ detailField('resourceCode') }}</el-descriptions-item>
-            <el-descriptions-item label="资源类型">{{ detailFormatLabel() }}</el-descriptions-item>
+            <el-descriptions-item label="所属部门">{{ detailField('providerOrg') }}</el-descriptions-item>
+            <el-descriptions-item label="所属主题">{{ detailField('themeName') }}</el-descriptions-item>
+            <el-descriptions-item label="信息资源格式">{{ detailFormatLabel() }}</el-descriptions-item>
             <el-descriptions-item label="共享类型">{{ detailShareLabel() }}</el-descriptions-item>
             <el-descriptions-item label="共享条件">{{ detailField('shareCondition') }}</el-descriptions-item>
             <el-descriptions-item v-if="detailField('notShareReason') !== '—'" label="不共享理由">
               {{ detailField('notShareReason') }}
             </el-descriptions-item>
-            <el-descriptions-item label="向社会开放">{{ detailOpenLabel() }}</el-descriptions-item>
+            <el-descriptions-item label="是否向社会开放">{{ detailOpenLabel() }}</el-descriptions-item>
             <el-descriptions-item label="开放条件">{{ detailField('openCondition') }}</el-descriptions-item>
             <el-descriptions-item v-if="detailField('notOpenReason') !== '—'" label="不开放理由">
               {{ detailField('notOpenReason') }}
             </el-descriptions-item>
-            <el-descriptions-item label="主题资源目录">{{ detailField('themeName') }}</el-descriptions-item>
             <el-descriptions-item label="更新周期">{{ detailCycleLabel() }}</el-descriptions-item>
-            <el-descriptions-item label="信息资源分类">{{ detailCategoryLabel() }}</el-descriptions-item>
-            <el-descriptions-item label="联系人">{{ detailField('contactName') }}</el-descriptions-item>
-            <el-descriptions-item label="联系电话">{{ detailField('contactPhone') }}</el-descriptions-item>
-            <el-descriptions-item label="联系邮箱">{{ detailField('contactEmail') }}</el-descriptions-item>
+            <el-descriptions-item label="基础信息资源目录">{{ detailCategoryLabel() }}</el-descriptions-item>
+            <el-descriptions-item label="联系人名称">{{ detailField('contactName') }}</el-descriptions-item>
+            <el-descriptions-item label="联系人电话">{{ detailField('contactPhone') }}</el-descriptions-item>
+            <el-descriptions-item label="联系人邮箱">{{ detailField('contactEmail') }}</el-descriptions-item>
             <el-descriptions-item label="标签">
               <template v-if="detailTagList.length">
                 <el-tag v-for="tag in detailTagList" :key="tag" size="small" class="detail-tag">{{ tag }}</el-tag>
@@ -758,8 +889,118 @@ onActivated(() => {
             <el-descriptions-item label="目录描述">{{ detailField('description') }}</el-descriptions-item>
           </el-descriptions>
 
+          <template v-if="detailResourceFormat === 'DATABASE'">
+            <div class="detail-section-title">库表信息</div>
+            <el-descriptions :column="1" border size="small">
+              <el-descriptions-item label="数据源">{{ detailTableBind.sourceName }}</el-descriptions-item>
+              <el-descriptions-item label="数据表">{{ detailTableBind.tableName }}</el-descriptions-item>
+              <el-descriptions-item label="元数据条目">{{ detailTableBind.entryCode }}</el-descriptions-item>
+              <el-descriptions-item label="来源路径">{{ detailTableBind.sourcePath }}</el-descriptions-item>
+            </el-descriptions>
+            <div class="detail-section-title">字段列表</div>
+            <el-table
+              :data="detailColumns"
+              size="small"
+              stripe
+              border
+              class="detail-table"
+              empty-text="暂无字段信息"
+              max-height="360"
+            >
+              <el-table-column prop="columnName" label="名称" width="140" show-overflow-tooltip />
+              <el-table-column prop="columnNameZh" label="中文名称" min-width="120" show-overflow-tooltip />
+              <el-table-column prop="dataType" label="类型" width="100" show-overflow-tooltip />
+              <el-table-column label="敏感级别" width="90">
+                <template #default="{ row }">{{ row.sensLevel || '—' }}</template>
+              </el-table-column>
+              <el-table-column label="共享类型" width="120">
+                <template #default="{ row }">{{ shareLevelLabel(row.shareLevel) }}</template>
+              </el-table-column>
+              <el-table-column label="展示项" width="80" align="center">
+                <template #default="{ row }">{{ row.displayFlag ? '是' : '否' }}</template>
+              </el-table-column>
+              <el-table-column label="搜索项" width="80" align="center">
+                <template #default="{ row }">{{ row.searchFlag ? '是' : '否' }}</template>
+              </el-table-column>
+              <el-table-column label="统计项" width="80" align="center">
+                <template #default="{ row }">{{ row.statFlag ? '是' : '否' }}</template>
+              </el-table-column>
+              <el-table-column label="排序项" width="80" align="center">
+                <template #default="{ row }">{{ row.sortFlag ? '是' : '否' }}</template>
+              </el-table-column>
+            </el-table>
+          </template>
+
+          <template v-else-if="detailResourceFormat === 'API' && detailApi">
+            <div class="detail-section-title">接口信息</div>
+            <el-descriptions :column="1" border size="small">
+              <el-descriptions-item label="接口名称">{{ detailApi.apiName || '—' }}</el-descriptions-item>
+              <el-descriptions-item label="目标地址">{{ detailApi.apiUrl || '—' }}</el-descriptions-item>
+              <el-descriptions-item label="请求路径">{{ detailApi.apiPath || '—' }}</el-descriptions-item>
+              <el-descriptions-item label="完整接口地址">{{ detailApi.fullUrl || '—' }}</el-descriptions-item>
+              <el-descriptions-item label="请求方式">{{ detailApi.apiMethod || '—' }}</el-descriptions-item>
+              <el-descriptions-item label="接口版本">{{ detailApi.apiVersion || '—' }}</el-descriptions-item>
+              <el-descriptions-item label="超时(ms)">{{ detailApi.apiTimeout }}</el-descriptions-item>
+              <el-descriptions-item label="接口描述">{{ detailApi.apiDescription || '—' }}</el-descriptions-item>
+            </el-descriptions>
+            <div class="detail-section-title">请求参数</div>
+            <el-table
+              :data="detailApi.requestParams"
+              size="small"
+              stripe
+              border
+              class="detail-table"
+              empty-text="暂无请求参数"
+            >
+              <el-table-column prop="name" label="参数名" min-width="120" show-overflow-tooltip />
+              <el-table-column label="必填" width="70" align="center">
+                <template #default="{ row }">{{ row.required ? '是' : '否' }}</template>
+              </el-table-column>
+              <el-table-column prop="type" label="类型" width="100" />
+              <el-table-column prop="description" label="简介" min-width="140" show-overflow-tooltip />
+            </el-table>
+            <div class="detail-section-title">响应参数</div>
+            <el-table
+              :data="detailApi.responseParams"
+              size="small"
+              stripe
+              border
+              class="detail-table"
+              empty-text="暂无响应参数"
+            >
+              <el-table-column prop="name" label="参数名" min-width="120" show-overflow-tooltip />
+              <el-table-column label="必填" width="70" align="center">
+                <template #default="{ row }">{{ row.required ? '是' : '否' }}</template>
+              </el-table-column>
+              <el-table-column prop="type" label="类型" width="100" />
+              <el-table-column prop="description" label="简介" min-width="140" show-overflow-tooltip />
+            </el-table>
+          </template>
+
+          <template v-else-if="detailResourceFormat === 'FILE' && detailFile">
+            <div class="detail-section-title">文件信息</div>
+            <el-descriptions :column="1" border size="small">
+              <el-descriptions-item label="文件名称">{{ detailFile.fileName || '—' }}</el-descriptions-item>
+              <el-descriptions-item label="说明">{{ detailFile.fileRemark || '—' }}</el-descriptions-item>
+            </el-descriptions>
+            <el-table
+              :data="detailFile.columns"
+              size="small"
+              stripe
+              border
+              class="detail-table"
+              empty-text="暂无列信息"
+              max-height="360"
+            >
+              <el-table-column prop="columnName" label="列名" width="140" show-overflow-tooltip />
+              <el-table-column prop="columnNameZh" label="中文名称" min-width="120" show-overflow-tooltip />
+              <el-table-column prop="dataType" label="类型" width="100" />
+              <el-table-column prop="description" label="简介" min-width="140" show-overflow-tooltip />
+            </el-table>
+          </template>
+
           <el-alert
-            v-else-if="detailRow.categoryId && !detailRow.resourceId"
+            v-if="detailRow.categoryId && !detailRow.resourceId"
             type="info"
             :closable="false"
             show-icon

@@ -135,6 +135,10 @@ const subDetail = reactive<{
   row: null,
   mode: 'mine',
 })
+const progressDlg = reactive<{ visible: boolean; row: Subscription | null }>({
+  visible: false,
+  row: null,
+})
 
 const shareLabel = (m?: string) => {
   if (!m) return '-'
@@ -373,18 +377,43 @@ function flowStatusTag(s?: string) {
 
 function approvalProgressText(row: Subscription): string {
   const st = String(row.status || '').toUpperCase()
-  const hasCred = isApiSub(row) && !!(row.oauthClientId || payloadStr(payloadObj(row), 'oauthClientId'))
+  const hasCred = isCredentialSub(row) && !!(row.oauthClientId || payloadStr(payloadObj(row), 'oauthClientId'))
   if (st === 'PENDING') return '提交申请 → 待提供方审批'
   if (st === 'REJECTED') return '提交申请 → 已驳回'
   if (st === 'CANCELLED') return '已取消'
   if (st === 'APPROVED') {
-    if (isApiSub(row) && hasCred) return '提交申请 → 已通过 → 凭证已发放'
-    if (isApiSub(row)) return '提交申请 → 已通过 → 待发放凭证'
+    if (isCredentialSub(row) && hasCred) return '提交申请 → 已通过 → 凭证已发放'
+    if (isCredentialSub(row)) return '提交申请 → 已通过 → 待发放凭证'
     return '提交申请 → 已通过'
   }
   const flow = row.approvalFlow || []
   const current = flow.find((s) => s.status === 'PENDING' || s.status === 'WAITING') || flow[flow.length - 1]
   return current?.result || current?.step || statusLabel(row.status)
+}
+
+function openApplyProgress(row: Subscription) {
+  progressDlg.row = row
+  progressDlg.visible = true
+}
+
+function applyProgressSteps(row: Subscription | null) {
+  if (!row) return []
+  const st = String(row.status || '').toUpperCase()
+  const applyTime = formatDateTime(row.createdAt, '')
+  const reviewTime = formatDateTime(row.reviewedAt, '')
+  const reviewed = st === 'APPROVED' || st === 'REJECTED'
+  const rejected = st === 'REJECTED'
+  const cancelled = st === 'CANCELLED'
+  const hasCred = isCredentialSub(row) && !!(row.oauthClientId || payloadStr(payloadObj(row), 'oauthClientId'))
+  const synced = st === 'APPROVED' && (!isCredentialSub(row) || hasCred)
+  const deptState = rejected ? 'reject' : reviewed ? 'done' : cancelled ? 'wait' : 'current'
+  const syncState = synced ? 'done' : reviewed && !rejected ? 'current' : 'wait'
+  return [
+    { title: '用户申请', time: applyTime, state: cancelled ? 'wait' : 'done', hint: cancelled ? '已取消' : '已提交' },
+    { title: '平台审核', time: applyTime, state: cancelled ? 'wait' : 'done', hint: cancelled ? '—' : '已通过' },
+    { title: '部门审核', time: reviewed ? reviewTime : '', state: deptState, hint: rejected ? '已驳回' : reviewed ? '已通过' : cancelled ? '—' : '审批中' },
+    { title: '权限同步', time: synced ? reviewTime : '', state: syncState, hint: synced ? '已完成' : syncState === 'current' ? '同步中' : '未开始' },
+  ]
 }
 
 function payloadObj(row: Subscription | null): Record<string, unknown> | null {
@@ -413,10 +442,31 @@ function isApiSub(row: Subscription | null) {
   return String(row?.resourceType || '').toUpperCase() === 'API'
 }
 
+function isTableSub(row: Subscription | null) {
+  const t = String(row?.resourceType || '').toUpperCase()
+  return t === 'TABLE' || t === 'DATABASE' || t === 'DB' || t === 'DB_SYNC'
+}
+
+/** 接口与库表审核后展示同一套 OAuth / 接口信息 */
+function isCredentialSub(row: Subscription | null) {
+  return isApiSub(row) || isTableSub(row)
+}
+
+function payloadParamRows(row: Subscription | null, key: 'inputParams' | 'outputParams'): Record<string, unknown>[] {
+  const obj = payloadObj(row)
+  const v = obj?.[key]
+  return Array.isArray(v) ? (v as Record<string, unknown>[]) : []
+}
+
+function hasTableParams(row: Subscription | null) {
+  const obj = payloadObj(row)
+  return Array.isArray(obj?.inputParams) || Array.isArray(obj?.outputParams)
+}
+
 function payloadEntries(row: Subscription | null): { label: string; value: string; section?: string }[] {
   if (!row) return []
   const obj = payloadObj(row)
-  if (isApiSub(row)) {
+  if (isCredentialSub(row)) {
     const days = payloadStr(obj, 'useDays')
     return [
       { label: '目录名称', value: dash(row.catalogTitle), section: 'base' },
@@ -950,6 +1000,11 @@ onMounted(() => {
                     {{ row.createdAt ? String(row.createdAt).replace('T', ' ').slice(0, 19) : '—' }}
                   </template>
                 </el-table-column>
+                <el-table-column label="操作" width="120" fixed="right">
+                  <template #default="{ row }">
+                    <el-button size="small" type="primary" plain @click.stop="openApplyProgress(row)">审批进度</el-button>
+                  </template>
+                </el-table-column>
               </el-table>
               <PortalPagination
                 v-if="mySubs.length"
@@ -1030,8 +1085,9 @@ onMounted(() => {
                       {{ row.createdAt ? String(row.createdAt).replace('T', ' ').slice(0, 19) : '—' }}
                     </template>
                   </el-table-column>
-                  <el-table-column label="操作" width="140" fixed="right">
+                  <el-table-column label="操作" width="260" fixed="right">
                     <template #default="{ row }">
+                      <el-button size="small" type="primary" plain @click.stop="openApplyProgress(row)">审批进度</el-button>
                       <el-button link type="primary" @click.stop="openSubDetail(row, 'reviewed')">详情</el-button>
                       <el-button link type="primary" @click.stop="openSubDetail(row, 'pending')">审核</el-button>
                     </template>
@@ -1083,8 +1139,9 @@ onMounted(() => {
                   <el-table-column label="审批时间" width="170">
                     <template #default="{ row }">{{ fmtFlowTime(row.reviewedAt) }}</template>
                   </el-table-column>
-                  <el-table-column label="操作" width="90" fixed="right">
+                  <el-table-column label="操作" width="200" fixed="right">
                     <template #default="{ row }">
+                      <el-button size="small" type="primary" plain @click.stop="openApplyProgress(row)">审批进度</el-button>
                       <el-button link type="primary" @click.stop="openSubDetail(row, 'reviewed')">详情</el-button>
                     </template>
                   </el-table-column>
@@ -1149,7 +1206,7 @@ onMounted(() => {
     >
       <template v-if="subDetail.row">
         <section class="detail-block">
-          <h4>{{ isApiSub(subDetail.row) ? '基本信息' : '资源与办理' }}</h4>
+          <h4>{{ isCredentialSub(subDetail.row) ? '基本信息' : '资源与办理' }}</h4>
           <el-descriptions :column="1" border size="small">
             <el-descriptions-item v-for="(it, i) in payloadEntries(subDetail.row).filter(e => !e.section || e.section === 'base')" :key="'b'+i" :label="it.label">
               {{ it.value }}
@@ -1179,6 +1236,37 @@ onMounted(() => {
               {{ it.value }}
             </el-descriptions-item>
           </el-descriptions>
+        </section>
+        <section v-if="hasTableParams(subDetail.row)" class="detail-block">
+          <h4>库表入参 / 出参</h4>
+          <div class="detail-section-title">入参</div>
+          <el-table
+            :data="payloadParamRows(subDetail.row, 'inputParams')"
+            size="small"
+            stripe
+            border
+            empty-text="编目未勾选搜索项"
+            class="detail-table"
+          >
+            <el-table-column prop="name" label="字段名称" min-width="120" />
+            <el-table-column prop="comment" label="中文名称" min-width="120" />
+            <el-table-column prop="type" label="字段类型" width="110" />
+            <el-table-column prop="length" label="字段长度" width="90" />
+          </el-table>
+          <div class="detail-section-title">出参</div>
+          <el-table
+            :data="payloadParamRows(subDetail.row, 'outputParams')"
+            size="small"
+            stripe
+            border
+            empty-text="无"
+            class="detail-table"
+          >
+            <el-table-column prop="name" label="字段名称" min-width="120" />
+            <el-table-column prop="comment" label="中文名称" min-width="120" />
+            <el-table-column prop="type" label="字段类型" width="110" />
+            <el-table-column prop="length" label="字段长度" width="90" />
+          </el-table>
         </section>
         <section class="detail-block">
           <h4>审批流程</h4>
@@ -1266,6 +1354,38 @@ onMounted(() => {
       <template #footer>
         <el-button @click="appDialogVisible = false">取消</el-button>
         <el-button type="primary" :loading="appSaving" @click="saveMyApp">保存</el-button>
+      </template>
+    </el-dialog>
+
+    <el-dialog
+      v-model="progressDlg.visible"
+      width="440px"
+      align-center
+      append-to-body
+      class="apply-progress-dlg"
+    >
+      <template #header>
+        <div class="apply-progress-dlg__title">申请进度</div>
+      </template>
+      <ol class="apply-progress">
+        <li
+          v-for="s in applyProgressSteps(progressDlg.row)"
+          :key="s.title"
+          class="apply-progress__item"
+          :class="`is-${s.state}`"
+        >
+          <span class="apply-progress__dot" />
+          <div class="apply-progress__body">
+            <div class="apply-progress__head">
+              <span class="apply-progress__name">{{ s.title }}</span>
+              <span class="apply-progress__tag">{{ s.hint }}</span>
+            </div>
+            <div v-if="s.time" class="apply-progress__time">{{ s.time }}</div>
+          </div>
+        </li>
+      </ol>
+      <template #footer>
+        <el-button type="primary" @click="progressDlg.visible = false">确认</el-button>
       </template>
     </el-dialog>
   </div>
@@ -1414,6 +1534,15 @@ onMounted(() => {
   color: #1f2329;
   padding-left: 8px;
   border-left: 3px solid #1677ff;
+}
+.detail-section-title {
+  margin: 12px 0 8px;
+  font-size: 13px;
+  font-weight: 600;
+}
+.detail-table {
+  width: 100%;
+  margin-bottom: 8px;
 }
 .muted { color: #c0c4cc; }
 
@@ -1878,5 +2007,162 @@ onMounted(() => {
   .dual,
   .info-grid { grid-template-columns: 1fr; }
   .hero__title { font-size: 22px; }
+}
+</style>
+
+<style>
+.apply-progress-dlg.el-dialog {
+  border-radius: 8px;
+}
+.apply-progress-dlg .el-dialog__header {
+  margin-right: 0;
+  padding: 16px 20px 12px;
+  border-bottom: 1px solid #e5e6eb;
+}
+.apply-progress-dlg .el-dialog__body {
+  padding: 22px 28px 8px;
+}
+.apply-progress-dlg .el-dialog__footer {
+  padding: 8px 20px 16px;
+}
+.apply-progress-dlg__title {
+  padding-left: 10px;
+  border-left: 3px solid #1677ff;
+  font-size: 16px;
+  font-weight: 600;
+  color: #1f2329;
+  line-height: 1.25;
+}
+.apply-progress {
+  list-style: none;
+  margin: 0;
+  padding: 4px 4px 4px 8px;
+}
+.apply-progress__item {
+  position: relative;
+  display: flex;
+  align-items: flex-start;
+  gap: 14px;
+  padding-bottom: 28px;
+}
+.apply-progress__item:last-child {
+  padding-bottom: 4px;
+}
+.apply-progress__item:not(:last-child)::before {
+  content: '';
+  position: absolute;
+  left: 9px;
+  top: 22px;
+  bottom: 2px;
+  width: 2px;
+  background: #e5e6eb;
+}
+.apply-progress__item.is-done:not(:last-child)::before {
+  background: #00b42a;
+}
+.apply-progress__dot {
+  position: relative;
+  z-index: 1;
+  flex-shrink: 0;
+  width: 20px;
+  height: 20px;
+  box-sizing: border-box;
+  border-radius: 50%;
+  border: 2px solid #c9cdd4;
+  background: #fff;
+}
+.apply-progress__item.is-done .apply-progress__dot {
+  border-color: #00b42a;
+  background: #00b42a;
+}
+.apply-progress__item.is-done .apply-progress__dot::after {
+  content: '';
+  position: absolute;
+  left: 5px;
+  top: 2px;
+  width: 5px;
+  height: 9px;
+  border: solid #fff;
+  border-width: 0 2px 2px 0;
+  transform: rotate(45deg);
+}
+.apply-progress__item.is-current .apply-progress__dot {
+  border-color: #1677ff;
+  background: #1677ff;
+  box-shadow: 0 0 0 4px rgba(22, 119, 255, 0.18);
+}
+.apply-progress__item.is-reject .apply-progress__dot {
+  border-color: #f53f3f;
+  background: #f53f3f;
+}
+.apply-progress__item.is-reject .apply-progress__dot::after,
+.apply-progress__item.is-reject .apply-progress__dot::before {
+  content: '';
+  position: absolute;
+  left: 8px;
+  top: 3px;
+  width: 2px;
+  height: 10px;
+  background: #fff;
+  border-radius: 1px;
+}
+.apply-progress__item.is-reject .apply-progress__dot::before {
+  transform: rotate(45deg);
+}
+.apply-progress__item.is-reject .apply-progress__dot::after {
+  transform: rotate(-45deg);
+}
+.apply-progress__body {
+  min-width: 0;
+  flex: 1;
+  padding-top: 0;
+}
+.apply-progress__head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 20px;
+}
+.apply-progress__name {
+  font-size: 14px;
+  font-weight: 600;
+  color: #1f2329;
+  line-height: 20px;
+}
+.apply-progress__item.is-wait .apply-progress__name {
+  font-weight: 400;
+  color: #86909c;
+}
+.apply-progress__item.is-current .apply-progress__name {
+  color: #1677ff;
+}
+.apply-progress__item.is-reject .apply-progress__name {
+  color: #f53f3f;
+}
+.apply-progress__tag {
+  font-size: 12px;
+  line-height: 20px;
+  padding: 0 6px;
+  border-radius: 4px;
+  background: #f2f3f5;
+  color: #86909c;
+}
+.apply-progress__item.is-done .apply-progress__tag {
+  background: #e8ffea;
+  color: #00b42a;
+}
+.apply-progress__item.is-current .apply-progress__tag {
+  background: #e8f3ff;
+  color: #1677ff;
+}
+.apply-progress__item.is-reject .apply-progress__tag {
+  background: #ffece8;
+  color: #f53f3f;
+}
+.apply-progress__time {
+  margin-top: 4px;
+  font-size: 12px;
+  color: #86909c;
+  line-height: 18px;
 }
 </style>

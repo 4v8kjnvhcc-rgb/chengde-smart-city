@@ -105,6 +105,7 @@ interface ColumnRow {
   columnNameZh: string
   dataType: string
   dataTypeZh: string
+  length?: string
   sensLevel: string
   shareLevel: string
   displayFlag: boolean
@@ -192,6 +193,16 @@ const SHARE_LEVEL_ZH: Record<string, string> = {
   NOT_SHARE: '不予共享',
 }
 const SENS_LEVEL_OPTS = ['1级', '2级', '3级', '4级']
+const SHARE_CONDITION_OPTS = [
+  '依申请公开',
+  '业务协同',
+  '审批共享',
+  '履职共享',
+  '行政依据',
+  '工作参考业务协同',
+  '工作参考',
+]
+const OPEN_CONDITION_OPTS = ['无条件开放', '依申请开放']
 const BIND_CATEGORY_OPTS = [
   { key: 'SOURCE', label: '来源' },
   { key: 'ODS', label: '原始库' },
@@ -265,6 +276,9 @@ const batchColumnForm = reactive({
   sensLevel: '1级',
   shareLevel: 'CONDITIONAL',
   displayFlag: true,
+  searchFlag: false,
+  statFlag: false,
+  sortFlag: false,
 })
 const wizardStep = ref(0)
 const saving = ref(false)
@@ -427,6 +441,15 @@ const notShareReasonEnabled = computed(() => form.shareType === 'NOT_SHARE')
 const openConditionEnabled = computed(() => form.openType === 'SOCIAL_OPEN')
 const notOpenReasonEnabled = computed(() => form.openType === 'NOT_OPEN')
 
+const shareConditionOptions = computed(() => {
+  const cur = (form.shareCondition || '').trim()
+  return cur && !SHARE_CONDITION_OPTS.includes(cur) ? [cur, ...SHARE_CONDITION_OPTS] : SHARE_CONDITION_OPTS
+})
+const openConditionOptions = computed(() => {
+  const cur = (form.openCondition || '').trim()
+  return cur && !OPEN_CONDITION_OPTS.includes(cur) ? [cur, ...OPEN_CONDITION_OPTS] : OPEN_CONDITION_OPTS
+})
+
 const tagInputVisible = ref(false)
 const tagInputValue = ref('')
 const tagInputRef = ref<InputInstance>()
@@ -546,22 +569,27 @@ const themeCatalogOptions = computed(() =>
   })),
 )
 
+/** 查看/编辑回填期间禁止因格式切换清空接口/文件表单，也禁止覆盖共享/开放条件 */
+let hydratingForm = false
+
 watch(
   () => form.shareType,
   (v) => {
+    if (hydratingForm) return
     if (v !== 'CONDITIONAL') form.shareCondition = ''
+    else if (!form.shareCondition) form.shareCondition = '依申请公开'
     if (v !== 'NOT_SHARE') form.notShareReason = ''
   },
 )
 watch(
   () => form.openType,
   (v) => {
+    if (hydratingForm) return
     if (v !== 'SOCIAL_OPEN') form.openCondition = ''
+    else if (!form.openCondition) form.openCondition = '依申请开放'
     if (v !== 'NOT_OPEN') form.notOpenReason = ''
   },
 )
-/** 查看/编辑回填期间禁止因格式切换清空接口/文件表单 */
-let hydratingForm = false
 
 watch(
   () => form.resourceFormat,
@@ -901,6 +929,7 @@ function fillFormFromRow(row: CatalogRes) {
         columnNameZh: c.columnNameZh || c.remark || c.columnName || '',
         dataType: c.dataType || 'VARCHAR',
         dataTypeZh: c.dataTypeZh || dataTypeToZh(c.dataType || ''),
+        length: c.length != null && String(c.length) !== '' ? String(c.length) : (c.columnLength || c.columnSize ? String(c.columnLength || c.columnSize) : ''),
         sensLevel: c.sensLevel || '1级',
         shareLevel: c.shareLevel || c.fieldType || 'CONDITIONAL',
         displayFlag: c.displayFlag !== false,
@@ -1071,7 +1100,7 @@ function validateStep1(): boolean {
     return false
   }
   if (form.shareType === 'CONDITIONAL' && !form.shareCondition?.trim()) {
-    ElMessage.warning('有条件共享须填写共享条件')
+    ElMessage.warning('有条件共享须选择共享条件')
     return false
   }
   if (form.shareType === 'NOT_SHARE' && !form.notShareReason?.trim()) {
@@ -1083,7 +1112,7 @@ function validateStep1(): boolean {
     return false
   }
   if (form.openType === 'SOCIAL_OPEN' && !form.openCondition?.trim()) {
-    ElMessage.warning('向社会开放须填写开放条件')
+    ElMessage.warning('向社会开放须选择开放条件')
     return false
   }
   if (form.openType === 'NOT_OPEN' && !form.notOpenReason?.trim()) {
@@ -1293,6 +1322,7 @@ function addColumnRow() {
     columnNameZh: '',
     dataType: 'VARCHAR',
     dataTypeZh: '字符串',
+    length: '',
     sensLevel: '1级',
     shareLevel: form.shareType || 'CONDITIONAL',
     displayFlag: true,
@@ -1459,6 +1489,8 @@ async function loadBindColumns(tableName: string) {
       dataType?: string
       remarks?: string
       comment?: string
+      columnSize?: number
+      length?: number | string
     }>
     const defaultShare = form.shareType === 'OPEN' || form.shareType === 'CONDITIONAL' || form.shareType === 'NOT_SHARE'
       ? form.shareType
@@ -1470,6 +1502,9 @@ async function loadBindColumns(tableName: string) {
         columnNameZh: c.remarks || c.comment || c.columnName || '',
         dataType,
         dataTypeZh: dataTypeToZh(dataType),
+        length: c.columnSize != null && c.columnSize !== 0
+          ? String(c.columnSize)
+          : (c.length != null && String(c.length) !== '' ? String(c.length) : ''),
         sensLevel: '1级',
         shareLevel: defaultShare,
         displayFlag: true,
@@ -1874,6 +1909,9 @@ function openBatchColumnSetting() {
   batchColumnForm.sensLevel = '1级'
   batchColumnForm.shareLevel = 'CONDITIONAL'
   batchColumnForm.displayFlag = true
+  batchColumnForm.searchFlag = false
+  batchColumnForm.statFlag = false
+  batchColumnForm.sortFlag = false
   batchColumnVisible.value = true
 }
 
@@ -1882,6 +1920,9 @@ function applyBatchColumnSetting() {
     row.sensLevel = batchColumnForm.sensLevel
     row.shareLevel = batchColumnForm.shareLevel
     row.displayFlag = batchColumnForm.displayFlag
+    row.searchFlag = batchColumnForm.searchFlag
+    row.statFlag = batchColumnForm.statFlag
+    row.sortFlag = batchColumnForm.sortFlag
   }
   batchColumnVisible.value = false
   ElMessage.success(`已批量设置 ${columnRows.value.length} 个字段`)
@@ -2185,14 +2226,16 @@ onActivated(async () => {
           </el-select>
         </el-form-item>
         <el-form-item label="共享条件" :required="shareConditionEnabled">
-          <el-input
+          <el-select
             v-model="form.shareCondition"
             :disabled="!shareConditionEnabled || viewMode"
             clearable
-            maxlength="256"
-            show-word-limit
-            placeholder="有条件共享时必填"
-          />
+            filterable
+            style="width: 100%"
+            placeholder="有条件共享时必选"
+          >
+            <el-option v-for="o in shareConditionOptions" :key="o" :label="o" :value="o" />
+          </el-select>
         </el-form-item>
         <el-form-item v-if="notShareReasonEnabled" label="不共享理由" required>
           <el-input v-model="form.notShareReason" type="textarea" :rows="2" placeholder="不予共享时必填" />
@@ -2203,14 +2246,16 @@ onActivated(async () => {
           </el-select>
         </el-form-item>
         <el-form-item label="开放条件" :required="openConditionEnabled">
-          <el-input
+          <el-select
             v-model="form.openCondition"
             :disabled="!openConditionEnabled || viewMode"
             clearable
-            maxlength="256"
-            show-word-limit
-            placeholder="开放时必填"
-          />
+            filterable
+            style="width: 100%"
+            placeholder="向社会开放时必选"
+          >
+            <el-option v-for="o in openConditionOptions" :key="o" :label="o" :value="o" />
+          </el-select>
         </el-form-item>
         <el-form-item v-if="notOpenReasonEnabled" label="不开放理由" required>
           <el-input v-model="form.notOpenReason" type="textarea" :rows="2" placeholder="不开放时必填" />
@@ -2353,8 +2398,21 @@ onActivated(async () => {
                 </el-select>
               </template>
             </el-table-column>
-            <el-table-column label="是否展示项" width="90" align="center">
+            <el-table-column width="72" align="center">
+              <template #header><div class="col-flag-head">是否<br>展示项</div></template>
               <template #default="{ row }"><el-checkbox v-model="row.displayFlag" :disabled="viewMode" /></template>
+            </el-table-column>
+            <el-table-column width="72" align="center">
+              <template #header><div class="col-flag-head">是否<br>搜索项</div></template>
+              <template #default="{ row }"><el-checkbox v-model="row.searchFlag" :disabled="viewMode" /></template>
+            </el-table-column>
+            <el-table-column width="72" align="center">
+              <template #header><div class="col-flag-head">是否<br>统计项</div></template>
+              <template #default="{ row }"><el-checkbox v-model="row.statFlag" :disabled="viewMode" /></template>
+            </el-table-column>
+            <el-table-column width="72" align="center">
+              <template #header><div class="col-flag-head">是否<br>排序项</div></template>
+              <template #default="{ row }"><el-checkbox v-model="row.sortFlag" :disabled="viewMode" /></template>
             </el-table-column>
           </el-table>
         </template>
@@ -2868,6 +2926,15 @@ onActivated(async () => {
         <el-form-item label="是否展示项">
           <el-switch v-model="batchColumnForm.displayFlag" />
         </el-form-item>
+        <el-form-item label="是否搜索项">
+          <el-switch v-model="batchColumnForm.searchFlag" />
+        </el-form-item>
+        <el-form-item label="是否统计项">
+          <el-switch v-model="batchColumnForm.statFlag" />
+        </el-form-item>
+        <el-form-item label="是否排序项">
+          <el-switch v-model="batchColumnForm.sortFlag" />
+        </el-form-item>
       </el-form>
       <template #footer>
         <el-button @click="batchColumnVisible = false">取消</el-button>
@@ -2927,6 +2994,11 @@ onActivated(async () => {
   font-size: 14px;
   font-weight: 600;
   margin-bottom: 8px;
+}
+.col-flag-head {
+  line-height: 1.25;
+  font-size: 12px;
+  white-space: normal;
 }
 .hint {
   font-size: 12px;

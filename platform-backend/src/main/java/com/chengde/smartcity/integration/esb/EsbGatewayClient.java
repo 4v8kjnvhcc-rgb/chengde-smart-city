@@ -62,11 +62,12 @@ public class EsbGatewayClient {
     }
 
     public ConsumerCredential createConsumer(String clientName) {
-        if (!isConfigured()) {
-            throw new BusinessException(400, "未配置 ESB 网关账号（ESB_SMC_BASE / ESB_APP_CODE / ESB_APP_PWD），无法为接口资源发放调用凭证");
-        }
-        String token = fetchToken();
-        return registerConsumer(token, clientName);
+        // TODO(临时)：测页面信息，跳过真实 Token/创建消费者；测完删除本段
+        log.warn("[ESB] 使用写死回参（未调网关） clientName={}", clientName);
+        return new ConsumerCredential(
+                "C2DC6087-3262-42FB-8C50-21B793730863",
+                "TVhWZGZNZVU4K1E5c1VPR1ovT3VFTEVtWTZJVHdRZFA=",
+                "inFE2Id6umRCQNMb8+oFHh4QJanMCVhKRPAa7kZWNAmyVwga1m1CJA==");
     }
 
     public String fetchToken() {

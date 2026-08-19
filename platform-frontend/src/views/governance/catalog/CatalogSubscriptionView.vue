@@ -120,6 +120,11 @@ function shareLabel(mode?: string) {
   return SHARE_ZH[mode] || statusLabel(mode)
 }
 
+function showApiCredential(row: SubRow | null) {
+  const m = String(row?.shareMode || row?.resourceType || '').toUpperCase()
+  return m === 'API' || m === 'TABLE' || m === 'DATABASE' || m === 'DB_SYNC' || m === 'DB'
+}
+
 function parsePayload(row: SubRow | null): Record<string, unknown> {
   if (!row?.applyPayload) return {}
   const p = row.applyPayload
@@ -130,6 +135,21 @@ function parsePayload(row: SubRow | null): Record<string, unknown> {
     return {}
   }
 }
+
+const detailPayload = computed(() => parsePayload(subDetail.row))
+const detailInputParams = computed(() =>
+  Array.isArray(detailPayload.value.inputParams)
+    ? (detailPayload.value.inputParams as Record<string, unknown>[])
+    : [],
+)
+const detailOutputParams = computed(() =>
+  Array.isArray(detailPayload.value.outputParams)
+    ? (detailPayload.value.outputParams as Record<string, unknown>[])
+    : [],
+)
+const detailHasParams = computed(() =>
+  Array.isArray(detailPayload.value.inputParams) || Array.isArray(detailPayload.value.outputParams),
+)
 
 function payloadVal(obj: Record<string, unknown>, key: string) {
   const v = obj[key]
@@ -245,12 +265,12 @@ async function approve(row: SubRow) {
     return
   }
   try {
-    await api.post(`/governance/catalog/subscriptions/${row.id}/approve`, {
+    const res = await api.post(`/governance/catalog/subscriptions/${row.id}/approve`, {
       comment: reviewForm.note.trim() || '同意',
       reviewerName: reviewForm.reviewerName.trim(),
       reviewerContact: reviewForm.reviewerContact.trim(),
     }, { timeout: 45_000 })
-    ElMessage.success('已通过')
+    ElMessage.success(res.data?.oauthClientId ? '已通过，已发放接口调用凭证' : '已通过')
     subDetail.visible = false
     await Promise.all([loadPending(), loadReviewed()])
   } catch (e: unknown) {
@@ -631,9 +651,39 @@ onActivated(() => {
             <el-descriptions-item label="申请依据">{{ payloadVal(parsePayload(subDetail.row), 'applyBasis') || '—' }}</el-descriptions-item>
             <el-descriptions-item label="其他技术需求">{{ payloadVal(parsePayload(subDetail.row), 'techReq') || '—' }}</el-descriptions-item>
           </el-descriptions>
+          <template v-if="detailHasParams">
+            <div class="detail-section-title">入参</div>
+            <el-table
+              :data="detailInputParams"
+              size="small"
+              stripe
+              border
+              empty-text="编目未勾选搜索项"
+              class="detail-table"
+            >
+              <el-table-column prop="name" label="字段名称" min-width="120" />
+              <el-table-column prop="comment" label="中文名称" min-width="120" />
+              <el-table-column prop="type" label="字段类型" width="110" />
+              <el-table-column prop="length" label="字段长度" width="90" />
+            </el-table>
+            <div class="detail-section-title">出参</div>
+            <el-table
+              :data="detailOutputParams"
+              size="small"
+              stripe
+              border
+              empty-text="无"
+              class="detail-table"
+            >
+              <el-table-column prop="name" label="字段名称" min-width="120" />
+              <el-table-column prop="comment" label="中文名称" min-width="120" />
+              <el-table-column prop="type" label="字段类型" width="110" />
+              <el-table-column prop="length" label="字段长度" width="90" />
+            </el-table>
+          </template>
         </section>
 
-        <section v-if="subDetail.row.shareMode === 'API'" class="detail-block">
+        <section v-if="showApiCredential(subDetail.row)" class="detail-block">
           <h4>接口信息</h4>
           <el-descriptions :column="1" border size="small">
             <el-descriptions-item label="应用系统名称">{{ payloadVal(parsePayload(subDetail.row), 'systemName') || '—' }}</el-descriptions-item>
@@ -763,6 +813,15 @@ onActivated(() => {
   color: #1f2329;
   padding-left: 8px;
   border-left: 3px solid #1677ff;
+}
+.detail-section-title {
+  margin: 12px 0 8px;
+  font-size: 13px;
+  font-weight: 600;
+}
+.detail-table {
+  width: 100%;
+  margin-bottom: 8px;
 }
 .sub-detail-ops {
   margin-top: 16px;
