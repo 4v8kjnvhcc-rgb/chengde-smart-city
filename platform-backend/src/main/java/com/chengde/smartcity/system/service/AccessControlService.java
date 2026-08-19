@@ -598,6 +598,32 @@ public class AccessControlService {
         return g.getId();
     }
 
+    @SuppressWarnings("unchecked")
+    @Transactional
+    public Integer batchCreateDataGrant(UserPrincipal operator, Map<String, Object> body) {
+        List<Number> scopeIds = (List<Number>) body.get("scopeIds");
+        List<Number> granteeIds = (List<Number>) body.get("granteeIds");
+        String scopeType = str(body.get("scopeType"), "TABLE");
+        String perm = str(body.get("perm"), "READ");
+        if (scopeIds == null || scopeIds.isEmpty() || granteeIds == null || granteeIds.isEmpty()) {
+            throw new BusinessException(400, "scopeIds/granteeIds required");
+        }
+        int count = 0;
+        for (Number sid : scopeIds) {
+            for (Number gid : granteeIds) {
+                Map<String, Object> single = new java.util.HashMap<>();
+                single.put("scopeType", scopeType);
+                single.put("scopeId", sid);
+                single.put("granteeType", "USER");
+                single.put("granteeId", gid);
+                single.put("perm", perm);
+                createDataGrant(operator, single);
+                count++;
+            }
+        }
+        return count;
+    }
+
     @Transactional
     public void deleteDataGrant(UserPrincipal operator, Long id) {
         assertCanGrantResourceOrData(operator);

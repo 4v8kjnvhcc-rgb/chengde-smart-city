@@ -9,8 +9,9 @@ import { statusLabel, statusTagType } from '@/utils/status-label'
 import { formatDateTime } from '@/utils/datetime'
 import { useAuthStore } from '@/stores/auth'
 
-const props = withDefaults(defineProps<{ catalogOrigin?: 'INGEST' | 'GOVERNANCE' }>(), {
+const props = withDefaults(defineProps<{ catalogOrigin?: 'INGEST' | 'GOVERNANCE'; embedded?: boolean }>(), {
   catalogOrigin: 'GOVERNANCE',
+  embedded: false,
 })
 
 const route = useRoute()
@@ -620,7 +621,7 @@ onActivated(() => {
 
 <template>
   <div class="approval-page">
-    <PageCard :title="pageTitle">
+    <component :is="embedded ? 'div' : PageCard" :title="embedded ? undefined : pageTitle">
       <el-tabs
         v-if="showCategoryScope"
         v-model="activeScope"
@@ -711,7 +712,7 @@ onActivated(() => {
         v-model:page-size="pageSize"
         :total="rows.length"
       />
-    </PageCard>
+    </component>
 
     <!-- 查看：目录基本信息 + 审批流程；审核入口在详情内再点「审核」 -->
     <el-drawer

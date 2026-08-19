@@ -291,16 +291,16 @@ function modelRowClassName({ row }: { row: AnalysisModel }) {
 
 const ZONE_DEFS: Record<string, ZoneDef[]> = {
   population: [
-    { key: 'zone.collect', zoneCode: 'collect', label: '人口数据采集区设计', mCodes: ['M152'], deepLink: '/exchange/ingestion', deepLabel: '打开数据归集' },
-    { key: 'zone.govern', zoneCode: 'govern', label: '人口数据治理及反馈区设计', mCodes: ['M153', 'M155', 'M156'], deepLink: '/governance', deepLabel: '打开数据治理' },
-    { key: 'zone.core', zoneCode: 'core', label: '人口核心数据区设计', mCodes: ['M157'], deepLink: '/resource-center', deepLabel: '打开资源中心' },
+    { key: 'zone.collect', zoneCode: 'collect', label: '人口数据采集区设计', mCodes: ['M152'], deepLink: '/exchange/ingestion?system=collect&module=ingest.structured&section=structured-table', deepLabel: '打开数据归集' },
+    { key: 'zone.govern', zoneCode: 'govern', label: '人口数据治理及反馈区设计', mCodes: ['M153', 'M155', 'M156'], deepLink: '/governance?tab=etl&etlSub=task-mgmt', deepLabel: '打开数据治理' },
+    { key: 'zone.core', zoneCode: 'core', label: '人口核心数据区设计', mCodes: ['M157'], deepLink: '/governance?tab=model&mSub=clean', deepLabel: '打开数据融合' },
     { key: 'zone.internal', zoneCode: 'internal', label: '人口数据内部服务区设计', mCodes: ['M158'], deepLink: '/exchange/ingestion?system=register&module=m048', deepLabel: '打开访问控制' },
     { key: 'zone.share', zoneCode: 'share', label: '人口数据共享服务区设计', mCodes: ['M154', 'M159', 'M160', 'M161', 'M162', 'M163', 'M164', 'M165', 'M166', 'M167', 'M168', 'M169', 'M170', 'M171', 'M172', 'M173', 'M174'], deepLink: '/catalog', deepLabel: '打开资源目录' },
   ],
   legal: [
-    { key: 'zone.collect', zoneCode: 'collect', label: '法人数据采集区设计', mCodes: ['M175'], deepLink: '/exchange/ingestion', deepLabel: '打开数据归集' },
-    { key: 'zone.govern', zoneCode: 'govern', label: '法人数据治理及反馈区设计', mCodes: ['M176', 'M178', 'M179'], deepLink: '/governance', deepLabel: '打开数据治理' },
-    { key: 'zone.core', zoneCode: 'core', label: '法人核心数据区设计', mCodes: ['M180'], deepLink: '/resource-center', deepLabel: '打开资源中心' },
+    { key: 'zone.collect', zoneCode: 'collect', label: '法人数据采集区设计', mCodes: ['M175'], deepLink: '/exchange/ingestion?system=collect&module=ingest.structured&section=structured-table', deepLabel: '打开数据归集' },
+    { key: 'zone.govern', zoneCode: 'govern', label: '法人数据治理及反馈区设计', mCodes: ['M176', 'M178', 'M179'], deepLink: '/governance?tab=etl&etlSub=task-mgmt', deepLabel: '打开数据治理' },
+    { key: 'zone.core', zoneCode: 'core', label: '法人核心数据区设计', mCodes: ['M180'], deepLink: '/governance?tab=model&mSub=clean', deepLabel: '打开数据融合' },
     { key: 'zone.internal', zoneCode: 'internal', label: '法人数据内部服务区设计', mCodes: ['M181'], deepLink: '/resource-center', deepLabel: '打开资源中心' },
     { key: 'zone.share', zoneCode: 'share', label: '法人数据共享服务区设计', mCodes: ['M177', 'M182', 'M183', 'M184', 'M185', 'M186', 'M187', 'M188', 'M189', 'M190', 'M191', 'M192', 'M193', 'M194', 'M195', 'M196', 'M197'], deepLink: '/catalog', deepLabel: '打开资源目录' },
   ],
@@ -421,7 +421,7 @@ const odsTableKeyword = ref('')
 const odsTablesAll = ref<OdsTableRow[]>([])
 const odsTablePage = ref(1)
 const odsTablePageSize = ref(10)
-const selectedOdsTable = ref<OdsTableRow | null>(null)
+const selectedOdsTables = ref<OdsTableRow[]>([])
 const docKeyword = ref('')
 const docCategoryCode = ref('')
 const docPublishStatus = ref('')
@@ -470,10 +470,16 @@ const channelsPaged = computed(() => {
   return channelsFiltered.value.slice(start, start + channelPageSize.value)
 })
 const canConfirmCollectBind = computed(() => {
-  if (bindAccessMode.value === 'STRUCT') return !!selectedOdsTable.value
+  if (bindAccessMode.value === 'STRUCT') return selectedOdsTables.value.length > 0
   if (bindAccessMode.value === 'UNSTRUCT') return !!selectedDoc.value
   if (bindAccessMode.value === 'API' || bindAccessMode.value === 'CDC') return !!selectedChannel.value
   return false
+})
+const collectBindConfirmLabel = computed(() => {
+  if (bindAccessMode.value === 'STRUCT' && selectedOdsTables.value.length > 1) {
+    return `确认挂载（${selectedOdsTables.value.length}）`
+  }
+  return '确认挂载'
 })
 
 const modelDrawer = ref(false)
@@ -912,7 +918,7 @@ function resetCollectWizard() {
   odsTableKeyword.value = ''
   odsTablesAll.value = []
   odsTablePage.value = 1
-  selectedOdsTable.value = null
+  selectedOdsTables.value = []
   docKeyword.value = ''
   docCategoryCode.value = ''
   docPublishStatus.value = ''
@@ -965,8 +971,12 @@ async function loadOdsSources() {
   }
 }
 
+function onOdsTableSelectionChange(rows: OdsTableRow[]) {
+  selectedOdsTables.value = rows || []
+}
+
 async function loadOdsTables() {
-  selectedOdsTable.value = null
+  selectedOdsTables.value = []
   odsTablesAll.value = []
   odsTablePage.value = 1
   const id = odsSourceId.value
@@ -1099,7 +1109,7 @@ async function bindWizardNext() {
 
 function bindWizardPrev() {
   if (bindStep.value === 3) {
-    selectedOdsTable.value = null
+    selectedOdsTables.value = []
     selectedDoc.value = null
     selectedChannel.value = null
     bindStep.value = 2
@@ -1137,21 +1147,50 @@ async function confirmBind() {
 
 async function confirmCollectBind() {
   if (!activeZone.value || !bindDimGroup.value || !bindAccessMode.value) return
-  let body: Record<string, unknown> | null = null
-  if (bindAccessMode.value === 'STRUCT' && selectedOdsTable.value) {
-    const t = selectedOdsTable.value
-    const sid = odsSourceId.value
-    body = {
-      assetType: 'METADATA',
-      assetRef: `MDS_${sid}_${t.tableName}`,
-      assetName: t.tableName,
-      physicalTable: t.tableName,
-      metaEntryCode: sid != null ? `MDS_${sid}` : undefined,
-      dataLayer: inferBindDataLayer(t.tableName),
-      dimGroup: 'DATATYPE',
-      accessMode: 'STRUCT',
+  const zoneCode = activeZone.value.zoneCode
+  const bindUrl = `/analytics/domain/${meta.value.domain}/zones/${zoneCode}/bindings`
+
+  if (bindAccessMode.value === 'STRUCT') {
+    const tables = selectedOdsTables.value
+    if (!tables.length) {
+      ElMessage.warning('请勾选要挂载的表')
+      return
     }
-  } else if (bindAccessMode.value === 'UNSTRUCT' && selectedDoc.value) {
+    const sid = odsSourceId.value
+    let ok = 0
+    let fail = 0
+    for (const t of tables) {
+      try {
+        await api.post(bindUrl, {
+          assetType: 'METADATA',
+          assetRef: `MDS_${sid}_${t.tableName}`,
+          assetName: t.tableName,
+          physicalTable: t.tableName,
+          metaEntryCode: sid != null ? `MDS_${sid}` : undefined,
+          dataLayer: inferBindDataLayer(t.tableName),
+          dimGroup: 'DATATYPE',
+          accessMode: 'STRUCT',
+        })
+        ok += 1
+      } catch {
+        fail += 1
+      }
+    }
+    if (ok > 0 && fail === 0) {
+      ElMessage.success(ok === 1 ? '已挂载' : `已批量挂载 ${ok} 张表`)
+    } else if (ok > 0) {
+      ElMessage.warning(`成功挂载 ${ok} 张，失败 ${fail} 张`)
+    } else {
+      ElMessage.error('批量挂载失败')
+      return
+    }
+    bindDialog.value = false
+    await loadBindings(true)
+    return
+  }
+
+  let body: Record<string, unknown> | null = null
+  if (bindAccessMode.value === 'UNSTRUCT' && selectedDoc.value) {
     const d = selectedDoc.value
     body = {
       assetType: 'DOCUMENT',
@@ -1180,7 +1219,7 @@ async function confirmCollectBind() {
     ElMessage.warning('请选择要挂载的对象')
     return
   }
-  await api.post(`/analytics/domain/${meta.value.domain}/zones/${activeZone.value.zoneCode}/bindings`, body)
+  await api.post(bindUrl, body)
   ElMessage.success('已挂载')
   bindDialog.value = false
   await loadBindings(true)
@@ -2003,11 +2042,12 @@ onMounted(async () => {
               :data="odsTablesPaged"
               stripe
               size="small"
-              highlight-current-row
+              row-key="tableName"
               max-height="320"
               :empty-text="`暂无表，请先选择 ${zoneBindLayerLabel} 数据源`"
-              @current-change="(row: OdsTableRow | null) => { selectedOdsTable = row }"
+              @selection-change="onOdsTableSelectionChange"
             >
+              <el-table-column type="selection" width="48" reserve-selection />
               <el-table-column prop="tableName" label="表名" min-width="160" />
               <el-table-column prop="sourceName" label="数据源" min-width="140" show-overflow-tooltip />
               <el-table-column prop="dataLayer" label="分层" width="80" />
@@ -2157,7 +2197,7 @@ onMounted(async () => {
             :disabled="!canConfirmCollectBind"
             @click="confirmBind"
           >
-            确认挂载
+            {{ collectBindConfirmLabel }}
           </el-button>
         </template>
         <template v-else>

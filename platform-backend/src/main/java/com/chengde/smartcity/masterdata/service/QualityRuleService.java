@@ -86,27 +86,27 @@ public class QualityRuleService {
     }
 
     /**
-     * 仅在「有垃圾数据 / 排序异常」时静默修复。
-     * 故意不因「标准项被用户删除」触发，避免删完又被自动补回。
+     * 仅在标准项排序异常或有临时垃圾数据时静默修复。
+     * 用户自建规则（非标准 code）保留不动，不视为需要修复。
      */
     private boolean catalogNeedsRepair() {
         Set<String> standardCodes = standardCodeSet();
         List<GovQualityRule> all = ruleMapper.selectList(null);
         for (GovQualityRule rule : all) {
-            String code = rule.getRuleCode();
-            if (code == null || !standardCodes.contains(code) || isTempRule(rule)) {
+            if (isTempRule(rule)) {
                 return true;
             }
-            if (rule.getSortNo() == null || rule.getSortNo() <= 0) {
+            if (standardCodes.contains(rule.getRuleCode())
+                    && (rule.getSortNo() == null || rule.getSortNo() <= 0)) {
                 return true;
             }
         }
         return false;
     }
 
-    /** 清理非标准/临时规则，并修正已存在标准项的排序与文案；不补回已删除的标准项 */
+    /** 仅清理临时垃圾规则，并修正标准项的排序与文案；用户自建规则保留 */
     private void repairCatalogQuietly() {
-        purgeNonStandardRules();
+        purgeTempRulesOnly();
         Set<String> standardCodes = standardCodeSet();
         List<GovQualityRule> remain = ruleMapper.selectList(new LambdaQueryWrapper<GovQualityRule>()
                 .in(GovQualityRule::getRuleCode, standardCodes)
@@ -195,7 +195,7 @@ public class QualityRuleService {
         return result;
     }
 
-    /** 删除非标准目录项（含临时压测、旧 QR_COMPLETE_* 等），只留 11 类标准编码 */
+    /** 删除非标准目录项（含临时压测、旧 QR_COMPLETE_* 等），只留 11 类标准编码。仅 alignStandardCatalog 调用 */
     private int purgeNonStandardRules() {
         Set<String> standardCodes = standardCodeSet();
         List<GovQualityRule> all = ruleMapper.selectList(null);
@@ -211,6 +211,23 @@ public class QualityRuleService {
                     .eq(GovQualityRuleConfig::getRuleId, id));
             ruleMapper.deleteById(id);
             purged++;
+        }
+        return purged;
+    }
+
+    /** 仅删除临时/垃圾规则，保留标准项和用户自建项 */
+    private int purgeTempRulesOnly() {
+        List<GovQualityRule> all = ruleMapper.selectList(null);
+        int purged = 0;
+        for (GovQualityRule rule : all) {
+            if (isTempRule(rule)) {
+                Long id = rule.getId();
+                clearRuleReferences(id);
+                configMapper.delete(new LambdaQueryWrapper<GovQualityRuleConfig>()
+                        .eq(GovQualityRuleConfig::getRuleId, id));
+                ruleMapper.deleteById(id);
+                purged++;
+            }
         }
         return purged;
     }

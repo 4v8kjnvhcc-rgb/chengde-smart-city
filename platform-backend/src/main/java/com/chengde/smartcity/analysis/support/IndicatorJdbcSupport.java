@@ -15,6 +15,7 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 import java.util.regex.Pattern;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -26,7 +27,7 @@ import org.springframework.stereotype.Component;
  *   <li>库：指标域新增/保存时 {@code CREATE DATABASE IF NOT EXISTS}；任务执行时再幂等校验</li>
  *   <li>表：已存在则跳过建表，仅 {@code ADD COLUMN} 补缺字段；去掉历史多余列 task_id / trigger_type</li>
  *   <li>落数：仅指标任务执行（手动执行或发布后的调度）写入；保存/预览不落结果表</li>
- *   <li>主表只保留本批；若主表已有数据，先追加进 {@code {table}_history}（保留原 calc_at），再写入本批</li>
+ *   <li>主表只保留本批；若主表已有数据，先追加进 {@code {table}_history}（保留原 update_time），再写入本批</li>
  * </ul>
  */
 @Component
@@ -34,6 +35,8 @@ public class IndicatorJdbcSupport {
 
     private static final Logger log = LoggerFactory.getLogger(IndicatorJdbcSupport.class);
     private static final Pattern SAFE_IDENT = Pattern.compile("^[a-z][a-z0-9_]{0,63}$");
+    private static final String UPDATE_TIME_COL = "update_time";
+    private static final String LEGACY_CALC_AT = "calc_at";
 
     private final IndicatorDatabaseProperties props;
 
@@ -92,7 +95,8 @@ public class IndicatorJdbcSupport {
 
     /**
      * 增量就绪结果表：库/表已存在则跳过重建，仅补新增业务字段列。
-     * 固定列：id / calc_at。
+     * 固定列：{@code id}（首列）与 {@code update_time}（末列，注释：更新时间）。
+     * 业务列：{@code ind_} + 查询结果英文字段；COMMENT=中文指标名称；类型/长度与字段映射一致。
      */
     public void ensureResultTable(String database, String tableName, List<IndField> indicators) {
         String db = sanitizeDbName(database);
@@ -113,11 +117,25 @@ public class IndicatorJdbcSupport {
             int added = 0;
             for (Map.Entry<String, String> e : cols.entrySet()) {
                 if (!columnExists(conn, db, table, e.getKey())) {
-                    st.execute("ALTER TABLE `" + table + "` ADD COLUMN `" + e.getKey() + "` " + e.getValue() + " NULL");
+                    // 业务列插在 update_time / calc_at 之前，保持更新时间在末列
+                    StringBuilder ddl = new StringBuilder();
+                    ddl.append("ALTER TABLE `").append(table).append("` ADD COLUMN `")
+                            .append(e.getKey()).append("` ").append(e.getValue()).append(" NULL");
+                    String afterCol = null;
+                    if (columnExists(conn, db, table, UPDATE_TIME_COL)) {
+                        afterCol = lastColumnName(conn, db, table, Set.of(UPDATE_TIME_COL));
+                    } else if (columnExists(conn, db, table, LEGACY_CALC_AT)) {
+                        afterCol = lastColumnName(conn, db, table, Set.of(LEGACY_CALC_AT));
+                    }
+                    if (afterCol != null && !afterCol.isBlank()) {
+                        ddl.append(" AFTER `").append(afterCol).append('`');
+                    }
+                    st.execute(ddl.toString());
                     added++;
                     log.info("指标结果表补列 db={} table={} col={}", db, table, e.getKey());
                 }
             }
+            ensureUpdateTimeColumn(conn, st, db, table);
             if (added == 0 && exists) {
                 log.debug("指标结果表字段无增量 db={} table={}", db, table);
             }
@@ -135,22 +153,73 @@ public class IndicatorJdbcSupport {
         }
     }
 
+    /**
+     * 将历史 {@code calc_at} 迁移为末列 {@code update_time}（注释：更新时间）；新建表已符合则仅校正位置/索引。
+     */
+    private void ensureUpdateTimeColumn(Connection conn, Statement st, String db, String table) throws SQLException {
+        boolean hasCalc = columnExists(conn, db, table, LEGACY_CALC_AT);
+        boolean hasUpdate = columnExists(conn, db, table, UPDATE_TIME_COL);
+
+        if (hasCalc && !hasUpdate) {
+            String after = lastColumnName(conn, db, table, Set.of(LEGACY_CALC_AT));
+            StringBuilder sql = new StringBuilder();
+            sql.append("ALTER TABLE `").append(table)
+                    .append("` CHANGE COLUMN `").append(LEGACY_CALC_AT).append("` `").append(UPDATE_TIME_COL)
+                    .append("` DATETIME NOT NULL COMMENT '更新时间'");
+            if (after != null && !after.isBlank()) {
+                sql.append(" AFTER `").append(after).append('`');
+            }
+            st.execute(sql.toString());
+            log.info("指标结果表列迁移 db={} table={} {}→{}", db, table, LEGACY_CALC_AT, UPDATE_TIME_COL);
+            hasUpdate = true;
+            hasCalc = false;
+        } else if (!hasUpdate) {
+            st.execute("ALTER TABLE `" + table + "` ADD COLUMN `" + UPDATE_TIME_COL
+                    + "` DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP COMMENT '更新时间'");
+            log.info("指标结果表补列 db={} table={} col={}", db, table, UPDATE_TIME_COL);
+            hasUpdate = true;
+        }
+
+        if (hasCalc && hasUpdate) {
+            st.execute("UPDATE `" + table + "` SET `" + UPDATE_TIME_COL + "` = COALESCE(`"
+                    + UPDATE_TIME_COL + "`, `" + LEGACY_CALC_AT + "`)");
+            st.execute("ALTER TABLE `" + table + "` DROP COLUMN `" + LEGACY_CALC_AT + "`");
+            log.info("指标结果表删除遗留列 db={} table={} col={}", db, table, LEGACY_CALC_AT);
+        }
+
+        if (hasUpdate) {
+            String after = lastColumnName(conn, db, table, Set.of(UPDATE_TIME_COL));
+            StringBuilder mod = new StringBuilder();
+            mod.append("ALTER TABLE `").append(table).append("` MODIFY COLUMN `").append(UPDATE_TIME_COL)
+                    .append("` DATETIME NOT NULL COMMENT '更新时间'");
+            if (after != null && !after.isBlank()) {
+                mod.append(" AFTER `").append(after).append('`');
+            }
+            st.execute(mod.toString());
+        }
+
+        dropIndexIfExists(conn, st, db, table, "idx_calc_at");
+        if (hasUpdate && !indexExists(conn, db, table, "idx_update_time")) {
+            st.execute("ALTER TABLE `" + table + "` ADD INDEX `idx_update_time` (`" + UPDATE_TIME_COL + "`)");
+        }
+    }
+
     private String buildCreateTableDdl(String table, LinkedHashMap<String, String> cols) {
         StringBuilder ddl = new StringBuilder();
         ddl.append("CREATE TABLE IF NOT EXISTS `").append(table).append("` (");
         ddl.append("`id` BIGINT NOT NULL AUTO_INCREMENT,");
-        ddl.append("`calc_at` DATETIME NOT NULL,");
         for (Map.Entry<String, String> e : cols.entrySet()) {
             ddl.append("`").append(e.getKey()).append("` ").append(e.getValue()).append(" NULL,");
         }
-        ddl.append("PRIMARY KEY (`id`), KEY `idx_calc_at` (`calc_at`)");
+        ddl.append("`").append(UPDATE_TIME_COL).append("` DATETIME NOT NULL COMMENT '更新时间',");
+        ddl.append("PRIMARY KEY (`id`), KEY `idx_update_time` (`").append(UPDATE_TIME_COL).append("`)");
         ddl.append(") ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_general_ci");
         return ddl.toString();
     }
 
     /**
      * 任务执行写入查询结果：主表只留本批。
-     * 主表已有行时先 {@code INSERT…SELECT} 追加到 {@code {table}_history}（保留原 calc_at），再删除主表旧行后插入本批。
+     * 主表已有行时先 {@code INSERT…SELECT} 追加到 {@code {table}_history}（保留原 update_time），再删除主表旧行后插入本批。
      * 主表为空（首次落数）只写主表，不建空历史表。
      * 预览/保存不得调用本方法。
      *
@@ -164,13 +233,9 @@ public class IndicatorJdbcSupport {
         if (indicators != null) {
             for (IndField ind : indicators) {
                 if (ind == null) continue;
-                String name = ind.getFieldName();
-                if (name == null || name.isBlank()) {
-                    name = ind.getResultField();
-                }
-                if (name == null || name.isBlank()) continue;
-                String col = sanitizeColumn(name);
-                if ("id".equals(col) || "calc_at".equals(col) || "task_id".equals(col) || "trigger_type".equals(col)) {
+                String col = resolveResultColumn(ind);
+                if (col == null || col.isBlank()) continue;
+                if (isReservedResultColumn(col)) {
                     continue;
                 }
                 colToInd.putIfAbsent(col, ind);
@@ -244,8 +309,8 @@ public class IndicatorJdbcSupport {
             return 0;
         }
         List<String> cols = new ArrayList<>();
-        cols.add("calc_at");
         cols.addAll(colToInd.keySet());
+        cols.add(UPDATE_TIME_COL);
         StringBuilder sql = new StringBuilder("INSERT INTO `").append(table).append("` (");
         for (int i = 0; i < cols.size(); i++) {
             if (i > 0) sql.append(',');
@@ -261,12 +326,12 @@ public class IndicatorJdbcSupport {
         try (PreparedStatement ps = conn.prepareStatement(sql.toString())) {
             int batch = 0;
             for (Map<String, Object> row : sourceRows) {
-                ps.setTimestamp(1, now);
-                int idx = 2;
+                int idx = 1;
                 for (Map.Entry<String, IndField> e : colToInd.entrySet()) {
                     IndField ind = e.getValue();
                     ps.setObject(idx++, pickValue(row, ind.getResultField(), ind.getFieldName()));
                 }
+                ps.setTimestamp(idx, now);
                 ps.addBatch();
                 batch++;
                 written++;
@@ -289,7 +354,7 @@ public class IndicatorJdbcSupport {
         }
     }
 
-    /** {@code ind_xxx} → {@code ind_xxx_history}，批次用已有 calc_at 区分。 */
+    /** {@code ind_xxx} → {@code ind_xxx_history}，批次用已有 update_time 区分。 */
     static String historyTableName(String table) {
         String hist = table + "_history";
         if (hist.length() > 64 || !SAFE_IDENT.matcher(hist).matches()) {
@@ -304,8 +369,12 @@ public class IndicatorJdbcSupport {
                 st.execute("CREATE TABLE `" + history + "` LIKE `" + table + "`");
                 log.info("指标历史表新建 db={} table={} like={}", db, history, table);
             }
+            ensureUpdateTimeColumn(conn, st, db, history);
         }
         alignHistoryColumns(conn, db, table, history);
+        try (Statement st = conn.createStatement()) {
+            ensureUpdateTimeColumn(conn, st, db, history);
+        }
     }
 
     private void alignHistoryColumns(Connection conn, String db, String table, String history) throws SQLException {
@@ -427,6 +496,34 @@ public class IndicatorJdbcSupport {
         return n;
     }
 
+    /**
+     * 结果表业务列名：{@code ind_} + 查询结果英文字段（resultField）。
+     * 若 fieldName 已是合法 ind_ 前缀则优先采用（与字段映射列表一致）。
+     */
+    static String resolveResultColumn(IndField ind) {
+        if (ind == null) return null;
+        String fn = ind.getFieldName();
+        if (fn != null && !fn.isBlank()) {
+            String col = sanitizeColumn(fn);
+            if (col.startsWith("ind_")) return col;
+        }
+        String rf = ind.getResultField();
+        if (rf == null || rf.isBlank()) return null;
+        String base = sanitizeColumn(rf);
+        if (base.startsWith("ind_")) return base;
+        String col = "ind_" + base;
+        return col.length() > 64 ? col.substring(0, 64) : col;
+    }
+
+    private static String escapeMysqlComment(String raw) {
+        if (raw == null || raw.isBlank()) return "";
+        return raw.replace("\\", "\\\\").replace("'", "''");
+    }
+
+    /**
+     * 列定义：类型/长度来自字段映射，COMMENT 为中文指标名称。
+     * value 形如 {@code VARCHAR(64) COMMENT '人口学历'}
+     */
     private LinkedHashMap<String, String> columnDefs(List<IndField> indicators) {
         LinkedHashMap<String, String> cols = new LinkedHashMap<>();
         if (indicators == null) {
@@ -434,40 +531,137 @@ public class IndicatorJdbcSupport {
         }
         for (IndField ind : indicators) {
             if (ind == null) continue;
-            String name = ind.getFieldName();
-            if (name == null || name.isBlank()) {
-                name = ind.getResultField();
-            }
-            if (name == null || name.isBlank()) continue;
-            String col = sanitizeColumn(name);
-            if ("id".equals(col) || "calc_at".equals(col) || "task_id".equals(col) || "trigger_type".equals(col)) {
+            String col = resolveResultColumn(ind);
+            if (col == null || col.isBlank()) continue;
+            if (isReservedResultColumn(col)) {
                 continue;
             }
-            cols.putIfAbsent(col, toMysqlType(ind.getFieldType(), ind.getFieldLength(), ind.getFieldPrecision()));
+            String typeSql = toMysqlType(ind.getFieldType(), ind.getFieldLength(), ind.getFieldPrecision());
+            String comment = ind.getIndicatorName();
+            if (comment == null || comment.isBlank()) {
+                comment = ind.getResultField() != null ? ind.getResultField() : col;
+            }
+            String def = typeSql + " COMMENT '" + escapeMysqlComment(comment) + "'";
+            cols.putIfAbsent(col, def);
         }
         return cols;
     }
 
+    /** 按字段映射的数据类型/长度生成 MySQL 8 类型片段（不含 COMMENT）。 */
     private static String toMysqlType(String fieldType, Integer length, Integer precision) {
-        String t = fieldType == null ? "" : fieldType.trim().toLowerCase(Locale.ROOT);
-        if (t.contains("浮点") || t.contains("小数") || t.contains("decimal") || t.contains("double") || t.contains("float")) {
-            int p = precision == null || precision <= 0 ? 4 : Math.min(precision, 10);
-            return "DECIMAL(20," + p + ")";
+        String t = fieldType == null ? "VARCHAR" : fieldType.trim().toUpperCase(Locale.ROOT);
+        int len = length == null || length <= 0 ? 64 : Math.min(Math.max(length, 1), 65535);
+        int scale = precision == null || precision < 0 ? 0 : precision;
+
+        // 兼容历史中文类型
+        if (t.contains("浮点") || t.contains("小数")) {
+            return "DECIMAL(20," + (scale <= 0 ? 4 : Math.min(scale, 10)) + ")";
         }
-        if (t.contains("整数") || t.contains("数值") || t.contains("int") || t.contains("long") || t.contains("bigint")) {
+        if (t.contains("整数") || t.contains("数值")) {
             return "BIGINT";
         }
-        if (t.contains("日期时间") || t.contains("datetime") || t.contains("timestamp")) {
+        if (t.contains("日期时间")) {
             return "DATETIME";
         }
-        if (t.contains("日期") || t.equals("date")) {
+        if ("日期".equals(t)) {
             return "DATE";
         }
-        int len = length == null || length <= 0 ? 100 : Math.min(Math.max(length, 1), 4000);
-        if (len > 1000) {
-            return "TEXT";
+
+        return switch (t) {
+            case "CHAR" -> "CHAR(" + Math.min(len, 255) + ")";
+            case "VARCHAR" -> "VARCHAR(" + Math.min(len, 16383) + ")";
+            case "TINYTEXT", "TEXT", "MEDIUMTEXT", "LONGTEXT",
+                 "TINYBLOB", "BLOB", "MEDIUMBLOB", "LONGBLOB",
+                 "JSON", "DATE", "DATETIME", "TIMESTAMP", "TIME", "YEAR" -> t;
+            case "TINYINT", "SMALLINT", "MEDIUMINT", "INT", "BIGINT" -> t;
+            case "INTEGER" -> "INT";
+            case "FLOAT", "DOUBLE" -> t;
+            case "DECIMAL", "NUMERIC" -> {
+                int p = Math.min(Math.max(len, 1), 65);
+                int s = scale <= 0 ? 2 : Math.min(scale, Math.min(30, p));
+                yield "DECIMAL(" + p + "," + s + ")";
+            }
+            case "BOOLEAN", "BOOL" -> "TINYINT(1)";
+            case "BIT" -> "BIT(" + Math.min(Math.max(len, 1), 64) + ")";
+            default -> {
+                if (t.contains("DECIMAL") || t.contains("DOUBLE") || t.contains("FLOAT")) {
+                    yield "DECIMAL(20," + (scale <= 0 ? 4 : Math.min(scale, 10)) + ")";
+                }
+                if (t.contains("INT") || t.contains("LONG") || t.contains("BIGINT")) {
+                    yield "BIGINT";
+                }
+                if (t.contains("DATETIME") || t.contains("TIMESTAMP")) {
+                    yield "DATETIME";
+                }
+                if (t.equals("DATE") || t.contains("DATE")) {
+                    yield "DATE";
+                }
+                if (len > 1000) {
+                    yield "TEXT";
+                }
+                yield "VARCHAR(" + Math.min(len, 16383) + ")";
+            }
+        };
+    }
+
+    private static boolean isReservedResultColumn(String col) {
+        String c = col == null ? "" : col.trim().toLowerCase(Locale.ROOT);
+        return "id".equals(c)
+                || UPDATE_TIME_COL.equals(c)
+                || LEGACY_CALC_AT.equals(c)
+                || "task_id".equals(c)
+                || "trigger_type".equals(c);
+    }
+
+    /** 按 ordinal 取最后一个不在 exclude 中的列名（用于 AFTER）。 */
+    private static String lastColumnName(Connection conn, String db, String table, Set<String> exclude)
+            throws SQLException {
+        String last = null;
+        try (PreparedStatement ps = conn.prepareStatement(
+                "SELECT COLUMN_NAME FROM information_schema.COLUMNS "
+                        + "WHERE TABLE_SCHEMA=? AND TABLE_NAME=? ORDER BY ORDINAL_POSITION")) {
+            ps.setString(1, db);
+            ps.setString(2, table);
+            try (ResultSet rs = ps.executeQuery()) {
+                while (rs.next()) {
+                    String col = rs.getString(1);
+                    if (col == null) continue;
+                    boolean skip = false;
+                    if (exclude != null) {
+                        for (String ex : exclude) {
+                            if (ex != null && ex.equalsIgnoreCase(col)) {
+                                skip = true;
+                                break;
+                            }
+                        }
+                    }
+                    if (!skip) {
+                        last = col;
+                    }
+                }
+            }
         }
-        return "VARCHAR(" + len + ")";
+        return last;
+    }
+
+    private static boolean indexExists(Connection conn, String db, String table, String indexName) throws SQLException {
+        try (PreparedStatement ps = conn.prepareStatement(
+                "SELECT 1 FROM information_schema.STATISTICS "
+                        + "WHERE TABLE_SCHEMA=? AND TABLE_NAME=? AND INDEX_NAME=? LIMIT 1")) {
+            ps.setString(1, db);
+            ps.setString(2, table);
+            ps.setString(3, indexName);
+            try (ResultSet rs = ps.executeQuery()) {
+                return rs.next();
+            }
+        }
+    }
+
+    private static void dropIndexIfExists(Connection conn, Statement st, String db, String table, String indexName)
+            throws SQLException {
+        if (indexExists(conn, db, table, indexName)) {
+            st.execute("ALTER TABLE `" + table + "` DROP INDEX `" + indexName + "`");
+        }
     }
 
     private static boolean columnExists(Connection conn, String db, String table, String column) throws SQLException {

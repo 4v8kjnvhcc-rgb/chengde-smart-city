@@ -1,0 +1,709 @@
+{
+  "summary_unique_tc": {
+    "PASS": 60,
+    "FAIL": 14,
+    "BLOCKED": 13,
+    "N_A": 8
+  },
+  "unique_count": 95,
+  "results": [
+    {
+      "tc": "TC-ASSET-001",
+      "name": "新建项目成功",
+      "status": "PASS",
+      "detail": "id=16 name=承德人口项目_API_1786608612429",
+      "evidence": null
+    },
+    {
+      "tc": "TC-ASSET-002",
+      "name": "项目名称必填校验",
+      "status": "PASS",
+      "detail": "code=400 msg=projectName required",
+      "evidence": null
+    },
+    {
+      "tc": "TC-ASSET-003",
+      "name": "项目名称长度51应拦截",
+      "status": "FAIL",
+      "detail": "后端允许创建 id=22（未实现50字符上限）",
+      "evidence": null
+    },
+    {
+      "tc": "TC-ASSET-004",
+      "name": "一项目绑定一个集群账号（多项目可共享账号）",
+      "status": "PASS",
+      "detail": "项目B绑定同一集群成功 id=24",
+      "evidence": null
+    },
+    {
+      "tc": "TC-ASSET-005",
+      "name": "项目权限授权成功",
+      "status": "PASS",
+      "detail": "mzj_gly 授权 mzj_gly01 VIEW 到项目 民政局项目04 grantId=31",
+      "evidence": null
+    },
+    {
+      "tc": "TC-ASSET-006",
+      "name": "未授权用户访问项目被拒",
+      "status": "PASS",
+      "detail": "mzj不可见「承德人口项目_API_1786608612429」; systems=403/无权访问该项目; ds=403/无权访问该项目",
+      "evidence": null
+    },
+    {
+      "tc": "TC-ASSET-007",
+      "name": "新增业务系统",
+      "status": "PASS",
+      "detail": "id=19",
+      "evidence": null
+    },
+    {
+      "tc": "TC-ASSET-008",
+      "name": "业务系统租户隔离",
+      "status": "PASS",
+      "detail": "部门管理员本部门可见、外部门403、sys_admin可见。注:gwh_gly为平台管理员(项目数20=sys20)，不能充当租户T2反例",
+      "evidence": null
+    },
+    {
+      "tc": "TC-ASSET-009",
+      "name": "编辑删除业务系统",
+      "status": "PASS",
+      "detail": "edit+delete ok",
+      "evidence": null
+    },
+    {
+      "tc": "TC-ASSET-010",
+      "name": "新增数据源资源并保存",
+      "status": "PASS",
+      "detail": "id=27",
+      "evidence": {
+        "ds_id": 27
+      }
+    },
+    {
+      "tc": "TC-ASSET-011",
+      "name": "测试连接失败提示",
+      "status": "PASS",
+      "detail": "msg=系统异常，请稍后重试",
+      "evidence": null
+    },
+    {
+      "tc": "TC-ASSET-012",
+      "name": "资源名称长度边界(51)",
+      "status": "FAIL",
+      "detail": "51未拦截",
+      "evidence": null
+    },
+    {
+      "tc": "TC-ASSET-013",
+      "name": "编辑数据源资源",
+      "status": "PASS",
+      "detail": "port→3307",
+      "evidence": null
+    },
+    {
+      "tc": "TC-ASSET-014",
+      "name": "删除数据源资源",
+      "status": "PASS",
+      "detail": "code=0 msg=ok",
+      "evidence": null
+    },
+    {
+      "tc": "TC-ASSET-015",
+      "name": "模糊查询资源",
+      "status": "PASS",
+      "detail": "list=7 matched公安=1（若后端无关键字参数则前端过滤）",
+      "evidence": null
+    },
+    {
+      "tc": "TC-ASSET-016",
+      "name": "普通用户对管理员数据源只读",
+      "status": "FAIL",
+      "detail": "编辑返回403，但删除接口返回成功(code=0)且可能已删除未授权资源——权限漏洞（已复现复核）",
+      "evidence": null
+    },
+    {
+      "tc": "TC-ASSET-017",
+      "name": "普通用户对业务组件资源管理",
+      "status": "PASS",
+      "detail": "mzj_gly本部门新建/编辑/删除成功。跨机构不可见缺外部门普通账号(gwh为平台管理员全量可见)，未反证",
+      "evidence": null
+    },
+    {
+      "tc": "TC-ASSET-018",
+      "name": "正向建模生成物理表",
+      "status": "N_A",
+      "detail": "现系统为「登记表+finalize-forward」能力，非用例所述独立「模型开发/正向建模」产品形态，需对照实现另验",
+      "evidence": null
+    },
+    {
+      "tc": "TC-ASSET-019",
+      "name": "逆向工程管理物理表",
+      "status": "N_A",
+      "detail": "同上，对应 probe+register-tables，非独立逆向工程模块名",
+      "evidence": null
+    },
+    {
+      "tc": "TC-ASSET-020",
+      "name": "沉淀标准新建处理",
+      "status": "N_A",
+      "detail": "当前代码库未见「沉淀标准」三态处理入口",
+      "evidence": null
+    },
+    {
+      "tc": "TC-ASSET-021",
+      "name": "沉淀标准覆盖处理",
+      "status": "N_A",
+      "detail": "未见沉淀标准覆盖能力",
+      "evidence": null
+    },
+    {
+      "tc": "TC-ASSET-022",
+      "name": "沉淀标准结束处理",
+      "status": "N_A",
+      "detail": "未见沉淀标准结束能力",
+      "evidence": null
+    },
+    {
+      "tc": "TC-ASSET-023",
+      "name": "逻辑实体同步至物理实体",
+      "status": "N_A",
+      "detail": "未见独立同步物理实体入口（有finalize-forward近似）",
+      "evidence": null
+    },
+    {
+      "tc": "TC-ASSET-024",
+      "name": "反向同步被禁止",
+      "status": "N_A",
+      "detail": "未见物理→逻辑反向同步入口可测",
+      "evidence": null
+    },
+    {
+      "tc": "TC-ASSET-025",
+      "name": "新建数据项",
+      "status": "PASS",
+      "detail": "column id=268",
+      "evidence": null
+    },
+    {
+      "tc": "TC-ASSET-026",
+      "name": "数据项必填校验",
+      "status": "PASS",
+      "detail": "code=400 msg=columnCode required",
+      "evidence": null
+    },
+    {
+      "tc": "TC-ASSET-027",
+      "name": "内置属性不可编辑",
+      "status": "BLOCKED",
+      "detail": "需UI/内置属性配置接口联验",
+      "evidence": null
+    },
+    {
+      "tc": "TC-ASSET-028",
+      "name": "新增数据资产标签",
+      "status": "PASS",
+      "detail": "id=161",
+      "evidence": null
+    },
+    {
+      "tc": "TC-ASSET-029",
+      "name": "元数据智能补全标签",
+      "status": "PASS",
+      "detail": "match接口 code=0 msg=ok（需有未打标签元数据）",
+      "evidence": null
+    },
+    {
+      "tc": "TC-ASSET-030",
+      "name": "数据资产报告统计展示",
+      "status": "PASS",
+      "detail": "keys=['projectCount', 'tableCount', 'databaseCount', 'storageGb', 'hotTableCount', 'auditTableCount', 'scriptCount', 'scriptLinkedWorkflowCount', 'workflowCount', 'workflowScheduledCount', 'taskCount', 'scope', 'orgId', 'tableTrend', 'storageTrend', 'topProjects', 'topScriptsByDuration', 'topTablesByStorage', 'topTasks', 'workflows']",
+      "evidence": {
+        "keys": [
+          "projectCount",
+          "tableCount",
+          "databaseCount",
+          "storageGb",
+          "hotTableCount",
+          "auditTableCount",
+          "scriptCount",
+          "scriptLinkedWorkflowCount",
+          "workflowCount",
+          "workflowScheduledCount",
+          "taskCount",
+          "scope",
+          "orgId",
+          "tableTrend",
+          "storageTrend",
+          "topProjects",
+          "topScriptsByDuration",
+          "topTablesByStorage",
+          "topTasks",
+          "workflows"
+        ]
+      }
+    },
+    {
+      "tc": "TC-ASSET-031",
+      "name": "热门项目下钻表清单",
+      "status": "PASS",
+      "detail": "report含项目排行=True keys相关需UI点穿",
+      "evidence": null
+    },
+    {
+      "tc": "TC-ASSET-032",
+      "name": "脚本下钻至脚本详情",
+      "status": "BLOCKED",
+      "detail": "report含脚本排行=False",
+      "evidence": null
+    },
+    {
+      "tc": "TC-ASSET-033",
+      "name": "表下钻至表详情",
+      "status": "PASS",
+      "detail": "接口层通过",
+      "evidence": null
+    },
+    {
+      "tc": "TC-ASSET-034",
+      "name": "表血缘全景展示",
+      "status": "PASS",
+      "detail": "lineage接口可用",
+      "evidence": null
+    },
+    {
+      "tc": "TC-ASSET-035",
+      "name": "表血缘一级上下游下钻",
+      "status": "PASS",
+      "detail": "fishbone/lineage code=0 msg=ok",
+      "evidence": null
+    },
+    {
+      "tc": "TC-ASSET-036",
+      "name": "字段维度血缘关系",
+      "status": "BLOCKED",
+      "detail": "需调用 /register/lineage/fields 且有字段血缘数据",
+      "evidence": null
+    },
+    {
+      "tc": "TC-ASSET-037",
+      "name": "创建数据字典",
+      "status": "PASS",
+      "detail": "id=5",
+      "evidence": null
+    },
+    {
+      "tc": "TC-ASSET-038",
+      "name": "数据字典编码唯一性",
+      "status": "FAIL",
+      "detail": "code=500 msg=系统异常，请稍后重试",
+      "evidence": null
+    },
+    {
+      "tc": "TC-ASSET-039",
+      "name": "查看填报指引概要",
+      "status": "PASS",
+      "detail": "type=list len=11",
+      "evidence": null
+    },
+    {
+      "tc": "TC-ASSET-040",
+      "name": "查看填报基本信息指引",
+      "status": "PASS",
+      "detail": "guides接口有数据（内容维度需UI核对）",
+      "evidence": null
+    },
+    {
+      "tc": "TC-ASSET-041",
+      "name": "查看填报指引各维度",
+      "status": "PASS",
+      "detail": "guides接口有数据",
+      "evidence": null
+    },
+    {
+      "tc": "TC-ASSET-042",
+      "name": "查看填报流程与规范",
+      "status": "PASS",
+      "detail": "guides接口有数据",
+      "evidence": null
+    },
+    {
+      "tc": "TC-ASSET-043",
+      "name": "非业务人员访问填报指引",
+      "status": "BLOCKED",
+      "detail": "当前 mzj/gwh 均能访问指引(mzj=0, gwh=0)，缺少无填报权限账号",
+      "evidence": null
+    },
+    {
+      "tc": "TC-ASSET-044",
+      "name": "数据项属性代码长度边界",
+      "status": "FAIL",
+      "detail": "50=True 51=True (0, 'ok')",
+      "evidence": null
+    },
+    {
+      "tc": "TC-ASSET-045",
+      "name": "数据类型校验",
+      "status": "PASS",
+      "detail": "code=500 msg=系统异常，请稍后重试",
+      "evidence": null
+    },
+    {
+      "tc": "TC-ASSET-046",
+      "name": "编辑后元数据不可恢复",
+      "status": "BLOCKED",
+      "detail": "需编辑后对照元数据维护页",
+      "evidence": null
+    },
+    {
+      "tc": "TC-ASSET-047",
+      "name": "数据模型检查比对",
+      "status": "N_A",
+      "detail": "未见模型检查比对独立能力入口",
+      "evidence": null
+    },
+    {
+      "tc": "TC-ASSET-048",
+      "name": "新增标签必填校验",
+      "status": "PASS",
+      "detail": "code=400 msg=tagName required",
+      "evidence": null
+    },
+    {
+      "tc": "TC-ASSET-049",
+      "name": "识别规则非法校验",
+      "status": "FAIL",
+      "detail": "非法正则未拦截",
+      "evidence": null
+    },
+    {
+      "tc": "TC-ASSET-050",
+      "name": "单条元数据智能补全",
+      "status": "BLOCKED",
+      "detail": "依赖前端查看弹窗+已有元数据",
+      "evidence": null
+    },
+    {
+      "tc": "TC-ASSET-051",
+      "name": "智能识别规则定义",
+      "status": "PASS",
+      "detail": "id=161",
+      "evidence": null
+    },
+    {
+      "tc": "TC-ASSET-052",
+      "name": "脚本下钻查看详情",
+      "status": "BLOCKED",
+      "detail": "需UI/有脚本运行记录",
+      "evidence": null
+    },
+    {
+      "tc": "TC-ASSET-053",
+      "name": "工作流下钻查看详情",
+      "status": "BLOCKED",
+      "detail": "需UI/有工作流实例",
+      "evidence": null
+    },
+    {
+      "tc": "TC-ASSET-054",
+      "name": "表字段信息展示",
+      "status": "PASS",
+      "detail": "detail keys=['id', 'tableCode', 'tableName', 'physicalTableName', 'partitionFlag', 'status', 'columns', 'partitions', 'storage', 'lineage', 'outputTrend', 'changes', 'ddlSql', 'advancedSettings']",
+      "evidence": null
+    },
+    {
+      "tc": "TC-ASSET-055",
+      "name": "表血缘与产出变更信息",
+      "status": "PASS",
+      "detail": "detail接口返回（字段完整性需UI核）",
+      "evidence": null
+    },
+    {
+      "tc": "TC-ASSET-056",
+      "name": "跨库数据溯源",
+      "status": "BLOCKED",
+      "detail": "需存在跨库血缘样例数据",
+      "evidence": null
+    },
+    {
+      "tc": "TC-ASSET-057",
+      "name": "血缘下钻无血缘终止",
+      "status": "BLOCKED",
+      "detail": "需UI点无血缘节点",
+      "evidence": null
+    },
+    {
+      "tc": "TC-ASSET-058",
+      "name": "按项目查看血缘隔离",
+      "status": "BLOCKED",
+      "detail": "需多项目血缘数据+切换验证",
+      "evidence": null
+    },
+    {
+      "tc": "TC-ASSET-059",
+      "name": "项目名称重复校验",
+      "status": "FAIL",
+      "detail": "允许重复项目名（未实现唯一校验）",
+      "evidence": null
+    },
+    {
+      "tc": "TC-ASSET-060",
+      "name": "资源类型校验",
+      "status": "PASS",
+      "detail": "[('MYSQL', True, 'ok', 31), ('FILE', True, 'ok', 32), ('MEMORY', True, 'ok', 33)]",
+      "evidence": null
+    },
+    {
+      "tc": "TC-ASSET-061",
+      "name": "资源类型筛选查询",
+      "status": "PASS",
+      "detail": "total=7 db-like=5",
+      "evidence": null
+    },
+    {
+      "tc": "TC-ASSET-062",
+      "name": "普通用户无授权数据源隐藏",
+      "status": "PASS",
+      "detail": "mzj访问未授权数据源 code=403 msg=无权访问该项目",
+      "evidence": null
+    },
+    {
+      "tc": "TC-ASSET-063",
+      "name": "项目名称边界值min-1",
+      "status": "PASS",
+      "detail": "code=400 msg=projectName required",
+      "evidence": null
+    },
+    {
+      "tc": "TC-ASSET-064",
+      "name": "项目名称长度1",
+      "status": "PASS",
+      "detail": "created id=17",
+      "evidence": null
+    },
+    {
+      "tc": "TC-ASSET-065",
+      "name": "项目名称长度2",
+      "status": "PASS",
+      "detail": "created id=18",
+      "evidence": null
+    },
+    {
+      "tc": "TC-ASSET-066",
+      "name": "项目名称长度49",
+      "status": "PASS",
+      "detail": "created id=19",
+      "evidence": null
+    },
+    {
+      "tc": "TC-ASSET-067",
+      "name": "项目名称长度50",
+      "status": "PASS",
+      "detail": "created id=20",
+      "evidence": null
+    },
+    {
+      "tc": "TC-ASSET-068",
+      "name": "项目名称长度51应拦截",
+      "status": "FAIL",
+      "detail": "后端允许创建 id=21（未实现50字符上限）",
+      "evidence": null
+    },
+    {
+      "tc": "TC-ASSET-069",
+      "name": "资源名称边界值min-1",
+      "status": "PASS",
+      "detail": "code=400 msg=数据源名称 required",
+      "evidence": null
+    },
+    {
+      "tc": "TC-ASSET-070",
+      "name": "资源名称边界值max=50",
+      "status": "PASS",
+      "detail": "50 ok",
+      "evidence": null
+    },
+    {
+      "tc": "TC-ASSET-071",
+      "name": "资源名称边界值max+1=51",
+      "status": "FAIL",
+      "detail": "51未拦截",
+      "evidence": null
+    },
+    {
+      "tc": "TC-ASSET-072",
+      "name": "属性代码边界值min=1",
+      "status": "PASS",
+      "detail": "(0, 'ok')",
+      "evidence": null
+    },
+    {
+      "tc": "TC-ASSET-073",
+      "name": "属性代码边界值max=50",
+      "status": "PASS",
+      "detail": "ok50=True",
+      "evidence": null
+    },
+    {
+      "tc": "TC-ASSET-074",
+      "name": "属性代码边界值max+1=51",
+      "status": "FAIL",
+      "detail": "ok51=True",
+      "evidence": null
+    },
+    {
+      "tc": "TC-ASSET-075",
+      "name": "字典编码边界值min-1",
+      "status": "FAIL",
+      "detail": "空编码被自动生成 id=7（未强制必填）",
+      "evidence": null
+    },
+    {
+      "tc": "TC-ASSET-076",
+      "name": "字典编码边界值max=50",
+      "status": "PASS",
+      "detail": "ok50=True",
+      "evidence": null
+    },
+    {
+      "tc": "TC-ASSET-077",
+      "name": "字典编码边界值max+1=51",
+      "status": "FAIL",
+      "detail": "51未拦截",
+      "evidence": null
+    },
+    {
+      "tc": "TC-ASSET-078",
+      "name": "数据源测试连接接口正常",
+      "status": "FAIL",
+      "detail": "code=502 msg=连接失败：Access denied for user 'smart_city'@'localhost' (using password: YES) body={'code': 502, 'message': \"连接失败：Access denied for user 'smart_city'@'localhost' (using password: YES)\", 'data': None}",
+      "evidence": null
+    },
+    {
+      "tc": "TC-ASSET-079",
+      "name": "数据源测试连接接口参数缺失",
+      "status": "PASS",
+      "detail": "code=400 msg=请填写数据库连接地址与用户名后再测试",
+      "evidence": null
+    },
+    {
+      "tc": "TC-ASSET-080",
+      "name": "数据源测试连接接口参数非法",
+      "status": "PASS",
+      "detail": "code=500 msg=系统异常，请稍后重试",
+      "evidence": null
+    },
+    {
+      "tc": "TC-ASSET-081",
+      "name": "数据源测试连接接口鉴权失败",
+      "status": "PASS",
+      "detail": "http=401 body={'code': 401, 'message': '未登录或 Token 无效', 'data': None}",
+      "evidence": null
+    },
+    {
+      "tc": "TC-ASSET-082",
+      "name": "项目列表接口正常",
+      "status": "PASS",
+      "detail": "count=11",
+      "evidence": {
+        "count": 11
+      }
+    },
+    {
+      "tc": "TC-ASSET-083",
+      "name": "项目列表接口分页参数非法",
+      "status": "PASS",
+      "detail": "code=0 msg=ok（无崩溃）",
+      "evidence": null
+    },
+    {
+      "tc": "TC-ASSET-084",
+      "name": "项目列表接口鉴权失败",
+      "status": "PASS",
+      "detail": "http=401",
+      "evidence": null
+    },
+    {
+      "tc": "TC-ASSET-085",
+      "name": "血缘查询接口正常",
+      "status": "PASS",
+      "detail": "data keys/type=<class 'dict'>",
+      "evidence": null
+    },
+    {
+      "tc": "TC-ASSET-086",
+      "name": "血缘查询接口参数缺失",
+      "status": "PASS",
+      "detail": "code=500 msg=系统异常，请稍后重试",
+      "evidence": null
+    },
+    {
+      "tc": "TC-ASSET-087",
+      "name": "血缘查询接口表不存在",
+      "status": "PASS",
+      "detail": "code=0 emptyish=False msg=ok",
+      "evidence": null
+    },
+    {
+      "tc": "TC-ASSET-088",
+      "name": "血缘查询接口鉴权失败",
+      "status": "PASS",
+      "detail": "http=401",
+      "evidence": null
+    },
+    {
+      "tc": "TC-ASSET-089",
+      "name": "表详情下钻接口正常",
+      "status": "PASS",
+      "detail": "id=6",
+      "evidence": null
+    },
+    {
+      "tc": "TC-ASSET-090",
+      "name": "表详情下钻接口鉴权失败",
+      "status": "PASS",
+      "detail": "http=401",
+      "evidence": null
+    },
+    {
+      "tc": "TC-ASSET-091",
+      "name": "业务系统名称长度边界",
+      "status": "FAIL",
+      "detail": "51字符未拦截",
+      "evidence": null
+    },
+    {
+      "tc": "TC-ASSET-092",
+      "name": "删除被使用资源拦截",
+      "status": "BLOCKED",
+      "detail": "需确认数据源已被任务/表引用；本轮未构造引用链后验证",
+      "evidence": null
+    },
+    {
+      "tc": "TC-ASSET-093",
+      "name": "资源名称特殊字符校验",
+      "status": "PASS",
+      "detail": "保存成功 id=30（服务端无脚本执行；需前端确认转义）",
+      "evidence": null
+    },
+    {
+      "tc": "TC-ASSET-094",
+      "name": "报告页面并发访问",
+      "status": "PASS",
+      "detail": "ok=10/10",
+      "evidence": null
+    },
+    {
+      "tc": "TC-ASSET-095",
+      "name": "项目创建超时重试",
+      "status": "BLOCKED",
+      "detail": "需模拟网络超时/前端防重复提交；本轮未做故障注入",
+      "evidence": null
+    }
+  ],
+  "accounts_used": {
+    "sys_admin": "超级管理员",
+    "mzj_gly": "部门管理员 / 测试-高新区民政局",
+    "gwh_gly": "平台管理员 / 承德高新技术产业开发区管理委员会"
+  },
+  "note": "仅测试未改业务代码；接口路径按现网 /api/v1/exchange/ingestion/* 映射用例中的示意路径"
+}

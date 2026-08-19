@@ -1,0 +1,26 @@
+GET (401, '未登录或 Token 无效') {'code': 401, 'message': '未登录或 Token 无效', 'data': None}
+POST (401, '未登录或 Token 无效') {'code': 401, 'message': '未登录或 Token 无效', 'data': None}
+[BLOCKED] TC-COLLECT-006: mapping-suggest 不可用或鉴权异常
+cid 5 rid 6
+bind (0, 'ok')
+publish (0, 'ok')
+[PASS] TC-COLLECT-036: bind+publish ok rid=6
+approvals 1
+[PASS] TC-COLLECT-037: (0, 'ok') aid=1
+[PASS] TC-COLLECT-039: 400/拒绝时必须填写审批意见
+[FAIL] TC-COLLECT-038: (400, '拒绝时必须填写审批意见')
+model (400, '数据源不能为空')
+[BLOCKED] TC-COLLECT-053: (400, '数据源不能为空')
+SUMMARY {'PASS': 52, 'FAIL': 9, 'BLOCKED': 3, 'N_A': 0}
+FAIL TC-COLLECT-004 接入方式必填校验 code=0/ok
+FAIL TC-COLLECT-005 源表未选择校验 code=0/ok
+BLOCKED TC-COLLECT-006 字段映射冲突处理 mapping-suggest 不可用或鉴权异常
+FAIL TC-COLLECT-007 接入任务重复校验 允许重复任务名
+FAIL TC-COLLECT-008 接入任务名称长度边界 51未拦截
+FAIL TC-COLLECT-028 未选表探查拦截 0/ok
+BLOCKED TC-COLLECT-032 无对账任务选择拦截 pipeline=0/ok; reconcile/run=(0, 'ok')
+FAIL TC-COLLECT-038 目录审批拒绝填写意见 (400, '拒绝时必须填写审批意见')
+FAIL TC-COLLECT-040 编目名称长度边界 51未拦截
+FAIL TC-COLLECT-046 规则阈值边界 101未拦截 (0, 'ok')
+FAIL TC-COLLECT-048 规则名称长度边界 51未拦截
+BLOCKED TC-COLLECT-053 质量规则权重配置 (400, '数据源不能为空')

@@ -83,13 +83,85 @@ const projectGrantForm = reactive({
   granteeId: undefined as number | undefined,
   perm: 'VIEW',
 })
-const dataGrantForm = reactive({
-  scopeType: 'TABLE',
-  scopeId: undefined as number | undefined,
-  granteeType: 'USER',
-  granteeId: undefined as number | undefined,
-  perm: 'READ',
+const dataGrantKeyword = ref('')
+const dataGrantDialogVisible = ref(false)
+const dataGrantDialogLoading = ref(false)
+const dgForm = reactive({
+  projectId: undefined as number | undefined,
+  systemId: undefined as number | undefined,
+  sourceId: undefined as number | undefined,
+  tableIds: [] as number[],
+  granteeIds: [] as number[],
 })
+const dgSystems = ref<Array<{ id: number; systemName: string }>>([])
+const dgSources = ref<Array<{ id: number; sourceName: string }>>([])
+const dgTables = ref<Array<{ id: number; tableName: string; tableCode: string }>>([])
+
+async function onDgProjectChange(projectId: number | undefined) {
+  dgForm.systemId = undefined
+  dgForm.sourceId = undefined
+  dgForm.tableIds = []
+  dgSystems.value = []
+  dgSources.value = []
+  dgTables.value = []
+  if (projectId) {
+    dgSystems.value = ((await ingestionApi.systems(projectId)).data || []) as typeof dgSystems.value
+  }
+}
+
+async function onDgSystemChange(systemId: number | undefined) {
+  dgForm.sourceId = undefined
+  dgForm.tableIds = []
+  dgSources.value = []
+  dgTables.value = []
+  if (systemId) {
+    dgSources.value = ((await ingestionApi.dataSources(dgForm.projectId, systemId)).data || []) as typeof dgSources.value
+  }
+}
+
+async function onDgSourceChange(sourceId: number | undefined) {
+  dgForm.tableIds = []
+  dgTables.value = []
+  if (sourceId) {
+    dgTables.value = ((await ingestionApi.tables(sourceId)).data || []) as typeof dgTables.value
+  }
+}
+
+function openDataGrantDialog() {
+  dgForm.projectId = undefined
+  dgForm.systemId = undefined
+  dgForm.sourceId = undefined
+  dgForm.tableIds = []
+  dgForm.granteeIds = []
+  dgSystems.value = []
+  dgSources.value = []
+  dgTables.value = []
+  dataGrantDialogVisible.value = true
+}
+
+async function submitDataGrant() {
+  if (!dgForm.tableIds.length || !dgForm.granteeIds.length) {
+    ElMessage.warning('请选择数据表和授权用户')
+    return
+  }
+  dataGrantDialogLoading.value = true
+  try {
+    await api.post('/system/access/data-grants/batch', {
+      scopeType: 'TABLE',
+      scopeIds: dgForm.tableIds,
+      granteeIds: dgForm.granteeIds,
+      perm: 'READ',
+    })
+    ElMessage.success('数据授权已保存')
+    dataGrantDialogVisible.value = false
+    await loadDataGrants()
+  } catch (e: unknown) {
+    ElMessage.error((e as Error)?.message || '授权失败')
+  } finally {
+    dataGrantDialogLoading.value = false
+  }
+}
+
 const tables = ref<Array<{ id: number; tableName: string; tableCode: string }>>([])
 const crossForm = reactive({
   targetOrgId: undefined as number | undefined,
@@ -231,10 +303,20 @@ watch(activeTab, async (tab) => {
     await Promise.all([loadProjects(), loadUsers(), loadProjectGrants()])
     await loadRoles()
   } else if (tab === 'data') {
-    await Promise.all([loadTables(), loadUsers(), loadDataGrants()])
+    await Promise.all([loadProjects(), loadUsers(), loadDataGrants()])
   } else if (tab === 'cross') {
     await Promise.all([loadOrgs(), loadCross()])
   }
+})
+
+const filteredDataGrants = computed(() => {
+  const kw = dataGrantKeyword.value.trim().toLowerCase()
+  if (!kw) return dataGrants.value
+  return dataGrants.value.filter((r) => {
+    const label = String(r.scopeLabel || '').toLowerCase()
+    const name = String(r.granteeName || '').toLowerCase()
+    return label.includes(kw) || name.includes(kw)
+  })
 })
 
 const ACCESS_TABS = new Set(['overview', 'function', 'resource', 'data', 'cross'])
@@ -283,20 +365,6 @@ async function removeProjectGrant(id: number) {
   await loadProjectGrants()
 }
 
-async function createDataGrant() {
-  if (!dataGrantForm.scopeId || !dataGrantForm.granteeId) {
-    ElMessage.warning('请选择数据范围与授权对象')
-    return
-  }
-  try {
-    await api.post('/system/access/data-grants', { ...dataGrantForm })
-    ElMessage.success('数据授权已保存')
-    await loadDataGrants()
-  } catch (e: unknown) {
-    ElMessage.error((e as Error)?.message || '授权失败')
-  }
-}
-
 async function removeDataGrant(id: number) {
   await ElMessageBox.confirm('确认删除该数据授权？', '提示')
   await api.delete(`/system/access/data-grants/${id}`)
@@ -339,7 +407,7 @@ onMounted(async () => {
   if (tab && tab !== 'overview') {
     activeTab.value = tab
     // watch(activeTab) 会拉取；此处再兜底一次，避免未触发时下拉无数据
-    if (tab === 'data') await Promise.all([loadTables(), loadUsers(), loadDataGrants()])
+    if (tab === 'data') await Promise.all([loadProjects(), loadUsers(), loadDataGrants()])
     else if (tab === 'resource') await Promise.all([loadProjects(), loadUsers(), loadProjectGrants(), loadRoles()])
     else if (tab === 'function') await loadFunctionRoles()
     else if (tab === 'cross') await Promise.all([loadOrgs(), loadCross()])
@@ -497,54 +565,26 @@ onMounted(async () => {
         </el-tab-pane>
 
         <el-tab-pane label="数据权限" name="data">
-          <el-form
-            v-if="canManageDataGrant"
-            inline
-            class="portal-inline-form portal-inline-form--block"
-          >
-            <el-form-item label="范围" class="portal-field-sm">
-              <el-select v-model="dataGrantForm.scopeType">
-                <el-option label="表" value="TABLE" />
-                <el-option label="数据源" value="SOURCE" />
-              </el-select>
-            </el-form-item>
-            <el-form-item label="对象表" class="portal-field-xl">
-              <el-select v-model="dataGrantForm.scopeId" filterable placeholder="输入表名筛选">
-                <el-option v-for="t in tables" :key="t.id" :label="`${t.tableName} (${t.tableCode})`" :value="t.id" />
-              </el-select>
-            </el-form-item>
-            <el-form-item label="授权给" class="portal-field-lg">
-              <el-select
-                v-model="dataGrantForm.granteeId"
-                filterable
-                clearable
-                placeholder="请选择用户"
-              >
-                <el-option
-                  v-for="u in users"
-                  :key="u.id"
-                  :label="`${u.displayName || u.username}（${u.username}）`"
-                  :value="u.id"
-                />
-              </el-select>
+          <el-form inline class="portal-inline-form portal-inline-form--block" @submit.prevent>
+            <el-form-item label="名称" class="portal-field-lg">
+              <el-input v-model="dataGrantKeyword" clearable placeholder="请输入名称" @keyup.enter="loadDataGrants" />
             </el-form-item>
             <el-form-item class="portal-form-actions">
-              <el-button type="primary" @click="createDataGrant">授权</el-button>
+              <el-button type="primary" @click="loadDataGrants">查询</el-button>
+              <el-button @click="dataGrantKeyword = ''; loadDataGrants()">重置</el-button>
+              <el-button v-if="canManageDataGrant" type="primary" @click="openDataGrantDialog">+ 新增</el-button>
             </el-form-item>
           </el-form>
-          <el-table :data="dataGrants" stripe size="small">
+          <el-table :data="filteredDataGrants" stripe border class="portal-table">
+            <el-table-column prop="scopeLabel" label="名称" min-width="200" show-overflow-tooltip />
             <el-table-column prop="scopeType" label="范围类型" width="100">
               <template #default="{ row }">{{ row.scopeType === 'TABLE' ? '表' : '数据源' }}</template>
             </el-table-column>
-            <el-table-column prop="scopeLabel" label="资源" />
-            <el-table-column prop="granteeType" label="对象类型" width="100">
-              <template #default="{ row }">{{ $statusLabel(row.granteeType) }}</template>
-            </el-table-column>
-            <el-table-column prop="granteeName" label="对象" width="140" />
+            <el-table-column prop="granteeName" label="授权用户" min-width="140" />
             <el-table-column prop="perm" label="权限" width="90">
               <template #default="{ row }">{{ statusLabel(row.perm) }}</template>
             </el-table-column>
-            <el-table-column label="操作" width="100">
+            <el-table-column label="操作" width="100" fixed="right">
               <template #default="{ row }">
                 <el-button
                   v-if="canManageDataGrant"
@@ -608,6 +648,45 @@ onMounted(async () => {
         </el-tab-pane>
       </el-tabs>
     </PageCard>
+
+    <el-dialog
+      v-model="dataGrantDialogVisible"
+      title="新增数据授权"
+      width="560px"
+      destroy-on-close
+    >
+      <el-form label-width="80px">
+        <el-form-item label="项目">
+          <el-select v-model="dgForm.projectId" filterable clearable placeholder="请选择项目" style="width:100%" @change="onDgProjectChange">
+            <el-option v-for="p in projects" :key="p.id" :label="p.projectName" :value="p.id" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="系统">
+          <el-select v-model="dgForm.systemId" filterable clearable placeholder="请先选择项目" :disabled="!dgForm.projectId" style="width:100%" @change="onDgSystemChange">
+            <el-option v-for="s in dgSystems" :key="s.id" :label="s.systemName" :value="s.id" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="数据源">
+          <el-select v-model="dgForm.sourceId" filterable clearable placeholder="请先选择系统" :disabled="!dgForm.systemId" style="width:100%" @change="onDgSourceChange">
+            <el-option v-for="d in dgSources" :key="d.id" :label="d.sourceName" :value="d.id" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="数据表">
+          <el-select v-model="dgForm.tableIds" multiple filterable clearable placeholder="请先选择数据源" :disabled="!dgForm.sourceId" style="width:100%">
+            <el-option v-for="t in dgTables" :key="t.id" :label="`${t.tableName} (${t.tableCode})`" :value="t.id" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="授权用户">
+          <el-select v-model="dgForm.granteeIds" multiple filterable clearable placeholder="请选择用户（可多选）" style="width:100%">
+            <el-option v-for="u in users" :key="u.id" :label="`${u.displayName || u.username}（${u.username}）`" :value="u.id" />
+          </el-select>
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="dataGrantDialogVisible = false">取消</el-button>
+        <el-button type="primary" :loading="dataGrantDialogLoading" @click="submitDataGrant">授权</el-button>
+      </template>
+    </el-dialog>
 
     <el-dialog
       v-model="menuViewVisible"

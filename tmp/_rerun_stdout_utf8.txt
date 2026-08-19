@@ -1,0 +1,12 @@
+[PASS] TC-COLLECT-020: (0, 'ok') id=15
+[PASS] TC-COLLECT-021: 文件影像=(0, 'ok'); 动态=(0, 'ok'); 视频=(0, 'ok')
+[PASS] TC-COLLECT-022: (400, '分类代码已存在')
+[PASS] TC-COLLECT-023: edit=(0, 'ok') del=(0, 'ok') list=True
+[PASS] TC-COLLECT-035: create=(0, 'ok') edit=(0, 'ok') list=True del=(0, 'ok')
+[PASS] TC-COLLECT-056: (0, 'ok') id=11
+[PASS] TC-COLLECT-088: empty=(400, '规则编码、名称与算法不能为空') ok=(0, 'ok')
+[PASS] TC-COLLECT-089: (401, '未登录或 Token 无效')/(0, 'ok')
+[FAIL] TC-COLLECT-076: edit=(401, '未登录或 Token 无效') del=(401, '未登录或 Token 无效')
+[PASS] TC-COLLECT-036: bind+publish ok rid=19
+[PASS] TC-COLLECT-102: cid=5 rid=19
+summary {'PASS': 83, 'FAIL': 13, 'BLOCKED': 14}

@@ -294,7 +294,6 @@ onUnmounted(() => {
       <div class="card-head">
         <div>
           <div class="card-head__title">实时任务监控</div>
-          <div class="card-head__sub">今日应执行 / 完成 / 执行中 / 待执行可视化，支持优先级、日志与邮件短信告警</div>
         </div>
         <div class="card-head__actions">
           <el-button @click="openPriority">优先级设置</el-button>
@@ -303,15 +302,6 @@ onUnmounted(() => {
         </div>
       </div>
     </template>
-
-    <el-alert
-      v-if="overview.message"
-      :title="overview.message"
-      type="warning"
-      show-icon
-      :closable="false"
-      style="margin-bottom: 12px"
-    />
 
     <div v-loading="overviewLoading" class="kpi-row">
       <div class="kpi">
@@ -511,18 +501,13 @@ onUnmounted(() => {
 .card-head {
   display: flex;
   justify-content: space-between;
-  align-items: flex-start;
+  align-items: center;
   gap: 12px;
   width: 100%;
 }
 .card-head__title {
   font-size: 16px;
   font-weight: 650;
-}
-.card-head__sub {
-  margin-top: 4px;
-  color: var(--el-text-color-secondary);
-  font-size: 12px;
 }
 .card-head__actions {
   display: flex;

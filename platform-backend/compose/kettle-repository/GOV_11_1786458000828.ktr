@@ -1,0 +1,199 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<transformation_configuration>
+<transformation>
+  <info>
+    <name>GOV_11_1786458000828</name>
+    <description>治理任务自动生成</description>
+    <extended_description/>
+    <trans_version/>
+    <trans_type>Normal</trans_type>
+    <directory>/</directory>
+    <parameters></parameters>
+    <log>
+      <trans-log-table><connection/><schema/><table/></trans-log-table>
+      <perf-log-table><connection/><schema/><table/></perf-log-table>
+      <channel-log-table><connection/><schema/><table/></channel-log-table>
+      <step-log-table><connection/><schema/><table/></step-log-table>
+    </log>
+    <maxdate><connection/><table/><field/><offset>0.0</offset><maxdiff>0.0</maxdiff></maxdate>
+    <size_rowset>10000</size_rowset>
+    <sleep_time_empty>50</sleep_time_empty>
+    <sleep_time_full>50</sleep_time_full>
+    <unique_connections>N</unique_connections>
+    <feedback_shown>Y</feedback_shown>
+    <feedback_size>50000</feedback_size>
+    <using_thread_priorities>Y</using_thread_priorities>
+    <shared_objects_file/>
+    <capture_step_performance>N</capture_step_performance>
+    <step_performance_capturing_delay>1000</step_performance_capturing_delay>
+    <step_performance_capturing_size_limit>100</step_performance_capturing_size_limit>
+    <dependencies></dependencies>
+    <partitionschemas></partitionschemas>
+    <slaveservers></slaveservers>
+    <clusterschemas></clusterschemas>
+    <created_user>system</created_user>
+    <modified_user>system</modified_user>
+    <start>n_INPUT_1</start>
+  </info>
+  <notepads></notepads>
+<connection>
+  <name>default</name>
+  <server>host.docker.internal</server>
+  <type>MYSQL</type>
+  <access>Native</access>
+  <database>smart_city_ods</database>
+  <port>3306</port>
+  <username>root</username>
+  <password>root</password>
+</connection>
+<connection>
+  <name>PLATFORM</name>
+  <server>host.docker.internal</server>
+  <type>MYSQL</type>
+  <access>Native</access>
+  <database>smart_city_ods</database>
+  <port>3306</port>
+  <username>root</username>
+  <password>root</password>
+</connection>
+<connection>
+  <name>smart_city</name>
+  <server>host.docker.internal</server>
+  <type>MYSQL</type>
+  <access>Native</access>
+  <database>smart_city</database>
+  <port>3306</port>
+  <username>root</username>
+  <password>root</password>
+</connection>
+<connection>
+  <name>smart_city_ods</name>
+  <server>host.docker.internal</server>
+  <type>MYSQL</type>
+  <access>Native</access>
+  <database>smart_city_ods</database>
+  <port>3306</port>
+  <username>root</username>
+  <password>root</password>
+</connection>
+<connection>
+  <name>smart_city_dwd</name>
+  <server>host.docker.internal</server>
+  <type>MYSQL</type>
+  <access>Native</access>
+  <database>smart_city_dwd</database>
+  <port>3306</port>
+  <username>root</username>
+  <password>root</password>
+</connection>
+<connection>
+  <name>smart_city_dws</name>
+  <server>host.docker.internal</server>
+  <type>MYSQL</type>
+  <access>Native</access>
+  <database>smart_city_dws</database>
+  <port>3306</port>
+  <username>root</username>
+  <password>root</password>
+</connection>
+<connection>
+  <name>smart_city_ads</name>
+  <server>host.docker.internal</server>
+  <type>MYSQL</type>
+  <access>Native</access>
+  <database>smart_city_ads</database>
+  <port>3306</port>
+  <username>root</username>
+  <password>root</password>
+</connection>
+  <order>
+    <hop>
+      <from>n_INPUT_1</from>
+      <to>n_UNION_5_1786456222323</to>
+      <enabled>Y</enabled>
+    </hop>
+    <hop>
+      <from>n_INPUT_2</from>
+      <to>n_UNION_5_1786456222323</to>
+      <enabled>Y</enabled>
+    </hop>
+    <hop>
+      <from>n_UNION_5_1786456222323</from>
+      <to>n_OUTPUT_4</to>
+      <enabled>Y</enabled>
+    </hop>
+  </order>
+  <step>
+    <name>n_INPUT_1</name>
+    <type>TableInput</type>
+    <description>输入1</description>
+    <distribute>Y</distribute>
+    <copies>1</copies>
+    <connection>smart_city_dwd</connection>
+    <sql>SELECT `ddbh`, `khxm`, `khsj`, `ddjey`, `xdsj`, `fhrq`, `jsyf`, `wldh`, `ddbz`, `_uploaded_at` FROM `dwd_up_mb03ddxxb`</sql>
+    <limit>1000</limit>
+    <variables_active>Y</variables_active>
+    <!-- inputMode=TABLE -->
+  </step>
+  <step>
+    <name>n_INPUT_2</name>
+    <type>TableInput</type>
+    <description>输入2</description>
+    <distribute>Y</distribute>
+    <copies>1</copies>
+    <connection>smart_city_dwd</connection>
+    <sql>SELECT `ddbh`, `khxm`, `khsj`, `ddjey`, `xdsj`, `fhrq`, `jsyf`, `wldh`, `ddbz`, `_uploaded_at` FROM `dwd_mb03ddxxb_01`</sql>
+    <limit>1000</limit>
+    <variables_active>Y</variables_active>
+    <!-- inputMode=TABLE -->
+  </step>
+  <step>
+    <name>n_OUTPUT_4</name>
+    <type>TableOutput</type>
+    <description>输出</description>
+    <distribute>Y</distribute>
+    <copies>1</copies>
+    <connection>smart_city_dws</connection>
+    <schema/>
+    <table>dws_mb03ddxxb_2</table>
+    <commit>1000</commit>
+    <truncate>Y</truncate>
+    <ignore_errors>N</ignore_errors>
+    <use_batch>Y</use_batch>
+  </step>
+  <step>
+    <name>n_UNION_5_1786456222323</name>
+    <type>Append</type>
+    <description>合并</description>
+    <distribute>Y</distribute>
+    <copies>1</copies>
+    <head_name>n_INPUT_1</head_name>
+    <tail_name>n_INPUT_2</tail_name>
+    <!-- append streams -->
+  </step>
+  <step_error_handling></step_error_handling>
+  <slave_step_copy_partition_distribution></slave_step_copy_partition_distribution>
+  <slave_transformation>N</slave_transformation>
+</transformation>
+  <transformation_execution_configuration>
+    <exec_local>Y</exec_local>
+    <exec_remote>N</exec_remote>
+    <pass_export>N</pass_export>
+    <exec_cluster>N</exec_cluster>
+    <cluster_post>Y</cluster_post>
+    <cluster_prepare>Y</cluster_prepare>
+    <cluster_start>Y</cluster_start>
+    <cluster_show_trans>N</cluster_show_trans>
+    <parameters></parameters>
+    <variables></variables>
+    <arguments></arguments>
+    <safe_mode>N</safe_mode>
+    <log_level>Basic</log_level>
+    <log_file>N</log_file>
+    <log_file_append>N</log_file_append>
+    <create_parent_folder>N</create_parent_folder>
+    <clear_log>Y</clear_log>
+    <gather_metrics>N</gather_metrics>
+    <show_subcomponents>Y</show_subcomponents>
+  </transformation_execution_configuration>
+</transformation_configuration>

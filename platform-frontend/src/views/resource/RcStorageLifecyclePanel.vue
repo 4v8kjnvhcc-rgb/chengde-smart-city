@@ -493,14 +493,6 @@ onMounted(reload)
     </el-tabs>
 
     <div v-show="activeTab === 'policies'">
-      <el-alert
-        v-if="mode === 'archive'"
-        type="info"
-        :closable="false"
-        show-icon
-        style="margin-bottom: 12px"
-        title="归档只处理已备份的日快照表（*_bak.{表}{yyyyMMdd}），未备份的表不会归档。"
-      />
       <el-form inline class="portal-inline-form portal-inline-form--block" @submit.prevent="doPolicyQuery">
         <el-form-item label="关键字" class="portal-field-xl">
           <el-input
@@ -534,7 +526,7 @@ onMounted(reload)
           <template #default="{ row }">{{ policyMeta(row).backupScope === 'PARTITION' ? '按区' : '按表' }}</template>
         </el-table-column>
         <el-table-column v-if="mode === 'archive'" label="压缩" width="90">
-          <template #default="{ row }">{{ statusLabel(row.compressType || (row.compressEnabled ? 'GZIP' : 'NONE')) }}</template>
+          <template #default="{ row }">{{ statusLabel(row.compressType || (row.compressEnabled ? 'GZIP' : 'NONE'), 'compress') }}</template>
         </el-table-column>
         <el-table-column label="执行周期" width="180" show-overflow-tooltip>
           <template #default="{ row }">
@@ -694,7 +686,7 @@ onMounted(reload)
         <el-form-item v-if="mode === 'archive' && form.compressEnabled" label="压缩方式">
           <el-select v-model="form.compressType" :disabled="formReadonly" style="width: 100%">
             <el-option :label="statusLabel('GZIP')" value="GZIP" />
-            <el-option :label="statusLabel('NONE')" value="NONE" />
+            <el-option :label="statusLabel('NONE', 'compress')" value="NONE" />
           </el-select>
         </el-form-item>
         <el-form-item label="执行周期" required>

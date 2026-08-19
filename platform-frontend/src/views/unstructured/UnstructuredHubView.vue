@@ -1236,8 +1236,8 @@ async function extractFeatures(row: Doc) {
     const res = await api.post(`/unstructured/platform/documents/${row.id}/extract-features`)
     ElMessage.success(String(res.data?.message || '基本特征已提取'))
     await Promise.all([loadMetadataOverview(), loadDocuments()])
-  } catch {
-    ElMessage.error('特征提取失败')
+  } catch (e: unknown) {
+    ElMessage.error((e instanceof Error ? e.message : '') || '特征提取失败')
   } finally {
     metaBusyId.value = null
   }
@@ -1249,8 +1249,8 @@ async function understandContent(row: Doc) {
     const res = await api.post(`/unstructured/platform/documents/${row.id}/understand`)
     ElMessage.success(String(res.data?.message || '内容理解已落地'))
     await Promise.all([loadMetadataOverview(), loadDocuments()])
-  } catch {
-    ElMessage.error('内容理解失败')
+  } catch (e: unknown) {
+    ElMessage.error((e instanceof Error ? e.message : '') || '内容理解失败')
   } finally {
     metaBusyId.value = null
   }
@@ -1447,15 +1447,7 @@ onMounted(() => {
           <el-button type="primary" @click="addCategory">新增分类</el-button>
         </div>
         <el-table :data="pagedCategories" stripe size="small">
-          <el-table-column prop="categoryCode" label="编码" width="160" />
           <el-table-column prop="categoryName" label="名称" min-width="140" />
-          <el-table-column label="上级分类" min-width="120">
-            <template #default="{ row }">{{ row.parentId ? categoryNameById.get(row.parentId) || '—' : '顶级分类' }}</template>
-          </el-table-column>
-          <el-table-column label="媒介" width="100">
-            <template #default="{ row }">{{ statusLabel(row.mediaType) }}</template>
-          </el-table-column>
-          <el-table-column prop="description" label="说明" min-width="180" show-overflow-tooltip />
           <el-table-column prop="sortOrder" label="排序" width="70" />
           <el-table-column label="状态" width="100">
             <template #default="{ row }">

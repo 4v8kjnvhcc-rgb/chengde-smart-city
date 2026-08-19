@@ -1373,7 +1373,8 @@ public class UnstructuredPlatformService {
     }
 
     private String buildFingerprint(UnsDocument doc) {
-        return String.join("|", fingerprintTokens(doc));
+        String raw = String.join("|", fingerprintTokens(doc));
+        return raw.length() <= 500 ? raw : raw.substring(0, 500);
     }
 
     private double jaccard(Set<String> a, Set<String> b) {

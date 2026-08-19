@@ -783,11 +783,9 @@ onMounted(async () => {
         <div v-if="selectedNode" class="mds-context">当前分类：{{ selectedLabel }}</div>
 
         <el-table :data="pagedRows" stripe size="small" empty-text="暂无数据">
-          <el-table-column prop="sortOrder" label="排序" width="70" />
           <el-table-column prop="sourceName" label="名称" min-width="180" show-overflow-tooltip />
           <el-table-column prop="deptName" label="部门名称" min-width="140" show-overflow-tooltip />
           <el-table-column prop="categoryName" label="所属分类" min-width="120" show-overflow-tooltip />
-          <el-table-column prop="remarks" label="备注" min-width="160" show-overflow-tooltip />
           <el-table-column label="操作" width="180" fixed="right">
             <template #default="{ row }">
               <el-button link type="primary" @click="openEdit(row)">编辑</el-button>

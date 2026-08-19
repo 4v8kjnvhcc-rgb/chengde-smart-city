@@ -72,13 +72,9 @@ onMounted(reload)
           </el-form-item>
         </el-form>
         <el-table :data="definitions" stripe>
-          <el-table-column prop="defCode" label="编码" width="140" />
           <el-table-column prop="defName" label="名称" width="140" />
           <el-table-column prop="businessDesc" label="业务描述" min-width="160" />
           <el-table-column prop="techDesc" label="技术描述" min-width="160" />
-          <el-table-column label="状态" width="90">
-          <template #default="{ row }">{{ $statusLabel(row.status) }}</template>
-        </el-table-column>
         </el-table>
       </template>
 

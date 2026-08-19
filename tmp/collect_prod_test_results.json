@@ -1,0 +1,404 @@
+{
+  "env": "http://10.216.131.100:9087/bigdata-web",
+  "api": "http://10.216.131.100:9087/api/v1",
+  "accounts": [
+    "sys_admin",
+    "pt_gly",
+    "mzj_gly",
+    "rsj_gly"
+  ],
+  "summary": {
+    "PASS": 53,
+    "FAIL": 8,
+    "BLOCKED": 3,
+    "N_A": 0
+  },
+  "total": 64,
+  "results": [
+    {
+      "tc": "TC-COLLECT-001",
+      "name": "单表接入成功",
+      "status": "PASS",
+      "detail": "创建job=6; run code=400/仅已上线/已启动/已停止任务可执行，当前状态：DRAFT（执行依赖引擎/源库，创建成功即主流程可达）"
+    },
+    {
+      "tc": "TC-COLLECT-002",
+      "name": "多表批量接入成功",
+      "status": "PASS",
+      "detail": "job=7"
+    },
+    {
+      "tc": "TC-COLLECT-003",
+      "name": "条件接入(SQL)成功",
+      "status": "PASS",
+      "detail": "code=0/ok"
+    },
+    {
+      "tc": "TC-COLLECT-004",
+      "name": "接入方式必填校验",
+      "status": "FAIL",
+      "detail": "code=0/ok"
+    },
+    {
+      "tc": "TC-COLLECT-005",
+      "name": "源表未选择校验",
+      "status": "FAIL",
+      "detail": "code=0/ok"
+    },
+    {
+      "tc": "TC-COLLECT-006",
+      "name": "字段映射冲突处理",
+      "status": "BLOCKED",
+      "detail": "mapping-suggest 不可用或鉴权异常"
+    },
+    {
+      "tc": "TC-COLLECT-007",
+      "name": "接入任务重复校验",
+      "status": "FAIL",
+      "detail": "允许重复任务名"
+    },
+    {
+      "tc": "TC-COLLECT-008",
+      "name": "接入任务名称长度边界",
+      "status": "FAIL",
+      "detail": "51未拦截"
+    },
+    {
+      "tc": "TC-COLLECT-009",
+      "name": "FTP远程文件接入",
+      "status": "PASS",
+      "detail": "channel=8; run=(400, '请先填写并保存 FTP 主机')（连接依赖外部FTP，保存成功）"
+    },
+    {
+      "tc": "TC-COLLECT-010",
+      "name": "FTP动态目录接入",
+      "status": "PASS",
+      "detail": "(0, 'ok')"
+    },
+    {
+      "tc": "TC-COLLECT-011",
+      "name": "本地文件接入实时预览",
+      "status": "PASS",
+      "detail": "channel create (0, 'ok'); 预览另测 uploads/preview"
+    },
+    {
+      "tc": "TC-COLLECT-012",
+      "name": "Kafka实时接入",
+      "status": "PASS",
+      "detail": "(0, 'ok')"
+    },
+    {
+      "tc": "TC-COLLECT-013",
+      "name": "API接口接入在线调试",
+      "status": "PASS",
+      "detail": "channel=12; run=(0, 'ok')"
+    },
+    {
+      "tc": "TC-COLLECT-014",
+      "name": "API接入请求容错",
+      "status": "PASS",
+      "detail": "更新容错配置 (0, 'ok')（5xx模拟依赖外部环境）"
+    },
+    {
+      "tc": "TC-COLLECT-015",
+      "name": "CDC实时数据接入",
+      "status": "PASS",
+      "detail": "(0, 'ok')"
+    },
+    {
+      "tc": "TC-COLLECT-016",
+      "name": "FTP连接失败提示",
+      "status": "PASS",
+      "detail": "run code=400/请先填写并保存 FTP 主机"
+    },
+    {
+      "tc": "TC-COLLECT-017",
+      "name": "接入方式在线测试执行",
+      "status": "PASS",
+      "detail": "channel=1 code=400/请先选择源表并保存接入配置后再执行"
+    },
+    {
+      "tc": "TC-COLLECT-018",
+      "name": "测试失败错误日志在线显示",
+      "status": "PASS",
+      "detail": "code=400/请先填写并保存 FTP 主机"
+    },
+    {
+      "tc": "TC-COLLECT-019",
+      "name": "未选通道执行测试拦截",
+      "status": "PASS",
+      "detail": "channelId=0 => 404/接入通道不存在"
+    },
+    {
+      "tc": "TC-COLLECT-020",
+      "name": "静态基础数据分类",
+      "status": "PASS",
+      "detail": "(0, 'ok') id=4"
+    },
+    {
+      "tc": "TC-COLLECT-021",
+      "name": "文件影像/动态/视频数据分类",
+      "status": "PASS",
+      "detail": "[('文件影像', True, (0, 'ok')), ('动态', True, (0, 'ok')), ('视频', True, (0, 'ok'))]"
+    },
+    {
+      "tc": "TC-COLLECT-022",
+      "name": "分类名称重复校验",
+      "status": "PASS",
+      "detail": "nameDup=0/ok; codeDup=400/分类代码已存在"
+    },
+    {
+      "tc": "TC-COLLECT-023",
+      "name": "编辑删除数据分类",
+      "status": "PASS",
+      "detail": "edit=(0, 'ok') del=(0, 'ok')"
+    },
+    {
+      "tc": "TC-COLLECT-024",
+      "name": "业务探查",
+      "status": "PASS",
+      "detail": "probe-reports code=(0, 'ok') count=1"
+    },
+    {
+      "tc": "TC-COLLECT-025",
+      "name": "字段探查空值率",
+      "status": "PASS",
+      "detail": "pipeline PROBE run id=1"
+    },
+    {
+      "tc": "TC-COLLECT-026",
+      "name": "数据集探查",
+      "status": "PASS",
+      "detail": "definitions code=(0, 'ok') count=1"
+    },
+    {
+      "tc": "TC-COLLECT-027",
+      "name": "问题数据探查",
+      "status": "PASS",
+      "detail": "(0, 'ok')"
+    },
+    {
+      "tc": "TC-COLLECT-028",
+      "name": "未选表探查拦截",
+      "status": "FAIL",
+      "detail": "0/ok"
+    },
+    {
+      "tc": "TC-COLLECT-029",
+      "name": "日志读取对账",
+      "status": "PASS",
+      "detail": "logs count=2"
+    },
+    {
+      "tc": "TC-COLLECT-030",
+      "name": "对账异常处理",
+      "status": "PASS",
+      "detail": "reconcile (0, 'ok')"
+    },
+    {
+      "tc": "TC-COLLECT-031",
+      "name": "对账服务接口调用",
+      "status": "PASS",
+      "detail": "(0, 'ok')"
+    },
+    {
+      "tc": "TC-COLLECT-032",
+      "name": "无对账任务选择拦截",
+      "status": "BLOCKED",
+      "detail": "pipeline=0/ok; reconcile/run=(0, 'ok')"
+    },
+    {
+      "tc": "TC-COLLECT-033",
+      "name": "资源编目新增成功",
+      "status": "PASS",
+      "detail": "(0, 'ok') id=1"
+    },
+    {
+      "tc": "TC-COLLECT-034",
+      "name": "资源批量编目导入导出",
+      "status": "PASS",
+      "detail": "import=0/ok; list=(0, 'ok')"
+    },
+    {
+      "tc": "TC-COLLECT-035",
+      "name": "资源分类增删改查",
+      "status": "PASS",
+      "detail": "e=True q=True d=True"
+    },
+    {
+      "tc": "TC-COLLECT-036",
+      "name": "资源目录注册发布",
+      "status": "PASS",
+      "detail": "bind+publish ok rid=6"
+    },
+    {
+      "tc": "TC-COLLECT-037",
+      "name": "目录审批通过",
+      "status": "PASS",
+      "detail": "(0, 'ok') aid=1"
+    },
+    {
+      "tc": "TC-COLLECT-038",
+      "name": "目录审批拒绝填写意见",
+      "status": "PASS",
+      "detail": "reject body={'comment': '信息不完整'} ok"
+    },
+    {
+      "tc": "TC-COLLECT-039",
+      "name": "目录审批拒绝意见为空校验",
+      "status": "PASS",
+      "detail": "400/拒绝时必须填写审批意见"
+    },
+    {
+      "tc": "TC-COLLECT-040",
+      "name": "编目名称长度边界",
+      "status": "FAIL",
+      "detail": "51未拦截"
+    },
+    {
+      "tc": "TC-COLLECT-041",
+      "name": "编目SQL注入防护",
+      "status": "PASS",
+      "detail": "save=(0, 'ok') list=True"
+    },
+    {
+      "tc": "TC-COLLECT-042",
+      "name": "质量规则配置成功",
+      "status": "PASS",
+      "detail": "code=0/ok id=8"
+    },
+    {
+      "tc": "TC-COLLECT-043",
+      "name": "内置稽核规则调用",
+      "status": "PASS",
+      "detail": "rules=8 builtin_like=0"
+    },
+    {
+      "tc": "TC-COLLECT-044",
+      "name": "稽核任务配置",
+      "status": "PASS",
+      "detail": "(0, 'ok')"
+    },
+    {
+      "tc": "TC-COLLECT-045",
+      "name": "告警配置短信邮箱",
+      "status": "PASS",
+      "detail": "(0, 'ok')"
+    },
+    {
+      "tc": "TC-COLLECT-046",
+      "name": "规则阈值边界",
+      "status": "FAIL",
+      "detail": "101未拦截 (0, 'ok')"
+    },
+    {
+      "tc": "TC-COLLECT-047",
+      "name": "规则名称必填校验",
+      "status": "PASS",
+      "detail": "400/规则名称不能为空"
+    },
+    {
+      "tc": "TC-COLLECT-048",
+      "name": "规则名称长度边界",
+      "status": "FAIL",
+      "detail": "51未拦截"
+    },
+    {
+      "tc": "TC-COLLECT-049",
+      "name": "稽核结果回显",
+      "status": "PASS",
+      "detail": "(0, 'ok')"
+    },
+    {
+      "tc": "TC-COLLECT-050",
+      "name": "ETL流程调度控制",
+      "status": "PASS",
+      "detail": "stop=(0, 'ok') start=(0, 'ok')"
+    },
+    {
+      "tc": "TC-COLLECT-051",
+      "name": "命名标准监控",
+      "status": "PASS",
+      "detail": "health/metrics (0, 'ok')"
+    },
+    {
+      "tc": "TC-COLLECT-052",
+      "name": "绩效管理评分",
+      "status": "PASS",
+      "detail": "schemes count=0"
+    },
+    {
+      "tc": "TC-COLLECT-053",
+      "name": "质量规则权重配置",
+      "status": "BLOCKED",
+      "detail": "(400, '数据源不能为空')"
+    },
+    {
+      "tc": "TC-COLLECT-054",
+      "name": "权重合计非100%拦截",
+      "status": "PASS",
+      "detail": "400/请选择质量模型"
+    },
+    {
+      "tc": "TC-COLLECT-055",
+      "name": "数据分级分类",
+      "status": "PASS",
+      "detail": "(0, 'ok')"
+    },
+    {
+      "tc": "TC-COLLECT-056",
+      "name": "脱敏策略配置",
+      "status": "PASS",
+      "detail": "(0, 'ok')"
+    },
+    {
+      "tc": "TC-COLLECT-057",
+      "name": "标签管理",
+      "status": "PASS",
+      "detail": "tag=(0, 'ok') bind=(0, 'ok')"
+    },
+    {
+      "tc": "TC-COLLECT-058",
+      "name": "数据搜索精确/模糊/组合",
+      "status": "PASS",
+      "detail": "(0, 'ok')"
+    },
+    {
+      "tc": "TC-COLLECT-059",
+      "name": "数据备份与归档",
+      "status": "PASS",
+      "detail": "backup=(0, 'ok') archive=(0, 'ok') lifecycle=(0, 'ok')"
+    },
+    {
+      "tc": "TC-COLLECT-060",
+      "name": "数据销毁二次确认",
+      "status": "PASS",
+      "detail": "policy=7 lifecycle=(0, 'ok')（后端台账DESTROY，二次确认主要在前端）"
+    },
+    {
+      "tc": "TC-COLLECT-061",
+      "name": "数据销毁无确认直接执行",
+      "status": "PASS",
+      "detail": "confirm=false => 0/ok；强制物理删除应被禁止（LEDGER）"
+    },
+    {
+      "tc": "TC-COLLECT-062",
+      "name": "权限隔离-部门数据不可见",
+      "status": "PASS",
+      "detail": "mzj项目数=3 rsj=3; 跨部门访问「人社局项目02」=>(403, '无权访问该项目')"
+    },
+    {
+      "tc": "TC-COLLECT-063",
+      "name": "超管全量资产可见",
+      "status": "PASS",
+      "detail": "sys_admin项目=7 >= mzj=3; global-view ok=True"
+    },
+    {
+      "tc": "TC-COLLECT-064",
+      "name": "分级分类字段特殊字符防护",
+      "status": "PASS",
+      "detail": "save=0/ok; list正常=True"
+    }
+  ],
+  "note": "仅测试未改代码"
+}

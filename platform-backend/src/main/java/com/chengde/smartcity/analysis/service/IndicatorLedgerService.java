@@ -325,17 +325,44 @@ public class IndicatorLedgerService {
                              String execCycle, String cronExpr, String remark, String executorAddress) {
         IndGroup g = getGroup(id);
         long cnt = fieldMapper.selectCount(new LambdaQueryWrapper<IndField>().eq(IndField::getGroupId, id));
-        if (cnt == 0) throw new BusinessException(400, "请先新增指标后再发布");
+        if (cnt == 0) {
+            throw new BusinessException(400, "请先配置字段映射（执行 SQL 生成字段）后再发布");
+        }
+        // 发布前规范化：列名 ind_+查询结果英文，缺省类型/长度
+        List<IndField> fields = fieldMapper.selectList(new LambdaQueryWrapper<IndField>()
+                .eq(IndField::getGroupId, id)
+                .orderByAsc(IndField::getFieldPosition)
+                .orderByAsc(IndField::getUuid));
+        for (IndField f : fields) {
+            boolean dirty = false;
+            String rf = f.getResultField();
+            if (rf == null || rf.isBlank()) {
+                throw new BusinessException(400, "字段映射缺少查询结果字段，无法建表");
+            }
+            String safeRf = rf.trim().replaceAll("[^a-zA-Z0-9_]", "_").toLowerCase(Locale.ROOT);
+            String expect = "ind_" + safeRf;
+            if (f.getFieldName() == null || f.getFieldName().isBlank() || !f.getFieldName().toLowerCase(Locale.ROOT).startsWith("ind_")) {
+                f.setFieldName(expect);
+                dirty = true;
+            }
+            if (f.getFieldType() == null || f.getFieldType().isBlank()) {
+                f.setFieldType("VARCHAR");
+                dirty = true;
+            }
+            if (f.getFieldLength() == null || f.getFieldLength() <= 0) {
+                f.setFieldLength(64);
+                dirty = true;
+            }
+            if (dirty) {
+                fieldMapper.updateById(f);
+            }
+        }
         g.setPublishStatus(1);
         g.setPublishTime(LocalDateTime.now());
         g.setPublishBy(operator != null ? operator.getUsername() : "system");
         groupMapper.updateById(g);
         indicatorTaskService.ensureFromPublishedGroup(operator, g, taskName, execCycle, cronExpr, remark, executorAddress);
-        // 发布即幂等建结果表；落数仍在任务「执行」或调度触发时写入
-        List<IndField> fields = fieldMapper.selectList(new LambdaQueryWrapper<IndField>()
-                .eq(IndField::getGroupId, id)
-                .orderByAsc(IndField::getFieldPosition)
-                .orderByAsc(IndField::getUuid));
+        // 发布即幂等建结果表：列名=ind_+英文，COMMENT=中文指标名，类型/长度与映射一致
         IndArea area = areaMapper.selectById(g.getAreaId());
         String domainDb = area == null ? null : area.getDbSchema();
         String targetTable = g.getTableName();
@@ -450,7 +477,18 @@ public class IndicatorLedgerService {
 
         int i = 0;
         for (Map<String, Object> f : fields) {
-            String resultField = required(f.get("resultField"), "resultField").toString();
+            String resultField = required(f.get("resultField"), "resultField").toString().trim();
+            String safeRf = resultField.replaceAll("[^a-zA-Z0-9_]", "_").toLowerCase(Locale.ROOT);
+            if (safeRf.isBlank()) safeRf = "col";
+            String fieldName = str(f.get("fieldName"), null);
+            if (fieldName == null || fieldName.isBlank()) {
+                fieldName = "ind_" + safeRf;
+            } else {
+                fieldName = fieldName.trim().toLowerCase(Locale.ROOT);
+                if (!fieldName.startsWith("ind_")) {
+                    fieldName = "ind_" + safeRf;
+                }
+            }
             IndField ind = new IndField();
             ind.setUuid(UUID.randomUUID().toString());
             ind.setGroupId(groupId);
@@ -458,10 +496,10 @@ public class IndicatorLedgerService {
             ind.setSqlSerial(q.getSerial());
             ind.setName(str(f.get("indicatorName"), resultField));
             ind.setTag(str(f.get("indicatorFlag"), null));
-            ind.setFieldName(str(f.get("fieldName"), "ind_" + resultField));
-            ind.setFieldType(str(f.get("fieldType"), "VARCHAR"));
+            ind.setFieldName(fieldName);
+            ind.setFieldType(str(f.get("fieldType"), "VARCHAR").toUpperCase(Locale.ROOT));
             Integer flen = intVal(f.get("fieldLength"));
-            ind.setFieldLength(flen == null || flen <= 0 ? 100 : flen);
+            ind.setFieldLength(flen == null || flen <= 0 ? 64 : flen);
             ind.setFieldPrecision(intVal(f.get("fieldPrecision")));
             ind.setRsColumn(resultField);
             ind.setFieldPosition(++i);
@@ -484,6 +522,11 @@ public class IndicatorLedgerService {
         if (body.get("fieldName") != null) ind.setFieldName(String.valueOf(body.get("fieldName")));
         if (body.containsKey("indicatorFlag")) ind.setTag(str(body.get("indicatorFlag"), null));
         if (body.containsKey("fieldType")) ind.setFieldType(str(body.get("fieldType"), null));
+        if (body.containsKey("fieldLength")) {
+            Integer flen = intVal(body.get("fieldLength"));
+            ind.setFieldLength(flen == null || flen <= 0 ? 64 : flen);
+        }
+        if (body.containsKey("fieldPrecision")) ind.setFieldPrecision(intVal(body.get("fieldPrecision")));
         if (body.containsKey("resultField")) ind.setRsColumn(str(body.get("resultField"), null));
         fieldMapper.updateById(ind);
         auditService.log(operator.getUserId(), operator.getUsername(), operator.getOrgId(),

@@ -1,0 +1,51 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<transstatus>
+  <transname>GOV_10_1786455515002</transname>
+  <id>1df9c1f6-3505-4b70-a263-fb4f86f08921</id>
+  <status_desc>Finished (with errors)</status_desc>
+  <error_desc/>
+  <log_date>2026/08/11 13:38:35.583</log_date>
+  <paused>N</paused>
+  <stepstatuslist>
+    <stepstatus><stepname>n_INPUT_1</stepname><copy>0</copy><linesRead>0</linesRead><linesWritten>3</linesWritten><linesInput>3</linesInput><linesOutput>0</linesOutput><linesUpdated>0</linesUpdated><linesRejected>0</linesRejected><errors>0</errors><statusDescription>Stopped</statusDescription><seconds>0.0</seconds><speed> 115</speed><priority>-</priority><stopped>Y</stopped><paused>N</paused></stepstatus>
+    <stepstatus><stepname>n_UNION_5_1786454463893</stepname><copy>0</copy><linesRead>10</linesRead><linesWritten>10</linesWritten><linesInput>0</linesInput><linesOutput>0</linesOutput><linesUpdated>0</linesUpdated><linesRejected>0</linesRejected><errors>0</errors><statusDescription>Stopped</statusDescription><seconds>0.3</seconds><speed> 31</speed><priority>-</priority><stopped>Y</stopped><paused>N</paused></stepstatus>
+    <stepstatus><stepname>n_INPUT_2</stepname><copy>0</copy><linesRead>0</linesRead><linesWritten>7</linesWritten><linesInput>7</linesInput><linesOutput>0</linesOutput><linesUpdated>0</linesUpdated><linesRejected>0</linesRejected><errors>0</errors><statusDescription>Stopped</statusDescription><seconds>0.0</seconds><speed> 233</speed><priority>-</priority><stopped>Y</stopped><paused>N</paused></stepstatus>
+    <stepstatus><stepname>n_OUTPUT_4</stepname><copy>0</copy><linesRead>10</linesRead><linesWritten>0</linesWritten><linesInput>0</linesInput><linesOutput>0</linesOutput><linesUpdated>0</linesUpdated><linesRejected>0</linesRejected><errors>1</errors><statusDescription>Stopped</statusDescription><seconds>0.4</seconds><speed> 27</speed><priority>-</priority><stopped>Y</stopped><paused>N</paused></stepstatus>
+  </stepstatuslist>
+  <first_log_line_nr>0</first_log_line_nr>
+  <last_log_line_nr>176</last_log_line_nr>
+<result><lines_input>0</lines_input>
+<lines_output>0</lines_output>
+<lines_read>0</lines_read>
+<lines_written>0</lines_written>
+<lines_updated>0</lines_updated>
+<lines_rejected>0</lines_rejected>
+<lines_deleted>0</lines_deleted>
+<nr_errors>1</nr_errors>
+<nr_files_retrieved>0</nr_files_retrieved>
+<entry_nr>0</entry_nr>
+<result>Y</result>
+<exit_status>0</exit_status>
+<is_stopped>Y</is_stopped>
+<log_channel_id>3657ecfe-f1f2-4603-9834-f6dbd19a63e1</log_channel_id>
+<log_text/>
+<elapsedTimeMillis>0</elapsedTimeMillis>
+<executionId/>
+</result>  <logging_string>&lt;![CDATA[H4sIAAAAAAAAAM1XXU/bMBR9Hr/CeyJIrUnSpF9SH1hhU7VBWWmZJoQqNzGtIXGC7UDz72c7/aQf
+pLBuvES265xzfH3P7Y1t2uVjs3psWcAq1UvVeskFRfCtfd23zL5VqZYd13Ut1zRtuXxKeIyENyJ0
+CLhATGAf3EUMCIYol4MQCRJRcLPu9dsDey0V7bd73ctet+9AU06bEaXYU8AiAj4SaIA4Bjc8lGx9
+j4i07z/zW2B4URgS0bBM0zzaiNy6UMCWBv5KKOEjicsw8tUBHhPM0gLwgoirqZcRS/2vwNl/F+6F
+uphFHuYawmg1SgXQbpgF0FGPX2raU6OzxquHtrfBVpZhK3lgexet9kXfnVyq45RL1VppG4k5I7E0
+i3q+TrOUDGedTrsDjCfMuMqrGpSE0Cw6drUABgkJ/MUlcMeiEEhcu2g6RcsGpgPdMrRdMEiz3cMk
+PQJ10KN4HGc5NlDZDJJYJhoGmDGZy1liCXUIMcLzFJxfKPyf4iM2hDGmAo0i6BPoRQxDPPZwrJV9
+x0IE+HSi+Ys63dn0xzrIqVuHQcdEBUGHKN+bp0kcEE+HkgqWgsPKoS4PD1iOpW374cAs+f54PICX
+ndb5Sef3YT7gfLs+IbE2PNMrhNO4QE+aVuBtwTJme+/RE6pbjpM3Z/OrwGEs0hPqN3XGrTDatbcz
+6oIMucAxhxI1wFEi4kTArhq3s7Evi3nEsbG4pqnd2jvOOmeGnYR2R6o8QpZQYz7TJLXKDhzqDahi
+c6xHAaJDuAC9iFvNHbYmSrgqAWk9w+ePAdRJ0NPlYME3e8trdTZZb2CYKnLvHt77A29uZw6vfv7Q
+dpxk7Dp5xmyPPr9tOzsEdpW8GRB5yEuGY8SwfyUkVSgXpCjsJRMFV5gRFASpsWlzdhNWee9KWlRg
+RlGwXYljVd+lZAbXCuNgid9Y/kmzVWruvy4V+SMNIQQlEEqWt5tEJpyK+5DJbky2a1xanlBxTaJA
+t38f0ThqusEw1juT4wXpbHaO4lj+f2YFMVhx7Mq+TIxt79Mz+exS269xs/qVT4pllq0PUs52sLUy
+WXkHk+VsoOf988aYbPhu6y5/n/lYZO1vRLEsQFop0M0CeCZilDXCfFObm4+DcPBAgmDaRkfywTKO
+zwd/ACzHtEd0DgAA
+]]&gt;</logging_string>
+</transstatus>

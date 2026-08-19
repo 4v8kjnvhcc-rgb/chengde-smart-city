@@ -84,6 +84,13 @@ public class AccessControlController {
         return ApiResponse.ok(accessControlService.createDataGrant(principal, body));
     }
 
+    @PostMapping("/data-grants/batch")
+    @PreAuthorize("isAuthenticated()")
+    public ApiResponse<Integer> batchCreateDataGrant(@AuthenticationPrincipal UserPrincipal principal,
+                                                     @RequestBody Map<String, Object> body) {
+        return ApiResponse.ok(accessControlService.batchCreateDataGrant(principal, body));
+    }
+
     @DeleteMapping("/data-grants/{id}")
     @PreAuthorize("isAuthenticated()")
     public ApiResponse<Void> deleteDataGrant(@AuthenticationPrincipal UserPrincipal principal,

@@ -1,0 +1,21 @@
+logins ok: mzj= 测试-高新区民政局 gwh= 承德高新技术产业开发区管理委员会
+mzj project {'id': 13, 'projectCode': 'PRJ_b61534d4', 'projectName': '民政局项目04', 'boundOrgId': 301, 'clusterAccountId': 2, 'systemName': '民政局系统0401-', 'status': 'ACTIVE', 'registerStatus': 'DRAFT', 'rejectReason': None, 'createdBy': 'mzj_gly', 'createdAt': '2026-08-08T07:04:28', 'boundOrgName': '测试-高新区民政局', 'clusterAccountName': '集群02（JQ02）'}
+grant target {'id': 13, 'username': 'mzj_gly01', 'displayName': '民政局管理员01', 'orgId': 301, 'orgName': '测试-高新区民政局'}
+[PASS] TC-ASSET-005 项目权限授权成功: mzj_gly 授权 mzj_gly01 VIEW 到项目 民政局项目04 grantId=31
+foreign project {'id': 23, 'projectCode': 'PRJ_357d3300', 'projectName': '承德人口项目_API_1786608612429', 'boundOrgId': 1, 'clusterAccountId': None, 'systemName': None, 'status': 'ACTIVE', 'registerStatus': 'DRAFT', 'rejectReason': None, 'createdBy': 'sys_admin', 'createdAt': '2026-08-13T16:10:12', 'boundOrgName': '承德高新技术产业开发区管理委员会', 'clusterAccountName': None}
+[PASS] TC-ASSET-006 未授权用户访问项目被拒: mzj不可见「承德人口项目_API_1786608612429」; systems=403/无权访问该项目; ds=403/无权访问该项目
+[FAIL] TC-ASSET-008 业务系统租户隔离: mzj_sees=True leaked=True cross_hidden=False admin_sees=True gwh=0/ok sys=0
+api_proj ds count 0
+[BLOCKED] TC-ASSET-062 普通用户无授权数据源隐藏: 无system
+[BLOCKED] TC-ASSET-016 普通用户对管理员数据源只读: 无system
+[FAIL] TC-ASSET-017 普通用户对业务组件资源管理: edit=True del=True other_hidden=False gwh_code=0
+[BLOCKED] TC-ASSET-043 非业务人员访问填报指引: 当前 mzj/gwh 均能访问指引(mzj=0, gwh=0)，缺少无填报权限账号
+visibility sys=20 gwh=20 mzj=5
+SUMMARY {'PASS': 57, 'FAIL': 15, 'BLOCKED': 15, 'N_A': 8} count 95
+TC-ASSET-005 PASS mzj_gly 授权 mzj_gly01 VIEW 到项目 民政局项目04 grantId=31
+TC-ASSET-006 PASS mzj不可见「承德人口项目_API_1786608612429」; systems=403/无权访问该项目; ds=403/无权访问该项目
+TC-ASSET-008 FAIL mzj_sees=True leaked=True cross_hidden=False admin_sees=True gwh=0/ok sys=0
+TC-ASSET-016 BLOCKED 无system
+TC-ASSET-017 FAIL edit=True del=True other_hidden=False gwh_code=0
+TC-ASSET-062 BLOCKED 无system
+TC-ASSET-043 BLOCKED 当前 mzj/gwh 均能访问指引(mzj=0, gwh=0)，缺少无填报权限账号

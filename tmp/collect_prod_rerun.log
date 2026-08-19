@@ -1,0 +1,37 @@
+parent_id 1 cats 3
+cat (0, 'ok') 4
+[PASS] TC-COLLECT-020 静态基础数据分类: (0, 'ok') id=4
+[PASS] TC-COLLECT-021 文件影像/动态/视频数据分类: [('文件影像', True, (0, 'ok')), ('动态', True, (0, 'ok')), ('视频', True, (0, 'ok'))]
+[PASS] TC-COLLECT-022 分类名称重复校验: nameDup=0/ok; codeDup=400/分类代码已存在
+[PASS] TC-COLLECT-023 编辑删除数据分类: edit=(0, 'ok') del=(0, 'ok')
+reg (0, 'ok') 1
+[PASS] TC-COLLECT-033 资源编目新增成功: (0, 'ok') id=1
+[BLOCKED] TC-COLLECT-036 资源目录注册发布: (400, '资源「人口基础目录_1786612308」尚未关联分类')
+approvals 0
+[BLOCKED] TC-COLLECT-037 目录审批通过: 提交后仍无待审批
+[BLOCKED] TC-COLLECT-038 目录审批拒绝填写意见: 无待审批
+[BLOCKED] TC-COLLECT-039 目录审批拒绝意见为空校验: 无待审批
+[PASS] TC-COLLECT-035 资源分类增删改查: e=True q=True d=True
+[FAIL] TC-COLLECT-040 编目名称长度边界: 51未拦截
+[PASS] TC-COLLECT-041 编目SQL注入防护: save=(0, 'ok') list=True
+[BLOCKED] TC-COLLECT-006 字段映射冲突处理: (401, '未登录或 Token 无效')
+mask (0, 'ok')
+[PASS] TC-COLLECT-056 脱敏策略配置: (0, 'ok')
+[BLOCKED] TC-COLLECT-053 质量规则权重配置: (400, '数据源不能为空')
+[PASS] TC-COLLECT-054 权重合计非100%拦截: 400/请选择质量模型
+SUMMARY {'PASS': 49, 'FAIL': 8, 'BLOCKED': 7, 'N_A': 0}
+FAIL TC-COLLECT-004 接入方式必填校验 code=0/ok
+FAIL TC-COLLECT-005 源表未选择校验 code=0/ok
+BLOCKED TC-COLLECT-006 字段映射冲突处理 (401, '未登录或 Token 无效')
+FAIL TC-COLLECT-007 接入任务重复校验 允许重复任务名
+FAIL TC-COLLECT-008 接入任务名称长度边界 51未拦截
+FAIL TC-COLLECT-028 未选表探查拦截 0/ok
+BLOCKED TC-COLLECT-032 无对账任务选择拦截 pipeline=0/ok; reconcile/run=(0, 'ok')
+BLOCKED TC-COLLECT-036 资源目录注册发布 (400, '资源「人口基础目录_1786612308」尚未关联分类')
+BLOCKED TC-COLLECT-037 目录审批通过 提交后仍无待审批
+BLOCKED TC-COLLECT-038 目录审批拒绝填写意见 无待审批
+BLOCKED TC-COLLECT-039 目录审批拒绝意见为空校验 无待审批
+FAIL TC-COLLECT-040 编目名称长度边界 51未拦截
+FAIL TC-COLLECT-046 规则阈值边界 101未拦截 (0, 'ok')
+FAIL TC-COLLECT-048 规则名称长度边界 51未拦截
+BLOCKED TC-COLLECT-053 质量规则权重配置 (400, '数据源不能为空')

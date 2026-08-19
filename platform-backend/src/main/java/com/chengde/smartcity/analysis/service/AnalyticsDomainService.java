@@ -649,7 +649,7 @@ public class AnalyticsDomainService {
             ind.setResultField(resultField);
             ind.setFieldType(str(f.get("fieldType"), "VARCHAR"));
             Integer flen = intVal(f.get("fieldLength"));
-            ind.setFieldLength(flen == null || flen <= 0 ? 100 : flen);
+            ind.setFieldLength(flen == null || flen <= 0 ? 64 : flen);
             ind.setFieldPrecision(intVal(f.get("fieldPrecision")));
             ind.setFieldName(fieldName);
             ind.setIndicatorFlag(str(f.get("indicatorFlag"), null));
@@ -819,7 +819,7 @@ public class AnalyticsDomainService {
             Map<String, Object> row = new LinkedHashMap<>();
             row.put("resultField", alias);
             row.put("fieldType", "VARCHAR");
-            row.put("fieldLength", 100);
+            row.put("fieldLength", 64);
             row.put("fieldPrecision", 0);
             row.put("indicatorName", alias);
             row.put("fieldName", "ind_" + alias);
@@ -857,7 +857,7 @@ public class AnalyticsDomainService {
             Map<String, Object> row = new LinkedHashMap<>();
             row.put("resultField", col);
             row.put("fieldType", base.getOrDefault("fieldType", "VARCHAR"));
-            row.put("fieldLength", base.getOrDefault("fieldLength", 100));
+            row.put("fieldLength", base.getOrDefault("fieldLength", 64));
             row.put("fieldPrecision", base.getOrDefault("fieldPrecision", 0));
             row.put("indicatorName", base.getOrDefault("indicatorName", col));
             row.put("fieldName", base.getOrDefault("fieldName", "ind_" + col));

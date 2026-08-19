@@ -8,6 +8,9 @@ import HubSideLayout, { type HubNavItem } from '@/components/common/HubSideLayou
 import RcStorageLifecyclePanel from '@/views/resource/RcStorageLifecyclePanel.vue'
 import RcResourceMonitorPanel from '@/views/resource/RcResourceMonitorPanel.vue'
 import RcStatsAnalysisPanel from '@/views/resource/RcStatsAnalysisPanel.vue'
+import CatalogPortalView from '@/views/governance/catalog/CatalogPortalView.vue'
+import CatalogResourceView from '@/views/governance/catalog/CatalogResourceView.vue'
+import CatalogApprovalView from '@/views/governance/catalog/CatalogApprovalView.vue'
 import { statusLabel, statusTagType } from '@/utils/status-label'
 import ExecCycleSelect from '@/views/system/ExecCycleSelect.vue'
 import { useExecCycleLabel } from '@/utils/exec-cycle-label'
@@ -2158,156 +2161,15 @@ onMounted(() => {
       <PageCard v-else-if="activeNav === 'catalog'" title="资产目录管理">
 <el-tabs v-model="catalogTab">
           <el-tab-pane label="目录查询" name="query">
-            <el-form inline class="portal-inline-form portal-inline-form--block">
-              <el-form-item label="关键词" class="portal-field-md">
-                <el-input v-model="catalogFilter.q" placeholder="编码/名称" clearable @keyup.enter="loadCatalog" />
-              </el-form-item>
-              <el-form-item label="可见性" class="portal-field-sm">
-                <el-select v-model="catalogFilter.visibility" clearable placeholder="全部">
-                  <el-option label="公开" value="PUBLIC" />
-                  <el-option label="未公开" value="PRIVATE" />
-                </el-select>
-              </el-form-item>
-              <el-form-item label="子系统" class="portal-field-lg">
-                <el-select v-model="catalogFilter.subsystem" clearable filterable placeholder="全部">
-                  <el-option v-for="s in catalogSubsystems" :key="s.code" :label="s.name" :value="s.code" />
-                </el-select>
-              </el-form-item>
-              <el-form-item label="审批状态" class="portal-field-sm">
-                <el-select v-model="catalogFilter.publishStatus" clearable placeholder="全部">
-                  <el-option label="草稿" value="DRAFT" />
-                  <el-option label="待审核" value="PENDING_REVIEW" />
-                  <el-option label="已公开" value="PUBLISHED" />
-                  <el-option label="已驳回" value="REJECTED" />
-                </el-select>
-              </el-form-item>
-              <el-form-item class="portal-form-actions">
-                <el-button type="primary" @click="loadCatalog">查询</el-button>
-                <el-button @click="resetCatalogFilter">重置</el-button>
-              </el-form-item>
-            </el-form>
-            <el-table :data="catalogEntries" stripe size="small">
-              <el-table-column prop="entryCode" label="编码" width="140" show-overflow-tooltip />
-              <el-table-column prop="entryName" label="名称" min-width="120" show-overflow-tooltip />
-              <el-table-column prop="physicalTable" label="纳管表" width="140" show-overflow-tooltip />
-              <el-table-column prop="subsystemName" label="所属子系统" min-width="140" show-overflow-tooltip />
-              <el-table-column label="可见性" width="90">
-                <template #default="{ row }">
-                  <el-tag :type="statusTagType(row.visibility)" size="small">{{ statusLabel(row.visibility) }}</el-tag>
-                </template>
-              </el-table-column>
-              <el-table-column label="审批" width="100">
-                <template #default="{ row }">
-                  <el-tag :type="statusTagType(row.publishStatus)" size="small">{{ statusLabel(row.publishStatus) }}</el-tag>
-                </template>
-              </el-table-column>
-              <el-table-column label="加密" width="150">
-                <template #default="{ row }">
-                  <el-switch
-                    v-model="row.encryptEnabled"
-                    size="small"
-                    inline-prompt
-                    active-text="开"
-                    inactive-text="关"
-                    @change="saveCatalogEncrypt(row)"
-                  />
-                  <el-select
-                    v-if="row.encryptEnabled"
-                    v-model="row.encryptAlgo"
-                    size="small"
-                    style="width:88px;margin-left:6px"
-                    @change="saveCatalogEncrypt(row)"
-                  >
-                    <el-option label="AES256" value="AES256" />
-                    <el-option label="SM4" value="SM4" />
-                  </el-select>
-                </template>
-              </el-table-column>
-              <el-table-column prop="driveTask" label="驱动任务" min-width="120" show-overflow-tooltip />
-              <el-table-column label="操作" width="200" fixed="right">
-                <template #default="{ row }">
-                  <el-button
-                    v-if="row.publishStatus === 'DRAFT' || row.publishStatus === 'REJECTED'"
-                    link
-                    type="primary"
-                    @click="submitCatalogPublish(row.id)"
-                  >提交公开</el-button>
-                  <el-button
-                    v-if="isSysAdmin && row.visibility === 'PUBLIC'"
-                    link
-                    type="warning"
-                    @click="unpublishCatalog(row.id)"
-                  >下线</el-button>
-                  <span v-if="row.rejectReason" class="text-muted">{{ row.rejectReason }}</span>
-                </template>
-              </el-table-column>
-            </el-table>
+            <CatalogPortalView v-if="catalogTab === 'query'" embedded />
           </el-tab-pane>
 
           <el-tab-pane label="资源编目" name="register">
-            <el-form inline class="portal-inline-form portal-inline-form--block">
-              <el-form-item label="纳管表" class="portal-field-xl">
-                <el-select v-model="catalogForm.managedTableId" placeholder="输入表名筛选" filterable>
-                  <el-option
-                    v-for="t in managedTables"
-                    :key="t.id"
-                    :label="`${t.physicalTable}${t.themeName ? ' · ' + t.themeName : ''}`"
-                    :value="t.id"
-                  />
-                </el-select>
-              </el-form-item>
-              <el-form-item label="目录名" class="portal-field-md">
-                <el-input v-model="catalogForm.entryName" placeholder="可选，默认用表名" />
-              </el-form-item>
-              <el-form-item label="所属子系统" class="portal-field-lg">
-                <el-select v-model="catalogForm.subsystemCode" filterable>
-                  <el-option v-for="s in catalogSubsystems" :key="s.code" :label="s.name" :value="s.code" />
-                </el-select>
-              </el-form-item>
-              <el-form-item label="加密控制" class="portal-field-sm">
-                <el-switch v-model="catalogForm.encryptEnabled" />
-              </el-form-item>
-              <el-form-item v-if="catalogForm.encryptEnabled" label="算法" class="portal-field-sm">
-                <el-select v-model="catalogForm.encryptAlgo">
-                  <el-option label="AES256" value="AES256" />
-                  <el-option label="SM4" value="SM4" />
-                </el-select>
-              </el-form-item>
-              <el-form-item label="说明" class="portal-field-xl">
-                <el-input v-model="catalogForm.description" placeholder="可选" />
-              </el-form-item>
-              <el-form-item class="portal-form-actions">
-                <el-button type="primary" @click="createCatalog">登记编目</el-button>
-              </el-form-item>
-            </el-form>
-</el-tab-pane>
+            <CatalogResourceView v-if="catalogTab === 'register'" embedded />
+          </el-tab-pane>
 
           <el-tab-pane label="公开审批" name="approve">
-<el-table :data="catalogEntries" stripe size="small">
-              <el-table-column prop="entryCode" label="编码" width="140" />
-              <el-table-column prop="entryName" label="名称" min-width="120" />
-              <el-table-column prop="subsystemName" label="申请子系统" min-width="140" />
-              <el-table-column prop="physicalTable" label="纳管表" width="140" show-overflow-tooltip />
-              <el-table-column label="加密" width="100">
-                <template #default="{ row }">
-                  {{ row.encryptEnabled ? statusLabel(row.encryptAlgo || 'ENCRYPT') : '不加密' }}
-                </template>
-              </el-table-column>
-              <el-table-column label="审批状态" width="100">
-                <template #default="{ row }">
-                  <el-tag :type="statusTagType(row.publishStatus)" size="small">{{ statusLabel(row.publishStatus) }}</el-tag>
-                </template>
-              </el-table-column>
-              <el-table-column label="操作" width="160" fixed="right">
-                <template #default="{ row }">
-                  <template v-if="isSysAdmin">
-                    <el-button link type="success" @click="approveCatalogPublish(row.id)">通过公开</el-button>
-                    <el-button link type="danger" @click="rejectCatalogPublish(row.id)">驳回</el-button>
-                  </template>
-                  <span v-else>-</span>
-                </template>
-              </el-table-column>
-            </el-table>
+            <CatalogApprovalView v-if="catalogTab === 'approve'" embedded />
           </el-tab-pane>
 
           <el-tab-pane label="驱动交换" name="exchange">

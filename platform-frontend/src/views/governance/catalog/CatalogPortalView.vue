@@ -11,6 +11,8 @@ import ResourceApplyDialog from '@/views/exchange/application/ResourceApplyDialo
 import type { ApplyResource } from '@/views/exchange/application/ResourceApplyDialog.vue'
 import { addFavorite, fetchFavorites, isFavorited, removeFavorite } from '@/views/exchange/application/portal-favorites'
 
+withDefaults(defineProps<{ embedded?: boolean }>(), { embedded: false })
+
 const route = useRoute()
 const router = useRouter()
 
@@ -462,7 +464,7 @@ onActivated(() => {
 </script>
 
 <template>
-  <PageCard title="资源目录门户">
+  <component :is="embedded ? 'div' : PageCard" :title="embedded ? undefined : '资源目录门户'">
     <!-- 详情：与政务共享资源一致，支持订阅 + 资源申请 -->
     <div v-if="detailVisible" v-loading="detailLoading" class="share-detail">
       <button type="button" class="share-detail__back" @click="closeDetail">← 返回资源目录门户</button>
@@ -733,7 +735,7 @@ onActivated(() => {
       :open-attr-label="openAttrLabel"
       @submit="submitApplyPayload"
     />
-  </PageCard>
+  </component>
 </template>
 
 <style scoped>

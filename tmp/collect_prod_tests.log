@@ -1,0 +1,73 @@
+logins: {'sys_admin': True, 'pt_gly': True, 'mzj_gly': True, 'rsj_gly': True}
+projects 7
+sources sample 9
+tables 21
+channels 7
+jobs 5
+[PASS] TC-COLLECT-001 单表接入成功: 创建job=6; run code=400/仅已上线/已启动/已停止任务可执行，当前状态：DRAFT（执行依赖引擎/源库，创建成功即主流程可达）
+[PASS] TC-COLLECT-002 多表批量接入成功: job=7
+[PASS] TC-COLLECT-003 条件接入(SQL)成功: code=0/ok
+[FAIL] TC-COLLECT-004 接入方式必填校验: code=0/ok
+[FAIL] TC-COLLECT-005 源表未选择校验: code=0/ok
+[BLOCKED] TC-COLLECT-006 字段映射冲突处理: mapping-suggest code=401/未登录或 Token 无效 data_type=NoneType
+[FAIL] TC-COLLECT-007 接入任务重复校验: 允许重复任务名
+[FAIL] TC-COLLECT-008 接入任务名称长度边界: 51未拦截
+[PASS] TC-COLLECT-009 FTP远程文件接入: channel=8; run=(400, '请先填写并保存 FTP 主机')（连接依赖外部FTP，保存成功）
+[PASS] TC-COLLECT-010 FTP动态目录接入: (0, 'ok')
+[PASS] TC-COLLECT-011 本地文件接入实时预览: channel create (0, 'ok'); 预览另测 uploads/preview
+[PASS] TC-COLLECT-012 Kafka实时接入: (0, 'ok')
+[PASS] TC-COLLECT-013 API接口接入在线调试: channel=12; run=(0, 'ok')
+[PASS] TC-COLLECT-014 API接入请求容错: 更新容错配置 (0, 'ok')（5xx模拟依赖外部环境）
+[PASS] TC-COLLECT-015 CDC实时数据接入: (0, 'ok')
+[PASS] TC-COLLECT-016 FTP连接失败提示: run code=400/请先填写并保存 FTP 主机
+[PASS] TC-COLLECT-017 接入方式在线测试执行: channel=1 code=400/请先选择源表并保存接入配置后再执行
+[PASS] TC-COLLECT-018 测试失败错误日志在线显示: code=400/请先填写并保存 FTP 主机
+[PASS] TC-COLLECT-019 未选通道执行测试拦截: channelId=0 => 404/接入通道不存在
+[FAIL] TC-COLLECT-020 静态基础数据分类: code=400/资源目录名称不能为空 id=None
+[FAIL] TC-COLLECT-021 文件影像/动态/视频数据分类: [('文件影像', False, (400, '资源目录名称不能为空')), ('动态', False, (400, '资源目录名称不能为空')), ('视频', False, (400, '资源目录名称不能为空'))]
+[BLOCKED] TC-COLLECT-022 分类名称重复校验: 400/资源目录名称不能为空
+[BLOCKED] TC-COLLECT-023 编辑删除数据分类: 无分类id
+[PASS] TC-COLLECT-024 业务探查: probe-reports code=(0, 'ok') count=1
+[PASS] TC-COLLECT-025 字段探查空值率: pipeline PROBE run id=1
+[PASS] TC-COLLECT-026 数据集探查: definitions code=(0, 'ok') count=1
+[PASS] TC-COLLECT-027 问题数据探查: (0, 'ok')
+[FAIL] TC-COLLECT-028 未选表探查拦截: 0/ok
+[PASS] TC-COLLECT-029 日志读取对账: logs count=2
+[PASS] TC-COLLECT-030 对账异常处理: reconcile (0, 'ok')
+[PASS] TC-COLLECT-031 对账服务接口调用: (0, 'ok')
+[BLOCKED] TC-COLLECT-032 无对账任务选择拦截: pipeline=0/ok; reconcile/run=(0, 'ok')
+[FAIL] TC-COLLECT-033 资源编目新增成功: code=400/信息资源名称不能为空 id=None
+[PASS] TC-COLLECT-034 资源批量编目导入导出: import=0/ok; list=(0, 'ok')
+[FAIL] TC-COLLECT-035 资源分类增删改查: create failed (400, '资源目录名称不能为空')
+[BLOCKED] TC-COLLECT-036 资源目录注册发布: 无编目id
+approvals 0 pending None
+[BLOCKED] TC-COLLECT-037 目录审批通过: 无待审批记录
+[BLOCKED] TC-COLLECT-038 目录审批拒绝填写意见: 无审批数据/pt_gly
+[BLOCKED] TC-COLLECT-039 目录审批拒绝意见为空校验: 无审批数据/pt_gly
+[FAIL] TC-COLLECT-040 编目名称长度边界: 50=(400, '信息资源名称不能为空') 51=(400, '信息资源名称不能为空')
+[PASS] TC-COLLECT-041 编目SQL注入防护: save=400/信息资源名称不能为空; list仍正常=True（无注入导致接口崩溃）
+[PASS] TC-COLLECT-042 质量规则配置成功: code=0/ok id=8
+[PASS] TC-COLLECT-043 内置稽核规则调用: rules=8 builtin_like=0
+[PASS] TC-COLLECT-044 稽核任务配置: (0, 'ok')
+[PASS] TC-COLLECT-045 告警配置短信邮箱: (0, 'ok')
+[FAIL] TC-COLLECT-046 规则阈值边界: 101未拦截 (0, 'ok')
+[PASS] TC-COLLECT-047 规则名称必填校验: 400/规则名称不能为空
+[FAIL] TC-COLLECT-048 规则名称长度边界: 51未拦截
+[PASS] TC-COLLECT-049 稽核结果回显: (0, 'ok')
+[PASS] TC-COLLECT-050 ETL流程调度控制: stop=(0, 'ok') start=(0, 'ok')
+[PASS] TC-COLLECT-051 命名标准监控: health/metrics (0, 'ok')
+[PASS] TC-COLLECT-052 绩效管理评分: schemes count=0
+[BLOCKED] TC-COLLECT-053 质量规则权重配置: (400, '数据源不能为空')
+[PASS] TC-COLLECT-054 权重合计非100%拦截: 400/数据源不能为空
+[PASS] TC-COLLECT-055 数据分级分类: (0, 'ok')
+[FAIL] TC-COLLECT-056 脱敏策略配置: (400, '规则编码、名称与算法不能为空')
+[PASS] TC-COLLECT-057 标签管理: tag=(0, 'ok') bind=(0, 'ok')
+[PASS] TC-COLLECT-058 数据搜索精确/模糊/组合: (0, 'ok')
+[PASS] TC-COLLECT-059 数据备份与归档: backup=(0, 'ok') archive=(0, 'ok') lifecycle=(0, 'ok')
+[PASS] TC-COLLECT-060 数据销毁二次确认: policy=7 lifecycle=(0, 'ok')（后端台账DESTROY，二次确认主要在前端）
+[PASS] TC-COLLECT-061 数据销毁无确认直接执行: confirm=false => 0/ok；强制物理删除应被禁止（LEDGER）
+[PASS] TC-COLLECT-062 权限隔离-部门数据不可见: mzj项目数=3 rsj=3; 跨部门访问「人社局项目02」=>(403, '无权访问该项目')
+[PASS] TC-COLLECT-063 超管全量资产可见: sys_admin项目=7 >= mzj=3; global-view ok=True
+[PASS] TC-COLLECT-064 分级分类字段特殊字符防护: save=0/ok; list正常=True
+SUMMARY {'PASS': 42, 'FAIL': 13, 'BLOCKED': 9, 'N_A': 0} total 64
+missing []

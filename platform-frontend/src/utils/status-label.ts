@@ -50,7 +50,7 @@ const STATUS_ZH: Record<string, string> = {
   DESTROYED: '已销毁',
   ALL_SUCCESS: '全部成功',
   PARTIAL: '部分成功',
-  NONE: '未执行',
+  NONE: '未执行', // 执行/运行默认；压缩/加密/计算结果须走 statusLabel(v, domain)
   FAILED: '失败',
   ONLINE: '在线',
   BUSY: '繁忙',
@@ -83,7 +83,7 @@ const STATUS_ZH: Record<string, string> = {
   OPEN: '开放',
   SKIPPED: '已跳过',
   NOT_RUN: '未运行',
-  NONE: '未生成',
+  NOT_GENERATED: '未生成',
   // 供需
   SUBMITTED: '待数据主管部门审核',
   ANALYZING: '预审中',
@@ -193,7 +193,7 @@ const STATUS_ZH: Record<string, string> = {
   CORE: '核心',
   AES256: 'AES-256',
   SM4: '国密SM4',
-  NONE: '不加密',
+  NO_ENCRYPTION: '不加密',
   // 采集范围 / 符合度 / 分层
   FULL: '整库',
   PASS: '通过',
@@ -270,7 +270,7 @@ const STATUS_ZH: Record<string, string> = {
   LOCAL: '本地文件',
   NAS: 'NAS存储',
   GZIP: 'GZIP压缩',
-  NONE: '不压缩',
+  NO_COMPRESSION: '不压缩',
   UNSTRUCT: '非结构化',
   SEMI: '半结构化',
   BASE: '基础库',
@@ -551,11 +551,22 @@ export function catalogResourceStatusLabel(approvalStatus?: string | null, publi
   return statusLabel(catalogResourceStatusCode(approvalStatus, publishStatus))
 }
 
+/** `NONE` 在不同字段含义不同，须按 domain 消歧，避免压缩/加密码覆盖执行状态。 */
+export type StatusLabelDomain = 'exec' | 'calc' | 'compress' | 'encrypt'
+
+const NONE_LABEL_BY_DOMAIN: Record<StatusLabelDomain, string> = {
+  exec: '未执行',
+  calc: '未生成',
+  compress: '不压缩',
+  encrypt: '不加密',
+}
+
 /**
  * 将后端状态码转为中文；未知码原样返回（便于发现漏映射）。
  * 数值状态：1→启用 / 0→停用（账号等）。
+ * `NONE` 默认按执行状态「未执行」；压缩/加密/计算结果请传 domain。
  */
-export function statusLabel(value: unknown): string {
+export function statusLabel(value: unknown, domain?: StatusLabelDomain): string {
   if (value === null || value === undefined || value === '') return '—'
   if (typeof value === 'number') {
     if (value === 1) return '启用'
@@ -563,6 +574,9 @@ export function statusLabel(value: unknown): string {
     return String(value)
   }
   const key = String(value).trim().toUpperCase()
+  if (key === 'NONE' && domain) {
+    return NONE_LABEL_BY_DOMAIN[domain]
+  }
   return STATUS_ZH[key] || String(value)
 }
 
@@ -577,7 +591,7 @@ export function statusTagType(value: unknown): 'success' | 'warning' | 'info' | 
   if (['REJECTED', 'FAILED', 'ERROR', 'FATAL', 'CANCELLED', 'ABNORMAL', 'EXPIRED', 'RETURNED', 'STOPPED', 'UNMAPPED', 'UNMATCHED', 'CRITICAL', 'BLOCKED', 'MISSING', 'HIGH', 'DOWN', 'FAIL', 'NEGATIVE', 'PROBLEM', 'ABANDONED'].includes(key)) {
     return 'danger'
   }
-  if (['INACTIVE', 'DISABLED', 'OFFLINE', 'CLOSED', 'WITHDRAWN', 'ARCHIVED', 'DESTROYED', 'STUB', 'EXTERNAL', 'SKIPPED', 'UNTESTED', 'LOW'].includes(key)) {
+  if (['INACTIVE', 'DISABLED', 'OFFLINE', 'CLOSED', 'WITHDRAWN', 'ARCHIVED', 'DESTROYED', 'STUB', 'EXTERNAL', 'SKIPPED', 'UNTESTED', 'LOW', 'NONE', 'NOT_RUN', 'NOT_GENERATED'].includes(key)) {
     return 'info'
   }
   return 'info'

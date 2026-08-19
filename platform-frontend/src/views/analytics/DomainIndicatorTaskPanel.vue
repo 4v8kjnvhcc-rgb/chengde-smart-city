@@ -367,7 +367,7 @@ onMounted(async () => {
         <template #default="{ row }">{{ statusLabel(row.scheduleStatus) }}</template>
       </el-table-column>
       <el-table-column label="执行状态" width="100">
-        <template #default="{ row }">{{ statusLabel(row.execStatus) }}</template>
+        <template #default="{ row }">{{ statusLabel(row.execStatus, 'exec') }}</template>
       </el-table-column>
       <el-table-column label="最近执行时间" width="170">
         <template #default="{ row }">{{ formatDateTime(row.lastRunAt) || '—' }}</template>
@@ -391,10 +391,10 @@ onMounted(async () => {
         </el-table-column>
         <el-table-column prop="triggerType" label="触发" width="110" />
         <el-table-column label="执行" width="90">
-          <template #default="{ row }">{{ statusLabel(row.execStatus) }}</template>
+          <template #default="{ row }">{{ statusLabel(row.execStatus, 'exec') }}</template>
         </el-table-column>
         <el-table-column label="结果" width="100">
-          <template #default="{ row }">{{ statusLabel(row.calcResult) }}</template>
+          <template #default="{ row }">{{ statusLabel(row.calcResult, 'calc') }}</template>
         </el-table-column>
         <el-table-column prop="message" label="摘要" min-width="160" show-overflow-tooltip />
       </el-table>
@@ -409,7 +409,7 @@ onMounted(async () => {
         <el-table-column prop="fieldName" label="字段名" min-width="120" />
         <el-table-column prop="resultField" label="结果字段" min-width="120" />
         <el-table-column prop="fieldType" label="字段类型" width="90" />
-        <el-table-column prop="indicatorFlag" label="指标标识" min-width="120" />
+        <el-table-column prop="fieldLength" label="长度" width="80" />
       </el-table>
       <template #footer>
         <el-button type="primary" @click="indDialog = false">关闭</el-button>

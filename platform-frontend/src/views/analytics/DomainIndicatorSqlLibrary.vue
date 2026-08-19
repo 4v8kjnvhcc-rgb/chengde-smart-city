@@ -12,10 +12,19 @@ export interface IndicatorRow {
   queryNo?: string
   resultField?: string
   fieldType?: string
+  fieldLength?: number
   indicatorName: string
   fieldName?: string
   indicatorCode?: string
 }
+
+const MYSQL8_FIELD_TYPES = [
+  'VARCHAR', 'CHAR', 'TEXT', 'TINYTEXT', 'MEDIUMTEXT', 'LONGTEXT',
+  'INT', 'BIGINT', 'SMALLINT', 'TINYINT', 'MEDIUMINT',
+  'DECIMAL', 'FLOAT', 'DOUBLE',
+  'DATE', 'DATETIME', 'TIMESTAMP', 'TIME', 'YEAR',
+  'BOOLEAN', 'BIT', 'JSON', 'BLOB', 'MEDIUMBLOB', 'LONGBLOB',
+] as const
 
 const loading = ref(false)
 const rows = ref<IndicatorRow[]>([])
@@ -105,6 +114,8 @@ async function runParse() {
       ...f,
       indicatorName: f.indicatorName || f.resultField,
       fieldName: f.fieldName || `ind_${f.resultField}`,
+      fieldType: f.fieldType || 'VARCHAR',
+      fieldLength: f.fieldLength != null && f.fieldLength > 0 ? f.fieldLength : 64,
     }))
     ElMessage.success(`已解析 ${parsedFields.value.length} 个结果字段`)
   } catch (e: unknown) {
@@ -177,6 +188,7 @@ async function persistRow(row: IndicatorRow) {
     await api.put(`/analytics/domain/indicators/${row.id}`, {
       indicatorName: row.indicatorName,
       fieldName: row.fieldName,
+      fieldType: row.fieldType || 'VARCHAR',
     })
   } catch (e: unknown) {
     ElMessage.error((e as Error).message || '保存失败')
@@ -208,22 +220,38 @@ defineExpose({ load })
     </el-form>
 
     <el-table class="portal-table" :data="rows" stripe size="small" empty-text="暂无数据">
-      <el-table-column prop="queryNo" label="查询编号" min-width="200" show-overflow-tooltip />
+      <el-table-column type="index" label="序号" width="60" />
+      <el-table-column label="字段名" min-width="140" show-overflow-tooltip>
+        <template #default="{ row }">{{ row.fieldName || `ind_${row.resultField}` }}</template>
+      </el-table-column>
       <el-table-column prop="resultField" label="查询结果字段" min-width="140" show-overflow-tooltip />
-      <el-table-column prop="fieldType" label="字段类型" width="100" />
       <el-table-column label="指标名称" min-width="140">
         <template #default="{ row }">
           <el-input v-model="row.indicatorName" size="small" @change="persistRow(row)" />
         </template>
       </el-table-column>
-      <el-table-column label="字段名" min-width="160">
+      <el-table-column label="数据类型" width="140">
         <template #default="{ row }">
-          <el-input v-model="row.fieldName" size="small" @change="persistRow(row)" />
+          <el-select v-model="row.fieldType" size="small" filterable @change="persistRow(row)">
+            <el-option v-for="t in MYSQL8_FIELD_TYPES" :key="t" :label="t" :value="t" />
+          </el-select>
+        </template>
+      </el-table-column>
+      <el-table-column label="长度" width="110">
+        <template #default="{ row }">
+          <el-input-number
+            v-model="row.fieldLength"
+            size="small"
+            :min="1"
+            :max="65535"
+            controls-position="right"
+            @change="persistRow(row)"
+          />
         </template>
       </el-table-column>
       <el-table-column label="操作" width="90" fixed="right">
         <template #default="{ row }">
-          <el-button link type="primary" @click="removeRow(row)">删除</el-button>
+          <el-button link type="danger" @click="removeRow(row)">删除</el-button>
         </template>
       </el-table-column>
     </el-table>
@@ -259,10 +287,26 @@ defineExpose({ load })
       </el-form>
 
       <el-table :data="parsedFields" stripe size="small" max-height="220" empty-text="暂无数据">
-        <el-table-column prop="resultField" label="结果字段名" min-width="140" />
-        <el-table-column prop="fieldType" label="字段类型" width="100" />
-        <el-table-column prop="fieldLength" label="字段长度" width="100" />
-        <el-table-column prop="fieldPrecision" label="字段精度" width="100" />
+        <el-table-column type="index" label="序号" width="60" />
+        <el-table-column prop="fieldName" label="字段名" min-width="140" show-overflow-tooltip />
+        <el-table-column prop="resultField" label="查询结果字段" min-width="120" show-overflow-tooltip />
+        <el-table-column label="指标名称" min-width="120">
+          <template #default="{ row }">
+            <el-input v-model="row.indicatorName" size="small" />
+          </template>
+        </el-table-column>
+        <el-table-column label="数据类型" width="130">
+          <template #default="{ row }">
+            <el-select v-model="row.fieldType" size="small" filterable>
+              <el-option v-for="t in MYSQL8_FIELD_TYPES" :key="t" :label="t" :value="t" />
+            </el-select>
+          </template>
+        </el-table-column>
+        <el-table-column label="长度" width="100">
+          <template #default="{ row }">
+            <el-input-number v-model="row.fieldLength" size="small" :min="1" :max="65535" controls-position="right" />
+          </template>
+        </el-table-column>
       </el-table>
 
       <template #footer>

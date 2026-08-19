@@ -203,14 +203,6 @@ onMounted(() => {
       empty-text="暂无数据"
     >
       <el-table-column prop="label" label="名称" min-width="240" show-overflow-tooltip />
-      <el-table-column prop="categoryCode" label="编码" min-width="160" show-overflow-tooltip />
-      <el-table-column prop="layerCode" label="层级编码" min-width="120" show-overflow-tooltip />
-      <el-table-column label="类型" width="100">
-        <template #default="{ row }">
-          <el-tag v-if="row.systemFlag === 1" size="small" type="info">系统</el-tag>
-          <el-tag v-else size="small">自定义</el-tag>
-        </template>
-      </el-table-column>
       <el-table-column label="操作" width="220" fixed="right">
         <template #default="{ row }">
           <el-button link type="primary" @click="openCreate(row.id)">新增子级</el-button>

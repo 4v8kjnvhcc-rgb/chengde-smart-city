@@ -213,8 +213,9 @@ const DS_ADAPTERS = [
 const PARAM_TYPE_OPTS = ['字符串', '整数', '浮点数', '布尔', '对象', '数组', '日期', '日期时间']
 const FILE_MAX_BYTES = 100 * 1024 * 1024
 
-const props = withDefaults(defineProps<{ catalogOrigin?: 'INGEST' | 'GOVERNANCE' }>(), {
+const props = withDefaults(defineProps<{ catalogOrigin?: 'INGEST' | 'GOVERNANCE'; embedded?: boolean }>(), {
   catalogOrigin: 'GOVERNANCE',
+  embedded: false,
 })
 
 /**
@@ -1961,7 +1962,7 @@ onActivated(async () => {
 </script>
 
 <template>
-  <PageCard :title="pageTitle">
+  <component :is="embedded ? 'div' : PageCard" :title="embedded ? undefined : pageTitle">
     <el-form inline class="portal-inline-form portal-inline-form--block">
       <el-form-item label="资源名称" class="portal-field-lg">
         <el-input
@@ -2871,7 +2872,7 @@ onActivated(async () => {
         <el-button type="primary" :loading="batchLoading" @click="submitBatchCreate">生成目录</el-button>
       </template>
     </el-dialog>
-  </PageCard>
+  </component>
 </template>
 
 <style scoped>
