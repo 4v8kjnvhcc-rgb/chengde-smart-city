@@ -1037,25 +1037,30 @@ public class ResourceCenterPlatformService {
         String tableRule = mergeLifecycleRule(body, sourceDb, tableNames);
         String compressType = str(body.get("compressType"),
                 boolVal(body.get("compressEnabled"), false) ? "GZIP" : "NONE").toUpperCase(Locale.ROOT);
+        int retentionDays = parseRetentionDays(body.get("retentionDays"), 180);
+        String storageStrategy = normalizeStorageStrategy(
+                str(body.get("storageStrategy"), null), action);
         RcStoragePolicy p = new RcStoragePolicy();
         p.setPolicyCode(str(body.get("policyCode"), "POL_" + System.currentTimeMillis()));
         p.setPolicyName(required(body.get("policyName"), "policyName").toString());
         p.setActionType(action);
-        p.setRetentionDays(180);
+        p.setRetentionDays(retentionDays);
         p.setThemeId(longVal(body.get("themeId")) != null ? longVal(body.get("themeId"))
                 : (mt == null ? null : mt.getThemeId()));
         p.setManagedTableId(managedId);
-        p.setStorageStrategy("DB");
-        p.setBackupLibraryId(null);
+        p.setStorageStrategy(storageStrategy);
+        p.setBackupLibraryId(longVal(body.get("backupLibraryId")));
         p.setTableRule(tableRule);
         p.setCompressEnabled(boolVal(body.get("compressEnabled"), "GZIP".equals(compressType)) ? 1 : 0);
         p.setCompressType(compressType);
         p.setDestroyRule("DESTROY".equals(action)
-                ? str(body.get("destroyRule"), "仅销毁满6个月的备份日快照表与归档文件，源表不改")
+                ? str(body.get("destroyRule"),
+                "仅销毁已备份且已归档、且保存满 " + retentionDays + " 天的日快照与归档文件，源业务表不改")
                 : str(body.get("destroyRule"), null));
-        p.setScheduleEnabled(1);
+        p.setScheduleEnabled(boolVal(body.get("scheduleEnabled"), false) ? 1 : 0);
         p.setScheduleCron(cron);
-        p.setNextRunAt(computeNextRun(cron, LocalDateTime.now()));
+        p.setNextRunAt(p.getScheduleEnabled() != null && p.getScheduleEnabled() == 1
+                ? computeNextRun(cron, LocalDateTime.now()) : null);
         p.setDsPublishStatus("LOCAL");
         p.setStatus("ACTIVE");
         policyMapper.insert(p);
@@ -1113,7 +1118,20 @@ public class ResourceCenterPlatformService {
         rule.put("sourceDb", sourceDb);
         rule.put("tableNames", tableNames);
         rule.put("tableName", tableNames.isEmpty() ? null : tableNames.get(0));
-        rule.put("backupDatabase", com.chengde.smartcity.masterdata.support.DataLayerSupport.backupDatabaseFor(sourceDb));
+        String expectedBak = com.chengde.smartcity.masterdata.support.DataLayerSupport.backupDatabaseFor(sourceDb);
+        String bakFromBody = str(body.get("backupDatabase"), null);
+        if (bakFromBody == null || bakFromBody.isBlank()) {
+            bakFromBody = str(rule.get("backupDatabase"), expectedBak);
+        }
+        String bak = bakFromBody == null || bakFromBody.isBlank() ? expectedBak : bakFromBody.trim();
+        if (!com.chengde.smartcity.masterdata.support.DataLayerSupport.isBackupDatabase(bak)) {
+            throw new BusinessException(400, "备份库须为分层 *_bak 库");
+        }
+        if (!sourceDb.equalsIgnoreCase(
+                com.chengde.smartcity.masterdata.support.DataLayerSupport.sourceDatabaseOf(bak))) {
+            throw new BusinessException(400, "备份库须与源库对应，期望 " + expectedBak);
+        }
+        rule.put("backupDatabase", bak.toLowerCase(Locale.ROOT));
         String scope = body.get("backupScope") != null
                 ? String.valueOf(body.get("backupScope")).toUpperCase(Locale.ROOT)
                 : str(rule.get("backupScope"), "TABLE").toUpperCase(Locale.ROOT);
@@ -1173,7 +1191,10 @@ public class ResourceCenterPlatformService {
         if (body.containsKey("policyName")) {
             p.setPolicyName(required(body.get("policyName"), "policyName").toString());
         }
-        p.setRetentionDays(180);
+        if (body.containsKey("retentionDays")) {
+            p.setRetentionDays(parseRetentionDays(body.get("retentionDays"),
+                    p.getRetentionDays() == null ? 180 : p.getRetentionDays()));
+        }
         if (body.containsKey("managedTableId")) {
             Long managedId = longVal(body.get("managedTableId"));
             if (managedId == null) throw new BusinessException(400, "请选择纳管表");
@@ -1183,11 +1204,8 @@ public class ResourceCenterPlatformService {
             p.setThemeId(mt.getThemeId());
         }
         if (body.containsKey("storageStrategy")) {
-            String strategy = str(body.get("storageStrategy"), p.getStorageStrategy());
-            if (strategy != null && !Set.of("LOCAL", "NAS", "OBJECT").contains(strategy)) {
-                throw new BusinessException(400, "storageStrategy 须为 LOCAL / NAS / OBJECT");
-            }
-            p.setStorageStrategy(strategy);
+            p.setStorageStrategy(normalizeStorageStrategy(
+                    str(body.get("storageStrategy"), p.getStorageStrategy()), p.getActionType()));
         }
         if (body.containsKey("backupLibraryId")) {
             p.setBackupLibraryId(longVal(body.get("backupLibraryId")));
@@ -1227,9 +1245,14 @@ public class ResourceCenterPlatformService {
         if (body.containsKey("scheduleEnabled") || body.containsKey("scheduleCron")) {
             String cron = str(body.get("scheduleCron"), p.getScheduleCron());
             validateCron(cron);
-            p.setScheduleEnabled(1);
             p.setScheduleCron(cron);
-            p.setNextRunAt(computeNextRun(cron, LocalDateTime.now()));
+            if (body.containsKey("scheduleEnabled")) {
+                boolean on = boolVal(body.get("scheduleEnabled"), false);
+                p.setScheduleEnabled(on ? 1 : 0);
+                p.setNextRunAt(on ? computeNextRun(cron, LocalDateTime.now()) : null);
+            } else if (p.getScheduleEnabled() != null && p.getScheduleEnabled() == 1) {
+                p.setNextRunAt(computeNextRun(cron, LocalDateTime.now()));
+            }
         }
         if (body.containsKey("status")) {
             p.setStatus(str(body.get("status"), p.getStatus()));
@@ -2112,6 +2135,39 @@ public class ResourceCenterPlatformService {
         } catch (Exception ex) {
             throw new BusinessException(400, "Cron 表达式非法: " + ex.getMessage());
         }
+    }
+
+    private static int parseRetentionDays(Object raw, int defaultDays) {
+        if (raw == null || String.valueOf(raw).isBlank()) {
+            return Math.max(defaultDays, 1);
+        }
+        try {
+            int d = Integer.parseInt(String.valueOf(raw).trim());
+            if (d < 1 || d > 3650) {
+                throw new BusinessException(400, "保存天数须在 1～3650 之间");
+            }
+            return d;
+        } catch (BusinessException e) {
+            throw e;
+        } catch (Exception e) {
+            throw new BusinessException(400, "保存天数须为整数");
+        }
+    }
+
+    /** 生命周期：BACKUP/DESTROY 默认 DB（分层备份库）；ARCHIVE 默认 LOCAL（归档目录）。 */
+    private static String normalizeStorageStrategy(String raw, String actionType) {
+        String action = actionType == null ? "" : actionType.toUpperCase(Locale.ROOT);
+        String def = "ARCHIVE".equals(action) ? "LOCAL" : "DB";
+        String s = raw == null || raw.isBlank() ? def : raw.trim().toUpperCase(Locale.ROOT);
+        if (!Set.of("DB", "LOCAL", "NAS", "OBJECT").contains(s)) {
+            throw new BusinessException(400, "存储策略须为 DB / LOCAL / NAS / OBJECT");
+        }
+        if ("BACKUP".equals(action) || "DESTROY".equals(action)) {
+            if (!"DB".equals(s)) {
+                throw new BusinessException(400, "备份/销毁请使用存储策略「DB」（分层备份库快照）");
+            }
+        }
+        return s;
     }
 
     private static LocalDateTime computeNextRun(String cron, LocalDateTime base) {

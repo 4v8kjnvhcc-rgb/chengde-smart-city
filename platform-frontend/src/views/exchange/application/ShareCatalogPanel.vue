@@ -7,6 +7,7 @@ import { statusLabel } from '@/utils/status-label'
 import PortalPagination from '@/components/common/PortalPagination.vue'
 import ResourceApplyDialog from './ResourceApplyDialog.vue'
 import type { ApplyResource } from './ResourceApplyDialog.vue'
+import { applyColumnsFromDetail } from './ResourceApplyDialog.vue'
 import { addFavorite, fetchFavorites, isFavorited, removeFavorite } from './portal-favorites'
 
 export interface CatalogFacet {
@@ -292,6 +293,7 @@ function openApplyForm(row?: CatalogRow | Record<string, unknown> | null) {
     updatedAt: src.updatedAt as string | undefined,
     resourceType: (src.resourceType as string) || 'TABLE',
     resourceTypeLabel: src.resourceTypeLabel as string | undefined,
+    columns: applyColumnsFromDetail(src as Record<string, unknown>),
   }
   applyVisible.value = true
 }

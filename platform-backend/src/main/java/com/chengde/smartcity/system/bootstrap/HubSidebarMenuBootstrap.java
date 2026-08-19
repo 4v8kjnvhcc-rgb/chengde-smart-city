@@ -75,17 +75,19 @@ public class HubSidebarMenuBootstrap implements ApplicationRunner {
             log.info("Retired obsolete menus (status=0 only, visible untouched): {} rows", retired);
         }
 
-        // 通用支撑：统一用户 / 智能BI / 任务管理 / 集成运维（7882/7883）
+        // 通用支撑下仅保留：统一用户(13) / 智能BI(14)；任务管理/集成运维挂在统一用户内
         jdbcTemplate.update(
                 "UPDATE sys_menu SET status = 1 WHERE id IN (12, 7880, 7881, 7882, 7883, 13, 14, 15, 16, 17, 18, 19, 6000, 6010)");
         jdbcTemplate.update(
-                "UPDATE sys_menu SET parent_id = 7880, sort_order = 3, status = 1, "
+                "UPDATE sys_menu SET parent_id = 13, sort_order = 5, status = 1, "
                         + "menu_name = '任务管理', path = '/analytics/support?tab=tasks', "
                         + "permission = 'hub:analytics:support:tasks' WHERE id = 7882");
         jdbcTemplate.update(
-                "UPDATE sys_menu SET parent_id = 7880, sort_order = 4, status = 1, "
+                "UPDATE sys_menu SET parent_id = 13, sort_order = 6, status = 1, "
                         + "menu_name = '集成运维', path = '/analytics/support?tab=ops.kettle', "
                         + "permission = 'hub:analytics:support:ops' WHERE id = 7883");
+        // 旧 UUM 重复入口保持停用，避免双勾选；不改 visible
+        jdbcTemplate.update("UPDATE sys_menu SET status = 0 WHERE id IN (7507, 7508) AND status <> 0");
 
         int granted = jdbcTemplate.update(
                 "INSERT INTO sys_role_menu (role_id, menu_id) "

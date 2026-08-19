@@ -5,15 +5,18 @@ import com.chengde.smartcity.audit.AuditService;
 import com.chengde.smartcity.common.exception.BusinessException;
 import com.chengde.smartcity.exchange.entity.BizCatalogItem;
 import com.chengde.smartcity.exchange.entity.BizDemandSupplyTask;
+import com.chengde.smartcity.exchange.entity.BizPortalApp;
 import com.chengde.smartcity.exchange.entity.BizPortalSituation;
 import com.chengde.smartcity.exchange.entity.BizPortalSubscription;
 import com.chengde.smartcity.exchange.entity.BizResourceFavorite;
 import com.chengde.smartcity.exchange.mapper.BizCatalogItemMapper;
 import com.chengde.smartcity.exchange.mapper.BizDemandSupplyTaskMapper;
+import com.chengde.smartcity.exchange.mapper.BizPortalAppMapper;
 import com.chengde.smartcity.exchange.mapper.BizPortalSituationMapper;
 import com.chengde.smartcity.exchange.mapper.BizPortalSubscriptionMapper;
 import com.chengde.smartcity.exchange.mapper.BizResourceFavoriteMapper;
 import com.chengde.smartcity.integration.config.IntegrationProperties;
+import com.chengde.smartcity.integration.esb.EsbConsumerProvisionService;
 import com.chengde.smartcity.integration.storage.StorageIntegrationClient;
 import com.chengde.smartcity.masterdata.entity.GovCatalogCategory;
 import com.chengde.smartcity.masterdata.entity.GovCatalogResource;
@@ -40,6 +43,7 @@ import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
+import java.util.regex.Pattern;
 import java.util.stream.Collectors;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -53,10 +57,13 @@ public class PortalService {
     private static final String ES_INDEX = "smartcity_catalog";
     private static final ObjectMapper OM = new ObjectMapper();
     private static final DateTimeFormatter DT_FMT = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
+    private static final Pattern CONTACT_PHONE_PATTERN =
+            Pattern.compile("^(1[3-9]\\d{9}|0\\d{2,3}-?\\d{7,8})$");
 
     private final BizCatalogItemMapper catalogMapper;
     private final BizPortalSubscriptionMapper subscriptionMapper;
     private final BizResourceFavoriteMapper favoriteMapper;
+    private final BizPortalAppMapper portalAppMapper;
     private final BizPortalSituationMapper situationMapper;
     private final BizDemandSupplyTaskMapper supplyTaskMapper;
     private final GovCatalogResourceMapper govResourceMapper;
@@ -67,10 +74,12 @@ public class PortalService {
     private final IntegrationProperties integrationProperties;
     private final StorageIntegrationClient storageClient;
     private final CatalogSubscriptionService catalogSubscriptionService;
+    private final EsbConsumerProvisionService esbConsumerProvisionService;
 
     public PortalService(BizCatalogItemMapper catalogMapper,
                          BizPortalSubscriptionMapper subscriptionMapper,
                          BizResourceFavoriteMapper favoriteMapper,
+                         BizPortalAppMapper portalAppMapper,
                          BizPortalSituationMapper situationMapper,
                          BizDemandSupplyTaskMapper supplyTaskMapper,
                          GovCatalogResourceMapper govResourceMapper,
@@ -80,10 +89,12 @@ public class PortalService {
                          AuditService auditService,
                          IntegrationProperties integrationProperties,
                          StorageIntegrationClient storageClient,
-                         CatalogSubscriptionService catalogSubscriptionService) {
+                         CatalogSubscriptionService catalogSubscriptionService,
+                         EsbConsumerProvisionService esbConsumerProvisionService) {
         this.catalogMapper = catalogMapper;
         this.subscriptionMapper = subscriptionMapper;
         this.favoriteMapper = favoriteMapper;
+        this.portalAppMapper = portalAppMapper;
         this.situationMapper = situationMapper;
         this.supplyTaskMapper = supplyTaskMapper;
         this.govResourceMapper = govResourceMapper;
@@ -94,6 +105,7 @@ public class PortalService {
         this.integrationProperties = integrationProperties;
         this.storageClient = storageClient;
         this.catalogSubscriptionService = catalogSubscriptionService;
+        this.esbConsumerProvisionService = esbConsumerProvisionService;
     }
 
     public Map<String, Object> home(String keyword) {
@@ -383,6 +395,11 @@ public class PortalService {
                 row.put("catalogCode", cat.getCatalogCode());
                 row.put("govResourceId", cat.getGovResourceId());
             }
+            row.put("oauthClientId", sub.getOauthClientId());
+            row.put("oauthClientSecret", sub.getOauthClientSecret());
+            row.put("esbCustomerId", sub.getEsbCustomerId());
+            row.put("apiUrl", sub.getApiUrl());
+            row.put("apiMethod", sub.getApiMethod());
             String ref = "PORTAL_SUB_" + sub.getId();
             List<BizDemandSupplyTask> tasks = supplyTaskMapper.selectList(new LambdaQueryWrapper<BizDemandSupplyTask>()
                     .eq(BizDemandSupplyTask::getRefFlowCode, ref)
@@ -447,6 +464,36 @@ public class PortalService {
             review.put("comment", sub.getApproverNote());
         }
         flow.add(review);
+        if ("API".equalsIgnoreCase(nz(sub.getResourceType(), ""))) {
+            Map<String, Object> cred = new LinkedHashMap<>();
+            cred.put("step", "发放调用凭证");
+            if ("APPROVED".equals(st) && !blank(sub.getOauthClientId())) {
+                cred.put("status", "DONE");
+                cred.put("result", "已发放");
+                cred.put("actor", sub.getReviewedBy());
+                cred.put("time", sub.getReviewedAt());
+                cred.put("comment", "");
+            } else if ("APPROVED".equals(st)) {
+                cred.put("status", "PENDING");
+                cred.put("result", "待发放");
+                cred.put("actor", "");
+                cred.put("time", null);
+                cred.put("comment", "");
+            } else if ("PENDING".equals(st)) {
+                cred.put("status", "WAITING");
+                cred.put("result", "待审批后发放");
+                cred.put("actor", "");
+                cred.put("time", null);
+                cred.put("comment", "");
+            } else {
+                cred.put("status", "SKIPPED");
+                cred.put("result", "—");
+                cred.put("actor", "");
+                cred.put("time", null);
+                cred.put("comment", "");
+            }
+            flow.add(cred);
+        }
         return flow;
     }
 
@@ -667,6 +714,12 @@ public class PortalService {
                 catalogMapper.updateById(catalog);
             }
             log.info("portal subscription {} approved, task {}", id, task.getId());
+            if (esbConsumerProvisionService.needsEsbProvision(sub)) {
+                esbConsumerProvisionService.provisionOnApprove(sub);
+                out.put("oauthClientId", sub.getOauthClientId());
+                out.put("apiUrl", sub.getApiUrl());
+                out.put("apiMethod", sub.getApiMethod());
+            }
         }
 
         auditService.log(operator.getUserId(), operator.getUsername(), operator.getOrgId(),
@@ -876,6 +929,126 @@ public class PortalService {
             throw new BusinessException(400, "catalogId 或 govResourceId 必填");
         }
         favoriteMapper.delete(q);
+    }
+
+    /** 个人空间「我的应用」：当前登录人自己的应用系统台账 */
+    public List<Map<String, Object>> listMyApps(UserPrincipal operator) {
+        if (operator == null || operator.getUserId() == null) {
+            return List.of();
+        }
+        List<BizPortalApp> list = portalAppMapper.selectList(new LambdaQueryWrapper<BizPortalApp>()
+                .eq(BizPortalApp::getUserId, operator.getUserId())
+                .orderByDesc(BizPortalApp::getCreatedAt)
+                .orderByDesc(BizPortalApp::getId));
+        List<Map<String, Object>> out = new ArrayList<>();
+        for (BizPortalApp app : list) {
+            out.add(toMyAppRow(app));
+        }
+        return out;
+    }
+
+    @Transactional
+    public Map<String, Object> createMyApp(UserPrincipal operator, Map<String, Object> body) {
+        BizPortalApp app = new BizPortalApp();
+        fillMyAppOwner(app, operator);
+        fillMyAppFields(app, body, true);
+        ensureUniqueAppName(operator.getUserId(), app.getAppName(), null);
+        LocalDateTime now = LocalDateTime.now();
+        app.setCreatedAt(now);
+        app.setUpdatedAt(now);
+        portalAppMapper.insert(app);
+        auditService.log(operator.getUserId(), operator.getUsername(), operator.getOrgId(),
+                "PORTAL_MY_APP_CREATE", "biz_portal_app", String.valueOf(app.getId()), app.getAppName());
+        return toMyAppRow(app);
+    }
+
+    @Transactional
+    public Map<String, Object> updateMyApp(UserPrincipal operator, Long id, Map<String, Object> body) {
+        BizPortalApp app = requireOwnedApp(operator, id);
+        fillMyAppFields(app, body, false);
+        ensureUniqueAppName(operator.getUserId(), app.getAppName(), app.getId());
+        app.setUpdatedAt(LocalDateTime.now());
+        portalAppMapper.updateById(app);
+        auditService.log(operator.getUserId(), operator.getUsername(), operator.getOrgId(),
+                "PORTAL_MY_APP_UPDATE", "biz_portal_app", String.valueOf(id), app.getAppName());
+        return toMyAppRow(app);
+    }
+
+    @Transactional
+    public void deleteMyApp(UserPrincipal operator, Long id) {
+        BizPortalApp app = requireOwnedApp(operator, id);
+        portalAppMapper.deleteById(id);
+        auditService.log(operator.getUserId(), operator.getUsername(), operator.getOrgId(),
+                "PORTAL_MY_APP_DELETE", "biz_portal_app", String.valueOf(id), app.getAppName());
+    }
+
+    private BizPortalApp requireOwnedApp(UserPrincipal operator, Long id) {
+        if (operator == null || operator.getUserId() == null) {
+            throw new BusinessException(401, "未登录");
+        }
+        BizPortalApp app = portalAppMapper.selectById(id);
+        if (app == null) {
+            throw new BusinessException(404, "应用不存在");
+        }
+        if (!Objects.equals(operator.getUserId(), app.getUserId()) && !operator.isSystemAdmin()) {
+            throw new BusinessException(403, "仅可维护本人应用");
+        }
+        return app;
+    }
+
+    private void fillMyAppOwner(BizPortalApp app, UserPrincipal operator) {
+        if (operator == null || operator.getUserId() == null) {
+            throw new BusinessException(401, "未登录");
+        }
+        app.setUserId(operator.getUserId());
+        app.setUsername(operator.getUsername());
+        app.setOrgId(operator.getOrgId());
+    }
+
+    private void fillMyAppFields(BizPortalApp app, Map<String, Object> body, boolean creating) {
+        String appName = str(body == null ? null : body.get("appName"), creating ? "" : app.getAppName());
+        String contactName = str(body == null ? null : body.get("contactName"), creating ? "" : app.getContactName());
+        String contactPhone = str(body == null ? null : body.get("contactPhone"), creating ? "" : app.getContactPhone());
+        if (appName == null || appName.isBlank()) {
+            throw new BusinessException(400, "请填写应用系统名称");
+        }
+        if (contactName == null || contactName.isBlank()) {
+            throw new BusinessException(400, "请填写联系人");
+        }
+        if (contactPhone == null || contactPhone.isBlank()) {
+            throw new BusinessException(400, "请填写联系电话");
+        }
+        String phone = contactPhone.trim();
+        if (!CONTACT_PHONE_PATTERN.matcher(phone).matches()) {
+            throw new BusinessException(400, "联系电话格式不对");
+        }
+        app.setAppName(appName.trim());
+        app.setContactName(contactName.trim());
+        app.setContactPhone(phone);
+    }
+
+    private void ensureUniqueAppName(Long userId, String appName, Long excludeId) {
+        LambdaQueryWrapper<BizPortalApp> q = new LambdaQueryWrapper<BizPortalApp>()
+                .eq(BizPortalApp::getUserId, userId)
+                .eq(BizPortalApp::getAppName, appName);
+        if (excludeId != null) {
+            q.ne(BizPortalApp::getId, excludeId);
+        }
+        Long n = portalAppMapper.selectCount(q);
+        if (n != null && n > 0) {
+            throw new BusinessException(400, "已存在同名应用系统");
+        }
+    }
+
+    private Map<String, Object> toMyAppRow(BizPortalApp app) {
+        Map<String, Object> row = new LinkedHashMap<>();
+        row.put("id", app.getId());
+        row.put("appName", app.getAppName());
+        row.put("contactName", app.getContactName());
+        row.put("contactPhone", app.getContactPhone());
+        row.put("createdAt", app.getCreatedAt() == null ? null : DT_FMT.format(app.getCreatedAt()));
+        row.put("updatedAt", app.getUpdatedAt() == null ? null : DT_FMT.format(app.getUpdatedAt()));
+        return row;
     }
 
     private Map<String, Object> toFavoriteRow(BizResourceFavorite f) {
@@ -1377,9 +1550,7 @@ public class PortalService {
                     for (Map.Entry<?, ?> e : m.entrySet()) {
                         t.put(String.valueOf(e.getKey()), e.getValue());
                     }
-                    Object cols = t.get("columns");
-                    boolean emptyCols = !(cols instanceof List<?>) || ((List<?>) cols).isEmpty();
-                    if (emptyCols && !columns.isEmpty()) {
+                    if (!columns.isEmpty()) {
                         t.put("columns", columns);
                     }
                     if (blank(str(t.get("summary"), "")) && !columns.isEmpty()) {
@@ -1490,6 +1661,9 @@ public class PortalService {
             if (len == null) {
                 len = m.get("columnLength");
             }
+            if (len == null) {
+                len = m.get("columnSize");
+            }
             col.put("length", len == null || String.valueOf(len).isBlank() ? "" : String.valueOf(len));
             col.put("pk", boolish(m.get("pk")) || boolish(m.get("primaryKey")) || boolish(m.get("isPk")));
             if (m.containsKey("nullable")) {
@@ -1500,6 +1674,8 @@ public class PortalService {
                 col.put("nullable", true);
             }
             col.put("sensitivity", firstNonBlank(str(m.get("sensLevel"), null), str(m.get("sensitivity"), null), ""));
+            col.put("displayFlag", !m.containsKey("displayFlag") || boolish(m.get("displayFlag")));
+            col.put("searchFlag", boolish(m.get("searchFlag")));
             out.add(col);
         }
         return out;

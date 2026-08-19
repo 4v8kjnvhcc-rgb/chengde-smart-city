@@ -45,8 +45,8 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Service;
 
 /**
- * 多表按日快照：备份库生成 {表}{yyyyMMdd}（跑到哪天打哪天），源表不改；归档同名 tsv.gz；满 6 个月才销毁。
- * 分区备份/分区销毁仅 LEDGER。
+ * 多表按日快照：备份库生成 {表}{yyyyMMdd}（跑到哪天打哪天），源表不改；归档同名 tsv.gz；
+ * 销毁门槛取策略保存天数（默认 180 天≈6 个月）。分区备份/分区销毁仅 LEDGER。
  */
 @Service
 public class StorageLifecycleService {
@@ -57,7 +57,8 @@ public class StorageLifecycleService {
     private static final Pattern DAY_SUFFIX = Pattern.compile("^(\\d{8})$");
     private static final Pattern LEGACY_MONTH_SUFFIX = Pattern.compile("^(\\d{6})$");
     private static final DateTimeFormatter YMD = DateTimeFormatter.ofPattern("yyyyMMdd");
-    private static final int RETAIN_MONTHS = 6;
+    /** 未配置保存天数时的默认保留（约 6 个月） */
+    private static final int DEFAULT_RETENTION_DAYS = 180;
 
     private final LayerJdbcSupport layerJdbc;
     private final RcStoragePolicyMapper policyMapper;
@@ -208,7 +209,7 @@ public class StorageLifecycleService {
     }
 
     private Map<String, Object> runBackup(RcStoragePolicy p, String sourceDb, List<String> tables, String actor) {
-        String bakDb = DataLayerSupport.backupDatabaseFor(sourceDb);
+        String bakDb = resolveBackupDb(p, sourceDb);
         String stamp = dayStamp();
         long copiedTotal = 0;
         Long lastArtId = null;
@@ -272,7 +273,7 @@ public class StorageLifecycleService {
     }
 
     private Map<String, Object> runArchive(RcStoragePolicy p, String sourceDb, List<String> tables, String actor) {
-        String bakDb = DataLayerSupport.backupDatabaseFor(sourceDb);
+        String bakDb = resolveBackupDb(p, sourceDb);
         boolean compress = p.getCompressEnabled() == null || p.getCompressEnabled() == 1;
         long rowsTotal = 0;
         Long lastArtId = null;
@@ -358,8 +359,9 @@ public class StorageLifecycleService {
     }
 
     private Map<String, Object> runDestroy(RcStoragePolicy p, String sourceDb, List<String> tables, String actor) {
-        String bakDb = DataLayerSupport.backupDatabaseFor(sourceDb);
-        int cutoff = cutoffDay();
+        String bakDb = resolveBackupDb(p, sourceDb);
+        int retainDays = resolveRetentionDays(p);
+        int cutoff = cutoffDay(retainDays);
         int droppedTables = 0;
         int deletedFiles = 0;
         int marked = 0;
@@ -416,8 +418,8 @@ public class StorageLifecycleService {
         }
         String msg;
         if (destroyed.isEmpty()) {
-            msg = "没有可销毁项：须同时具备备份与归档，且满 " + RETAIN_MONTHS
-                    + " 个月（门槛 yyyyMMdd≤" + cutoff + "）"
+            msg = "没有可销毁项：须同时具备备份与归档，且保存满 " + retainDays
+                    + " 天（门槛 yyyyMMdd≤" + cutoff + "）"
                     + (blocked.isEmpty() ? "" : "；未达条件：" + String.join("、", blocked));
         } else {
             msg = "销毁完成：已删备份快照 " + droppedTables + " 张、归档文件 " + deletedFiles
@@ -770,8 +772,7 @@ public class StorageLifecycleService {
                 continue;
             }
             art.setStatus("DESTROYED");
-            art.setMessage("已销毁（须同时具备备份与归档且满 " + RETAIN_MONTHS
-                    + " 个月）；原路径=" + art.getStorageLocation());
+            art.setMessage("已销毁（须同时具备备份与归档且达到保存天数）；原路径=" + art.getStorageLocation());
             artifactMapper.updateById(art);
             n++;
         }
@@ -956,10 +957,37 @@ public class StorageLifecycleService {
         return LocalDate.now().format(YMD);
     }
 
-    /** 满 6 个月门槛，与快照名比较用的 yyyyMMdd。例如 2026-08-16 → 20260216。 */
-    private static int cutoffDay() {
-        LocalDate c = LocalDate.now().minusMonths(RETAIN_MONTHS);
+    /** 满保存天数门槛，与快照名比较用的 yyyyMMdd。 */
+    private static int cutoffDay(int retainDays) {
+        int days = Math.max(retainDays, 1);
+        LocalDate c = LocalDate.now().minusDays(days);
         return c.getYear() * 10000 + c.getMonthValue() * 100 + c.getDayOfMonth();
+    }
+
+    static int resolveRetentionDays(RcStoragePolicy p) {
+        if (p != null && p.getRetentionDays() != null && p.getRetentionDays() > 0) {
+            return p.getRetentionDays();
+        }
+        return DEFAULT_RETENTION_DAYS;
+    }
+
+    /** 策略规则中的备份库；须为对应源库的 *_bak。 */
+    String resolveBackupDb(RcStoragePolicy p, String sourceDb) {
+        Map<String, Object> rule = p == null ? Map.of() : parseRule(p);
+        String expected = DataLayerSupport.backupDatabaseFor(sourceDb);
+        String configured = str(rule.get("backupDatabase"), expected);
+        if (configured == null || configured.isBlank()) {
+            return expected;
+        }
+        String bak = configured.trim().toLowerCase(Locale.ROOT);
+        if (!DataLayerSupport.isBackupDatabase(bak)) {
+            throw new BusinessException(400, "备份库须为分层 *_bak 库，当前=" + configured);
+        }
+        String srcOfBak = DataLayerSupport.sourceDatabaseOf(bak);
+        if (!sourceDb.equalsIgnoreCase(srcOfBak)) {
+            throw new BusinessException(400, "备份库 " + configured + " 与源库 " + sourceDb + " 不匹配，应为 " + expected);
+        }
+        return bak;
     }
 
     /**

@@ -13,6 +13,7 @@ import ChannelTaskPanel from './ChannelTaskPanel.vue'
 import SemiIngestConfigView from './SemiIngestConfigView.vue'
 import ApiIngestConfigView from './ApiIngestConfigView.vue'
 import CdcIngestConfigView from './CdcIngestConfigView.vue'
+import UnstructuredHubView from '@/views/unstructured/UnstructuredHubView.vue'
 
 import { ingestionRegisterCache } from '../ingestion-register-cache'
 
@@ -1137,15 +1138,9 @@ onMounted(() => {
 
 
 
-    <!-- 非结构：沿用通道面板；半结构 / API / CDC：按原型配置页 + 同页任务管理 -->
-
+    <!-- 非结构：与「文件资源管理 · 本地上传」同界面、同数据、同落盘 -->
     <template v-else-if="mainTab === 'unstruct'">
-      <ChannelTaskPanel
-        key="unstruct"
-        :title="activeOtherMeta?.label || '非结构化数据接入'"
-        channel-type="UNSTRUCT"
-        :config-fields="configFields('UNSTRUCT')"
-      />
+      <UnstructuredHubView embed-local-only embed-title="非结构化数据接入" />
     </template>
 
     <SemiIngestConfigView v-else-if="mainTab === 'semi'" />

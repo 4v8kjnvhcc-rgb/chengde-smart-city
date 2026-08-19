@@ -274,9 +274,11 @@ export function filterIngestionModules(
 ): IngestionModuleMeta[] {
   if (opts.isSystemAdmin) return modules
   const perms = opts.permissions || []
+  /** 角色只存叶子细码时，父模块粗码不在 permissions 里，须认前缀子码 */
+  const hasModulePerm = (code: string) =>
+    perms.includes(code) || perms.some((p) => p.startsWith(`${code}:`))
   return modules.filter((m) => {
-    if (perms.includes(m.permission)) return true
-    // 部门报告/图谱权限可打开同一模块
+    if (hasModulePerm(m.permission)) return true
     if (m.key === 'm046' && perms.includes('hub:ingestion:register:m046:dept')) return true
     if (m.key === 'm047' && perms.includes('hub:ingestion:register:m047:dept')) return true
     if (m.key === 'catalog') {
@@ -393,8 +395,8 @@ export function filterCollectNavItems(opts: { isSystemAdmin: boolean; permission
   return filterIngestionModules(COLLECT_MODULES, opts)
     .map((m) => toCollectNavItem(m, opts))
     .filter((item) => {
-      if (item.key !== 'catalog') return true
-      return !item.children || item.children.length > 0
+      if (!item.children) return true
+      return item.children.length > 0
     })
 }
 
@@ -416,7 +418,6 @@ export function isCollectModuleAllowed(
   }
   if (isCatalogSubKey(moduleKey) || moduleKey === 'catalog') {
     if (!allowed.some((m) => m.key === 'catalog')) return false
-    if (moduleKey === 'catalog.approvals') return !!opts?.isSystemAdmin
     if (!opts || opts.isSystemAdmin || moduleKey === 'catalog') return true
     const p = CATALOG_SUB_PERMISSIONS[moduleKey as CatalogSubKey]
     return opts.permissions.includes(p) || opts.permissions.includes('hub:ingestion:collect:catalog')
@@ -427,7 +428,6 @@ export function isCollectModuleAllowed(
 /** 目录模块：落到当前账号有权访问的第一个子页 */
 export function firstAllowedCatalogModule(opts: { isSystemAdmin: boolean; permissions: string[] }): CatalogSubKey {
   for (const k of CATALOG_SUB_KEYS) {
-    if (k === 'catalog.approvals' && !opts.isSystemAdmin) continue
     if (opts.isSystemAdmin) return k
     const p = CATALOG_SUB_PERMISSIONS[k]
     if (opts.permissions.includes(p) || opts.permissions.includes('hub:ingestion:collect:catalog')) {
@@ -475,49 +475,104 @@ function toCollectNavItem(
   opts?: { isSystemAdmin: boolean; permissions: string[] },
 ): HubNavItem {
   if (m.key === 'ingest') {
+    const ingestAllowed = (k: IngestSubKey) => {
+      if (!opts || opts.isSystemAdmin) return true
+      const map: Record<IngestSubKey, string> = {
+        'ingest.structured': 'hub:ingestion:collect:ingest:structured',
+        'ingest.unstruct': 'hub:ingestion:collect:ingest:unstruct',
+        'ingest.semi': 'hub:ingestion:collect:ingest:semi',
+        'ingest.api': 'hub:ingestion:collect:ingest:api',
+        'ingest.cdc': 'hub:ingestion:collect:ingest:cdc',
+      }
+      const p = map[k]
+      return opts.permissions.includes(p)
+        || opts.permissions.includes('hub:ingestion:collect:ingest')
+    }
     return {
       key: m.key,
       label: m.label,
       subLabel: m.subLabel,
-      children: INGEST_SUB_KEYS.map((k) => ({ key: k, label: INGEST_SUB_LABELS[k] })),
+      children: INGEST_SUB_KEYS.filter((k) => ingestAllowed(k)).map((k) => ({
+        key: k,
+        label: INGEST_SUB_LABELS[k],
+      })),
     }
   }
   if (m.key === 'quality') {
+    const qualityAllowed = (k: string) => {
+      if (!opts || opts.isSystemAdmin) return true
+      const map: Record<string, string> = {
+        'quality.standards.file': 'hub:ingestion:collect:quality:standards:file',
+        'quality.standards.element': 'hub:ingestion:collect:quality:standards:element',
+        'quality.standards.code': 'hub:ingestion:collect:quality:standards:code',
+        'quality.standards.naming': 'hub:ingestion:collect:quality:standards:naming',
+        'quality.rule-config': 'hub:ingestion:collect:quality:rule-config',
+        'quality.monitor': 'hub:ingestion:collect:quality:monitor',
+        'quality.assess': 'hub:ingestion:collect:quality:assess',
+        'quality.reports': 'hub:ingestion:collect:quality:reports',
+      }
+      const p = map[k]
+      return !!p && (opts.permissions.includes(p)
+        || opts.permissions.includes('hub:ingestion:collect:quality'))
+    }
+    const standardChildren = [
+      'quality.standards.file',
+      'quality.standards.element',
+      'quality.standards.code',
+      'quality.standards.naming',
+    ]
+      .filter((k) => qualityAllowed(k))
+      .map((k) => ({ key: k, label: QUALITY_SUB_LABELS[k as QualitySubKey] }))
+    const children: HubNavItem[] = []
+    if (standardChildren.length) {
+      children.push({
+        key: 'quality.standards',
+        label: '数据标准体系',
+        children: standardChildren,
+      })
+    }
+    for (const k of ['quality.rule-config', 'quality.monitor', 'quality.assess', 'quality.reports'] as const) {
+      if (qualityAllowed(k)) {
+        children.push({ key: k, label: QUALITY_SUB_LABELS[k] })
+      }
+    }
     return {
       key: m.key,
       label: m.label,
       subLabel: m.subLabel,
-      children: [
-        {
-          key: 'quality.standards',
-          label: '数据标准体系',
-          children: [
-            { key: 'quality.standards.file', label: QUALITY_SUB_LABELS['quality.standards.file'] },
-            { key: 'quality.standards.element', label: QUALITY_SUB_LABELS['quality.standards.element'] },
-            { key: 'quality.standards.code', label: QUALITY_SUB_LABELS['quality.standards.code'] },
-            { key: 'quality.standards.naming', label: QUALITY_SUB_LABELS['quality.standards.naming'] },
-          ],
-        },
-        { key: 'quality.rule-config', label: QUALITY_SUB_LABELS['quality.rule-config'] },
-        { key: 'quality.monitor', label: QUALITY_SUB_LABELS['quality.monitor'] },
-        { key: 'quality.assess', label: QUALITY_SUB_LABELS['quality.assess'] },
-        { key: 'quality.reports', label: QUALITY_SUB_LABELS['quality.reports'] },
-      ],
+      children,
     }
   }
   if (m.key === 'asset') {
+    const assetAllowed = (k: AssetSubKey) => {
+      if (!opts || opts.isSystemAdmin) return true
+      const map: Record<AssetSubKey, string> = {
+        'asset.classify': 'hub:ingestion:collect:asset:classify',
+        'asset.mask': 'hub:ingestion:collect:asset:mask',
+        'asset.tag': 'hub:ingestion:collect:asset:tag',
+        'asset.search': 'hub:ingestion:collect:asset:search',
+        'asset.backup': 'hub:ingestion:collect:asset:backup',
+        'asset.archive': 'hub:ingestion:collect:asset:archive',
+        'asset.destroy': 'hub:ingestion:collect:asset:destroy',
+        'asset.global': 'hub:ingestion:collect:asset:global',
+      }
+      const p = map[k]
+      return opts.permissions.includes(p)
+        || opts.permissions.includes('hub:ingestion:collect:asset')
+    }
     return {
       key: m.key,
       label: m.label,
       subLabel: m.subLabel,
-      children: ASSET_SUB_KEYS.map((k) => ({ key: k, label: ASSET_SUB_LABELS[k] })),
+      children: ASSET_SUB_KEYS.filter((k) => assetAllowed(k)).map((k) => ({
+        key: k,
+        label: ASSET_SUB_LABELS[k],
+      })),
     }
   }
   if (m.key === 'catalog') {
     const children = CATALOG_SUB_KEYS
       .filter((k) => {
-        // 部门管理员无目录审批权限，仅超管可见
-        if (k === 'catalog.approvals') return !!opts?.isSystemAdmin
         if (!opts || opts.isSystemAdmin) return true
         const p = CATALOG_SUB_PERMISSIONS[k]
         return opts.permissions.includes(p) || opts.permissions.includes('hub:ingestion:collect:catalog')

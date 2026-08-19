@@ -61,7 +61,7 @@ interface CatalogRes {
   themeName?: string
   baseCatalogName?: string
   tags?: string
-  extJson?: string
+  extJson?: string | Record<string, unknown>
   updateCycle?: string
   description?: string
   publishStatus: string
@@ -105,6 +105,7 @@ interface ColumnRow {
   columnNameZh: string
   dataType: string
   dataTypeZh: string
+  length?: string
   sensLevel: string
   shareLevel: string
   displayFlag: boolean
@@ -192,6 +193,16 @@ const SHARE_LEVEL_ZH: Record<string, string> = {
   NOT_SHARE: '不予共享',
 }
 const SENS_LEVEL_OPTS = ['1级', '2级', '3级', '4级']
+const SHARE_CONDITION_OPTS = [
+  '依申请公开',
+  '业务协同',
+  '审批共享',
+  '履职共享',
+  '行政依据',
+  '工作参考业务协同',
+  '工作参考',
+]
+const OPEN_CONDITION_OPTS = ['无条件开放', '依申请开放']
 const BIND_CATEGORY_OPTS = [
   { key: 'SOURCE', label: '来源' },
   { key: 'ODS', label: '原始库' },
@@ -266,6 +277,9 @@ const batchColumnForm = reactive({
   sensLevel: '1级',
   shareLevel: 'CONDITIONAL',
   displayFlag: true,
+  searchFlag: false,
+  statFlag: false,
+  sortFlag: false,
 })
 const wizardStep = ref(0)
 const saving = ref(false)
@@ -428,6 +442,15 @@ const notShareReasonEnabled = computed(() => form.shareType === 'NOT_SHARE')
 const openConditionEnabled = computed(() => form.openType === 'SOCIAL_OPEN')
 const notOpenReasonEnabled = computed(() => form.openType === 'NOT_OPEN')
 
+const shareConditionOptions = computed(() => {
+  const cur = (form.shareCondition || '').trim()
+  return cur && !SHARE_CONDITION_OPTS.includes(cur) ? [cur, ...SHARE_CONDITION_OPTS] : SHARE_CONDITION_OPTS
+})
+const openConditionOptions = computed(() => {
+  const cur = (form.openCondition || '').trim()
+  return cur && !OPEN_CONDITION_OPTS.includes(cur) ? [cur, ...OPEN_CONDITION_OPTS] : OPEN_CONDITION_OPTS
+})
+
 const tagInputVisible = ref(false)
 const tagInputValue = ref('')
 const tagInputRef = ref<InputInstance>()
@@ -547,23 +570,32 @@ const themeCatalogOptions = computed(() =>
   })),
 )
 
+/** 查看/编辑回填期间禁止因格式切换清空接口/文件表单，也禁止覆盖共享/开放条件 */
+let hydratingForm = false
+
 watch(
   () => form.shareType,
   (v) => {
+    if (hydratingForm) return
     if (v !== 'CONDITIONAL') form.shareCondition = ''
+    else if (!form.shareCondition) form.shareCondition = '依申请公开'
     if (v !== 'NOT_SHARE') form.notShareReason = ''
   },
 )
 watch(
   () => form.openType,
   (v) => {
+    if (hydratingForm) return
     if (v !== 'SOCIAL_OPEN') form.openCondition = ''
+    else if (!form.openCondition) form.openCondition = '依申请开放'
     if (v !== 'NOT_OPEN') form.notOpenReason = ''
   },
 )
+
 watch(
   () => form.resourceFormat,
   () => {
+    if (hydratingForm) return
     columnRows.value = []
     requestParams.value = []
     responseParams.value = []
@@ -824,14 +856,33 @@ async function submitBatchCreate() {
   }
 }
 
-function parseExt(row: CatalogRes) {
-  if (!row.extJson) return null
+function parseExt(row: CatalogRes): Record<string, any> | null {
+  const raw = row.extJson as unknown
+  if (raw == null || raw === '') return null
+  if (typeof raw === 'object') return raw as Record<string, any>
+  if (typeof raw !== 'string') return null
   try {
-    return JSON.parse(row.extJson)
+    const parsed = JSON.parse(raw)
+    return parsed && typeof parsed === 'object' ? parsed : null
   } catch {
     return null
   }
 }
+
+/** 目标地址 + 请求路径 → 完整接口 URL（路径已是 http 或已包含在地址中则不重复拼） */
+function joinApiUrl(base: string, path: string): string {
+  const b = (base || '').trim()
+  const p = (path || '').trim()
+  if (!p) return b
+  if (/^https?:\/\//i.test(p)) return p
+  if (!b) return p
+  if (b.endsWith(p) || b.endsWith(`/${p.replace(/^\/+/, '')}`)) return b
+  const left = b.replace(/\/+$/, '')
+  const right = p.replace(/^\/+/, '')
+  return `${left}/${right}`
+}
+
+const fullApiUrl = computed(() => joinApiUrl(apiForm.apiUrl, apiForm.apiPath))
 
 function fillFormFromRow(row: CatalogRes) {
   form.resourceCode = row.resourceCode
@@ -879,6 +930,7 @@ function fillFormFromRow(row: CatalogRes) {
         columnNameZh: c.columnNameZh || c.remark || c.columnName || '',
         dataType: c.dataType || 'VARCHAR',
         dataTypeZh: c.dataTypeZh || dataTypeToZh(c.dataType || ''),
+        length: c.length != null && String(c.length) !== '' ? String(c.length) : (c.columnLength || c.columnSize ? String(c.columnLength || c.columnSize) : ''),
         sensLevel: c.sensLevel || '1级',
         shareLevel: c.shareLevel || c.fieldType || 'CONDITIONAL',
         displayFlag: c.displayFlag !== false,
@@ -888,29 +940,37 @@ function fillFormFromRow(row: CatalogRes) {
         remark: c.remark || '',
       }))
     }
-    if (ext.api) {
+    let apiBlk = ext.api
+    if (typeof apiBlk === 'string') {
+      try {
+        apiBlk = JSON.parse(apiBlk)
+      } catch {
+        apiBlk = null
+      }
+    }
+    if (apiBlk && typeof apiBlk === 'object') {
       Object.assign(apiForm, {
-        apiName: ext.api.apiName || '',
-        apiUrl: ext.api.apiUrl || '',
-        apiPath: ext.api.apiPath || '',
-        apiMethod: ext.api.apiMethod || 'GET',
-        apiTimeout: ext.api.apiTimeout ?? 3000,
-        apiVersion: ext.api.apiVersion || '',
-        registerAt: ext.api.registerAt || '',
-        expireAt: ext.api.expireAt || '',
-        apiDescription: ext.api.apiDescription || '',
-        apiResultJson: ext.api.apiResultJson || '{}',
+        apiName: apiBlk.apiName || '',
+        apiUrl: apiBlk.apiUrl || '',
+        apiPath: apiBlk.apiPath || '',
+        apiMethod: apiBlk.apiMethod || 'GET',
+        apiTimeout: apiBlk.apiTimeout ?? 3000,
+        apiVersion: apiBlk.apiVersion || '',
+        registerAt: apiBlk.registerAt || '',
+        expireAt: apiBlk.expireAt || '',
+        apiDescription: apiBlk.apiDescription || '',
+        apiResultJson: apiBlk.apiResultJson || '{}',
       })
-      requestParams.value = Array.isArray(ext.api.requestParams)
-        ? ext.api.requestParams.map((p: any) => ({
+      requestParams.value = Array.isArray(apiBlk.requestParams)
+        ? apiBlk.requestParams.map((p: any) => ({
             name: p.name || '',
             type: p.type || '字符串',
             required: !!p.required,
             description: p.description || '',
           }))
         : []
-      responseParams.value = Array.isArray(ext.api.responseParams)
-        ? ext.api.responseParams.map((p: any) => ({
+      responseParams.value = Array.isArray(apiBlk.responseParams)
+        ? apiBlk.responseParams.map((p: any) => ({
             name: p.name || '',
             type: p.type || '字符串',
             required: !!p.required,
@@ -950,16 +1010,7 @@ function openEdit(row: CatalogRes) {
     ElMessage.warning('已发布不可编辑，请先下线')
     return
   }
-  resetForm()
-  editMode.value = true
-  viewMode.value = false
-  editingId.value = row.id
-  wizardStep.value = 0
-  void ensureCategoryLoaded()
-  void loadOrgs()
-  fillFormFromRow(row)
-  void loadEligibleMeta(row.metadataEntryCode)
-  dialogVisible.value = true
+  void openResourceDialog(row, 'edit')
 }
 
 interface ApprovalFlowRow {
@@ -998,18 +1049,38 @@ async function loadApprovalFlow(resourceId: number) {
   }
 }
 
-function openView(row: CatalogRes) {
+async function fetchResourceDetail(row: CatalogRes): Promise<CatalogRes> {
+  try {
+    const res = await api.get(`/governance/catalog/resources-mgmt/${row.id}`)
+    return (res.data as CatalogRes) || row
+  } catch {
+    return row
+  }
+}
+
+async function openResourceDialog(row: CatalogRes, mode: 'view' | 'edit') {
+  hydratingForm = true
   resetForm()
-  editMode.value = false
-  viewMode.value = true
+  editMode.value = mode === 'edit'
+  viewMode.value = mode === 'view'
   editingId.value = row.id
   wizardStep.value = 0
   void ensureCategoryLoaded()
   void loadOrgs()
-  fillFormFromRow(row)
   void loadEligibleMeta(row.metadataEntryCode)
-  void loadApprovalFlow(row.id)
-  dialogVisible.value = true
+  if (mode === 'view') void loadApprovalFlow(row.id)
+  try {
+    const detail = await fetchResourceDetail(row)
+    fillFormFromRow(detail)
+    dialogVisible.value = true
+    await nextTick()
+  } finally {
+    hydratingForm = false
+  }
+}
+
+function openView(row: CatalogRes) {
+  void openResourceDialog(row, 'view')
 }
 
 function validateStep1(): boolean {
@@ -1030,7 +1101,7 @@ function validateStep1(): boolean {
     return false
   }
   if (form.shareType === 'CONDITIONAL' && !form.shareCondition?.trim()) {
-    ElMessage.warning('有条件共享须填写共享条件')
+    ElMessage.warning('有条件共享须选择共享条件')
     return false
   }
   if (form.shareType === 'NOT_SHARE' && !form.notShareReason?.trim()) {
@@ -1042,7 +1113,7 @@ function validateStep1(): boolean {
     return false
   }
   if (form.openType === 'SOCIAL_OPEN' && !form.openCondition?.trim()) {
-    ElMessage.warning('向社会开放须填写开放条件')
+    ElMessage.warning('向社会开放须选择开放条件')
     return false
   }
   if (form.openType === 'NOT_OPEN' && !form.notOpenReason?.trim()) {
@@ -1144,7 +1215,7 @@ function goNext() {
   if (!viewMode.value && !validateStep1()) return
   wizardStep.value = 1
   apiTab.value = 'basic'
-  if (form.resourceFormat === 'API') {
+  if (!viewMode.value && form.resourceFormat === 'API') {
     if (!requestParams.value.length) addRequestParam()
     if (!responseParams.value.length) addResponseParam()
   }
@@ -1252,6 +1323,7 @@ function addColumnRow() {
     columnNameZh: '',
     dataType: 'VARCHAR',
     dataTypeZh: '字符串',
+    length: '',
     sensLevel: '1级',
     shareLevel: form.shareType || 'CONDITIONAL',
     displayFlag: true,
@@ -1418,6 +1490,8 @@ async function loadBindColumns(tableName: string) {
       dataType?: string
       remarks?: string
       comment?: string
+      columnSize?: number
+      length?: number | string
     }>
     const defaultShare = form.shareType === 'OPEN' || form.shareType === 'CONDITIONAL' || form.shareType === 'NOT_SHARE'
       ? form.shareType
@@ -1429,6 +1503,9 @@ async function loadBindColumns(tableName: string) {
         columnNameZh: c.remarks || c.comment || c.columnName || '',
         dataType,
         dataTypeZh: dataTypeToZh(dataType),
+        length: c.columnSize != null && c.columnSize !== 0
+          ? String(c.columnSize)
+          : (c.length != null && String(c.length) !== '' ? String(c.length) : ''),
         sensLevel: '1级',
         shareLevel: defaultShare,
         displayFlag: true,
@@ -1833,6 +1910,9 @@ function openBatchColumnSetting() {
   batchColumnForm.sensLevel = '1级'
   batchColumnForm.shareLevel = 'CONDITIONAL'
   batchColumnForm.displayFlag = true
+  batchColumnForm.searchFlag = false
+  batchColumnForm.statFlag = false
+  batchColumnForm.sortFlag = false
   batchColumnVisible.value = true
 }
 
@@ -1841,6 +1921,9 @@ function applyBatchColumnSetting() {
     row.sensLevel = batchColumnForm.sensLevel
     row.shareLevel = batchColumnForm.shareLevel
     row.displayFlag = batchColumnForm.displayFlag
+    row.searchFlag = batchColumnForm.searchFlag
+    row.statFlag = batchColumnForm.statFlag
+    row.sortFlag = batchColumnForm.sortFlag
   }
   batchColumnVisible.value = false
   ElMessage.success(`已批量设置 ${columnRows.value.length} 个字段`)
@@ -2144,14 +2227,16 @@ onActivated(async () => {
           </el-select>
         </el-form-item>
         <el-form-item label="共享条件" :required="shareConditionEnabled">
-          <el-input
+          <el-select
             v-model="form.shareCondition"
             :disabled="!shareConditionEnabled || viewMode"
             clearable
-            maxlength="256"
-            show-word-limit
-            placeholder="有条件共享时必填"
-          />
+            filterable
+            style="width: 100%"
+            placeholder="有条件共享时必选"
+          >
+            <el-option v-for="o in shareConditionOptions" :key="o" :label="o" :value="o" />
+          </el-select>
         </el-form-item>
         <el-form-item v-if="notShareReasonEnabled" label="不共享理由" required>
           <el-input v-model="form.notShareReason" type="textarea" :rows="2" placeholder="不予共享时必填" />
@@ -2162,14 +2247,16 @@ onActivated(async () => {
           </el-select>
         </el-form-item>
         <el-form-item label="开放条件" :required="openConditionEnabled">
-          <el-input
+          <el-select
             v-model="form.openCondition"
             :disabled="!openConditionEnabled || viewMode"
             clearable
-            maxlength="256"
-            show-word-limit
-            placeholder="开放时必填"
-          />
+            filterable
+            style="width: 100%"
+            placeholder="向社会开放时必选"
+          >
+            <el-option v-for="o in openConditionOptions" :key="o" :label="o" :value="o" />
+          </el-select>
         </el-form-item>
         <el-form-item v-if="notOpenReasonEnabled" label="不开放理由" required>
           <el-input v-model="form.notOpenReason" type="textarea" :rows="2" placeholder="不开放时必填" />
@@ -2312,8 +2399,21 @@ onActivated(async () => {
                 </el-select>
               </template>
             </el-table-column>
-            <el-table-column label="是否展示项" width="90" align="center">
+            <el-table-column width="72" align="center">
+              <template #header><div class="col-flag-head">是否<br>展示项</div></template>
               <template #default="{ row }"><el-checkbox v-model="row.displayFlag" :disabled="viewMode" /></template>
+            </el-table-column>
+            <el-table-column width="72" align="center">
+              <template #header><div class="col-flag-head">是否<br>搜索项</div></template>
+              <template #default="{ row }"><el-checkbox v-model="row.searchFlag" :disabled="viewMode" /></template>
+            </el-table-column>
+            <el-table-column width="72" align="center">
+              <template #header><div class="col-flag-head">是否<br>统计项</div></template>
+              <template #default="{ row }"><el-checkbox v-model="row.statFlag" :disabled="viewMode" /></template>
+            </el-table-column>
+            <el-table-column width="72" align="center">
+              <template #header><div class="col-flag-head">是否<br>排序项</div></template>
+              <template #default="{ row }"><el-checkbox v-model="row.sortFlag" :disabled="viewMode" /></template>
             </el-table-column>
           </el-table>
         </template>
@@ -2322,7 +2422,7 @@ onActivated(async () => {
         <template v-else-if="form.resourceFormat === 'API'">
           <el-tabs v-model="apiTab">
             <el-tab-pane label="基本信息" name="basic">
-              <el-form label-width="120px" class="api-basic-form">
+              <el-form label-width="120px" class="api-basic-form" :disabled="viewMode">
                 <el-row :gutter="16">
                   <el-col :span="12">
                     <el-form-item label="接口名称" required>
@@ -2342,6 +2442,7 @@ onActivated(async () => {
                   <el-col :span="12">
                     <el-form-item label="请求路径" required>
                       <el-input v-model="apiForm.apiPath" placeholder="/api/xxx" />
+                      <div v-if="fullApiUrl" class="hint">完整接口地址：{{ fullApiUrl }}</div>
                     </el-form-item>
                   </el-col>
                   <el-col :span="12">
@@ -2385,7 +2486,7 @@ onActivated(async () => {
             <el-tab-pane label="请求参数" name="req">
               <div class="section-head">
                 <span>请求参数</span>
-                <el-button type="primary" size="small" @click="addRequestParam">添加参数</el-button>
+                <el-button v-if="!viewMode" type="primary" size="small" @click="addRequestParam">添加参数</el-button>
               </div>
               <el-table :data="requestParams" size="small" stripe border max-height="360">
                 <el-table-column label="参数名" min-width="140">
@@ -2419,7 +2520,7 @@ onActivated(async () => {
             <el-tab-pane label="响应参数" name="resp">
               <div class="section-head">
                 <span>响应参数</span>
-                <el-button type="primary" size="small" @click="addResponseParam">添加参数</el-button>
+                <el-button v-if="!viewMode" type="primary" size="small" @click="addResponseParam">添加参数</el-button>
               </div>
               <el-table :data="responseParams" size="small" stripe border max-height="360">
                 <el-table-column label="参数名" min-width="140">
@@ -2826,6 +2927,15 @@ onActivated(async () => {
         <el-form-item label="是否展示项">
           <el-switch v-model="batchColumnForm.displayFlag" />
         </el-form-item>
+        <el-form-item label="是否搜索项">
+          <el-switch v-model="batchColumnForm.searchFlag" />
+        </el-form-item>
+        <el-form-item label="是否统计项">
+          <el-switch v-model="batchColumnForm.statFlag" />
+        </el-form-item>
+        <el-form-item label="是否排序项">
+          <el-switch v-model="batchColumnForm.sortFlag" />
+        </el-form-item>
       </el-form>
       <template #footer>
         <el-button @click="batchColumnVisible = false">取消</el-button>
@@ -2885,6 +2995,11 @@ onActivated(async () => {
   font-size: 14px;
   font-weight: 600;
   margin-bottom: 8px;
+}
+.col-flag-head {
+  line-height: 1.25;
+  font-size: 12px;
+  white-space: normal;
 }
 .hint {
   font-size: 12px;

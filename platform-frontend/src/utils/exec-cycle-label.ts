@@ -46,11 +46,11 @@ export function invalidateExecCycleMap() {
   pending = null
 }
 
-/** 同步取名称；映射未加载时回退为原 Cron（调用方应先 ensure） */
+/** 同步取名称；映射未加载或未匹配时显示「自定义周期」，不回显 Cron 原文 */
 export function formatExecCycleLabel(cron?: string | null, empty = '—'): string {
   if (cron == null || !String(cron).trim()) return empty
   const key = normalizeCronExpr(String(cron))
-  return cache?.[key] || key
+  return cache?.[key] || '自定义周期'
 }
 
 /**

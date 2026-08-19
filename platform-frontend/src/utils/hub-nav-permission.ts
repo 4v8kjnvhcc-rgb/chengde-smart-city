@@ -49,9 +49,11 @@ export function filterHubNavByPermissions(
 
 /**
  * 按用户已授权菜单树过滤 Hub 侧栏（对超管同样生效）。
- * - 叶子必须出现在 menus/me（角色勾选入库的菜单）中，否则隐藏——避免权限码被 UNION/缓存放大后侧栏多出未勾选项
- * - 叶子命中 path?tab=key 或 permission 映射；叶子自身 visible=0 则隐藏
- * - Hub 页壳 / Hub 分组目录 visible=0 仅表示不进门户顶栏，祖先隐藏不阻断侧栏子项
+ * - 叶子必须出现在 menus/me（角色勾选入库的菜单）中，否则隐藏
+ * - 叶子命中 path?tab=/module= 或 permission 映射
+ * - 自身 visible=0 一律隐藏（菜单管理「是否隐藏」对 Hub 侧栏生效）
+ * - 祖先为无 query 的 Hub 页壳 visible=0 不级联；业务分组目录 visible=0 级联隐藏子项
+ * - 门户顶栏另由 SidebarMenuItem 排除 hub 的 ?tab=/?module=，与 visible 解耦
  */
 export function filterHubNavByMenuVisible(
   items: HubNavItem[],
@@ -71,15 +73,11 @@ export function filterHubNavByMenuVisible(
   }
   walkMenu(menus)
 
-  /** Hub 顶栏壳 / 分组 / 带 tab 的侧栏叶子：visible=0 不进门户，侧栏显隐由角色勾选决定 */
-  const isHubChromeOnly = (node: MenuNode | undefined): boolean => {
+  const isHubShellAncestor = (node: MenuNode | undefined): boolean => {
     if (!node || node.integrationType !== 'hub') return false
     if (node.id === 13 || node.id === 14) return true
-    if (node.menuType === 1) return true
     const p = node.path || ''
-    if (p.includes('?tab=') || p.includes('&tab=') || p.includes('?module=') || p.includes('&module=')) {
-      return true
-    }
+    if (p.includes('?')) return false
     const base = p.split('?')[0]?.split('#')[0] || ''
     return (
       /^\/(governance|resource|unstructured|ingestion|analytics\/(support|bi|population|legal-entity|macro|key-domains))$/.test(
@@ -90,8 +88,13 @@ export function filterHubNavByMenuVisible(
 
   const lineageHidden = (node: MenuNode | undefined): boolean => {
     let cur = node
+    let self = true
     while (cur) {
-      if (cur.visible === 0 && !isHubChromeOnly(cur)) return true
+      if (cur.visible === 0) {
+        if (self) return true
+        if (!isHubShellAncestor(cur)) return true
+      }
+      self = false
       cur = cur.parentId ? byId.get(cur.parentId) : undefined
     }
     return false
@@ -117,7 +120,6 @@ export function filterHubNavByMenuVisible(
 
   const isHidden = (key: string): boolean => {
     const node = resolveMenu(key)
-    // 用户菜单树里没有对应项 = 角色未勾选，即使 permission 列表里有同名码也不进侧栏
     if (!node) return true
     return lineageHidden(node)
   }
@@ -270,11 +272,11 @@ export const INGESTION_NAV_PERMISSIONS: Record<string, string | string[]> = {
   m049: 'hub:ingestion:register:m049',
   m050: 'hub:ingestion:register:m050',
   ingest: 'hub:ingestion:collect:ingest',
-  'ingest.structured': 'hub:ingestion:collect:ingest',
-  'ingest.unstruct': 'hub:ingestion:collect:ingest',
-  'ingest.semi': 'hub:ingestion:collect:ingest',
-  'ingest.api': 'hub:ingestion:collect:ingest',
-  'ingest.cdc': 'hub:ingestion:collect:ingest',
+  'ingest.structured': 'hub:ingestion:collect:ingest:structured',
+  'ingest.unstruct': 'hub:ingestion:collect:ingest:unstruct',
+  'ingest.semi': 'hub:ingestion:collect:ingest:semi',
+  'ingest.api': 'hub:ingestion:collect:ingest:api',
+  'ingest.cdc': 'hub:ingestion:collect:ingest:cdc',
   pipeline: 'hub:ingestion:collect:pipeline',
   catalog: 'hub:ingestion:collect:catalog',
   'catalog.resources': 'hub:ingestion:collect:catalog:resources',
@@ -282,21 +284,22 @@ export const INGESTION_NAV_PERMISSIONS: Record<string, string | string[]> = {
   'catalog.publish': 'hub:ingestion:collect:catalog:publish',
   'catalog.approvals': 'hub:ingestion:collect:catalog:approvals',
   quality: 'hub:ingestion:collect:quality',
-  'quality.standards.file': 'hub:ingestion:collect:quality',
-  'quality.standards.element': 'hub:ingestion:collect:quality',
-  'quality.standards.code': 'hub:ingestion:collect:quality',
-  'quality.standards.naming': 'hub:ingestion:collect:quality',
-  'quality.rule-config': 'hub:ingestion:collect:quality',
-  'quality.monitor': 'hub:ingestion:collect:quality',
-  'quality.assess': 'hub:ingestion:collect:quality',
-  'quality.reports': 'hub:ingestion:collect:quality',
+  'quality.standards': 'hub:ingestion:collect:quality:standards',
+  'quality.standards.file': 'hub:ingestion:collect:quality:standards:file',
+  'quality.standards.element': 'hub:ingestion:collect:quality:standards:element',
+  'quality.standards.code': 'hub:ingestion:collect:quality:standards:code',
+  'quality.standards.naming': 'hub:ingestion:collect:quality:standards:naming',
+  'quality.rule-config': 'hub:ingestion:collect:quality:rule-config',
+  'quality.monitor': 'hub:ingestion:collect:quality:monitor',
+  'quality.assess': 'hub:ingestion:collect:quality:assess',
+  'quality.reports': 'hub:ingestion:collect:quality:reports',
   asset: 'hub:ingestion:collect:asset',
-  'asset.classify': 'hub:ingestion:collect:asset',
-  'asset.mask': 'hub:ingestion:collect:asset',
-  'asset.tag': 'hub:ingestion:collect:asset',
-  'asset.search': 'hub:ingestion:collect:asset',
-  'asset.backup': 'hub:ingestion:collect:asset',
-  'asset.archive': 'hub:ingestion:collect:asset',
-  'asset.destroy': 'hub:ingestion:collect:asset',
-  'asset.global': 'hub:ingestion:collect:asset',
+  'asset.classify': 'hub:ingestion:collect:asset:classify',
+  'asset.mask': 'hub:ingestion:collect:asset:mask',
+  'asset.tag': 'hub:ingestion:collect:asset:tag',
+  'asset.search': 'hub:ingestion:collect:asset:search',
+  'asset.backup': 'hub:ingestion:collect:asset:backup',
+  'asset.archive': 'hub:ingestion:collect:asset:archive',
+  'asset.destroy': 'hub:ingestion:collect:asset:destroy',
+  'asset.global': 'hub:ingestion:collect:asset:global',
 }

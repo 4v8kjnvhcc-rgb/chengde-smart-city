@@ -1,7 +1,12 @@
-<script setup lang="ts">
-import { computed, reactive, ref, watch } from 'vue'
-import { ElMessage } from 'element-plus'
-import { useAuthStore } from '@/stores/auth'
+<script lang="ts">
+export interface ApplyColumn {
+  name: string
+  comment?: string
+  type?: string
+  length?: string | number
+  displayFlag?: boolean
+  searchFlag?: boolean
+}
 
 export interface ApplyResource {
   id: number | string
@@ -13,7 +18,24 @@ export interface ApplyResource {
   updatedAt?: string
   resourceType?: string
   resourceTypeLabel?: string
+  columns?: ApplyColumn[]
 }
+
+export function applyColumnsFromDetail(src: Record<string, unknown> | null | undefined): ApplyColumn[] {
+  if (!src) return []
+  if (Array.isArray(src.columns)) return src.columns as ApplyColumn[]
+  const tables = src.tables
+  if (!Array.isArray(tables) || !tables.length) return []
+  const first = tables[0] as { columns?: ApplyColumn[] }
+  return Array.isArray(first?.columns) ? first.columns : []
+}
+</script>
+
+<script setup lang="ts">
+import { computed, reactive, ref, watch } from 'vue'
+import { ElMessage } from 'element-plus'
+import api from '@/api/http'
+import { useAuthStore } from '@/stores/auth'
 
 const props = defineProps<{
   visible: boolean
@@ -36,7 +58,29 @@ const SCENE_OPTIONS = ['百项堵点', '政务服务', '行业监管', '辅助�
 const TIME_RANGE_OPTIONS = ['全天（含非工作日）', '工作日（8:00-18:00）']
 const USE_SCOPE_OPTIONS = ['行政依据', '用于数据校验', '工作参考', '其他']
 
+interface MyAppOption {
+  id: number
+  appName: string
+  contactName?: string
+  contactPhone?: string
+}
+
+interface ParamRow {
+  checked: boolean
+  name: string
+  comment: string
+  type: string
+  length: string
+}
+
 const submitting = ref(false)
+const myApps = ref<MyAppOption[]>([])
+const myAppsLoading = ref(false)
+const inputRows = ref<ParamRow[]>([])
+const outputRows = ref<ParamRow[]>([])
+const inputExpanded = ref(false)
+const outputExpanded = ref(false)
+const PARAM_PREVIEW = 5
 const form = reactive({
   applicantOrg: '',
   contactName: '',
@@ -63,6 +107,70 @@ const dialogTitle = computed(() =>
 const isApi = computed(() =>
   (props.resource?.resourceType || form.resourceType) === 'API',
 )
+const isTable = computed(() => {
+  const t = String(props.resource?.resourceType || form.resourceType || '').toUpperCase()
+  return t === 'TABLE' || t === 'DATABASE'
+})
+const showQuotaFields = computed(() => isApi.value || isTable.value)
+const useDaysMax = computed(() => (isTable.value ? 3096 : 3656))
+
+function toParamRow(c: ApplyColumn): ParamRow {
+  return {
+    checked: true,
+    name: String(c.name || ''),
+    comment: String(c.comment || ''),
+    type: String(c.type || ''),
+    length: c.length == null || String(c.length).trim() === '' ? '—' : String(c.length),
+  }
+}
+
+function hydrateTableParams() {
+  const cols = props.resource?.columns || []
+  inputRows.value = cols.filter((c) => !!c.searchFlag).map(toParamRow)
+  outputRows.value = cols.filter((c) => c.displayFlag !== false).map(toParamRow)
+  inputExpanded.value = false
+  outputExpanded.value = false
+}
+
+const visibleInputRows = computed(() =>
+  inputExpanded.value || inputRows.value.length <= PARAM_PREVIEW
+    ? inputRows.value
+    : inputRows.value.slice(0, PARAM_PREVIEW),
+)
+const visibleOutputRows = computed(() =>
+  outputExpanded.value || outputRows.value.length <= PARAM_PREVIEW
+    ? outputRows.value
+    : outputRows.value.slice(0, PARAM_PREVIEW),
+)
+
+const inputAllChecked = computed({
+  get: () => inputRows.value.length > 0 && inputRows.value.every((r) => r.checked),
+  set: (v: boolean) => {
+    inputRows.value.forEach((r) => {
+      r.checked = v
+    })
+  },
+})
+const inputIndeterminate = computed(
+  () => inputRows.value.some((r) => r.checked) && !inputRows.value.every((r) => r.checked),
+)
+const outputAllChecked = computed({
+  get: () => outputRows.value.length > 0 && outputRows.value.every((r) => r.checked),
+  set: (v: boolean) => {
+    outputRows.value.forEach((r) => {
+      r.checked = v
+    })
+  },
+})
+const outputIndeterminate = computed(
+  () => outputRows.value.some((r) => r.checked) && !outputRows.value.every((r) => r.checked),
+)
+
+function selectedParams(rows: ParamRow[]) {
+  return rows
+    .filter((r) => r.checked && r.name)
+    .map((r) => ({ name: r.name, comment: r.comment, type: r.type, length: r.length }))
+}
 
 /** 申请方名称：优先登录用户所属部门，其次外部传入 */
 function resolveApplicantOrg() {
@@ -71,6 +179,26 @@ function resolveApplicantOrg() {
   const fromProp = String(props.defaultApplicantOrg || '').trim()
   if (fromProp) return fromProp
   return ''
+}
+
+async function loadMyApps() {
+  myAppsLoading.value = true
+  try {
+    const res = await api.get('/exchange/portal/my-apps')
+    myApps.value = Array.isArray(res.data) ? res.data : []
+  } catch (e: unknown) {
+    myApps.value = []
+    ElMessage.error(e instanceof Error ? e.message : '加载我的应用失败')
+  } finally {
+    myAppsLoading.value = false
+  }
+}
+
+function onSystemNameChange(name: string) {
+  const hit = myApps.value.find((a) => a.appName === name)
+  if (!hit) return
+  if (hit.contactName) form.contactName = hit.contactName
+  if (hit.contactPhone) form.contactPhone = hit.contactPhone
 }
 
 watch(
@@ -93,6 +221,13 @@ watch(
     form.applyBasis = ''
     form.techReq = ''
     form.purpose = ''
+    hydrateTableParams()
+    void loadMyApps().then(() => {
+      if (myApps.value.length === 1) {
+        form.systemName = myApps.value[0].appName
+        onSystemNameChange(form.systemName)
+      }
+    })
   },
 )
 
@@ -110,13 +245,19 @@ async function onSubmit() {
   if (!form.contactName.trim()) return ElMessage.warning('请填写联系人')
   if (!form.contactPhone.trim()) return ElMessage.warning('请填写联系电话')
   if (!hasText(form.scene)) return ElMessage.warning('请选择或填写使用办事场景')
-  if (!form.systemName.trim()) return ElMessage.warning('请填写应用系统名称')
+  if (!form.systemName.trim()) {
+    return ElMessage.warning(myApps.value.length ? '请选择应用系统名称' : '请先在个人空间「我的应用」中登记应用系统')
+  }
   if (!hasText(form.timeRange)) return ElMessage.warning('请选择或填写使用时间范围')
-  if (isApi.value) {
+  if (isTable.value) {
+    if (!outputRows.value.length) return ElMessage.warning('编目未勾选展示项，无法申请出参')
+    if (!selectedParams(outputRows.value).length) return ElMessage.warning('请至少勾选出参字段')
+  }
+  if (showQuotaFields.value) {
     if (form.callFreq == null) return ElMessage.warning('请填写服务接口调用频次')
     if (form.peakFreq == null) return ElMessage.warning('请填写服务接口峰值频率')
     if (form.useDays == null) return ElMessage.warning('请填写服务接口使用期限')
-    if (form.useDays > 3656) return ElMessage.warning('期限不得超过3656天')
+    if (form.useDays > useDaysMax.value) return ElMessage.warning(`期限不得超过${useDaysMax.value}天`)
   }
   if (!hasText(form.useScope)) return ElMessage.warning('请选择或填写使用范围说明')
   if (!form.dataDesc.trim()) return ElMessage.warning('请填写数据描述')
@@ -143,6 +284,8 @@ async function onSubmit() {
       dataDesc: form.dataDesc,
       applyBasis: form.applyBasis,
       techReq: form.techReq,
+      inputParams: isTable.value ? selectedParams(inputRows.value) : undefined,
+      outputParams: isTable.value ? selectedParams(outputRows.value) : undefined,
     })
   } finally {
     submitting.value = false
@@ -156,7 +299,7 @@ defineExpose({ close })
   <el-dialog
     :model-value="visible"
     :title="dialogTitle"
-    width="680px"
+    width="920px"
     top="5vh"
     destroy-on-close
     align-center
@@ -197,22 +340,90 @@ defineExpose({ close })
             </el-form-item>
           </div>
 
-          <p class="sub-cap">资源申请</p>
-          <el-form-item label="使用办事场景" required>
-            <el-select
-              v-model="form.scene"
-              filterable
-              allow-create
-              default-first-option
-              clearable
-              placeholder="请选择或输入办事场景"
-            >
-              <el-option v-for="o in SCENE_OPTIONS" :key="o" :label="o" :value="o" />
-            </el-select>
-          </el-form-item>
-          <el-form-item label="应用系统名称" required>
-            <el-input v-model="form.systemName" placeholder="请输入应用系统名称" />
-          </el-form-item>
+          <template v-if="isTable">
+            <p class="sub-cap">库表资源申请</p>
+            <p class="param-cap">入参<span class="param-cap__hint">（编目「是否搜索项」）</span></p>
+            <el-table :data="visibleInputRows" size="small" stripe border class="param-table" empty-text="编目未勾选搜索项">
+              <el-table-column width="46" align="center">
+                <template #header>
+                  <el-checkbox
+                    v-model="inputAllChecked"
+                    :indeterminate="inputIndeterminate"
+                    :disabled="!inputRows.length"
+                  />
+                </template>
+                <template #default="{ row }"><el-checkbox v-model="row.checked" /></template>
+              </el-table-column>
+              <el-table-column prop="name" label="字段名称" min-width="120" show-overflow-tooltip />
+              <el-table-column prop="comment" label="中文名称" min-width="120" show-overflow-tooltip />
+              <el-table-column prop="type" label="字段类型" width="110" show-overflow-tooltip />
+              <el-table-column prop="length" label="字段长度" width="90" />
+            </el-table>
+            <button
+              v-if="inputRows.length > PARAM_PREVIEW"
+              type="button"
+              class="expand-link"
+              @click="inputExpanded = !inputExpanded"
+            >{{ inputExpanded ? '收起内容' : '展开内容' }}</button>
+
+            <p class="param-cap">出参<span class="param-cap__hint">（编目「是否展示项」）</span></p>
+            <el-table :data="visibleOutputRows" size="small" stripe border class="param-table" empty-text="编目未勾选展示项">
+              <el-table-column width="46" align="center">
+                <template #header>
+                  <el-checkbox
+                    v-model="outputAllChecked"
+                    :indeterminate="outputIndeterminate"
+                    :disabled="!outputRows.length"
+                  />
+                </template>
+                <template #default="{ row }"><el-checkbox v-model="row.checked" /></template>
+              </el-table-column>
+              <el-table-column prop="name" label="字段名称" min-width="120" show-overflow-tooltip />
+              <el-table-column prop="comment" label="中文名称" min-width="120" show-overflow-tooltip />
+              <el-table-column prop="type" label="字段类型" width="110" show-overflow-tooltip />
+              <el-table-column prop="length" label="字段长度" width="90" />
+            </el-table>
+            <button
+              v-if="outputRows.length > PARAM_PREVIEW"
+              type="button"
+              class="expand-link"
+              @click="outputExpanded = !outputExpanded"
+            >{{ outputExpanded ? '收起内容' : '展开内容' }}</button>
+          </template>
+
+          <p class="sub-cap">信息填写</p>
+          <div class="pair-row">
+            <el-form-item label="使用办事场景" required>
+              <el-select
+                v-model="form.scene"
+                filterable
+                allow-create
+                default-first-option
+                clearable
+                placeholder="请选择或输入办事场景"
+              >
+                <el-option v-for="o in SCENE_OPTIONS" :key="o" :label="o" :value="o" />
+              </el-select>
+            </el-form-item>
+            <el-form-item label="应用系统名称" required>
+              <el-select
+                v-model="form.systemName"
+                filterable
+                clearable
+                :loading="myAppsLoading"
+                :placeholder="myApps.length ? '请选择应用系统' : '请先在个人空间登记应用'"
+                style="width: 100%"
+                @change="onSystemNameChange"
+              >
+                <el-option
+                  v-for="a in myApps"
+                  :key="a.id"
+                  :label="a.appName"
+                  :value="a.appName"
+                />
+              </el-select>
+            </el-form-item>
+          </div>
           <el-form-item label="使用时间范围" required>
             <el-select
               v-model="form.timeRange"
@@ -225,31 +436,31 @@ defineExpose({ close })
               <el-option v-for="o in TIME_RANGE_OPTIONS" :key="o" :label="o" :value="o" />
             </el-select>
           </el-form-item>
-          <div v-if="isApi" class="api-row">
-            <el-form-item label="调用频次" required>
+          <div v-if="showQuotaFields" class="api-row">
+            <el-form-item label="服务接口调用频次" required>
               <div class="with-unit">
                 <el-input-number v-model="form.callFreq" :min="1" :controls="false" placeholder="次数" />
                 <span class="unit">次/天</span>
               </div>
             </el-form-item>
-            <el-form-item label="峰值频率" required>
+            <el-form-item label="服务接口峰值频率" required>
               <div class="with-unit">
                 <el-input-number v-model="form.peakFreq" :min="1" :controls="false" placeholder="次数" />
                 <span class="unit">次/天</span>
               </div>
             </el-form-item>
-            <el-form-item label="使用期限" required>
+            <el-form-item label="服务接口使用期限" required>
               <div class="with-unit">
                 <el-input-number
                   v-model="form.useDays"
                   :min="1"
-                  :max="3656"
+                  :max="useDaysMax"
                   :controls="false"
                   placeholder="天数"
                 />
                 <span class="unit">天</span>
               </div>
-              <p class="field-hint">期限不得超过3656天</p>
+              <p class="field-hint">期限不能超过{{ useDaysMax }}天</p>
             </el-form-item>
           </div>
           <el-form-item label="使用范围说明" required>
@@ -265,18 +476,18 @@ defineExpose({ close })
             </el-select>
           </el-form-item>
           <el-form-item label="数据描述" required>
-            <el-input v-model="form.dataDesc" placeholder="请简要描述所需数据内容" />
+            <el-input v-model="form.dataDesc" placeholder="请输入" />
           </el-form-item>
           <el-form-item label="申请依据" required>
             <el-input
               v-model="form.applyBasis"
               type="textarea"
               :rows="3"
-              placeholder="请填写完成本办事场景所依据的法律、法规或政策文件"
+              placeholder="描述使用部门完成上述办事场景的法律、法规、政策的具体依据"
             />
           </el-form-item>
           <el-form-item label="其他技术需求" required>
-            <el-input v-model="form.techReq" placeholder="请填写接口对接、数据格式等技术要求" />
+            <el-input v-model="form.techReq" placeholder="基于特定服务接口的具体技术要求" />
           </el-form-item>
         </el-form>
       </section>
@@ -357,6 +568,36 @@ defineExpose({ close })
   grid-template-columns: 1fr 1fr 1fr;
   gap: 0 12px;
 }
+.pair-row {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0 12px;
+}
+.param-cap {
+  margin: 12px 0 8px;
+  font-size: 13px;
+  font-weight: 600;
+  color: #1f2329;
+}
+.param-cap__hint {
+  margin-left: 6px;
+  font-weight: 400;
+  color: #86909c;
+  font-size: 12px;
+}
+.param-table {
+  width: 100%;
+}
+.expand-link {
+  display: inline-block;
+  margin: 6px 0 4px;
+  border: 0;
+  background: transparent;
+  color: #1677ff;
+  cursor: pointer;
+  font-size: 13px;
+  padding: 0;
+}
 .api-row {
   display: grid;
   grid-template-columns: 1fr 1fr 1fr;
@@ -391,6 +632,7 @@ defineExpose({ close })
 
 @media (max-width: 640px) {
   .contact-row,
+  .pair-row,
   .api-row,
   .info-grid {
     grid-template-columns: 1fr;

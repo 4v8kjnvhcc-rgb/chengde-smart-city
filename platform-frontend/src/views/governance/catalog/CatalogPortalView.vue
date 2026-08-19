@@ -9,6 +9,7 @@ import { useClientPager } from '@/composables/useClientPager'
 import { statusLabel } from '@/utils/status-label'
 import ResourceApplyDialog from '@/views/exchange/application/ResourceApplyDialog.vue'
 import type { ApplyResource } from '@/views/exchange/application/ResourceApplyDialog.vue'
+import { applyColumnsFromDetail } from '@/views/exchange/application/ResourceApplyDialog.vue'
 import { addFavorite, fetchFavorites, isFavorited, removeFavorite } from '@/views/exchange/application/portal-favorites'
 
 withDefaults(defineProps<{ embedded?: boolean }>(), { embedded: false })
@@ -180,10 +181,12 @@ function buildDetailFromGov(row: CatalogRes, full?: CatalogRes): DetailMap {
           name: c.columnName || c.name || '',
           comment: c.columnNameZh || c.remark || c.comment || c.columnName || '',
           type: c.dataTypeZh || c.dataType || c.type || '',
-          length: c.length || c.columnLength || '',
+          length: c.length || c.columnLength || c.columnSize || '',
           pk: !!(c.pk || c.primaryKey || c.isPk),
           nullable: c.nullable !== undefined ? !!c.nullable : true,
           sensitivity: c.sensLevel || c.sensitivity || '',
+          displayFlag: c.displayFlag !== false,
+          searchFlag: !!c.searchFlag,
         }))
       : []
     const tableName = String(ext?.bindTableName || src.physicalTableName || src.resourceName || '—')
@@ -419,6 +422,7 @@ function openApplyForm() {
     updatedAt: formatUpdatedAt(d.updatedAt || row.updatedAt),
     resourceType: rt,
     resourceTypeLabel: String(d.resourceTypeLabel || (rt === 'API' ? '接口' : rt === 'FILE' ? '文件' : '库表')),
+    columns: applyColumnsFromDetail(d as Record<string, unknown>),
   }
   applyVisible.value = true
 }

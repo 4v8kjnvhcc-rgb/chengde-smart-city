@@ -6,6 +6,7 @@ import { ElMessage } from 'element-plus'
 import PageCard from '@/components/common/PageCard.vue'
 import PortalPagination from '@/components/common/PortalPagination.vue'
 import { useClientPager } from '@/composables/useClientPager'
+import { formatDateTime } from '@/utils/datetime'
 
 interface ReportRow {
   id: number
@@ -158,23 +159,46 @@ interface ReportDetail {
 }
 
 const detail = ref<ReportDetail | null>(null)
+const detailVisible = ref(false)
+const detailLoading = ref(false)
+const detailPanelRef = ref<HTMLElement | null>(null)
+const reportTableRef = ref<{ setCurrentRow?: (row?: ReportRow) => void } | null>(null)
 
 async function showDetail(row: ReportRow) {
   selectedId.value = row.id
-  const res = await api.get(`/governance/quality/reports-mgmt/${row.id}`)
-  detail.value = { ...(res.data || {}), report: res.data?.report || row }
+  detailVisible.value = true
+  detailLoading.value = true
+  reportTableRef.value?.setCurrentRow?.(row)
+  try {
+    const res = await api.get(`/governance/quality/reports-mgmt/${row.id}`)
+    detail.value = { ...(res.data || {}), report: res.data?.report || row }
+    await nextTick()
+    detailPanelRef.value?.scrollIntoView({ behavior: 'smooth', block: 'nearest' })
+  } catch (e: unknown) {
+    const msg = (e as { response?: { data?: { message?: string } } })?.response?.data?.message
+    ElMessage.error(msg || '加载报告详情失败')
+    detail.value = { report: row }
+  } finally {
+    detailLoading.value = false
+  }
 }
 
 async function openDrill(row: ReportRow) {
   selectedId.value = row.id
-  const res = await api.get(`/governance/quality/reports-mgmt/${row.id}/drill`)
-  issues.value = res.data?.issues || []
-  detail.value = {
-    report: row,
-    avgRunScore: res.data?.score,
-    runCount: (res.data?.runs || []).length,
+  reportTableRef.value?.setCurrentRow?.(row)
+  try {
+    const res = await api.get(`/governance/quality/reports-mgmt/${row.id}/drill`)
+    issues.value = res.data?.issues || []
+    detail.value = {
+      report: row,
+      avgRunScore: res.data?.score,
+      runCount: (res.data?.runs || []).length,
+    }
+    drillVisible.value = true
+  } catch (e: unknown) {
+    const msg = (e as { response?: { data?: { message?: string } } })?.response?.data?.message
+    ElMessage.error(msg || '下钻失败')
   }
-  drillVisible.value = true
 }
 
 async function doExport(row: ReportRow) {
@@ -254,7 +278,15 @@ onBeforeUnmount(() => {
       <div ref="chartRef" class="qr-chart" />
 
       <div class="qr-section-title">报告清单</div>
-      <el-table v-loading="loading" :data="pagedReports" stripe size="small" highlight-current-row>
+      <el-table
+        ref="reportTableRef"
+        v-loading="loading"
+        :data="pagedReports"
+        stripe
+        size="small"
+        highlight-current-row
+        row-key="id"
+      >
         <el-table-column prop="reportCode" label="编码" width="160" />
         <el-table-column prop="reportName" label="名称" min-width="160" show-overflow-tooltip />
         <el-table-column prop="dimension" label="维度" min-width="180" show-overflow-tooltip />
@@ -263,7 +295,9 @@ onBeforeUnmount(() => {
             <span class="qr-score" :class="`qr-score--${scoreTone(row.score)}`">{{ row.score }}</span>
           </template>
         </el-table-column>
-        <el-table-column prop="createdAt" label="生成时间" width="170" />
+        <el-table-column label="生成时间" width="170">
+          <template #default="{ row }">{{ formatDateTime(row.createdAt) }}</template>
+        </el-table-column>
         <el-table-column label="操作" width="220" fixed="right">
           <template #default="{ row }">
             <el-button link type="primary" @click="showDetail(row)">详情</el-button>
@@ -279,7 +313,7 @@ onBeforeUnmount(() => {
       />
       <el-empty v-if="!loading && !reports.length" description="暂无报告；需先有任务运行评分后再生成" />
 
-      <div class="qr-section-title">报告详情</div>
+      <div ref="detailPanelRef" class="qr-section-title">报告详情</div>
       <template v-if="detail?.report || selectedId">
         <el-descriptions :column="2" size="small" border>
           <el-descriptions-item label="报告评分">
@@ -303,11 +337,50 @@ onBeforeUnmount(() => {
           <el-table-column label="状态" width="90">
             <template #default="{ row }">{{ $statusLabel(row.status) }}</template>
           </el-table-column>
-          <el-table-column prop="startedAt" label="开始时间" min-width="160" />
+          <el-table-column label="开始时间" min-width="160">
+            <template #default="{ row }">{{ formatDateTime(row.startedAt) }}</template>
+          </el-table-column>
         </el-table>
       </template>
       <el-empty v-else description="点击「详情」查看结构化摘要" />
     </PageCard>
+
+    <el-drawer
+      v-model="detailVisible"
+      :title="detail?.report?.reportName || '报告详情'"
+      size="640px"
+    >
+      <div v-loading="detailLoading">
+        <el-descriptions :column="1" size="small" border>
+          <el-descriptions-item label="编码">{{ detail?.report?.reportCode || '—' }}</el-descriptions-item>
+          <el-descriptions-item label="名称">{{ detail?.report?.reportName || '—' }}</el-descriptions-item>
+          <el-descriptions-item label="报告评分">{{ detail?.report?.score ?? '—' }}</el-descriptions-item>
+          <el-descriptions-item label="运行均分">{{ detail?.avgRunScore ?? '—' }}</el-descriptions-item>
+          <el-descriptions-item label="关联运行数">{{ detail?.runCount ?? '—' }}</el-descriptions-item>
+          <el-descriptions-item label="维度">{{ detail?.report?.dimension || '—' }}</el-descriptions-item>
+          <el-descriptions-item label="生成时间">
+            {{ formatDateTime(detail?.report?.createdAt) }}
+          </el-descriptions-item>
+        </el-descriptions>
+        <div class="qr-section-title" style="margin-top: 16px">关联运行</div>
+        <el-table
+          v-if="detail?.recentRuns?.length"
+          :data="detail.recentRuns"
+          stripe
+          size="small"
+        >
+          <el-table-column prop="id" label="运行ID" width="80" />
+          <el-table-column prop="score" label="评分" width="80" />
+          <el-table-column label="状态" width="90">
+            <template #default="{ row }">{{ $statusLabel(row.status) }}</template>
+          </el-table-column>
+          <el-table-column label="开始时间" min-width="160">
+            <template #default="{ row }">{{ formatDateTime(row.startedAt) }}</template>
+          </el-table-column>
+        </el-table>
+        <el-empty v-else description="暂无关联运行" />
+      </div>
+    </el-drawer>
 
     <el-drawer v-model="drillVisible" title="问题下钻" size="560px">
       <el-table :data="issues" stripe size="small">

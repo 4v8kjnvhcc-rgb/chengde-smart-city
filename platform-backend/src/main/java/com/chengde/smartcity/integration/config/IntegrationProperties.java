@@ -12,6 +12,7 @@ public class IntegrationProperties {
     private DolphinScheduler ds = new DolphinScheduler();
     private Kettle kettle = new Kettle();
     private Storage storage = new Storage();
+    private Esb esb = new Esb();
 
     public boolean isEnabled() { return enabled; }
     public void setEnabled(boolean enabled) { this.enabled = enabled; }
@@ -27,6 +28,8 @@ public class IntegrationProperties {
     public void setKettle(Kettle kettle) { this.kettle = kettle; }
     public Storage getStorage() { return storage; }
     public void setStorage(Storage storage) { this.storage = storage; }
+    public Esb getEsb() { return esb; }
+    public void setEsb(Esb esb) { this.esb = esb; }
 
     public static class OpenMetadata {
         private String url = "http://localhost:8585/api/v1";
@@ -147,5 +150,31 @@ public class IntegrationProperties {
         public void setMongoUrl(String mongoUrl) { this.mongoUrl = mongoUrl; }
         public String getCanalUrl() { return canalUrl; }
         public void setCanalUrl(String canalUrl) { this.canalUrl = canalUrl; }
+    }
+
+    /** AEAI ESB 网关：获取 Token + 创建消费者 */
+    public static class Esb {
+        private String baseUrl = "http://10.10.10.61:7000";
+        private String appCode = "ESB";
+        private String appPwd = "";
+        /** 业务网关根地址，用于拼接口 URL 展示；可空 */
+        private String gatewayBase = "";
+        /** 连接超时（毫秒），建连失败尽快返回 */
+        private int connectTimeoutMs = 5000;
+        /** 读超时（毫秒），单次 Token / 创建消费者等待上限 */
+        private int readTimeoutMs = 10000;
+
+        public String getBaseUrl() { return baseUrl; }
+        public void setBaseUrl(String baseUrl) { this.baseUrl = baseUrl; }
+        public String getAppCode() { return appCode; }
+        public void setAppCode(String appCode) { this.appCode = appCode; }
+        public String getAppPwd() { return appPwd; }
+        public void setAppPwd(String appPwd) { this.appPwd = appPwd; }
+        public String getGatewayBase() { return gatewayBase; }
+        public void setGatewayBase(String gatewayBase) { this.gatewayBase = gatewayBase; }
+        public int getConnectTimeoutMs() { return connectTimeoutMs; }
+        public void setConnectTimeoutMs(int connectTimeoutMs) { this.connectTimeoutMs = connectTimeoutMs; }
+        public int getReadTimeoutMs() { return readTimeoutMs; }
+        public void setReadTimeoutMs(int readTimeoutMs) { this.readTimeoutMs = readTimeoutMs; }
     }
 }

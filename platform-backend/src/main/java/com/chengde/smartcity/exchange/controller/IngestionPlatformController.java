@@ -1123,6 +1123,25 @@ public class IngestionPlatformController {
         return ApiResponse.ok(pipelineDesignService.saveDefinition(principal, body));
     }
 
+    @PutMapping("/collect/definitions/{id}")
+    public ApiResponse<Long> updateDefinition(@AuthenticationPrincipal UserPrincipal principal,
+                                              @PathVariable Long id,
+                                              @RequestBody Map<String, Object> body) {
+        body.put("id", id);
+        return ApiResponse.ok(pipelineDesignService.saveDefinition(principal, body));
+    }
+
+    @DeleteMapping("/collect/definitions/{id}")
+    public ApiResponse<Void> deleteDefinition(@PathVariable Long id) {
+        pipelineDesignService.deleteDefinition(id);
+        return ApiResponse.ok(null);
+    }
+
+    @PostMapping("/collect/probe-reports")
+    public ApiResponse<Long> createProbeReport(@RequestBody Map<String, Object> body) {
+        return ApiResponse.ok(pipelineDesignService.createProbeReport(body));
+    }
+
     @GetMapping("/collect/reconcile-logs")
     public ApiResponse<List<IngReconcileLog>> reconcileLogs() {
         return ApiResponse.ok(pipelineDesignService.listReconcileLogs());

@@ -184,10 +184,10 @@ function rowOps(row: IngestTask): { primary: OpItem[]; more: OpItem[] } {
 function onRowOp(key: OpKey, row: IngestTask) {
   switch (key) {
     case 'view':
-      openResult(row)
+      void viewJob(row)
       break
     case 'edit':
-      editJob(row)
+      void editJob(row)
       break
     case 'publish':
       void publishJob(row.id)
@@ -313,10 +313,12 @@ async function onSourceDsPicked(row: MetaBindSource) {
   await loadMetaTables(row.id)
 }
 
-async function loadMetaTables(metaId?: number) {
-  metaTables.value = []
+async function loadMetaTables(metaId?: number, opts?: { silent?: boolean }) {
   const id = metaId ?? form.metaDataSourceId
-  if (id == null || id <= 0) return
+  if (id == null || id <= 0) {
+    seedMetaTablesFromForm()
+    return
+  }
   metaTablesLoading.value = true
   try {
     const rows = (await api.get(`/governance/platform/metadata/collect/meta-data-sources/${id}/tables`)).data || []
@@ -324,12 +326,27 @@ async function loadMetaTables(metaId?: number) {
       .map((r) => String(r.sourceTable || r.tableName || '').trim())
       .filter(Boolean)
       .sort((a, b) => a.localeCompare(b))
+    if (!metaTables.value.length) seedMetaTablesFromForm()
   } catch {
-    metaTables.value = []
-    ElMessage.error('加载数据源表清单失败')
+    if (!metaTables.value.length) seedMetaTablesFromForm()
+    if (!opts?.silent && !viewOnly.value) {
+      ElMessage.warning('未能连接数据源拉取表清单，已使用任务已保存的表名')
+    }
   } finally {
     metaTablesLoading.value = false
   }
+}
+
+/** 查看/编辑时接口不可用时，用任务配置里的源表填充下拉，避免空白与误报 */
+function seedMetaTablesFromForm() {
+  const names = new Set<string>(metaTables.value)
+  for (const t of form.sourceTables || []) {
+    const s = String(t || '').trim()
+    if (s) names.add(s)
+  }
+  const single = String(form.sourceTable || '').trim()
+  if (single) names.add(single)
+  metaTables.value = [...names].sort((a, b) => a.localeCompare(b))
 }
 
 const resultVisible = ref(false)
@@ -340,7 +357,11 @@ const editingJobId = ref<number | undefined>()
 const taskNameManual = ref(false)
 const taskNameGenerating = ref(false)
 const dialogVisible = ref(false)
-const dialogTitle = computed(() => (editingJobId.value ? '编辑接入任务' : '新建接入任务'))
+const viewOnly = ref(false)
+const dialogTitle = computed(() => {
+  if (viewOnly.value) return '查看接入任务'
+  return editingJobId.value ? '编辑接入任务' : '新建接入任务'
+})
 
 const steps = ['接入模式', '数据来源', '同步策略', '数据去向', '字段映射', '调度执行']
 
@@ -471,7 +492,19 @@ async function loadBase() {
 }
 
 async function ensureDialogData() {
-  if (form.metaDataSourceId && !metaTables.value.length) {
+  if (!form.metaDataSourceId) {
+    seedMetaTablesFromForm()
+    return
+  }
+  // 只读查看：不强制探活数据源，避免元数据源不可达时弹错打断浏览
+  if (viewOnly.value) {
+    seedMetaTablesFromForm()
+    if (!metaTables.value.length) {
+      await loadMetaTables(form.metaDataSourceId, { silent: true })
+    }
+    return
+  }
+  if (!metaTables.value.length) {
     await loadMetaTables(form.metaDataSourceId)
   }
 }
@@ -811,6 +844,15 @@ async function reloadJobs() {
 }
 
 async function editJob(row: IngestTask) {
+  await fillJobForm(row, false)
+}
+
+async function viewJob(row: IngestTask) {
+  await fillJobForm(row, true)
+}
+
+async function fillJobForm(row: IngestTask, readonly: boolean) {
+  viewOnly.value = readonly
   editingJobId.value = row.id
   taskNameManual.value = true
   form.taskName = row.taskName
@@ -865,6 +907,7 @@ async function editJob(row: IngestTask) {
 
 function resetWizard() {
   editingJobId.value = undefined
+  viewOnly.value = false
   taskNameManual.value = false
   form.taskName = ''
   form.accessMode = 'SINGLE'
@@ -1084,13 +1127,13 @@ onMounted(async () => {
         <el-step v-for="s in steps" :key="s" :title="s" />
       </el-steps>
 
-      <el-form label-width="120px" class="portal-inline-form portal-inline-form--block">
+      <el-form label-width="120px" class="portal-inline-form portal-inline-form--block" :disabled="viewOnly">
         <template v-if="step === 0">
           <el-form-item label="任务名称" class="portal-field-xl" required>
             <div class="task-name-row">
               <el-input
                 v-model="form.taskName"
-                :readonly="!editingJobId && !taskNameManual"
+                :readonly="viewOnly || (!editingJobId && !taskNameManual)"
                 placeholder="按命名规范自动生成：t_gj_+目标表名"
                 maxlength="80"
                 @input="onTaskNameInput"
@@ -1101,7 +1144,7 @@ onMounted(async () => {
                 </template>
               </el-input>
               <el-button
-                v-if="!editingJobId && !taskNameManual"
+                v-if="!viewOnly && !editingJobId && !taskNameManual"
                 link
                 type="primary"
                 @click="taskNameManual = true"
@@ -1109,7 +1152,7 @@ onMounted(async () => {
                 手动修改
               </el-button>
               <el-button
-                v-if="!editingJobId && taskNameManual"
+                v-if="!viewOnly && !editingJobId && taskNameManual"
                 link
                 type="primary"
                 @click="taskNameManual = false; refreshTaskName(true)"
@@ -1117,7 +1160,7 @@ onMounted(async () => {
                 恢复自动生成
               </el-button>
             </div>
-            <div v-if="!editingJobId" class="hint">归集任务命名规则：t_gj_ + 目标表表名（配置数据去向后自动填充）</div>
+            <div v-if="!editingJobId && !viewOnly" class="hint">归集任务命名规则：t_gj_ + 目标表表名（配置数据去向后自动填充）</div>
           </el-form-item>
           <el-form-item label="接入模式">
             <el-radio-group v-model="form.accessMode" @change="onModeChange">
@@ -1136,7 +1179,7 @@ onMounted(async () => {
                 readonly
                 placeholder="点击选择（数据来自元数据 · 数据源管理）"
               />
-              <el-button type="primary" @click="openSourceDsPicker">选择</el-button>
+              <el-button type="primary" :disabled="viewOnly" @click="openSourceDsPicker">选择</el-button>
             </div>
           </el-form-item>
           <template v-if="form.accessMode === 'SINGLE'">
@@ -1243,7 +1286,7 @@ onMounted(async () => {
                 readonly
                 placeholder="点击选择目标库"
               />
-              <el-button type="primary" @click="openTargetDsPicker">选择</el-button>
+              <el-button type="primary" :disabled="viewOnly" @click="openTargetDsPicker">选择</el-button>
             </div>
           </el-form-item>
           <template v-if="form.accessMode === 'MULTI'">
@@ -1344,11 +1387,16 @@ onMounted(async () => {
         <div class="dialog-footer">
           <el-button :disabled="step === 0" @click="step -= 1">上一步</el-button>
           <el-button v-if="step < steps.length - 1" type="primary" @click="nextStep">下一步</el-button>
+          <template v-else-if="viewOnly">
+            <el-button type="primary" @click="dialogVisible = false">关闭</el-button>
+          </template>
           <template v-else>
             <el-button type="primary" :loading="busy" @click="saveJob(false)">保存任务</el-button>
             <el-button type="success" :loading="busy || runBusy" @click="saveJob(true)">保存、上线并执行</el-button>
           </template>
-          <el-button @click="dialogVisible = false">取消</el-button>
+          <el-button v-if="!viewOnly || step < steps.length - 1" @click="dialogVisible = false">
+            {{ viewOnly ? '关闭' : '取消' }}
+          </el-button>
         </div>
       </template>
     </el-dialog>

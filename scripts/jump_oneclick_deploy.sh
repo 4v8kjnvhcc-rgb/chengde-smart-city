@@ -25,7 +25,7 @@ DEPLOY_HOST="${DEPLOY_HOST:-root@10.10.10.57}"
 REMOTE_ROOT="${REMOTE_ROOT:-/opt/chengde}"
 REMOTE_INBOX="${REMOTE_INBOX:-$REMOTE_ROOT/inbox}"
 REMOTE_APP="${REMOTE_APP:-$REMOTE_ROOT/chengde-smart-city}"
-# 1=跳过库 mysqldump（纯换镜像、无 Flyway 时更快）；0=按 D23 尝试备份库（需 .57 能访问库机）
+# 发版策略：B0 必备镜像+代码；库 dump 默认跳过（1）。仅特殊需要时 SKIP_DB_BACKUP=0
 SKIP_DB_BACKUP="${SKIP_DB_BACKUP:-1}"
 # ssh 额外参数，例如：SSH_OPTS="-p 22 -i ~/.ssh/id_rsa"
 SSH_OPTS="${SSH_OPTS:-}"

@@ -2,7 +2,7 @@
 import { computed, nextTick, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import api from '@/api/http'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox, type FormInstance, type FormRules } from 'element-plus'
 import { useAuthStore } from '@/stores/auth'
 import { DEPT_PORTAL_BRAND } from './application-nav'
 import ShareCatalogPanel from './ShareCatalogPanel.vue'
@@ -10,6 +10,8 @@ import type { CatalogRow as ShareCatalogRow } from './ShareCatalogPanel.vue'
 import SubscribeApplyPanel from './SubscribeApplyPanel.vue'
 import PortalPagination from '@/components/common/PortalPagination.vue'
 import { statusLabel } from '@/utils/status-label'
+import { formatDateTime } from '@/utils/datetime'
+import { phoneRule } from '@/utils/validators'
 import {
   fetchFavorites,
   removeFavorite,
@@ -79,6 +81,10 @@ interface Subscription {
   taskType?: string
   taskStatus?: string
   approvalFlow?: ApprovalFlowStep[]
+  oauthClientId?: string
+  oauthClientSecret?: string
+  apiUrl?: string
+  apiMethod?: string
 }
 
 const auth = useAuthStore()
@@ -128,6 +134,10 @@ const subDetail = reactive<{
   visible: false,
   row: null,
   mode: 'mine',
+})
+const progressDlg = reactive<{ visible: boolean; row: Subscription | null }>({
+  visible: false,
+  row: null,
 })
 
 const shareLabel = (m?: string) => {
@@ -189,6 +199,11 @@ async function loadSubscriptions() {
   pendingSubsList.value = pendingRes.data || []
   reviewedSubsList.value = reviewedRes.data || []
   myFavorites.value = favs
+  try {
+    await loadMyApps()
+  } catch {
+    myApps.value = []
+  }
 }
 
 const shareBrowseMode = ref<'theme' | 'dept'>('theme')
@@ -299,6 +314,14 @@ async function submitSubscription() {
   await loadSubscriptions()
 }
 
+function reviewApiError(e: unknown): string {
+  const msg = e instanceof Error ? e.message : ''
+  if (/timeout of \d+ms exceeded/i.test(msg) || /timeout/i.test(msg) && /exceeded|aborted/i.test(msg)) {
+    return '审核请求超时，未在限定时间内收到 ESB 网关响应，请稍后重试'
+  }
+  return msg || '审批失败'
+}
+
 async function reviewSub(id: number, action: 'APPROVE' | 'REJECT') {
   if (!reviewForm.reviewerName.trim()) {
     ElMessage.warning('请填写审批人')
@@ -318,13 +341,15 @@ async function reviewSub(id: number, action: 'APPROVE' | 'REJECT') {
       approverNote: reviewForm.note,
       reviewerName: reviewForm.reviewerName.trim(),
       reviewerContact: reviewForm.reviewerContact.trim(),
-    })
-    ElMessage.success(action === 'APPROVE' ? `已通过${res.data?.taskId ? `，任务 #${res.data.taskId}` : ''}` : '已驳回')
+    }, { timeout: 45_000 })
+    ElMessage.success(action === 'APPROVE'
+      ? `已通过${res.data?.taskId ? `，任务 #${res.data.taskId}` : ''}${res.data?.oauthClientId ? '，已发放接口调用凭证' : ''}`
+      : '已驳回')
     reviewForm.note = ''
     subDetail.visible = false
     await loadSubscriptions()
   } catch (e: unknown) {
-    ElMessage.error((e as Error)?.message || '审批失败')
+    ElMessage.error(reviewApiError(e))
   }
 }
 
@@ -346,11 +371,124 @@ function fmtFlowTime(v?: string) {
 function flowStatusTag(s?: string) {
   if (s === 'APPROVED' || s === 'DONE') return 'success'
   if (s === 'REJECTED' || s === 'CANCELLED') return 'danger'
+  if (s === 'SKIPPED') return 'info'
   return 'warning'
+}
+
+function approvalProgressText(row: Subscription): string {
+  const st = String(row.status || '').toUpperCase()
+  const hasCred = isCredentialSub(row) && !!(row.oauthClientId || payloadStr(payloadObj(row), 'oauthClientId'))
+  if (st === 'PENDING') return '提交申请 → 待提供方审批'
+  if (st === 'REJECTED') return '提交申请 → 已驳回'
+  if (st === 'CANCELLED') return '已取消'
+  if (st === 'APPROVED') {
+    if (isCredentialSub(row) && hasCred) return '提交申请 → 已通过 → 凭证已发放'
+    if (isCredentialSub(row)) return '提交申请 → 已通过 → 待发放凭证'
+    return '提交申请 → 已通过'
+  }
+  const flow = row.approvalFlow || []
+  const current = flow.find((s) => s.status === 'PENDING' || s.status === 'WAITING') || flow[flow.length - 1]
+  return current?.result || current?.step || statusLabel(row.status)
+}
+
+function openApplyProgress(row: Subscription) {
+  progressDlg.row = row
+  progressDlg.visible = true
+}
+
+function applyProgressSteps(row: Subscription | null) {
+  if (!row) return []
+  const st = String(row.status || '').toUpperCase()
+  const applyTime = formatDateTime(row.createdAt, '')
+  const reviewTime = formatDateTime(row.reviewedAt, '')
+  const reviewed = st === 'APPROVED' || st === 'REJECTED'
+  const rejected = st === 'REJECTED'
+  const cancelled = st === 'CANCELLED'
+  const hasCred = isCredentialSub(row) && !!(row.oauthClientId || payloadStr(payloadObj(row), 'oauthClientId'))
+  const synced = st === 'APPROVED' && (!isCredentialSub(row) || hasCred)
+  const deptState = rejected ? 'reject' : reviewed ? 'done' : cancelled ? 'wait' : 'current'
+  const syncState = synced ? 'done' : reviewed && !rejected ? 'current' : 'wait'
+  return [
+    { title: '用户申请', time: applyTime, state: cancelled ? 'wait' : 'done', hint: cancelled ? '已取消' : '已提交' },
+    { title: '平台审核', time: applyTime, state: cancelled ? 'wait' : 'done', hint: cancelled ? '—' : '已通过' },
+    { title: '部门审核', time: reviewed ? reviewTime : '', state: deptState, hint: rejected ? '已驳回' : reviewed ? '已通过' : cancelled ? '—' : '审批中' },
+    { title: '权限同步', time: synced ? reviewTime : '', state: syncState, hint: synced ? '已完成' : syncState === 'current' ? '同步中' : '未开始' },
+  ]
+}
+
+function payloadObj(row: Subscription | null): Record<string, unknown> | null {
+  if (!row) return null
+  const p = row.applyPayload
+  if (p && typeof p === 'object') return p as Record<string, unknown>
+  if (typeof p === 'string') {
+    try { return JSON.parse(p) as Record<string, unknown> } catch { return null }
+  }
+  return null
+}
+
+function payloadStr(obj: Record<string, unknown> | null, key: string): string {
+  if (!obj || obj[key] == null) return ''
+  const v = String(obj[key]).trim()
+  return v
+}
+
+function dash(v?: string | number | null) {
+  if (v == null) return '—'
+  const s = String(v).trim()
+  return s === '' ? '—' : s
+}
+
+function isApiSub(row: Subscription | null) {
+  return String(row?.resourceType || '').toUpperCase() === 'API'
+}
+
+function isTableSub(row: Subscription | null) {
+  const t = String(row?.resourceType || '').toUpperCase()
+  return t === 'TABLE' || t === 'DATABASE' || t === 'DB' || t === 'DB_SYNC'
+}
+
+/** 接口与库表审核后展示同一套 OAuth / 接口信息 */
+function isCredentialSub(row: Subscription | null) {
+  return isApiSub(row) || isTableSub(row)
+}
+
+function payloadParamRows(row: Subscription | null, key: 'inputParams' | 'outputParams'): Record<string, unknown>[] {
+  const obj = payloadObj(row)
+  const v = obj?.[key]
+  return Array.isArray(v) ? (v as Record<string, unknown>[]) : []
+}
+
+function hasTableParams(row: Subscription | null) {
+  const obj = payloadObj(row)
+  return Array.isArray(obj?.inputParams) || Array.isArray(obj?.outputParams)
 }
 
 function payloadEntries(row: Subscription | null): { label: string; value: string; section?: string }[] {
   if (!row) return []
+  const obj = payloadObj(row)
+  if (isCredentialSub(row)) {
+    const days = payloadStr(obj, 'useDays')
+    return [
+      { label: '目录名称', value: dash(row.catalogTitle), section: 'base' },
+      { label: '资源名称', value: dash(row.catalogCode), section: 'base' },
+      { label: '资源提供方名称', value: dash(row.providerOrg), section: 'base' },
+      { label: '联系人', value: dash(payloadStr(obj, 'contactName')), section: 'base' },
+      { label: '联系电话', value: dash(payloadStr(obj, 'contactPhone')), section: 'base' },
+      { label: '应用系统名称', value: dash(payloadStr(obj, 'systemName')), section: 'api' },
+      { label: '接口URL', value: dash(row.apiUrl || payloadStr(obj, 'apiUrl')), section: 'api' },
+      { label: '接口请求方式', value: dash(row.apiMethod || payloadStr(obj, 'apiMethod') || 'POST'), section: 'api' },
+      { label: '用于Oauth2服务认证的client secret信息', value: dash(row.oauthClientSecret || payloadStr(obj, 'oauthClientSecret')), section: 'api' },
+      { label: '用于Oauth2服务认证的clientid信息', value: dash(row.oauthClientId || payloadStr(obj, 'oauthClientId')), section: 'api' },
+      { label: '使用时间范围', value: dash(payloadStr(obj, 'timeRange')), section: 'api' },
+      { label: '使用期限', value: days ? `${days}天` : '—', section: 'api' },
+      { label: '其他技术请求说明', value: dash(payloadStr(obj, 'techReq')), section: 'api' },
+      { label: '办事场景', value: dash(payloadStr(obj, 'scene') || payloadStr(obj, 'useScope') || row.purpose), section: 'api' },
+      { label: '数据范围', value: dash(payloadStr(obj, 'dataDesc')), section: 'api' },
+      { label: '接口调用频次', value: dash(payloadStr(obj, 'callFreq')), section: 'api' },
+      { label: '接口峰值频率', value: dash(payloadStr(obj, 'peakFreq')), section: 'api' },
+      { label: '申请依据', value: dash(payloadStr(obj, 'applyBasis')), section: 'api' },
+    ]
+  }
   const base: { label: string; value: string; section?: string }[] = [
     { label: '资源名称', value: String(row.catalogTitle || row.catalogId || '—'), section: 'base' },
     { label: '资源编码', value: String(row.catalogCode || '—'), section: 'base' },
@@ -360,16 +498,14 @@ function payloadEntries(row: Subscription | null): { label: string; value: strin
     { label: '用途/场景', value: row.purpose || '—', section: 'base' },
     { label: '状态', value: statusLabel(row.status), section: 'base' },
     { label: '申请人', value: row.createdBy || '—', section: 'base' },
-    { label: '申请时间', value: row.createdAt ? String(row.createdAt).replace('T', ' ').slice(0, 19) : '—', section: 'base' },
+    { label: '申请时间', value: formatDateTime(row.createdAt) || '—', section: 'base' },
   ]
   if (row.reviewedBy) base.push({ label: '审批人', value: row.reviewedBy, section: 'base' })
   if (row.reviewerContact) base.push({ label: '联系方式', value: row.reviewerContact, section: 'base' })
   if (row.approverNote) base.push({ label: '审批意见', value: row.approverNote, section: 'base' })
   if (row.taskId) base.push({ label: '交换任务', value: `#${row.taskId} ${row.taskStatus || ''}`, section: 'base' })
 
-  const p = row.applyPayload
-  const obj = typeof p === 'string' ? (() => { try { return JSON.parse(p) as Record<string, unknown> } catch { return null } })() : p
-  if (obj && typeof obj === 'object') {
+  if (obj) {
     const contactMap: Record<string, string> = {
       contactName: '联系人',
       contactPhone: '联系电话',
@@ -401,10 +537,20 @@ function payloadEntries(row: Subscription | null): { label: string; value: strin
   return base
 }
 
+interface PortalMyApp {
+  id: number
+  appName: string
+  contactName: string
+  contactPhone: string
+  createdAt?: string
+  updatedAt?: string
+}
+
 const pendingSubs = computed(() => pendingSubsList.value)
 const mySubs = computed(() => subscriptions.value)
 const reviewedSubs = computed(() => reviewedSubsList.value)
-const myspaceInnerTab = ref<'mine' | 'pending' | 'reviewed' | 'favorites'>('mine')
+type MyspaceInnerTab = 'mine' | 'apps' | 'pending' | 'reviewed' | 'favorites'
+const myspaceInnerTab = ref<MyspaceInnerTab>('mine')
 const myspacePage = ref(1)
 const myspacePageSize = ref(10)
 const pendingPage = ref(1)
@@ -413,14 +559,38 @@ const reviewedPage = ref(1)
 const reviewedPageSize = ref(10)
 const favoritesPage = ref(1)
 const favoritesPageSize = ref(10)
+const myApps = ref<PortalMyApp[]>([])
+const appsPage = ref(1)
+const appsPageSize = ref(10)
+const appDialogVisible = ref(false)
+const appSaving = ref(false)
+const appEditingId = ref<number | null>(null)
+const appFormRef = ref<FormInstance>()
+const appForm = reactive({
+  appName: '',
+  contactName: '',
+  contactPhone: '',
+})
+const appFormRules: FormRules = {
+  appName: [{ required: true, message: '请填写应用系统名称', trigger: 'blur' }],
+  contactName: [{ required: true, message: '请填写联系人', trigger: 'blur' }],
+  contactPhone: [phoneRule({ required: true, allowLandline: true })],
+}
 
-async function setMyspaceInnerTab(tab: 'mine' | 'pending' | 'reviewed' | 'favorites') {
+async function loadMyApps() {
+  const res = await api.get('/exchange/portal/my-apps')
+  myApps.value = Array.isArray(res.data) ? res.data : []
+}
+
+async function setMyspaceInnerTab(tab: MyspaceInnerTab) {
   myspaceInnerTab.value = tab
   if (tab === 'favorites') {
     myFavorites.value = await fetchFavorites('PORTAL')
   } else if (tab === 'reviewed') {
     const res = await api.get('/exchange/portal/subscriptions', { params: { scope: 'reviewed' } })
     reviewedSubsList.value = res.data || []
+  } else if (tab === 'apps') {
+    await loadMyApps()
   }
 }
 const pagedMySubs = computed(() => {
@@ -439,6 +609,73 @@ const pagedFavorites = computed(() => {
   const start = (favoritesPage.value - 1) * favoritesPageSize.value
   return myFavorites.value.slice(start, start + favoritesPageSize.value)
 })
+const pagedMyApps = computed(() => {
+  const start = (appsPage.value - 1) * appsPageSize.value
+  return myApps.value.slice(start, start + appsPageSize.value)
+})
+
+function openAppCreate() {
+  appEditingId.value = null
+  appForm.appName = ''
+  appForm.contactName = String(auth.user?.displayName || '').trim()
+  appForm.contactPhone = ''
+  appDialogVisible.value = true
+}
+
+function openAppEdit(row: PortalMyApp) {
+  appEditingId.value = row.id
+  appForm.appName = row.appName
+  appForm.contactName = row.contactName
+  appForm.contactPhone = row.contactPhone
+  appDialogVisible.value = true
+}
+
+async function saveMyApp() {
+  if (!appFormRef.value) return
+  try {
+    await appFormRef.value.validate()
+  } catch {
+    return
+  }
+  appSaving.value = true
+  try {
+    const body = {
+      appName: appForm.appName.trim(),
+      contactName: appForm.contactName.trim(),
+      contactPhone: appForm.contactPhone.trim(),
+    }
+    if (appEditingId.value) {
+      await api.put(`/exchange/portal/my-apps/${appEditingId.value}`, body)
+      ElMessage.success('应用已更新')
+    } else {
+      await api.post('/exchange/portal/my-apps', body)
+      ElMessage.success('应用已新增')
+    }
+    appDialogVisible.value = false
+    await loadMyApps()
+  } catch (e: unknown) {
+    ElMessage.error(e instanceof Error ? e.message : '保存失败')
+  } finally {
+    appSaving.value = false
+  }
+}
+
+async function deleteMyApp(row: PortalMyApp) {
+  try {
+    await ElMessageBox.confirm(`确认删除应用「${row.appName}」？删除后不可恢复。`, '删除应用', {
+      type: 'warning',
+    })
+  } catch {
+    return
+  }
+  try {
+    await api.delete(`/exchange/portal/my-apps/${row.id}`)
+    ElMessage.success('已删除')
+    await loadMyApps()
+  } catch (e: unknown) {
+    ElMessage.error(e instanceof Error ? e.message : '删除失败')
+  }
+}
 
 function favoriteShareLabel(f: PortalFavorite) {
   if (f.resourceTypeLabel) return f.resourceTypeLabel
@@ -690,6 +927,15 @@ onMounted(() => {
             <button
               type="button"
               class="myspace-stat"
+              :class="{ 'is-active': myspaceInnerTab === 'apps' }"
+              @click="setMyspaceInnerTab('apps')"
+            >
+              <b>{{ myApps.length }}</b>
+              <span>我的应用</span>
+            </button>
+            <button
+              type="button"
+              class="myspace-stat"
               :class="{ 'is-active': myspaceInnerTab === 'pending' }"
               @click="setMyspaceInnerTab('pending')"
             >
@@ -746,9 +992,17 @@ onMounted(() => {
                     <el-tag :type="$statusTagType(row.status)" size="small">{{ $statusLabel(row.status) }}</el-tag>
                   </template>
                 </el-table-column>
+                <el-table-column label="审批进度" min-width="200" show-overflow-tooltip>
+                  <template #default="{ row }">{{ approvalProgressText(row) }}</template>
+                </el-table-column>
                 <el-table-column label="申请时间" width="170">
                   <template #default="{ row }">
                     {{ row.createdAt ? String(row.createdAt).replace('T', ' ').slice(0, 19) : '—' }}
+                  </template>
+                </el-table-column>
+                <el-table-column label="操作" width="120" fixed="right">
+                  <template #default="{ row }">
+                    <el-button size="small" type="primary" plain @click.stop="openApplyProgress(row)">审批进度</el-button>
                   </template>
                 </el-table-column>
               </el-table>
@@ -758,6 +1012,44 @@ onMounted(() => {
                 v-model:page-size="myspacePageSize"
                 :total="mySubs.length"
               />
+            </el-tab-pane>
+
+            <el-tab-pane name="apps">
+              <template #label>
+                <span>我的应用</span>
+                <span v-if="myApps.length" class="myspace-tab-count">{{ myApps.length }}</span>
+              </template>
+              <div class="myspace-apps-toolbar">
+                <el-button type="primary" @click="openAppCreate">新增</el-button>
+              </div>
+              <el-empty v-if="!myApps.length" description="暂无应用，点击「新增」登记应用系统" :image-size="72" />
+              <template v-else>
+                <el-table :data="pagedMyApps" stripe border class="portal-table">
+                  <el-table-column
+                    type="index"
+                    label="序号"
+                    width="70"
+                    :index="(i: number) => (appsPage - 1) * appsPageSize + i + 1"
+                  />
+                  <el-table-column prop="appName" label="应用系统名称" min-width="200" show-overflow-tooltip />
+                  <el-table-column prop="contactName" label="联系人" width="120" show-overflow-tooltip />
+                  <el-table-column prop="contactPhone" label="联系电话" width="140" />
+                  <el-table-column label="创建时间" width="170">
+                    <template #default="{ row }">{{ formatDateTime(row.createdAt) }}</template>
+                  </el-table-column>
+                  <el-table-column label="操作" width="140" fixed="right">
+                    <template #default="{ row }">
+                      <el-button link type="primary" @click="openAppEdit(row)">编辑</el-button>
+                      <el-button link type="danger" @click="deleteMyApp(row)">删除</el-button>
+                    </template>
+                  </el-table-column>
+                </el-table>
+                <PortalPagination
+                  v-model:page="appsPage"
+                  v-model:page-size="appsPageSize"
+                  :total="myApps.length"
+                />
+              </template>
             </el-tab-pane>
 
             <el-tab-pane name="pending">
@@ -785,13 +1077,18 @@ onMounted(() => {
                     <template #default="{ row }">{{ shareLabel(row.resourceType) }}</template>
                   </el-table-column>
                   <el-table-column prop="purpose" label="用途" min-width="140" show-overflow-tooltip />
+                  <el-table-column label="审批进度" min-width="200" show-overflow-tooltip>
+                    <template #default="{ row }">{{ approvalProgressText(row) }}</template>
+                  </el-table-column>
                   <el-table-column label="申请时间" width="170">
                     <template #default="{ row }">
                       {{ row.createdAt ? String(row.createdAt).replace('T', ' ').slice(0, 19) : '—' }}
                     </template>
                   </el-table-column>
-                  <el-table-column label="操作" width="120" fixed="right">
+                  <el-table-column label="操作" width="260" fixed="right">
                     <template #default="{ row }">
+                      <el-button size="small" type="primary" plain @click.stop="openApplyProgress(row)">审批进度</el-button>
+                      <el-button link type="primary" @click.stop="openSubDetail(row, 'reviewed')">详情</el-button>
                       <el-button link type="primary" @click.stop="openSubDetail(row, 'pending')">审核</el-button>
                     </template>
                   </el-table-column>
@@ -833,14 +1130,18 @@ onMounted(() => {
                       <el-tag :type="$statusTagType(row.status)" size="small">{{ $statusLabel(row.status) }}</el-tag>
                     </template>
                   </el-table-column>
+                  <el-table-column label="审批进度" min-width="200" show-overflow-tooltip>
+                    <template #default="{ row }">{{ approvalProgressText(row) }}</template>
+                  </el-table-column>
                   <el-table-column label="审批人" width="110" show-overflow-tooltip>
                     <template #default="{ row }">{{ row.reviewedBy || '—' }}</template>
                   </el-table-column>
                   <el-table-column label="审批时间" width="170">
                     <template #default="{ row }">{{ fmtFlowTime(row.reviewedAt) }}</template>
                   </el-table-column>
-                  <el-table-column label="操作" width="90" fixed="right">
+                  <el-table-column label="操作" width="200" fixed="right">
                     <template #default="{ row }">
+                      <el-button size="small" type="primary" plain @click.stop="openApplyProgress(row)">审批进度</el-button>
                       <el-button link type="primary" @click.stop="openSubDetail(row, 'reviewed')">详情</el-button>
                     </template>
                   </el-table-column>
@@ -905,9 +1206,17 @@ onMounted(() => {
     >
       <template v-if="subDetail.row">
         <section class="detail-block">
-          <h4>资源与办理</h4>
+          <h4>{{ isCredentialSub(subDetail.row) ? '基本信息' : '资源与办理' }}</h4>
           <el-descriptions :column="1" border size="small">
             <el-descriptions-item v-for="(it, i) in payloadEntries(subDetail.row).filter(e => !e.section || e.section === 'base')" :key="'b'+i" :label="it.label">
+              {{ it.value }}
+            </el-descriptions-item>
+          </el-descriptions>
+        </section>
+        <section v-if="payloadEntries(subDetail.row).some(e => e.section === 'api')" class="detail-block">
+          <h4>接口信息</h4>
+          <el-descriptions :column="1" border size="small">
+            <el-descriptions-item v-for="(it, i) in payloadEntries(subDetail.row).filter(e => e.section === 'api')" :key="'i'+i" :label="it.label">
               {{ it.value }}
             </el-descriptions-item>
           </el-descriptions>
@@ -927,6 +1236,37 @@ onMounted(() => {
               {{ it.value }}
             </el-descriptions-item>
           </el-descriptions>
+        </section>
+        <section v-if="hasTableParams(subDetail.row)" class="detail-block">
+          <h4>库表入参 / 出参</h4>
+          <div class="detail-section-title">入参</div>
+          <el-table
+            :data="payloadParamRows(subDetail.row, 'inputParams')"
+            size="small"
+            stripe
+            border
+            empty-text="编目未勾选搜索项"
+            class="detail-table"
+          >
+            <el-table-column prop="name" label="字段名称" min-width="120" />
+            <el-table-column prop="comment" label="中文名称" min-width="120" />
+            <el-table-column prop="type" label="字段类型" width="110" />
+            <el-table-column prop="length" label="字段长度" width="90" />
+          </el-table>
+          <div class="detail-section-title">出参</div>
+          <el-table
+            :data="payloadParamRows(subDetail.row, 'outputParams')"
+            size="small"
+            stripe
+            border
+            empty-text="无"
+            class="detail-table"
+          >
+            <el-table-column prop="name" label="字段名称" min-width="120" />
+            <el-table-column prop="comment" label="中文名称" min-width="120" />
+            <el-table-column prop="type" label="字段类型" width="110" />
+            <el-table-column prop="length" label="字段长度" width="90" />
+          </el-table>
         </section>
         <section class="detail-block">
           <h4>审批流程</h4>
@@ -987,6 +1327,67 @@ onMounted(() => {
         <el-button type="primary" style="margin-top:12px" @click="applyFromCatalog(preview.row!)">申请该资源</el-button>
       </template>
     </el-drawer>
+
+    <el-dialog
+      v-model="appDialogVisible"
+      :title="appEditingId ? '编辑应用' : '新增应用'"
+      width="480px"
+      destroy-on-close
+      align-center
+    >
+      <el-form
+        ref="appFormRef"
+        :model="appForm"
+        :rules="appFormRules"
+        label-width="120px"
+      >
+        <el-form-item label="应用系统名称" prop="appName">
+          <el-input v-model="appForm.appName" maxlength="128" placeholder="请输入应用系统名称" />
+        </el-form-item>
+        <el-form-item label="联系人" prop="contactName">
+          <el-input v-model="appForm.contactName" maxlength="64" placeholder="请输入联系人" />
+        </el-form-item>
+        <el-form-item label="联系电话" prop="contactPhone">
+          <el-input v-model="appForm.contactPhone" maxlength="32" placeholder="手机号或座机" />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="appDialogVisible = false">取消</el-button>
+        <el-button type="primary" :loading="appSaving" @click="saveMyApp">保存</el-button>
+      </template>
+    </el-dialog>
+
+    <el-dialog
+      v-model="progressDlg.visible"
+      width="440px"
+      align-center
+      append-to-body
+      class="apply-progress-dlg"
+    >
+      <template #header>
+        <div class="apply-progress-dlg__title">申请进度</div>
+      </template>
+      <ol class="apply-progress">
+        <li
+          v-for="s in applyProgressSteps(progressDlg.row)"
+          :key="s.title"
+          class="apply-progress__item"
+          :class="`is-${s.state}`"
+        >
+          <span class="apply-progress__dot" />
+          <div class="apply-progress__body">
+            <div class="apply-progress__head">
+              <span class="apply-progress__name">{{ s.title }}</span>
+              <span class="apply-progress__tag">{{ s.hint }}</span>
+            </div>
+            <div v-if="s.time" class="apply-progress__time">{{ s.time }}</div>
+          </div>
+        </li>
+      </ol>
+      <template #footer>
+        <el-button type="primary" @click="progressDlg.visible = false">确认</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
@@ -1021,6 +1422,12 @@ onMounted(() => {
 .myspace__stats {
   display: flex;
   gap: 28px;
+  flex-wrap: wrap;
+}
+.myspace-apps-toolbar {
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: 12px;
 }
 .myspace-stat {
   text-align: center;
@@ -1127,6 +1534,15 @@ onMounted(() => {
   color: #1f2329;
   padding-left: 8px;
   border-left: 3px solid #1677ff;
+}
+.detail-section-title {
+  margin: 12px 0 8px;
+  font-size: 13px;
+  font-weight: 600;
+}
+.detail-table {
+  width: 100%;
+  margin-bottom: 8px;
 }
 .muted { color: #c0c4cc; }
 
@@ -1591,5 +2007,162 @@ onMounted(() => {
   .dual,
   .info-grid { grid-template-columns: 1fr; }
   .hero__title { font-size: 22px; }
+}
+</style>
+
+<style>
+.apply-progress-dlg.el-dialog {
+  border-radius: 8px;
+}
+.apply-progress-dlg .el-dialog__header {
+  margin-right: 0;
+  padding: 16px 20px 12px;
+  border-bottom: 1px solid #e5e6eb;
+}
+.apply-progress-dlg .el-dialog__body {
+  padding: 22px 28px 8px;
+}
+.apply-progress-dlg .el-dialog__footer {
+  padding: 8px 20px 16px;
+}
+.apply-progress-dlg__title {
+  padding-left: 10px;
+  border-left: 3px solid #1677ff;
+  font-size: 16px;
+  font-weight: 600;
+  color: #1f2329;
+  line-height: 1.25;
+}
+.apply-progress {
+  list-style: none;
+  margin: 0;
+  padding: 4px 4px 4px 8px;
+}
+.apply-progress__item {
+  position: relative;
+  display: flex;
+  align-items: flex-start;
+  gap: 14px;
+  padding-bottom: 28px;
+}
+.apply-progress__item:last-child {
+  padding-bottom: 4px;
+}
+.apply-progress__item:not(:last-child)::before {
+  content: '';
+  position: absolute;
+  left: 9px;
+  top: 22px;
+  bottom: 2px;
+  width: 2px;
+  background: #e5e6eb;
+}
+.apply-progress__item.is-done:not(:last-child)::before {
+  background: #00b42a;
+}
+.apply-progress__dot {
+  position: relative;
+  z-index: 1;
+  flex-shrink: 0;
+  width: 20px;
+  height: 20px;
+  box-sizing: border-box;
+  border-radius: 50%;
+  border: 2px solid #c9cdd4;
+  background: #fff;
+}
+.apply-progress__item.is-done .apply-progress__dot {
+  border-color: #00b42a;
+  background: #00b42a;
+}
+.apply-progress__item.is-done .apply-progress__dot::after {
+  content: '';
+  position: absolute;
+  left: 5px;
+  top: 2px;
+  width: 5px;
+  height: 9px;
+  border: solid #fff;
+  border-width: 0 2px 2px 0;
+  transform: rotate(45deg);
+}
+.apply-progress__item.is-current .apply-progress__dot {
+  border-color: #1677ff;
+  background: #1677ff;
+  box-shadow: 0 0 0 4px rgba(22, 119, 255, 0.18);
+}
+.apply-progress__item.is-reject .apply-progress__dot {
+  border-color: #f53f3f;
+  background: #f53f3f;
+}
+.apply-progress__item.is-reject .apply-progress__dot::after,
+.apply-progress__item.is-reject .apply-progress__dot::before {
+  content: '';
+  position: absolute;
+  left: 8px;
+  top: 3px;
+  width: 2px;
+  height: 10px;
+  background: #fff;
+  border-radius: 1px;
+}
+.apply-progress__item.is-reject .apply-progress__dot::before {
+  transform: rotate(45deg);
+}
+.apply-progress__item.is-reject .apply-progress__dot::after {
+  transform: rotate(-45deg);
+}
+.apply-progress__body {
+  min-width: 0;
+  flex: 1;
+  padding-top: 0;
+}
+.apply-progress__head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 20px;
+}
+.apply-progress__name {
+  font-size: 14px;
+  font-weight: 600;
+  color: #1f2329;
+  line-height: 20px;
+}
+.apply-progress__item.is-wait .apply-progress__name {
+  font-weight: 400;
+  color: #86909c;
+}
+.apply-progress__item.is-current .apply-progress__name {
+  color: #1677ff;
+}
+.apply-progress__item.is-reject .apply-progress__name {
+  color: #f53f3f;
+}
+.apply-progress__tag {
+  font-size: 12px;
+  line-height: 20px;
+  padding: 0 6px;
+  border-radius: 4px;
+  background: #f2f3f5;
+  color: #86909c;
+}
+.apply-progress__item.is-done .apply-progress__tag {
+  background: #e8ffea;
+  color: #00b42a;
+}
+.apply-progress__item.is-current .apply-progress__tag {
+  background: #e8f3ff;
+  color: #1677ff;
+}
+.apply-progress__item.is-reject .apply-progress__tag {
+  background: #ffece8;
+  color: #f53f3f;
+}
+.apply-progress__time {
+  margin-top: 4px;
+  font-size: 12px;
+  color: #86909c;
+  line-height: 18px;
 }
 </style>

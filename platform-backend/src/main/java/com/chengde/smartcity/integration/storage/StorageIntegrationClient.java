@@ -13,6 +13,7 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpEntity;
 import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpMethod;
@@ -24,15 +25,19 @@ import org.springframework.web.client.RestTemplate;
 @Component
 public class StorageIntegrationClient {
 
+    /** 非结构文档本地镜像根目录：{app.upload.dir}/unstruct（生产即 /data/uploads/unstruct） */
+    private final Path documentRoot;
     private final IntegrationProperties props;
     private final RestTemplate rest;
     private final ObjectMapper objectMapper;
 
     public StorageIntegrationClient(IntegrationProperties props, RestTemplate integrationRestTemplate,
-                                    ObjectMapper objectMapper) {
+                                    ObjectMapper objectMapper,
+                                    @Value("${app.upload.dir:./data/uploads}") String uploadDir) {
         this.props = props;
         this.rest = integrationRestTemplate;
         this.objectMapper = objectMapper;
+        this.documentRoot = Path.of(uploadDir, "unstruct").toAbsolutePath().normalize();
     }
 
     public boolean isElasticsearchHealthy() {
@@ -61,17 +66,24 @@ public class StorageIntegrationClient {
 
     public String storeDocument(String title, String contentType, byte[] bytes) {
         IntegrationConfig.requireIntegration(props, "SeaweedFS");
-        String key = "docs/" + UUID.randomUUID() + "-" + title.replaceAll("[^a-zA-Z0-9._-]", "_");
-        Path local = Path.of("data", "nas-demo", "seaweed-fallback", key);
+        String safeName = title == null ? "file" : title.replaceAll("[^a-zA-Z0-9._\\u4e00-\\u9fa5-]", "_");
+        String key = "docs/" + UUID.randomUUID() + "-" + safeName;
+        Path local = documentRoot.resolve(key).normalize();
+        if (!local.startsWith(documentRoot)) {
+            throw new IllegalArgumentException("非法文件存储路径");
+        }
         try {
             Files.createDirectories(local.getParent());
             Files.write(local, bytes == null ? new byte[0] : bytes);
             if (isSeaweedHealthy()) {
-                HttpHeaders h = new HttpHeaders();
-                h.setContentType(MediaType.APPLICATION_OCTET_STREAM);
-                String assignUrl = props.getStorage().getSeaweedS3Endpoint().replace(":8333", ":9333") + "/dir/assign";
-                ResponseEntity<String> assign = rest.getForEntity(assignUrl, String.class);
-                return props.getStorage().getSeaweedBucket() + "/" + key + "?assign=" + assign.getBody();
+                try {
+                    String assignUrl = props.getStorage().getSeaweedS3Endpoint().replace(":8333", ":9333") + "/dir/assign";
+                    ResponseEntity<String> assign = rest.getForEntity(assignUrl, String.class);
+                    return props.getStorage().getSeaweedBucket() + "/" + key + "?assign=" + assign.getBody();
+                } catch (Exception seaweedEx) {
+                    // 本地已落盘：Seaweed 分配失败时仍返回可预览的本地键
+                    return "local://" + local.toAbsolutePath();
+                }
             }
             return "local://" + local.toAbsolutePath();
         } catch (Exception e) {
@@ -136,7 +148,16 @@ public class StorageIntegrationClient {
         if (queryIndex >= 0) {
             key = key.substring(0, queryIndex);
         }
-        return Path.of("data", "nas-demo", "seaweed-fallback", key);
+        Path modern = documentRoot.resolve(key).normalize();
+        if (Files.exists(modern)) {
+            return modern;
+        }
+        // 兼容历史相对路径 data/nas-demo/seaweed-fallback（容器内曾为 /app/data/...）
+        Path legacy = Path.of("data", "nas-demo", "seaweed-fallback", key).toAbsolutePath().normalize();
+        if (Files.exists(legacy)) {
+            return legacy;
+        }
+        return modern;
     }
 
     public Map<String, Object> indexCatalog(String catalogId, String catalogCode, String title, String description) {

@@ -229,8 +229,26 @@ export interface IngestTaskRun {
   detailJson?: string
 }
 export interface PipelineJob { id: number; jobCode: string; jobName: string; jobType: string; status: string; billAmount?: number; resultJson?: string }
-export interface ProbeReport { id: number; reportCode: string; sourceName: string; nullRate: number; domainCheck: string; entityType: string; status: string }
-export interface DataDefinition { id: number; defCode: string; defName: string; businessDesc: string; techDesc: string; status: string }
+export interface ProbeReport {
+  id: number
+  reportCode: string
+  sourceName: string
+  nullRate: number
+  domainCheck: string
+  entityType: string
+  metricsJson?: string
+  status: string
+  createdAt?: string
+}
+export interface DataDefinition {
+  id: number
+  defCode: string
+  defName: string
+  businessDesc: string
+  techDesc: string
+  status: string
+  createdAt?: string
+}
 export interface ReconcileLog { id: number; batchNo: string; matchedPct: number; diffRows: number; alertLevel: string; status: string }
 export interface Registry {
   id: number
@@ -617,8 +635,13 @@ export const ingestionApi = {
   pipelineJobs: (jobType?: string) => api.get<PipelineJob[]>('/exchange/ingestion/pipeline-jobs', { params: { jobType } }),
   runPipeline: (body: Record<string, unknown>) => api.post<number>('/exchange/ingestion/pipeline-jobs/run', body),
   probeReports: () => api.get<ProbeReport[]>('/exchange/ingestion/collect/probe-reports'),
+  createProbeReport: (body: Record<string, unknown>) =>
+    api.post<number>('/exchange/ingestion/collect/probe-reports', body),
   definitions: () => api.get<DataDefinition[]>('/exchange/ingestion/collect/definitions'),
   saveDefinition: (body: Record<string, unknown>) => api.post<number>('/exchange/ingestion/collect/definitions', body),
+  updateDefinition: (id: number, body: Record<string, unknown>) =>
+    api.put<number>(`/exchange/ingestion/collect/definitions/${id}`, body),
+  deleteDefinition: (id: number) => api.delete<void>(`/exchange/ingestion/collect/definitions/${id}`),
   reconcileLogs: () => api.get<ReconcileLog[]>('/exchange/ingestion/collect/reconcile-logs'),
   reconcile: (action: string) => api.get<Record<string, unknown>>(`/exchange/ingestion/reconcile/${action}`),
   registries: (params?: Record<string, unknown>) =>

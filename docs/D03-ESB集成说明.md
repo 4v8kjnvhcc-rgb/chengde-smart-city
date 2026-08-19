@@ -3,7 +3,7 @@
 | 属性 | 说明 |
 |------|------|
 | **文档编号** | **D03** |
-| **文档版本** | V1.0 |
+| **文档版本** | V1.1 |
 | **编制日期** | 2026-06-23 |
 | **上位基线** | [`D02-需求基线说明.md`](D02-需求基线说明.md) V2.2 |
 | **功能清单** | [`D05-系统功能清单.md`](D05-系统功能清单.md) V2.6 |
@@ -46,7 +46,7 @@
 | 运行监控 | Ws8MfRuntimeMonitor | REST | RS/WS/MF 运行时统计 |
 | 运行日志 | EaiManage | REST | `/rest/service-flow-log` 集成流程日志 |
 | API 注册 | ApiResourceLocator | REST | `/registry/api-config*` |
-| API 认证 | ApiAuthenticater | REST | `/security/authenticate` Token |
+| API 认证 | ApiAuthenticater | REST | `/security/authenticate` Token（详见 [获取 Token 与创建消费者](vendor/ESB-网关Token与创建消费者接口.md)） |
 | 安全算法 | SafetyAlgorithmManage | REST | 加密规则与配置 |
 | 权限同步 | AuthManage | REST | `syncAuthority`、`syncGroupUser` |
 | 文件交换 | FileTransManage | REST | `/rest/trans-send` 触发文件传输 |
@@ -103,4 +103,5 @@
 
 | 版本 | 日期 | 说明 |
 |------|------|------|
+| V1.1 | 2026-08-18 | 补充获取 Token / 创建消费者合订接口文档入口 |
 | V1.0 | 2026-06-23 | 初版：M001～M019 全 ESB 映射 |

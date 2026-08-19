@@ -7,9 +7,11 @@ import java.util.List;
 import java.util.Map;
 import org.springframework.security.access.prepost.PreAuthorize;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
+import org.springframework.web.bind.annotation.DeleteMapping;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
+import org.springframework.web.bind.annotation.PutMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
@@ -129,6 +131,35 @@ public class PortalController {
         Long govResourceId = body.get("govResourceId") == null ? null
                 : Long.valueOf(String.valueOf(body.get("govResourceId")));
         service.removeFavoriteByResource(principal, catalogId, govResourceId);
+        return ApiResponse.ok(null);
+    }
+
+    @GetMapping("/my-apps")
+    @PreAuthorize("isAuthenticated()")
+    public ApiResponse<List<Map<String, Object>>> myApps(@AuthenticationPrincipal UserPrincipal principal) {
+        return ApiResponse.ok(service.listMyApps(principal));
+    }
+
+    @PostMapping("/my-apps")
+    @PreAuthorize("isAuthenticated()")
+    public ApiResponse<Map<String, Object>> createMyApp(@AuthenticationPrincipal UserPrincipal principal,
+                                                        @RequestBody Map<String, Object> body) {
+        return ApiResponse.ok(service.createMyApp(principal, body));
+    }
+
+    @PutMapping("/my-apps/{id}")
+    @PreAuthorize("isAuthenticated()")
+    public ApiResponse<Map<String, Object>> updateMyApp(@AuthenticationPrincipal UserPrincipal principal,
+                                                        @PathVariable Long id,
+                                                        @RequestBody Map<String, Object> body) {
+        return ApiResponse.ok(service.updateMyApp(principal, id, body));
+    }
+
+    @DeleteMapping("/my-apps/{id}")
+    @PreAuthorize("isAuthenticated()")
+    public ApiResponse<Void> deleteMyApp(@AuthenticationPrincipal UserPrincipal principal,
+                                         @PathVariable Long id) {
+        service.deleteMyApp(principal, id);
         return ApiResponse.ok(null);
     }
 

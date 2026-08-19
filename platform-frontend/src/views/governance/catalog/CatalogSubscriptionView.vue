@@ -48,6 +48,10 @@ interface SubRow {
   physicalTableName?: string
   applyPayload?: string | Record<string, unknown>
   approvalFlow?: ApprovalFlowStep[]
+  oauthClientId?: string
+  oauthClientSecret?: string
+  apiUrl?: string
+  apiMethod?: string
   authorization?: {
     authorizationCode?: string
     status?: string
@@ -116,6 +120,11 @@ function shareLabel(mode?: string) {
   return SHARE_ZH[mode] || statusLabel(mode)
 }
 
+function showApiCredential(row: SubRow | null) {
+  const m = String(row?.shareMode || row?.resourceType || '').toUpperCase()
+  return m === 'API' || m === 'TABLE' || m === 'DATABASE' || m === 'DB_SYNC' || m === 'DB'
+}
+
 function parsePayload(row: SubRow | null): Record<string, unknown> {
   if (!row?.applyPayload) return {}
   const p = row.applyPayload
@@ -126,6 +135,21 @@ function parsePayload(row: SubRow | null): Record<string, unknown> {
     return {}
   }
 }
+
+const detailPayload = computed(() => parsePayload(subDetail.row))
+const detailInputParams = computed(() =>
+  Array.isArray(detailPayload.value.inputParams)
+    ? (detailPayload.value.inputParams as Record<string, unknown>[])
+    : [],
+)
+const detailOutputParams = computed(() =>
+  Array.isArray(detailPayload.value.outputParams)
+    ? (detailPayload.value.outputParams as Record<string, unknown>[])
+    : [],
+)
+const detailHasParams = computed(() =>
+  Array.isArray(detailPayload.value.inputParams) || Array.isArray(detailPayload.value.outputParams),
+)
 
 function payloadVal(obj: Record<string, unknown>, key: string) {
   const v = obj[key]
@@ -223,6 +247,14 @@ function flowStatusTag(s?: string) {
   return 'warning'
 }
 
+function reviewApiError(e: unknown): string {
+  const msg = e instanceof Error ? e.message : ''
+  if (/timeout of \d+ms exceeded/i.test(msg) || /timeout/i.test(msg) && /exceeded|aborted/i.test(msg)) {
+    return '审核请求超时，未在限定时间内收到 ESB 网关响应，请稍后重试'
+  }
+  return msg || '审批失败'
+}
+
 async function approve(row: SubRow) {
   if (!reviewForm.reviewerName.trim()) {
     ElMessage.warning('请填写审批人')
@@ -233,16 +265,16 @@ async function approve(row: SubRow) {
     return
   }
   try {
-    await api.post(`/governance/catalog/subscriptions/${row.id}/approve`, {
+    const res = await api.post(`/governance/catalog/subscriptions/${row.id}/approve`, {
       comment: reviewForm.note.trim() || '同意',
       reviewerName: reviewForm.reviewerName.trim(),
       reviewerContact: reviewForm.reviewerContact.trim(),
-    })
-    ElMessage.success('已通过')
+    }, { timeout: 45_000 })
+    ElMessage.success(res.data?.oauthClientId ? '已通过，已发放接口调用凭证' : '已通过')
     subDetail.visible = false
     await Promise.all([loadPending(), loadReviewed()])
   } catch (e: unknown) {
-    ElMessage.error((e as Error)?.message || '审批失败')
+    ElMessage.error(reviewApiError(e))
   }
 }
 
@@ -619,6 +651,61 @@ onActivated(() => {
             <el-descriptions-item label="申请依据">{{ payloadVal(parsePayload(subDetail.row), 'applyBasis') || '—' }}</el-descriptions-item>
             <el-descriptions-item label="其他技术需求">{{ payloadVal(parsePayload(subDetail.row), 'techReq') || '—' }}</el-descriptions-item>
           </el-descriptions>
+          <template v-if="detailHasParams">
+            <div class="detail-section-title">入参</div>
+            <el-table
+              :data="detailInputParams"
+              size="small"
+              stripe
+              border
+              empty-text="编目未勾选搜索项"
+              class="detail-table"
+            >
+              <el-table-column prop="name" label="字段名称" min-width="120" />
+              <el-table-column prop="comment" label="中文名称" min-width="120" />
+              <el-table-column prop="type" label="字段类型" width="110" />
+              <el-table-column prop="length" label="字段长度" width="90" />
+            </el-table>
+            <div class="detail-section-title">出参</div>
+            <el-table
+              :data="detailOutputParams"
+              size="small"
+              stripe
+              border
+              empty-text="无"
+              class="detail-table"
+            >
+              <el-table-column prop="name" label="字段名称" min-width="120" />
+              <el-table-column prop="comment" label="中文名称" min-width="120" />
+              <el-table-column prop="type" label="字段类型" width="110" />
+              <el-table-column prop="length" label="字段长度" width="90" />
+            </el-table>
+          </template>
+        </section>
+
+        <section v-if="showApiCredential(subDetail.row)" class="detail-block">
+          <h4>接口信息</h4>
+          <el-descriptions :column="1" border size="small">
+            <el-descriptions-item label="应用系统名称">{{ payloadVal(parsePayload(subDetail.row), 'systemName') || '—' }}</el-descriptions-item>
+            <el-descriptions-item label="接口URL">{{ subDetail.row.apiUrl || payloadVal(parsePayload(subDetail.row), 'apiUrl') || '—' }}</el-descriptions-item>
+            <el-descriptions-item label="接口请求方式">{{ subDetail.row.apiMethod || payloadVal(parsePayload(subDetail.row), 'apiMethod') || 'POST' }}</el-descriptions-item>
+            <el-descriptions-item label="用于Oauth2服务认证的client secret信息">
+              {{ subDetail.row.oauthClientSecret || payloadVal(parsePayload(subDetail.row), 'oauthClientSecret') || '—' }}
+            </el-descriptions-item>
+            <el-descriptions-item label="用于Oauth2服务认证的clientid信息">
+              {{ subDetail.row.oauthClientId || payloadVal(parsePayload(subDetail.row), 'oauthClientId') || '—' }}
+            </el-descriptions-item>
+            <el-descriptions-item label="使用时间范围">{{ payloadVal(parsePayload(subDetail.row), 'timeRange') || '—' }}</el-descriptions-item>
+            <el-descriptions-item label="使用期限">
+              {{ payloadVal(parsePayload(subDetail.row), 'useDays') ? `${payloadVal(parsePayload(subDetail.row), 'useDays')}天` : '—' }}
+            </el-descriptions-item>
+            <el-descriptions-item label="其他技术请求说明">{{ payloadVal(parsePayload(subDetail.row), 'techReq') || '—' }}</el-descriptions-item>
+            <el-descriptions-item label="办事场景">{{ payloadVal(parsePayload(subDetail.row), 'scene') || payloadVal(parsePayload(subDetail.row), 'useScope') || subDetail.row.purpose || '—' }}</el-descriptions-item>
+            <el-descriptions-item label="数据范围">{{ payloadVal(parsePayload(subDetail.row), 'dataDesc') || '—' }}</el-descriptions-item>
+            <el-descriptions-item label="接口调用频次">{{ payloadVal(parsePayload(subDetail.row), 'callFreq') || '—' }}</el-descriptions-item>
+            <el-descriptions-item label="接口峰值频率">{{ payloadVal(parsePayload(subDetail.row), 'peakFreq') || '—' }}</el-descriptions-item>
+            <el-descriptions-item label="申请依据">{{ payloadVal(parsePayload(subDetail.row), 'applyBasis') || '—' }}</el-descriptions-item>
+          </el-descriptions>
         </section>
 
         <section class="detail-block">
@@ -726,6 +813,15 @@ onActivated(() => {
   color: #1f2329;
   padding-left: 8px;
   border-left: 3px solid #1677ff;
+}
+.detail-section-title {
+  margin: 12px 0 8px;
+  font-size: 13px;
+  font-weight: 600;
+}
+.detail-table {
+  width: 100%;
+  margin-bottom: 8px;
 }
 .sub-detail-ops {
   margin-top: 16px;

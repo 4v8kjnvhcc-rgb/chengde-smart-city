@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # =============================================================================
-# 在 10.10.10.57（应用机）上执行：B0 备份（镜像/代码目录）+ 可选换代码包 + load 镜像 + prod_up_app
+# 在 10.10.10.57（应用机）上执行：B0 备份（镜像 + 代码目录，默认不做库 dump）
+#   + 可选换代码包 + load 镜像 + prod_up_app
 # 一般由跳板机 jump_oneclick_deploy.sh 上传后调用；也可在 .57 上手动：
 #   IMAGE_TAR=/opt/chengde/inbox/chengde-app-images_xxx.tar \
 #   CODE_TGZ=/opt/chengde/inbox/chengde-smart-city_xxx.tar.gz \
@@ -15,6 +16,8 @@ REMOTE_APP="${REMOTE_APP:-$REMOTE_ROOT/chengde-smart-city}"
 REMOTE_INBOX="${REMOTE_INBOX:-$REMOTE_ROOT/inbox}"
 IMAGE_TAR="${IMAGE_TAR:-}"
 CODE_TGZ="${CODE_TGZ:-}"
+# 发版策略：必备镜像/代码备份；库 dump 默认跳过（避免现场拉 mysql:8.0 卡住）。
+# 确需 dump 时再显式：SKIP_DB_BACKUP=0
 SKIP_DB_BACKUP="${SKIP_DB_BACKUP:-1}"
 HEALTH_URL="${HEALTH_URL:-http://127.0.0.1:9087/actuator/health}"
 PORTAL_HINT="${PORTAL_HINT:-http://10.10.10.57:9087/bigdata-web}"
@@ -60,9 +63,9 @@ else
   log "[B0] 无现有 $REMOTE_APP，跳过代码目录备份"
 fi
 
-# ---------- B0② 可选库备份 ----------
+# ---------- B0② 库 dump（默认跳过）----------
 if [[ "$SKIP_DB_BACKUP" != "1" && -f "$REMOTE_APP/compose/prod-app.env" ]]; then
-  log "[B0] 尝试备份业务库（失败不中断发版，请人工确认）..."
+  log "[B0] SKIP_DB_BACKUP=0，尝试备份业务库（失败不中断发版）..."
   ENV="$REMOTE_APP/compose/prod-app.env"
   if grep -q $'\r' "$ENV" 2>/dev/null; then
     sed -i 's/\r$//' "$ENV"
@@ -74,6 +77,7 @@ if [[ "$SKIP_DB_BACKUP" != "1" && -f "$REMOTE_APP/compose/prod-app.env" ]]; then
   MYSQL_USER=$(grep '^MYSQL_USER=' "$ENV" | cut -d= -f2- | tr -d '\r')
   MYSQL_PASSWORD=$(grep '^MYSQL_PASSWORD=' "$ENV" | cut -d= -f2- | tr -d '\r')
   if [[ -n "$MYSQL_HOST" && -n "$MYSQL_USER" ]]; then
+    # 须本机已有 mysql:8.0；现场勿依赖临时 pull（内网易卡住）
     docker run --rm mysql:8.0 mysqldump -h"$MYSQL_HOST" -P"${MYSQL_PORT:-13306}" -u"$MYSQL_USER" -p"$MYSQL_PASSWORD" \
       --single-transaction --routines --triggers smart_city \
       > "$BACKUP_DIR/smart_city.sql" 2>"$BACKUP_DIR/mysqldump.err"
@@ -85,7 +89,7 @@ if [[ "$SKIP_DB_BACKUP" != "1" && -f "$REMOTE_APP/compose/prod-app.env" ]]; then
   fi
   set -e
 else
-  log "[B0] 已跳过库 dump（SKIP_DB_BACKUP=$SKIP_DB_BACKUP）"
+  log "[B0] 按策略跳过库 dump（仅备份镜像+代码；SKIP_DB_BACKUP=$SKIP_DB_BACKUP）"
 fi
 
 # ---------- B2 换代码包（可选）----------
