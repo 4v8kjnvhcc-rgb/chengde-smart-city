@@ -25,6 +25,7 @@ const STEP_KEYS = ['classify', 'probe', 'define', 'run'] as const
 const ALL_PROBE_ITEMS = [
   '业务探查',
   '接入方式探查',
+  '字段探查',
   '空值率探查',
   '值域及分布探查',
   '命名实体探查',
@@ -223,6 +224,7 @@ async function runProbe() {
   const metrics: Record<string, string> = {
     businessProbe: has('业务探查') ? '业务含义：主数据/登记表，建议纳入静态基础数据' : '未执行',
     accessProbe: has('接入方式探查') ? 'JDBC 库表接入 · 建议 T+1 全量+增量' : '未执行',
+    fieldProbe: has('字段探查') ? '字段清单完整 · 类型/可空/注释可识别' : '未执行',
     nullRate: has('空值率探查') ? '0.018' : '未执行',
     domainDist: has('值域及分布探查') ? '枚举稳定 · Top5 覆盖 92%' : '未执行',
     namedEntity: has('命名实体探查') ? '人名/地名/机构名/手机号' : '未执行',
@@ -434,6 +436,9 @@ onMounted(() => {
         </el-table-column>
         <el-table-column label="接入方式" min-width="120" show-overflow-tooltip>
           <template #default="{ row }">{{ metricOf(row, 'accessProbe') }}</template>
+        </el-table-column>
+        <el-table-column label="字段探查" min-width="120" show-overflow-tooltip>
+          <template #default="{ row }">{{ metricOf(row, 'fieldProbe') }}</template>
         </el-table-column>
         <el-table-column label="空值率" width="90">
           <template #default="{ row }">{{ metricOf(row, 'nullRate', row.nullRate != null ? String(row.nullRate) : '—') }}</template>

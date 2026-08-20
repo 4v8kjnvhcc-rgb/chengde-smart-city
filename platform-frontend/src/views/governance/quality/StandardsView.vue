@@ -223,6 +223,43 @@ const mappingForm = reactive({
   remark: '',
 })
 
+// ---- 标准项比对 & 标准↔标准映射 ----
+interface ItemLinkRow {
+  id: number
+  sourceItemId: number
+  targetItemId: number
+  sourceItemCode?: string
+  sourceItemName?: string
+  targetItemCode?: string
+  targetItemName?: string
+  linkType: string
+  remark?: string
+  status: string
+  createdAt?: string
+}
+interface CompareDiff {
+  field: string
+  left: string
+  right: string
+  changed: boolean
+}
+const compareDialog = ref(false)
+const compareLeftId = ref<number | undefined>()
+const compareRightId = ref<number | undefined>()
+const compareLoading = ref(false)
+const compareDiffs = ref<CompareDiff[]>([])
+const compareChangedCount = ref(0)
+
+const linkDialog = ref(false)
+const linkRows = ref<ItemLinkRow[]>([])
+const linkLoading = ref(false)
+const linkForm = reactive({
+  sourceItemId: undefined as number | undefined,
+  targetItemId: undefined as number | undefined,
+  linkType: 'EQUIVALENT',
+  remark: '',
+})
+
 function normalizeTab(t?: string) {
   const s = String(t || 'element')
   return ['file', 'element', 'code', 'naming'].includes(s) ? s : 'element'
@@ -700,6 +737,71 @@ async function removeMapping(id: number) {
   }
 }
 
+function openCompare() {
+  compareLeftId.value = undefined
+  compareRightId.value = undefined
+  compareDiffs.value = []
+  compareChangedCount.value = 0
+  compareDialog.value = true
+}
+
+async function runCompare() {
+  if (!compareLeftId.value || !compareRightId.value) {
+    ElMessage.warning('请选择两个标准项')
+    return
+  }
+  compareLoading.value = true
+  try {
+    const res = await api.get('/governance/standards/compare', {
+      params: { leftId: compareLeftId.value, rightId: compareRightId.value },
+    })
+    compareDiffs.value = res.data?.diffs || []
+    compareChangedCount.value = res.data?.changedCount || 0
+  } catch (e: unknown) {
+    ElMessage.error(e instanceof Error ? e.message : '比对失败')
+  } finally {
+    compareLoading.value = false
+  }
+}
+
+async function openItemLinks() {
+  linkDialog.value = true
+  linkForm.sourceItemId = undefined
+  linkForm.targetItemId = undefined
+  linkForm.linkType = 'EQUIVALENT'
+  linkForm.remark = ''
+  await loadItemLinks()
+}
+
+async function loadItemLinks() {
+  linkLoading.value = true
+  try {
+    linkRows.value = (await api.get('/governance/standards/item-links')).data || []
+  } catch (e: unknown) {
+    ElMessage.error(e instanceof Error ? e.message : '加载标准映射失败')
+  } finally {
+    linkLoading.value = false
+  }
+}
+
+async function saveItemLink() {
+  if (!linkForm.sourceItemId || !linkForm.targetItemId) {
+    ElMessage.warning('请选择源/目标标准项')
+    return
+  }
+  await api.post('/governance/standards/item-links', { ...linkForm })
+  ElMessage.success('标准映射已添加')
+  linkForm.remark = ''
+  await loadItemLinks()
+}
+
+async function removeItemLink(row: ItemLinkRow) {
+  await ElMessageBox.confirm('确认删除该标准映射？', '删除确认', { type: 'warning' })
+  await api.delete(`/governance/standards/item-links/${row.id}`)
+  ElMessage.success('已删除')
+  await loadItemLinks()
+}
+
 watch(selectedCodeItemId, () => { loadCodebook() })
 watch(activeTab, (t) => {
   if (t === 'element') void load()
@@ -802,6 +904,8 @@ onMounted(() => {
               <el-button type="primary" @click="load">查询</el-button>
               <el-button @click="onReset">重置</el-button>
               <el-button type="primary" @click="openElementCreate">新增</el-button>
+              <el-button @click="openCompare">比对</el-button>
+              <el-button @click="openItemLinks">标准映射</el-button>
             </el-form-item>
           </el-form>
 
@@ -1155,6 +1259,93 @@ onMounted(() => {
         <el-table-column label="操作" width="80">
           <template #default="{ row }">
             <el-button link type="danger" @click="removeMapping(row.id)">删除</el-button>
+          </template>
+        </el-table-column>
+      </el-table>
+    </el-dialog>
+
+    <el-dialog v-model="compareDialog" title="标准项比对" width="720px" destroy-on-close>
+      <el-form inline class="portal-inline-form portal-inline-form--block">
+        <el-form-item label="左侧" class="portal-field-xl">
+          <el-select v-model="compareLeftId" filterable clearable placeholder="选择标准项" style="width:100%">
+            <el-option v-for="it in items" :key="`l-${it.id}`" :label="`${it.itemName}（${it.itemCode}）`" :value="it.id" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="右侧" class="portal-field-xl">
+          <el-select v-model="compareRightId" filterable clearable placeholder="选择标准项" style="width:100%">
+            <el-option v-for="it in items" :key="`r-${it.id}`" :label="`${it.itemName}（${it.itemCode}）`" :value="it.id" />
+          </el-select>
+        </el-form-item>
+        <el-form-item class="portal-form-actions">
+          <el-button type="primary" :loading="compareLoading" @click="runCompare">执行比对</el-button>
+        </el-form-item>
+      </el-form>
+      <el-alert
+        v-if="compareDiffs.length"
+        :type="compareChangedCount ? 'warning' : 'success'"
+        :closable="false"
+        show-icon
+        style="margin-bottom:12px"
+        :title="compareChangedCount ? `存在 ${compareChangedCount} 处差异` : '两侧标准项属性一致'"
+      />
+      <el-table :data="compareDiffs" stripe border size="small" empty-text="请选择两侧标准项后执行比对">
+        <el-table-column prop="field" label="属性" width="120" />
+        <el-table-column prop="left" label="左侧" min-width="160" show-overflow-tooltip />
+        <el-table-column prop="right" label="右侧" min-width="160" show-overflow-tooltip />
+        <el-table-column label="结果" width="90">
+          <template #default="{ row }">
+            <el-tag :type="row.changed ? 'warning' : 'success'" size="small">{{ row.changed ? '不同' : '相同' }}</el-tag>
+          </template>
+        </el-table-column>
+      </el-table>
+    </el-dialog>
+
+    <el-dialog v-model="linkDialog" title="标准数据之间映射" width="820px" destroy-on-close>
+      <el-form inline class="portal-inline-form portal-inline-form--block">
+        <el-form-item label="源标准" class="portal-field-xl">
+          <el-select v-model="linkForm.sourceItemId" filterable clearable placeholder="源标准项" style="width:100%">
+            <el-option v-for="it in items" :key="`s-${it.id}`" :label="`${it.itemName}（${it.itemCode}）`" :value="it.id" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="目标标准" class="portal-field-xl">
+          <el-select v-model="linkForm.targetItemId" filterable clearable placeholder="目标标准项" style="width:100%">
+            <el-option v-for="it in items" :key="`t-${it.id}`" :label="`${it.itemName}（${it.itemCode}）`" :value="it.id" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="关系" class="portal-field-md">
+          <el-select v-model="linkForm.linkType" style="width:100%">
+            <el-option label="等价" value="EQUIVALENT" />
+            <el-option label="别名" value="ALIAS" />
+            <el-option label="细化" value="REFINES" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="说明" class="portal-field-lg">
+          <el-input v-model="linkForm.remark" clearable />
+        </el-form-item>
+        <el-form-item class="portal-form-actions">
+          <el-button type="primary" @click="saveItemLink">添加映射</el-button>
+          <el-button :loading="linkLoading" @click="loadItemLinks">刷新</el-button>
+        </el-form-item>
+      </el-form>
+      <el-table v-loading="linkLoading" :data="linkRows" stripe border class="portal-table" empty-text="暂无标准间映射">
+        <el-table-column label="源标准" min-width="160" show-overflow-tooltip>
+          <template #default="{ row }">{{ row.sourceItemName || '—' }}（{{ row.sourceItemCode || '—' }}）</template>
+        </el-table-column>
+        <el-table-column label="关系" width="90">
+          <template #default="{ row }">{{ statusLabel(row.linkType) }}</template>
+        </el-table-column>
+        <el-table-column label="目标标准" min-width="160" show-overflow-tooltip>
+          <template #default="{ row }">{{ row.targetItemName || '—' }}（{{ row.targetItemCode || '—' }}）</template>
+        </el-table-column>
+        <el-table-column prop="remark" label="说明" min-width="120" show-overflow-tooltip />
+        <el-table-column label="状态" width="90">
+          <template #default="{ row }">
+            <el-tag :type="statusTagType(row.status)" size="small">{{ statusLabel(row.status) }}</el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column label="操作" width="90" fixed="right">
+          <template #default="{ row }">
+            <el-button link type="danger" @click="removeItemLink(row)">删除</el-button>
           </template>
         </el-table-column>
       </el-table>

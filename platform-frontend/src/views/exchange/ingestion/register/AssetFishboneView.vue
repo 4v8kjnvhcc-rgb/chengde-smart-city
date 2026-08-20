@@ -1,10 +1,12 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, ref, watch } from 'vue'
+import { ElMessage } from 'element-plus'
 import PageCard from '@/components/common/PageCard.vue'
 import {
   ingestionApi,
   useIngestionLoading,
   type AssetFishboneNode,
+  type AssetTag,
 } from '../useIngestionHub'
 
 type LayoutNode = {
@@ -20,6 +22,7 @@ type LayoutNode = {
   expanded: boolean
   depth: number
   lines?: string[]
+  matched?: boolean
 }
 
 type LayoutEdge = { fromX: number; fromY: number; toX: number; toY: number; straight?: boolean }
@@ -79,6 +82,119 @@ const layoutNodes = ref<LayoutNode[]>([])
 const layoutEdges = ref<LayoutEdge[]>([])
 const svgW = ref(1200)
 const svgH = ref(560)
+
+const keyword = ref('')
+const categoryTagId = ref<number | null>(null)
+const categoryOptions = ref<AssetTag[]>([])
+const categoryTableIds = ref<Set<number> | null>(null)
+const highlightIds = ref<Set<string>>(new Set())
+
+const tableDrawer = ref(false)
+const tableMetaLoading = ref(false)
+const tableMeta = ref<Record<string, unknown> | null>(null)
+
+function flattenTags(nodes: AssetTag[]): AssetTag[] {
+  const out: AssetTag[] = []
+  const walk = (list: AssetTag[]) => {
+    for (const n of list || []) {
+      out.push(n)
+      if (n.children?.length) walk(n.children)
+    }
+  }
+  walk(nodes)
+  return out
+}
+
+async function loadCategories() {
+  try {
+    const res = await ingestionApi.tagTree()
+    const data = res.data || { standardTree: [], customTags: [] }
+    categoryOptions.value = [
+      ...flattenTags(data.standardTree || []),
+      ...flattenTags(data.customTags || []),
+    ]
+  } catch {
+    categoryOptions.value = []
+  }
+}
+
+async function applyCategoryFilter() {
+  if (categoryTagId.value == null) {
+    categoryTableIds.value = null
+    applyHighlight()
+    return
+  }
+  try {
+    const res = await ingestionApi.tagBindingsByTag(categoryTagId.value)
+    const ids = new Set<number>()
+    for (const b of res.data || []) {
+      if (String(b.assetType).toUpperCase() === 'TABLE' && b.assetId != null) {
+        ids.add(Number(b.assetId))
+      }
+    }
+    categoryTableIds.value = ids
+  } catch {
+    categoryTableIds.value = new Set()
+    ElMessage.warning('加载类目绑定失败')
+  }
+  applyHighlight()
+}
+
+function nodeMatchesKeyword(n: LayoutNode, kw: string) {
+  if (!kw) return true
+  const hay = `${n.label || ''} ${n.code || ''} ${n.type || ''}`.toLowerCase()
+  return hay.includes(kw)
+}
+
+function applyHighlight() {
+  const kw = keyword.value.trim().toLowerCase()
+  const cat = categoryTableIds.value
+  const ids = new Set<string>()
+  for (const n of layoutNodes.value) {
+    let ok = true
+    if (kw) ok = nodeMatchesKeyword(n, kw)
+    if (ok && cat != null && n.type === 'TABLE') {
+      const tid = Number(String(n.id).replace(/^table:/, ''))
+      ok = Number.isFinite(tid) && cat.has(tid)
+    } else if (ok && cat != null && n.type !== 'TABLE' && n.type !== 'ORG' && n.type !== 'ROOT' && n.type !== 'DEPT') {
+      // 非表节点在类目筛选时不强制高亮
+      ok = !kw ? false : nodeMatchesKeyword(n, kw)
+    }
+    n.matched = ok && (!!kw || cat != null)
+    if (n.matched) ids.add(n.id)
+  }
+  highlightIds.value = ids
+}
+
+function onSearch() {
+  applyHighlight()
+  if ((keyword.value.trim() || categoryTagId.value != null) && !highlightIds.value.size) {
+    ElMessage.info('未匹配到节点，可换关键词或类目重试')
+  }
+}
+
+function onResetSearch() {
+  keyword.value = ''
+  categoryTagId.value = null
+  categoryTableIds.value = null
+  applyHighlight()
+}
+
+async function openTableMeta(n: LayoutNode) {
+  const tid = String(n.id).replace(/^table:/, '')
+  if (!tid) return
+  tableDrawer.value = true
+  tableMetaLoading.value = true
+  tableMeta.value = null
+  try {
+    const res = await ingestionApi.lineageTableMeta(`tbl-${tid}`)
+    tableMeta.value = res.data || null
+  } catch (e: unknown) {
+    ElMessage.error(e instanceof Error ? e.message : '加载表说明失败')
+  } finally {
+    tableMetaLoading.value = false
+  }
+}
 
 const hintText = computed(() => {
   if (mode.value === 'PLATFORM' && selectedOrgId.value == null) {
@@ -254,6 +370,7 @@ async function load(orgId?: number | null) {
   })
   await nextTick()
   rebuildLayout()
+  applyHighlight()
 }
 
 async function selectOrg(orgId: number) {
@@ -454,6 +571,10 @@ function onNodeClick(n: LayoutNode) {
     if (id) void selectOrg(id)
     return
   }
+  if (n.type === 'TABLE') {
+    void openTableMeta(n)
+    return
+  }
   if (n.expandable) toggle(n.id)
 }
 
@@ -466,9 +587,17 @@ function edgePath(e: LayoutEdge) {
   return `M ${e.fromX} ${e.fromY} C ${mx} ${e.fromY}, ${mx} ${e.toY}, ${e.toX} ${e.toY}`
 }
 
-watch(expanded, () => rebuildLayout())
+watch(expanded, () => {
+  rebuildLayout()
+  applyHighlight()
+})
+
+watch(categoryTagId, () => {
+  void applyCategoryFilter()
+})
 
 onMounted(() => {
+  void loadCategories()
   void load()
 })
 </script>
@@ -493,6 +622,21 @@ onMounted(() => {
           <el-button size="small" :loading="loading" @click="load(selectedOrgId)">刷新</el-button>
         </div>
       </div>
+
+      <el-form inline class="portal-inline-form portal-inline-form--block search-bar">
+        <el-form-item label="检索" class="portal-field-xl">
+          <el-input v-model="keyword" clearable placeholder="表名/编码/节点名称" @keyup.enter="onSearch" />
+        </el-form-item>
+        <el-form-item label="数据类目" class="portal-field-lg">
+          <el-select v-model="categoryTagId" clearable filterable placeholder="全部类目">
+            <el-option v-for="c in categoryOptions" :key="c.id" :label="c.tagName" :value="c.id" />
+          </el-select>
+        </el-form-item>
+        <el-form-item class="portal-form-actions">
+          <el-button type="primary" @click="onSearch">查询</el-button>
+          <el-button @click="onResetSearch">重置</el-button>
+        </el-form-item>
+      </el-form>
 
       <div class="canvas-wrap" :class="{ 'is-radial': isRadialOverview }">
         <div
@@ -523,6 +667,7 @@ onMounted(() => {
             v-for="n in layoutNodes"
             :key="n.id"
             class="node"
+            :class="{ 'is-matched': n.matched, 'is-dimmed': (keyword.trim() || categoryTagId != null) && !n.matched && n.type !== 'ROOT' && n.type !== 'ORG' && n.type !== 'DEPT' }"
             :transform="`translate(${n.x}, ${n.y})`"
             @click="onNodeClick(n)"
           >
@@ -530,9 +675,9 @@ onMounted(() => {
               :width="n.w"
               :height="n.h"
               :rx="n.type === 'ROOT' ? 12 : 18"
-              :fill="n.type === 'ROOT' ? '#d1e9ff' : '#fff'"
-              :stroke="n.type === 'ROOT' ? '#8fbfe8' : '#b0c4d8'"
-              :stroke-width="n.type === 'ROOT' ? 2 : 1.2"
+              :fill="n.matched ? '#fff7ed' : (n.type === 'ROOT' ? '#d1e9ff' : '#fff')"
+              :stroke="n.matched ? '#f97316' : (n.type === 'ROOT' ? '#8fbfe8' : '#b0c4d8')"
+              :stroke-width="n.matched ? 2.4 : (n.type === 'ROOT' ? 2 : 1.2)"
             />
             <text
               v-if="typeLabel(n.type)"
@@ -567,6 +712,28 @@ onMounted(() => {
         </svg>
       </div>
     </component>
+
+    <el-drawer v-model="tableDrawer" title="表使用说明与数据类目" size="420px" destroy-on-close>
+      <div v-loading="tableMetaLoading">
+        <template v-if="tableMeta?.found">
+          <el-descriptions :column="1" border size="small">
+            <el-descriptions-item label="表名称">{{ tableMeta.tableName || '—' }}</el-descriptions-item>
+            <el-descriptions-item label="表编码">{{ tableMeta.tableCode || '—' }}</el-descriptions-item>
+            <el-descriptions-item label="数据源">{{ tableMeta.sourceName || '—' }}</el-descriptions-item>
+            <el-descriptions-item label="Schema">{{ tableMeta.sourceSchema || '—' }}</el-descriptions-item>
+            <el-descriptions-item label="数据类目">
+              <template v-if="Array.isArray(tableMeta.categories) && (tableMeta.categories as string[]).length">
+                <el-tag v-for="c in (tableMeta.categories as string[])" :key="c" size="small" style="margin:2px">{{ c }}</el-tag>
+              </template>
+              <span v-else>暂无类目</span>
+            </el-descriptions-item>
+          </el-descriptions>
+          <h4 class="meta-title">表使用说明</h4>
+          <p class="meta-desc">{{ (tableMeta.usageDesc as string) || '暂无使用说明' }}</p>
+        </template>
+        <el-empty v-else-if="!tableMetaLoading" description="未找到表元数据" />
+      </div>
+    </el-drawer>
   </div>
 </template>
 
@@ -581,6 +748,7 @@ onMounted(() => {
   margin-bottom: 12px;
   flex-wrap: wrap;
 }
+.search-bar { margin-bottom: 12px; }
 .legend { display: flex; flex-wrap: wrap; gap: 10px 14px; }
 .leg-item { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: #475569; }
 .dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
@@ -606,6 +774,7 @@ onMounted(() => {
 .edge { stroke: #7eabc9; stroke-width: 1.4; }
 .node { cursor: pointer; }
 .node:hover rect { filter: brightness(0.96); }
+.node.is-dimmed { opacity: 0.35; }
 .type-text { font-size: 10px; font-weight: 600; }
 .label-text { font-size: 12px; fill: #1e293b; }
 .toggle { cursor: pointer; }
@@ -616,4 +785,6 @@ onMounted(() => {
   color: #94a3b8;
   font-size: 14px;
 }
+.meta-title { margin: 16px 0 8px; font-size: 14px; color: #334155; }
+.meta-desc { margin: 0; color: #64748b; line-height: 1.6; white-space: pre-wrap; }
 </style>

@@ -118,6 +118,37 @@ public class StandardItemController {
         return ApiResponse.ok(null);
     }
 
+    // ---- 标准项比对 & 标准↔标准映射 ----
+
+    @GetMapping("/compare")
+    @PreAuthorize("isAuthenticated()")
+    public ApiResponse<Map<String, Object>> compare(@RequestParam Long leftId,
+                                                    @RequestParam Long rightId) {
+        return ApiResponse.ok(service.compareItems(leftId, rightId));
+    }
+
+    @GetMapping("/item-links")
+    @PreAuthorize("isAuthenticated()")
+    public ApiResponse<List<Map<String, Object>>> listItemLinks(@RequestParam(required = false) Long itemId,
+                                                                @RequestParam(required = false) String linkType,
+                                                                @RequestParam(required = false) String status) {
+        return ApiResponse.ok(service.listItemLinks(itemId, linkType, status));
+    }
+
+    @PostMapping("/item-links")
+    @PreAuthorize("isAuthenticated()")
+    public ApiResponse<Long> createItemLink(@AuthenticationPrincipal UserPrincipal principal,
+                                            @RequestBody Map<String, Object> body) {
+        return ApiResponse.ok(service.createItemLink(principal, body));
+    }
+
+    @DeleteMapping("/item-links/{id}")
+    @PreAuthorize("isAuthenticated()")
+    public ApiResponse<Void> deleteItemLink(@PathVariable Long id) {
+        service.deleteItemLink(id);
+        return ApiResponse.ok(null);
+    }
+
     // ---- codebook （非 id 前缀）----
 
     @PutMapping("/codebook/{codeId}")

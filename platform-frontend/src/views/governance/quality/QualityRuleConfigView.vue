@@ -5,7 +5,8 @@
  * 2) 质量模型管理
  * 3) 质量规则配置
  * 4) 质量方案管理（定时→DolphinScheduler）
- * 5) 告警配置
+ * 5) 整改时间要求
+ * 6) 告警配置
  */
 import { ref, watch } from 'vue'
 import PageCard from '@/components/common/PageCard.vue'
@@ -14,6 +15,7 @@ import QualityModelPanel from './QualityModelPanel.vue'
 import QualityModelRulePanel from './QualityModelRulePanel.vue'
 import QualitySchemePanel from './QualitySchemePanel.vue'
 import QualityAlertConfigView from './QualityAlertConfigView.vue'
+import QualityFixSlaPanel from './QualityFixSlaPanel.vue'
 
 const activeTab = ref('rule-types')
 const modelRuleRef = ref<InstanceType<typeof QualityModelRulePanel> | null>(null)
@@ -39,6 +41,9 @@ watch(activeTab, (t) => {
       </el-tab-pane>
       <el-tab-pane label="质量方案管理" name="schemes" lazy>
         <QualitySchemePanel />
+      </el-tab-pane>
+      <el-tab-pane label="整改时间要求" name="fix-sla" lazy>
+        <QualityFixSlaPanel />
       </el-tab-pane>
       <el-tab-pane label="告警配置" name="alert-config" lazy>
         <QualityAlertConfigView />

@@ -7,10 +7,12 @@ import com.chengde.smartcity.exchange.mapper.IngDataSourceMapper;
 import com.chengde.smartcity.masterdata.entity.GovNamingStandard;
 import com.chengde.smartcity.masterdata.entity.GovStandardCodebook;
 import com.chengde.smartcity.masterdata.entity.GovStandardItem;
+import com.chengde.smartcity.masterdata.entity.GovStandardItemLink;
 import com.chengde.smartcity.masterdata.entity.GovStandardItemVersion;
 import com.chengde.smartcity.masterdata.entity.GovStandardMapping;
 import com.chengde.smartcity.masterdata.mapper.GovNamingStandardMapper;
 import com.chengde.smartcity.masterdata.mapper.GovStandardCodebookMapper;
+import com.chengde.smartcity.masterdata.mapper.GovStandardItemLinkMapper;
 import com.chengde.smartcity.masterdata.mapper.GovStandardItemMapper;
 import com.chengde.smartcity.masterdata.mapper.GovStandardItemVersionMapper;
 import com.chengde.smartcity.masterdata.mapper.GovStandardMappingMapper;
@@ -49,6 +51,7 @@ public class StandardItemService {
     private final GovStandardCodebookMapper codebookMapper;
     private final GovNamingStandardMapper namingMapper;
     private final GovStandardMappingMapper mappingMapper;
+    private final GovStandardItemLinkMapper itemLinkMapper;
     private final IngDataSourceMapper dataSourceMapper;
     private final DataSource platformDataSource;
     private final ObjectMapper objectMapper = new ObjectMapper();
@@ -58,6 +61,7 @@ public class StandardItemService {
                                GovStandardCodebookMapper codebookMapper,
                                GovNamingStandardMapper namingMapper,
                                GovStandardMappingMapper mappingMapper,
+                               GovStandardItemLinkMapper itemLinkMapper,
                                IngDataSourceMapper dataSourceMapper,
                                @Autowired(required = false) DataSource platformDataSource) {
         this.itemMapper = itemMapper;
@@ -65,6 +69,7 @@ public class StandardItemService {
         this.codebookMapper = codebookMapper;
         this.namingMapper = namingMapper;
         this.mappingMapper = mappingMapper;
+        this.itemLinkMapper = itemLinkMapper;
         this.dataSourceMapper = dataSourceMapper;
         this.platformDataSource = platformDataSource;
     }
@@ -750,6 +755,132 @@ public class StandardItemService {
             return "^[a-z][a-z0-9_]*$";
         }
         return "^[A-Za-z][A-Za-z0-9_]*$";
+    }
+
+    // ---- 标准项比对 & 标准↔标准映射 ----
+
+    public Map<String, Object> compareItems(Long leftId, Long rightId) {
+        if (leftId == null || rightId == null) {
+            throw new BusinessException(400, "请选择两个标准项");
+        }
+        if (leftId.equals(rightId)) {
+            throw new BusinessException(400, "比对两侧不能为同一标准项");
+        }
+        GovStandardItem left = get(leftId);
+        GovStandardItem right = get(rightId);
+        List<Map<String, Object>> diffs = new ArrayList<>();
+        addDiff(diffs, "编码", left.getItemCode(), right.getItemCode());
+        addDiff(diffs, "名称", left.getItemName(), right.getItemName());
+        addDiff(diffs, "类型", left.getItemType(), right.getItemType());
+        addDiff(diffs, "数据类型", left.getDataType(), right.getDataType());
+        addDiff(diffs, "数据格式", left.getDataFormat(), right.getDataFormat());
+        addDiff(diffs, "值域", left.getValueDomain(), right.getValueDomain());
+        addDiff(diffs, "业务定义", left.getBusinessDefinition(), right.getBusinessDefinition());
+        addDiff(diffs, "业务规则", left.getBusinessRule(), right.getBusinessRule());
+        addDiff(diffs, "引用标准", left.getReferenceStandard(), right.getReferenceStandard());
+        addDiff(diffs, "分类", left.getCategory(), right.getCategory());
+        addDiff(diffs, "敏感级", left.getSensitivity(), right.getSensitivity());
+        addDiff(diffs, "发布状态", left.getPublishStatus(), right.getPublishStatus());
+        addDiff(diffs, "版本号",
+                left.getVersionNo() == null ? null : String.valueOf(left.getVersionNo()),
+                right.getVersionNo() == null ? null : String.valueOf(right.getVersionNo()));
+        long changed = diffs.stream().filter(d -> Boolean.TRUE.equals(d.get("changed"))).count();
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("left", left);
+        out.put("right", right);
+        out.put("diffs", diffs);
+        out.put("changedCount", changed);
+        out.put("same", changed == 0);
+        return out;
+    }
+
+    public List<Map<String, Object>> listItemLinks(Long itemId, String linkType, String status) {
+        LambdaQueryWrapper<GovStandardItemLink> q = new LambdaQueryWrapper<GovStandardItemLink>()
+                .orderByDesc(GovStandardItemLink::getId);
+        if (itemId != null) {
+            q.and(w -> w.eq(GovStandardItemLink::getSourceItemId, itemId)
+                    .or().eq(GovStandardItemLink::getTargetItemId, itemId));
+        }
+        if (linkType != null && !linkType.isBlank()) {
+            q.eq(GovStandardItemLink::getLinkType, linkType);
+        }
+        if (status != null && !status.isBlank()) {
+            q.eq(GovStandardItemLink::getStatus, status);
+        }
+        List<GovStandardItemLink> links = itemLinkMapper.selectList(q);
+        List<Map<String, Object>> out = new ArrayList<>();
+        for (GovStandardItemLink link : links) {
+            Map<String, Object> row = new LinkedHashMap<>();
+            row.put("id", link.getId());
+            row.put("sourceItemId", link.getSourceItemId());
+            row.put("targetItemId", link.getTargetItemId());
+            row.put("linkType", link.getLinkType());
+            row.put("remark", link.getRemark());
+            row.put("status", link.getStatus());
+            row.put("createdBy", link.getCreatedBy());
+            row.put("createdAt", link.getCreatedAt());
+            row.put("updatedAt", link.getUpdatedAt());
+            GovStandardItem src = itemMapper.selectById(link.getSourceItemId());
+            GovStandardItem tgt = itemMapper.selectById(link.getTargetItemId());
+            row.put("sourceItemCode", src == null ? null : src.getItemCode());
+            row.put("sourceItemName", src == null ? null : src.getItemName());
+            row.put("targetItemCode", tgt == null ? null : tgt.getItemCode());
+            row.put("targetItemName", tgt == null ? null : tgt.getItemName());
+            out.add(row);
+        }
+        return out;
+    }
+
+    @Transactional
+    public Long createItemLink(UserPrincipal principal, Map<String, Object> body) {
+        Long sourceId = toLong(body.get("sourceItemId"));
+        Long targetId = toLong(body.get("targetItemId"));
+        if (sourceId == null || targetId == null) {
+            throw new BusinessException(400, "源/目标标准项不能为空");
+        }
+        if (sourceId.equals(targetId)) {
+            throw new BusinessException(400, "源与目标不能为同一标准项");
+        }
+        if (itemMapper.selectById(sourceId) == null || itemMapper.selectById(targetId) == null) {
+            throw new BusinessException(404, "标准项不存在");
+        }
+        String linkType = str(body.get("linkType"), "EQUIVALENT");
+        Long exists = itemLinkMapper.selectCount(new LambdaQueryWrapper<GovStandardItemLink>()
+                .eq(GovStandardItemLink::getSourceItemId, sourceId)
+                .eq(GovStandardItemLink::getTargetItemId, targetId)
+                .eq(GovStandardItemLink::getLinkType, linkType));
+        if (exists != null && exists > 0) {
+            throw new BusinessException(400, "该映射关系已存在");
+        }
+        GovStandardItemLink link = new GovStandardItemLink();
+        link.setSourceItemId(sourceId);
+        link.setTargetItemId(targetId);
+        link.setLinkType(linkType);
+        link.setRemark(str(body.get("remark"), null));
+        link.setStatus(str(body.get("status"), "ACTIVE"));
+        link.setCreatedBy(principal == null ? null : principal.getUsername());
+        link.setCreatedAt(LocalDateTime.now());
+        itemLinkMapper.insert(link);
+        return link.getId();
+    }
+
+    @Transactional
+    public void deleteItemLink(Long id) {
+        if (itemLinkMapper.selectById(id) == null) {
+            throw new BusinessException(404, "映射关系不存在");
+        }
+        itemLinkMapper.deleteById(id);
+    }
+
+    private static void addDiff(List<Map<String, Object>> diffs, String field, String left, String right) {
+        String l = left == null ? "" : left.trim();
+        String r = right == null ? "" : right.trim();
+        Map<String, Object> row = new LinkedHashMap<>();
+        row.put("field", field);
+        row.put("left", l.isEmpty() ? "—" : l);
+        row.put("right", r.isEmpty() ? "—" : r);
+        row.put("changed", !l.equals(r));
+        diffs.add(row);
     }
 
     private static void requireIdent(String name, String field) {
