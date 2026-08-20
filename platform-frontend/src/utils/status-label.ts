@@ -41,6 +41,20 @@ const STATUS_ZH: Record<string, string> = {
   PROVIDER_RETURNED: '提供方退回待裁决',
   SUBSCRIBED: '已订阅',
   DISTRIBUTED: '已分发',
+  DATA_UPDATE: '数据变更',
+  DATA_INSERT: '数据新增',
+  META_UPDATE: '元数据变更',
+  SCHEMA_CHANGE: '结构变更',
+  REPUBLISH: '重新发布',
+  INTERNAL_SYSTEM: '内部系统',
+  SUPERIOR: '上级单位',
+  CITY_BIGDATA: '市大数据中心',
+  NATIONAL_LOCAL_BIGDATA: '国家/地方大数据中心',
+  THIRD_PARTY: '第三方业务应用',
+  CHANGE: '变更触发',
+  APPROVE: '审批触发',
+  LEDGER: '已记台账',
+  ACKED: '已确认',
   // 运行/任务
   IDLE: '空闲',
   READY: '已配置',
@@ -125,6 +139,12 @@ const STATUS_ZH: Record<string, string> = {
   CRITICAL: '严重',
   TAGGED: '已标注',
   LINKED: '已关联',
+  EXTRACT: '关联提取',
+  ANALYZE: '关联分析',
+  BACKFILL: '关联回填',
+  SUCCESS: '成功',
+  SIMILARITY: '相似度',
+  KEYWORD: '关键词',
   POSITIVE: '正向',
   NEGATIVE: '负向',
   NEUTRAL: '中性',
@@ -146,6 +166,7 @@ const STATUS_ZH: Record<string, string> = {
   MANUAL: '手工',
   UNREAD: '未读',
   READ: '已读',
+  ACKED: '已确认',
   LOCKED: '已锁定',
   EXPIRED: '已过期',
   UNTESTED: '未测试',
@@ -347,6 +368,13 @@ const STATUS_ZH: Record<string, string> = {
   OUT_OF_RANGE: '超范围',
   FORMAT_ERROR: '格式错误',
   THRESHOLD: '超阈值',
+  // 质量问题分析
+  IN_ANALYSIS: '分析中',
+  LOCATE: '快速定位',
+  CODE_MAP: '编码映射',
+  PROCESS: '流程整改',
+  CODE_MISMATCH: '编码不匹配',
+  PARTIAL_MAP: '部分对标',
   // 脚本/组件类型
   SELECT: '查询',
   FORM: '表单',
@@ -582,10 +610,10 @@ export function statusLabel(value: unknown, domain?: StatusLabelDomain): string 
 
 export function statusTagType(value: unknown): 'success' | 'warning' | 'info' | 'danger' | 'primary' {
   const key = String(value ?? '').trim().toUpperCase()
-  if (['ACTIVE', 'ENABLED', 'SUCCESS', 'APPROVED', 'COMPLETED', 'FINISHED', 'CONFIRMED', 'CATALOG_MOUNTED', 'PUBLISHED', 'READY', 'CONFIGURED', 'NORMAL', 'SUBSCRIBED', 'DISTRIBUTED', 'MAPPED', 'MATCHED', 'INDEXED', 'OK', 'IMPLEMENTED', 'ONLINE', 'UP', 'PASS', 'UNDERSTOOD', 'POSITIVE', 'CLEANED', 'CLEANED_IN', 'PUBLIC'].includes(key)) {
+  if (['ACTIVE', 'ENABLED', 'SUCCESS', 'APPROVED', 'COMPLETED', 'FINISHED', 'CONFIRMED', 'CATALOG_MOUNTED', 'PUBLISHED', 'READY', 'CONFIGURED', 'NORMAL', 'SUBSCRIBED', 'DISTRIBUTED', 'MAPPED', 'MATCHED', 'INDEXED', 'OK', 'IMPLEMENTED', 'ONLINE', 'UP', 'PASS', 'UNDERSTOOD', 'POSITIVE', 'CLEANED', 'CLEANED_IN', 'PUBLIC', 'ACKED', 'READ'].includes(key)) {
     return 'success'
   }
-  if (['PENDING', 'PENDING_ARCHIVE', 'PENDING_REVIEW', 'RUNNING', 'ANALYZING', 'PRE_AUDITING', 'CORRECTION', 'WAITING', 'DRAFT', 'TO_REGISTER', 'SUPERVISING', 'DISPATCHED', 'PROVIDER_RETURNED', 'FULFILLING', 'PARTIAL', 'WARN', 'POC', 'MEDIUM', 'RAW', 'EXTRACTED', 'TAGGED', 'LEDGER', 'OPEN', 'OTHER', 'PRIVATE', 'UNEVEN', 'WITHDRAW_PENDING'].includes(key)) {
+  if (['PENDING', 'PENDING_ARCHIVE', 'PENDING_REVIEW', 'RUNNING', 'ANALYZING', 'PRE_AUDITING', 'CORRECTION', 'WAITING', 'DRAFT', 'TO_REGISTER', 'SUPERVISING', 'DISPATCHED', 'PROVIDER_RETURNED', 'FULFILLING', 'PARTIAL', 'WARN', 'POC', 'MEDIUM', 'RAW', 'EXTRACTED', 'TAGGED', 'LEDGER', 'OPEN', 'OTHER', 'PRIVATE', 'UNEVEN', 'WITHDRAW_PENDING', 'IN_ANALYSIS', 'PARTIAL_MAP', 'UNREAD'].includes(key)) {
     return 'warning'
   }
   if (['REJECTED', 'FAILED', 'ERROR', 'FATAL', 'CANCELLED', 'ABNORMAL', 'EXPIRED', 'RETURNED', 'STOPPED', 'UNMAPPED', 'UNMATCHED', 'CRITICAL', 'BLOCKED', 'MISSING', 'HIGH', 'DOWN', 'FAIL', 'NEGATIVE', 'PROBLEM', 'ABANDONED'].includes(key)) {

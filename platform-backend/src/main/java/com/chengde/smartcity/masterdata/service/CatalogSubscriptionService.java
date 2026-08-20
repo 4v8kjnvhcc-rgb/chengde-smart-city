@@ -49,6 +49,7 @@ public class CatalogSubscriptionService {
     private final AuditService auditService;
     private final SysOrgMapper orgMapper;
     private final EsbConsumerProvisionService esbConsumerProvisionService;
+    private final CatalogSubscribeDistributeService subscribeDistributeService;
 
     public CatalogSubscriptionService(GovCatalogSubscriptionMapper subscriptionMapper,
                                       GovCatalogResourceMapper resourceMapper,
@@ -57,7 +58,8 @@ public class CatalogSubscriptionService {
                                       BizCatalogItemMapper portalCatalogMapper,
                                       AuditService auditService,
                                       SysOrgMapper orgMapper,
-                                      EsbConsumerProvisionService esbConsumerProvisionService) {
+                                      EsbConsumerProvisionService esbConsumerProvisionService,
+                                      CatalogSubscribeDistributeService subscribeDistributeService) {
         this.subscriptionMapper = subscriptionMapper;
         this.resourceMapper = resourceMapper;
         this.authorizationMapper = authorizationMapper;
@@ -66,6 +68,7 @@ public class CatalogSubscriptionService {
         this.auditService = auditService;
         this.orgMapper = orgMapper;
         this.esbConsumerProvisionService = esbConsumerProvisionService;
+        this.subscribeDistributeService = subscribeDistributeService;
     }
 
     public List<Map<String, Object>> listMine(UserPrincipal operator, String status) {
@@ -341,6 +344,7 @@ public class CatalogSubscriptionService {
         }
         if ("APPROVED".equals(st)) {
             ensureAuthorization(null, sub);
+            subscribeDistributeService.onSubscriptionApproved(null, sub);
         }
     }
 
@@ -378,6 +382,7 @@ public class CatalogSubscriptionService {
             BizPortalSubscription portal = portalSubscriptionMapper.selectById(sub.getPortalSubscriptionId());
             esbConsumerProvisionService.provisionOnApprove(portal);
         }
+        subscribeDistributeService.onSubscriptionApproved(operator, sub);
         auditService.log(operator.getUserId(), operator.getUsername(), operator.getOrgId(),
                 "CATALOG_SUBSCRIBE_APPROVE", "gov_catalog_subscription",
                 String.valueOf(id), resource.getResourceName() + " auth=" + authorization.getAuthorizationCode());
@@ -458,46 +463,13 @@ public class CatalogSubscriptionService {
 
     @Transactional
     public Map<String, Object> distribute(UserPrincipal operator, Long id) {
+        // 按订阅配置的多目标分发（内部系统/上级/大数据中心等）；保留原返回字段兼容前端
+        Map<String, Object> pushed = subscribeDistributeService.distributeNow(operator, id, null);
         GovCatalogSubscription sub = require(id);
-        if (!"APPROVED".equalsIgnoreCase(sub.getStatus()) && !"DISTRIBUTED".equalsIgnoreCase(sub.getStatus())) {
-            throw new BusinessException(400, "仅已通过或已分发的订阅可触发分发");
-        }
-        GovCatalogResource resource = requireResource(sub.getResourceId());
-        String mode = sub.getShareMode() == null ? "DB_SYNC" : sub.getShareMode().toUpperCase();
-        String traceId = "GOV-" + UUID.randomUUID().toString().substring(0, 8);
-        String result;
-        if ("API".equals(mode)) {
-            String debugEntry = "/api/v1/governance/catalog/subscriptions/" + id + "/test-api";
-            result = "API 调试入口已就绪 entry=" + debugEntry + " traceId=" + traceId;
-            log.info("catalog distribute API-only id={} entry={}", id, debugEntry);
-        } else if ("FILE_SYNC".equals(mode)) {
-            // L1：仅写分发台账，不真实搬文件
-            result = "FILE_SYNC 已记分发台账（未真实传文件） resource=" + resource.getResourceCode()
-                    + " traceId=" + traceId;
-            log.info("catalog distribute FILE_SYNC log-only id={} resource={}", id, resource.getResourceCode());
-        } else {
-            // DB_SYNC：写日志不真搬数
-            result = "DB_SYNC 已记分发台账（未真实搬数） resource=" + resource.getResourceCode()
-                    + " traceId=" + traceId;
-            log.info("catalog distribute DB_SYNC log-only id={} resource={}", id, resource.getResourceCode());
-        }
-
-        sub.setStatus("DISTRIBUTED");
-        sub.setDistributeResult(result);
-        sub.setDistributeAt(LocalDateTime.now());
-        sub.setUpdatedAt(LocalDateTime.now());
-        subscriptionMapper.updateById(sub);
-
-        resource.setSubscriptionStatus("DISTRIBUTED");
-        resourceMapper.updateById(resource);
-
-        if (operator != null) {
-            auditService.log(operator.getUserId(), operator.getUsername(), operator.getOrgId(),
-                    "CATALOG_DISTRIBUTE", "gov_catalog_subscription", String.valueOf(id), result);
-        }
-
         Map<String, Object> out = toRow(sub);
-        out.put("traceId", traceId);
+        out.put("count", pushed.get("count"));
+        out.put("logs", pushed.get("logs"));
+        String mode = sub.getShareMode() == null ? "DB_SYNC" : sub.getShareMode().toUpperCase();
         if ("API".equals(mode)) {
             out.put("testApi", "/api/v1/governance/catalog/subscriptions/" + id + "/test-api");
         }

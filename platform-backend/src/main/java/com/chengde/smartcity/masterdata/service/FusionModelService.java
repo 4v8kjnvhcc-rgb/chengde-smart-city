@@ -132,6 +132,36 @@ public class FusionModelService {
         return root;
     }
 
+    public Map<String, Object> getDomainCanvas(Long domainId) {
+        GovFusionDomain domain = requireDomain(domainId);
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("domainId", domain.getId());
+        out.put("layoutJson", domain.getCanvasLayout());
+        return out;
+    }
+
+    @Transactional
+    public void saveDomainCanvas(UserPrincipal operator, Long domainId, Map<String, Object> body) {
+        GovFusionDomain domain = requireDomain(domainId);
+        Object raw = body == null ? null : body.get("layoutJson");
+        String layoutJson;
+        if (raw == null) {
+            layoutJson = null;
+        } else if (raw instanceof String s) {
+            layoutJson = s;
+        } else {
+            layoutJson = String.valueOf(raw);
+        }
+        if (layoutJson != null && layoutJson.length() > 4_000_000) {
+            throw new BusinessException(400, "画布布局过大");
+        }
+        domain.setCanvasLayout(layoutJson);
+        domain.setUpdatedAt(LocalDateTime.now());
+        domainMapper.updateById(domain);
+        log.info("fusion canvas saved domainId={} by={}", domainId,
+                operator == null ? "-" : operator.getUsername());
+    }
+
     /**
      * 模型报告：按主题域导出 Excel（概要 / 逻辑模型图 / 实体列表 / 实体属性 / 物理映射）。
      */

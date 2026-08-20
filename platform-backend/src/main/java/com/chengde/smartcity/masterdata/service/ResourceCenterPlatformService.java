@@ -184,11 +184,17 @@ public class ResourceCenterPlatformService {
 
     public Map<String, Object> libraryOverview() {
         List<RcBaseLibrary> base = libraryMapper.selectList(new LambdaQueryWrapper<RcBaseLibrary>()
-                .eq(RcBaseLibrary::getLibType, "BASE").orderByAsc(RcBaseLibrary::getSortOrder).orderByAsc(RcBaseLibrary::getId));
+                .eq(RcBaseLibrary::getLibType, "BASE")
+                .ne(RcBaseLibrary::getStatus, "OFFLINE")
+                .orderByAsc(RcBaseLibrary::getSortOrder).orderByAsc(RcBaseLibrary::getId));
         List<RcBaseLibrary> semi = libraryMapper.selectList(new LambdaQueryWrapper<RcBaseLibrary>()
-                .eq(RcBaseLibrary::getLibType, "SEMI").orderByAsc(RcBaseLibrary::getSortOrder).orderByAsc(RcBaseLibrary::getId));
+                .eq(RcBaseLibrary::getLibType, "SEMI")
+                .ne(RcBaseLibrary::getStatus, "OFFLINE")
+                .orderByAsc(RcBaseLibrary::getSortOrder).orderByAsc(RcBaseLibrary::getId));
         List<RcBaseLibrary> unstruct = libraryMapper.selectList(new LambdaQueryWrapper<RcBaseLibrary>()
-                .eq(RcBaseLibrary::getLibType, "UNSTRUCT").orderByAsc(RcBaseLibrary::getSortOrder).orderByAsc(RcBaseLibrary::getId));
+                .eq(RcBaseLibrary::getLibType, "UNSTRUCT")
+                .ne(RcBaseLibrary::getStatus, "OFFLINE")
+                .orderByAsc(RcBaseLibrary::getSortOrder).orderByAsc(RcBaseLibrary::getId));
         List<Map<String, Object>> managed = listManagedTables(null);
         Map<String, Object> inventory = buildInventory(base, semi, unstruct, managed);
 
@@ -216,39 +222,86 @@ public class ResourceCenterPlatformService {
 
     public List<Map<String, Object>> listAssetModules() {
         List<Map<String, Object>> out = new ArrayList<>();
+        Set<Long> claimedThemeIds = new HashSet<>();
         for (String[] def : ASSET_MODULES) {
             String zone = def[0];
             String code = def[1];
             String name = def[2];
-            RcThemeLibrary theme = themeMapper.selectOne(new LambdaQueryWrapper<RcThemeLibrary>()
-                    .eq(RcThemeLibrary::getThemeCode, code).last("LIMIT 1"));
-            if (theme == null) {
-                theme = themeMapper.selectOne(new LambdaQueryWrapper<RcThemeLibrary>()
-                        .eq(RcThemeLibrary::getZoneCode, zone).last("LIMIT 1"));
-            }
+            // 同一数据中心可能有多条主题/专题库（种子 MOD_* + 用户新建同名/同库区），须全部聚合纳管表
+            List<RcThemeLibrary> matched = themeMapper.selectList(new LambdaQueryWrapper<RcThemeLibrary>()
+                    .and(w -> w.eq(RcThemeLibrary::getThemeCode, code)
+                            .or().eq(RcThemeLibrary::getZoneCode, zone)
+                            .or().eq(RcThemeLibrary::getThemeName, name))
+                    .ne(RcThemeLibrary::getStatus, "OFFLINE")
+                    .orderByAsc(RcThemeLibrary::getId));
             Map<String, Object> m = new LinkedHashMap<>();
             m.put("moduleCode", code);
             m.put("moduleName", name);
             m.put("zoneCode", zone);
-            if (theme != null) {
-                long cnt = managedTableMapper.selectCount(new LambdaQueryWrapper<RcManagedTable>()
-                        .eq(RcManagedTable::getThemeId, theme.getId())
-                        .eq(RcManagedTable::getStatus, "ACTIVE"));
-                m.put("themeId", theme.getId());
-                m.put("themeCode", theme.getThemeCode());
-                m.put("themeName", theme.getThemeName());
-                m.put("ownerOrg", theme.getOwnerOrg());
-                m.put("description", theme.getDescription());
-                m.put("status", theme.getStatus());
-                m.put("managedCount", cnt);
-                m.put("tables", listManagedTables(theme.getId()));
+            if (!matched.isEmpty()) {
+                for (RcThemeLibrary t : matched) {
+                    claimedThemeIds.add(t.getId());
+                }
+                List<Long> themeIds = matched.stream().map(RcThemeLibrary::getId).toList();
+                List<Map<String, Object>> tables = listManagedTablesByThemeIds(themeIds);
+                RcThemeLibrary primary = matched.stream()
+                        .filter(t -> code.equalsIgnoreCase(t.getThemeCode()))
+                        .findFirst()
+                        .orElse(matched.get(0));
+                m.put("themeId", primary.getId());
+                m.put("themeCode", primary.getThemeCode());
+                m.put("themeName", primary.getThemeName());
+                m.put("ownerOrg", primary.getOwnerOrg());
+                m.put("description", primary.getDescription());
+                m.put("status", primary.getStatus());
+                m.put("themeIds", themeIds);
+                m.put("managedCount", tables.size());
+                m.put("tables", tables);
             } else {
                 m.put("themeId", null);
                 m.put("status", "DRAFT");
                 m.put("managedCount", 0);
                 m.put("tables", List.of());
+                m.put("themeIds", List.of());
             }
             out.add(m);
+        }
+        // 未归入十大中心的纳管表（如挂在 ZONE_THEME 企业主题库）单独列出，避免「纳管成功但模块页看不到」
+        List<RcManagedTable> allActive = managedTableMapper.selectList(new LambdaQueryWrapper<RcManagedTable>()
+                .eq(RcManagedTable::getStatus, "ACTIVE")
+                .orderByDesc(RcManagedTable::getId));
+        List<Map<String, Object>> orphanTables = new ArrayList<>();
+        for (RcManagedTable mt : allActive) {
+            if (mt.getThemeId() == null || !claimedThemeIds.contains(mt.getThemeId())) {
+                orphanTables.add(managedRow(mt));
+            }
+        }
+        Map<String, Object> orphan = new LinkedHashMap<>();
+        orphan.put("moduleCode", "MOD_UNASSIGNED");
+        orphan.put("moduleName", "未归入数据中心");
+        orphan.put("zoneCode", "ZONE_UNASSIGNED");
+        orphan.put("themeId", null);
+        orphan.put("ownerOrg", "—");
+        orphan.put("description", "已纳管但主题未挂到人口/法人等数据中心库区；请在「数据资产管理与分类」将主题选为对应中心后再纳管，或调整主题库区");
+        orphan.put("status", orphanTables.isEmpty() ? "ACTIVE" : "WARN");
+        orphan.put("managedCount", orphanTables.size());
+        orphan.put("tables", orphanTables);
+        orphan.put("themeIds", List.of());
+        out.add(orphan);
+        return out;
+    }
+
+    private List<Map<String, Object>> listManagedTablesByThemeIds(List<Long> themeIds) {
+        if (themeIds == null || themeIds.isEmpty()) {
+            return List.of();
+        }
+        List<Map<String, Object>> out = new ArrayList<>();
+        List<RcManagedTable> rows = managedTableMapper.selectList(new LambdaQueryWrapper<RcManagedTable>()
+                .in(RcManagedTable::getThemeId, themeIds)
+                .eq(RcManagedTable::getStatus, "ACTIVE")
+                .orderByDesc(RcManagedTable::getId));
+        for (RcManagedTable mt : rows) {
+            out.add(managedRow(mt));
         }
         return out;
     }
@@ -303,6 +356,7 @@ public class ResourceCenterPlatformService {
 
     public List<RcBaseLibrary> listLibraries(String libType) {
         LambdaQueryWrapper<RcBaseLibrary> q = new LambdaQueryWrapper<RcBaseLibrary>()
+                .ne(RcBaseLibrary::getStatus, "OFFLINE")
                 .orderByAsc(RcBaseLibrary::getSortOrder)
                 .orderByAsc(RcBaseLibrary::getId);
         if (libType != null && !libType.isBlank()) q.eq(RcBaseLibrary::getLibType, libType);
@@ -324,8 +378,58 @@ public class ResourceCenterPlatformService {
         return lib.getId();
     }
 
+    @Transactional
+    public RcBaseLibrary updateLibrary(UserPrincipal operator, Long id, Map<String, Object> body) {
+        RcBaseLibrary lib = libraryMapper.selectById(id);
+        if (lib == null) {
+            throw new BusinessException(404, "库不存在");
+        }
+        if (body.get("libName") != null) {
+            lib.setLibName(required(body.get("libName"), "libName").toString());
+        }
+        if (body.get("libType") != null) {
+            lib.setLibType(str(body.get("libType"), lib.getLibType()).toUpperCase(Locale.ROOT));
+        }
+        if (body.containsKey("description")) {
+            lib.setDescription(str(body.get("description"), null));
+        }
+        if (body.containsKey("ownerOrg")) {
+            lib.setOwnerOrg(str(body.get("ownerOrg"), null));
+        }
+        if (body.get("sortOrder") != null) {
+            lib.setSortOrder(intVal(body.get("sortOrder"), lib.getSortOrder()));
+        }
+        if (body.get("status") != null) {
+            lib.setStatus(str(body.get("status"), lib.getStatus()).toUpperCase(Locale.ROOT));
+        }
+        libraryMapper.updateById(lib);
+        auditService.log(operator.getUserId(), operator.getUsername(), operator.getOrgId(),
+                "RC_LIBRARY_UPDATE", "rc_base_library", String.valueOf(id), lib.getLibName());
+        return lib;
+    }
+
+    @Transactional
+    public void deleteLibrary(UserPrincipal operator, Long id) {
+        RcBaseLibrary lib = libraryMapper.selectById(id);
+        if (lib == null) {
+            throw new BusinessException(404, "库不存在");
+        }
+        long bound = managedTableMapper.selectCount(new LambdaQueryWrapper<RcManagedTable>()
+                .eq(RcManagedTable::getLibId, id)
+                .eq(RcManagedTable::getStatus, "ACTIVE"));
+        if (bound > 0) {
+            throw new BusinessException(400, "库下仍有 " + bound + " 张纳管表，请先解绑或调整所属库后再删除");
+        }
+        lib.setStatus("OFFLINE");
+        libraryMapper.updateById(lib);
+        auditService.log(operator.getUserId(), operator.getUsername(), operator.getOrgId(),
+                "RC_LIBRARY_DELETE", "rc_base_library", String.valueOf(id), lib.getLibName());
+    }
+
     public List<Map<String, Object>> listThemes(String libraryKind) {
-        LambdaQueryWrapper<RcThemeLibrary> q = new LambdaQueryWrapper<RcThemeLibrary>().orderByAsc(RcThemeLibrary::getId);
+        LambdaQueryWrapper<RcThemeLibrary> q = new LambdaQueryWrapper<RcThemeLibrary>()
+                .ne(RcThemeLibrary::getStatus, "OFFLINE")
+                .orderByAsc(RcThemeLibrary::getId);
         if (libraryKind != null && !libraryKind.isBlank()) q.eq(RcThemeLibrary::getLibraryKind, libraryKind);
         List<Map<String, Object>> out = new ArrayList<>();
         for (RcThemeLibrary t : themeMapper.selectList(q)) {
@@ -354,6 +458,98 @@ public class ResourceCenterPlatformService {
         t.setUpdatedAt(LocalDateTime.now());
         themeMapper.insert(t);
         return t.getId();
+    }
+
+    @Transactional
+    public Map<String, Object> updateTheme(UserPrincipal operator, Long id, Map<String, Object> body) {
+        RcThemeLibrary t = themeMapper.selectById(id);
+        if (t == null) {
+            throw new BusinessException(404, "主题/专题库不存在");
+        }
+        if (body.get("themeName") != null) {
+            t.setThemeName(required(body.get("themeName"), "themeName").toString());
+        }
+        if (body.get("libraryKind") != null) {
+            t.setLibraryKind(str(body.get("libraryKind"), t.getLibraryKind()).toUpperCase(Locale.ROOT));
+        }
+        if (body.containsKey("zoneCode")) {
+            t.setZoneCode(str(body.get("zoneCode"), t.getZoneCode()));
+        }
+        if (body.containsKey("ownerOrg")) {
+            t.setOwnerOrg(str(body.get("ownerOrg"), null));
+        }
+        if (body.containsKey("description")) {
+            t.setDescription(str(body.get("description"), null));
+        }
+        if (body.containsKey("partitionKey")) {
+            t.setPartitionKey(str(body.get("partitionKey"), null));
+        }
+        if (body.get("status") != null) {
+            t.setStatus(str(body.get("status"), t.getStatus()).toUpperCase(Locale.ROOT));
+        }
+        t.setUpdatedAt(LocalDateTime.now());
+        themeMapper.updateById(t);
+        auditService.log(operator.getUserId(), operator.getUsername(), operator.getOrgId(),
+                "RC_THEME_UPDATE", "rc_theme_library", String.valueOf(id), t.getThemeName());
+        return themeRow(t);
+    }
+
+    @Transactional
+    public void deleteTheme(UserPrincipal operator, Long id) {
+        RcThemeLibrary t = themeMapper.selectById(id);
+        if (t == null) {
+            throw new BusinessException(404, "主题/专题库不存在");
+        }
+        long bound = managedTableMapper.selectCount(new LambdaQueryWrapper<RcManagedTable>()
+                .eq(RcManagedTable::getThemeId, id)
+                .eq(RcManagedTable::getStatus, "ACTIVE"));
+        if (bound > 0) {
+            throw new BusinessException(400, "主题下仍有 " + bound + " 张纳管表，请先解绑后再删除");
+        }
+        t.setStatus("OFFLINE");
+        t.setUpdatedAt(LocalDateTime.now());
+        themeMapper.updateById(t);
+        auditService.log(operator.getUserId(), operator.getUsername(), operator.getOrgId(),
+                "RC_THEME_DELETE", "rc_theme_library", String.valueOf(id), t.getThemeName());
+    }
+
+    /** 调整纳管表所属主题/资源类型（资产分类纠偏）。 */
+    @Transactional
+    public Map<String, Object> updateManagedTable(UserPrincipal operator, Long id, Map<String, Object> body) {
+        RcManagedTable mt = managedTableMapper.selectById(id);
+        if (mt == null || !"ACTIVE".equalsIgnoreCase(mt.getStatus())) {
+            throw new BusinessException(404, "纳管表不存在");
+        }
+        if (body.get("themeId") != null) {
+            Long themeId = longVal(body.get("themeId"));
+            if (themeId == null || themeMapper.selectById(themeId) == null) {
+                throw new BusinessException(404, "主题/专题库不存在");
+            }
+            mt.setThemeId(themeId);
+        }
+        if (body.containsKey("libId")) {
+            Long libId = longVal(body.get("libId"));
+            if (libId != null) {
+                RcBaseLibrary lib = libraryMapper.selectById(libId);
+                if (lib == null) {
+                    throw new BusinessException(404, "关联库不存在");
+                }
+                mt.setLibId(libId);
+                if (body.get("assetType") == null || str(body.get("assetType"), "").isBlank()) {
+                    mt.setAssetType(lib.getLibType());
+                }
+            } else {
+                mt.setLibId(null);
+            }
+        }
+        if (body.get("assetType") != null && !str(body.get("assetType"), "").isBlank()) {
+            mt.setAssetType(str(body.get("assetType"), "BASE").toUpperCase(Locale.ROOT));
+        }
+        mt.setUpdatedAt(LocalDateTime.now());
+        managedTableMapper.updateById(mt);
+        auditService.log(operator.getUserId(), operator.getUsername(), operator.getOrgId(),
+                "RC_MANAGED_UPDATE", "rc_managed_table", String.valueOf(id), mt.getPhysicalTable());
+        return managedRow(mt);
     }
 
     public List<Map<String, Object>> listManagedTables(Long themeId) {

@@ -83,6 +83,7 @@ public class CatalogResourceService {
     private final GovMetaSourceCategoryMapper metaSourceCategoryMapper;
     private final SysUserMapper sysUserMapper;
     private final SysOrgMapper orgMapper;
+    private final CatalogSubscribeDistributeService subscribeDistributeService;
 
     public CatalogResourceService(GovCatalogResourceMapper resourceMapper,
                                   GovCatalogCategoryMapper categoryMapper,
@@ -98,7 +99,8 @@ public class CatalogResourceService {
                                   GovMetaDataSourceMapper metaDataSourceMapper,
                                   GovMetaSourceCategoryMapper metaSourceCategoryMapper,
                                   SysUserMapper sysUserMapper,
-                                  SysOrgMapper orgMapper) {
+                                  SysOrgMapper orgMapper,
+                                  CatalogSubscribeDistributeService subscribeDistributeService) {
         this.resourceMapper = resourceMapper;
         this.categoryMapper = categoryMapper;
         this.approvalMapper = approvalMapper;
@@ -114,6 +116,7 @@ public class CatalogResourceService {
         this.metaSourceCategoryMapper = metaSourceCategoryMapper;
         this.sysUserMapper = sysUserMapper;
         this.orgMapper = orgMapper;
+        this.subscribeDistributeService = subscribeDistributeService;
     }
 
     public List<GovCatalogResource> list(Long categoryId, String resourceType, String publishStatus,
@@ -1034,6 +1037,16 @@ public class CatalogResourceService {
             r.setPublishStatus("PUBLISHED");
             snapshotOnPublish(r, operator, "审批发布 v");
             syncPortal(r);
+            // 已发布资源再上架/版本变更：通知订阅方并按目标自动分发
+            try {
+                int ver = r.getVersionNo() == null ? 1 : r.getVersionNo();
+                String changeType = ver <= 1 ? "REPUBLISH" : "REPUBLISH";
+                subscribeDistributeService.onResourceChange(operator, r.getId(), changeType,
+                        "目录审批发布上架，版本 v" + ver + "，请订阅方同步最新数据。");
+            } catch (Exception e) {
+                log.warn("catalog subscribe notify after publish failed resourceId={}: {}",
+                        r.getId(), e.toString());
+            }
         } else if ("OFFLINE".equals(action)) {
             r.setPublishStatus("OFFLINE");
             // 下线审批通过后回到编目，须重新提交才进注册发布
@@ -1109,6 +1122,36 @@ public class CatalogResourceService {
     @Transactional
     public GovCatalogResource publish(UserPrincipal operator, Long id) {
         throw new BusinessException(400, "禁止直接发布：请提交「发布」审批，由「资源目录审批」通过后自动上架");
+    }
+
+    /**
+     * 提供方上报已发布资源的数据变更/新增（不改编目内容），通知订阅方并触发自动分发。
+     */
+    @Transactional
+    public Map<String, Object> reportDataChange(UserPrincipal operator, Long id, Map<String, Object> body) {
+        GovCatalogResource r = require(id);
+        if (!"PUBLISHED".equalsIgnoreCase(r.getPublishStatus())) {
+            throw new BusinessException(400, "仅已发布到门户的资源可上报数据变更");
+        }
+        assertProviderOrAdmin(operator, r);
+        String changeType = body == null ? "DATA_UPDATE" : String.valueOf(body.getOrDefault("changeType", "DATA_UPDATE"));
+        String detail = body == null ? null : (body.get("detail") == null ? null : String.valueOf(body.get("detail")));
+        return subscribeDistributeService.onResourceChange(operator, id, changeType, detail);
+    }
+
+    private void assertProviderOrAdmin(UserPrincipal operator, GovCatalogResource r) {
+        if (operator == null || operator.isSystemAdmin() || operator.isPlatformAdmin()) {
+            return;
+        }
+        String myOrg = null;
+        if (operator.getOrgId() != null) {
+            SysOrg org = orgMapper.selectById(operator.getOrgId());
+            myOrg = org == null ? null : org.getOrgName();
+        }
+        if (myOrg == null || myOrg.isBlank()
+                || !myOrg.trim().equals(r.getProviderOrg() == null ? "" : r.getProviderOrg().trim())) {
+            throw new BusinessException(403, "仅提供方或管理员可上报数据变更");
+        }
     }
 
     /** 兼容旧入口：转为提交下线审批，不旁路 */
@@ -1469,6 +1512,7 @@ public class CatalogResourceService {
                     m.put("resourceCode", r.getResourceCode());
                     m.put("resourceName", r.getResourceName());
                     m.put("resourceType", r.getResourceType());
+                    m.put("resourceFormat", r.getResourceFormat());
                     m.put("publishStatus", r.getPublishStatus());
                     m.put("approvalStatus", r.getApprovalStatus());
                 } else {
@@ -1483,6 +1527,9 @@ public class CatalogResourceService {
                 }
             }
             Map<String, Object> payload = parsePayload(a.getPayloadJson());
+            if (m.get("resourceFormat") == null && payload.get("resourceFormat") != null) {
+                m.put("resourceFormat", payload.get("resourceFormat"));
+            }
             if (m.get("categoryName") == null && payload.get("categoryName") != null) {
                 m.put("categoryName", payload.get("categoryName"));
             }

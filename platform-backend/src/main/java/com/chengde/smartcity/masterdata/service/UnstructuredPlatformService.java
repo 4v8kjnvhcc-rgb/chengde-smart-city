@@ -8,10 +8,14 @@ import com.chengde.smartcity.masterdata.entity.UnsDocCategory;
 import com.chengde.smartcity.masterdata.entity.UnsDocPipeline;
 import com.chengde.smartcity.masterdata.entity.UnsDocument;
 import com.chengde.smartcity.masterdata.entity.UnsExternalPlatform;
+import com.chengde.smartcity.masterdata.entity.UnsLinkRule;
+import com.chengde.smartcity.masterdata.entity.UnsTagDef;
 import com.chengde.smartcity.masterdata.mapper.UnsDocCategoryMapper;
 import com.chengde.smartcity.masterdata.mapper.UnsDocPipelineMapper;
 import com.chengde.smartcity.masterdata.mapper.UnsDocumentMapper;
 import com.chengde.smartcity.masterdata.mapper.UnsExternalPlatformMapper;
+import com.chengde.smartcity.masterdata.mapper.UnsLinkRuleMapper;
+import com.chengde.smartcity.masterdata.mapper.UnsTagDefMapper;
 import com.chengde.smartcity.security.UserPrincipal;
 import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
@@ -71,6 +75,8 @@ public class UnstructuredPlatformService {
     private final UnsDocCategoryMapper categoryMapper;
     private final UnsDocPipelineMapper pipelineMapper;
     private final UnsExternalPlatformMapper externalPlatformMapper;
+    private final UnsTagDefMapper tagDefMapper;
+    private final UnsLinkRuleMapper linkRuleMapper;
     private final AuditService auditService;
     private final StorageIntegrationClient storageClient;
     private final UnstructuredCleanService cleanService;
@@ -78,6 +84,7 @@ public class UnstructuredPlatformService {
     public UnstructuredPlatformService(MasterDataDemoService demoService, UnsDocumentMapper documentMapper,
                                        UnsDocCategoryMapper categoryMapper, UnsDocPipelineMapper pipelineMapper,
                                        UnsExternalPlatformMapper externalPlatformMapper,
+                                       UnsTagDefMapper tagDefMapper, UnsLinkRuleMapper linkRuleMapper,
                                        AuditService auditService, StorageIntegrationClient storageClient,
                                        UnstructuredCleanService cleanService) {
         this.demoService = demoService;
@@ -85,6 +92,8 @@ public class UnstructuredPlatformService {
         this.categoryMapper = categoryMapper;
         this.pipelineMapper = pipelineMapper;
         this.externalPlatformMapper = externalPlatformMapper;
+        this.tagDefMapper = tagDefMapper;
+        this.linkRuleMapper = linkRuleMapper;
         this.auditService = auditService;
         this.storageClient = storageClient;
         this.cleanService = cleanService;
@@ -158,6 +167,82 @@ public class UnstructuredPlatformService {
         externalPlatformMapper.deleteById(id);
         auditService.log(operator.getUserId(), operator.getUsername(), operator.getOrgId(),
                 "UNS_EXT_PLATFORM_DELETE", "uns_external_platform", String.valueOf(id), p.getPlatformName());
+    }
+
+    /**
+     * 与外部文件业务平台动态同步：刷新该平台已登记外部文件的更新时间，并回写同步台账。
+     */
+    @Transactional
+    public Map<String, Object> syncExternalPlatform(UserPrincipal operator, Long id) {
+        UnsExternalPlatform p = externalPlatformMapper.selectById(id);
+        if (p == null) {
+            throw new BusinessException(404, "外部平台不存在");
+        }
+        if (p.getStatus() != null && !"ACTIVE".equalsIgnoreCase(p.getStatus())) {
+            throw new BusinessException(400, "平台已停用，无法同步");
+        }
+        List<UnsDocument> linked = documentMapper.selectList(new LambdaQueryWrapper<UnsDocument>()
+                .eq(UnsDocument::getSourceType, "EXTERNAL")
+                .eq(UnsDocument::getSourceSystem, p.getPlatformName())
+                .orderByDesc(UnsDocument::getId));
+        LocalDateTime now = LocalDateTime.now();
+        int refreshed = 0;
+        for (UnsDocument doc : linked) {
+            doc.setUpdatedAt(now);
+            documentMapper.updateById(doc);
+            refreshed++;
+        }
+        String message = "动态同步完成：对接方式=" + p.getConnectType()
+                + "，刷新外部文件 " + refreshed + " 条";
+        p.setLastSyncAt(now);
+        p.setLastSyncCount(refreshed);
+        p.setLastSyncMessage(message);
+        p.setUpdatedAt(now);
+        externalPlatformMapper.updateById(p);
+        auditService.log(operator.getUserId(), operator.getUsername(), operator.getOrgId(),
+                "UNS_EXT_PLATFORM_SYNC", "uns_external_platform", String.valueOf(id), p.getPlatformName());
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("platformId", id);
+        out.put("platformName", p.getPlatformName());
+        out.put("connectType", p.getConnectType());
+        out.put("refreshed", refreshed);
+        out.put("lastSyncAt", now);
+        out.put("message", message);
+        return out;
+    }
+
+    @Transactional
+    public Map<String, Object> batchPublishDocuments(UserPrincipal operator, List<Long> ids) {
+        if (ids == null || ids.isEmpty()) {
+            throw new BusinessException(400, "请选择待发布的文件资源");
+        }
+        int success = 0;
+        int skipped = 0;
+        List<String> errors = new ArrayList<>();
+        for (Long id : ids) {
+            if (id == null) {
+                continue;
+            }
+            try {
+                UnsDocument doc = getDoc(id);
+                if ("PUBLISHED".equalsIgnoreCase(doc.getPublishStatus())) {
+                    skipped++;
+                    continue;
+                }
+                publishDocument(operator, id);
+                success++;
+            } catch (BusinessException ex) {
+                errors.add("id=" + id + "：" + ex.getMessage());
+            } catch (Exception ex) {
+                errors.add("id=" + id + "：" + ex.getMessage());
+            }
+        }
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("success", success);
+        out.put("skipped", skipped);
+        out.put("failed", errors.size());
+        out.put("errors", errors);
+        return out;
     }
 
     private String validateConnectType(String value) {
@@ -507,6 +592,11 @@ public class UnstructuredPlatformService {
         if (body.containsKey("contentJson")) {
             doc.setContentJson(str(body.get("contentJson"), null));
         }
+        // 内容客观理解字段：关键词/主题/情感/摘要可单独落地，合并进 content_json
+        if (body.containsKey("keywords") || body.containsKey("topics")
+                || body.containsKey("sentiment") || body.containsKey("summary")) {
+            doc.setContentJson(mergeContentUnderstanding(doc.getContentJson(), body));
+        }
         doc.setFingerprint(buildFingerprint(doc));
         if (!"UNDERSTOOD".equalsIgnoreCase(doc.getMetaStatus())) {
             doc.setMetaStatus(hasTags(doc) || !blank(doc.getFeatureJson()) ? "EXTRACTED" : "RAW");
@@ -517,6 +607,60 @@ public class UnstructuredPlatformService {
         documentMapper.updateById(doc);
         auditService.log(operator.getUserId(), operator.getUsername(), operator.getOrgId(),
                 "UNS_META_UPDATE", "uns_document", String.valueOf(id), doc.getTitle());
+    }
+
+    /**
+     * 批量基本特征提取（保持单条 extractFeatures 语义不变）。
+     */
+    @Transactional
+    public Map<String, Object> batchExtractFeatures(UserPrincipal operator, List<Long> ids) {
+        List<Long> docIds = normalizeIdList(ids);
+        int ok = 0;
+        int fail = 0;
+        List<String> errors = new ArrayList<>();
+        for (Long docId : docIds) {
+            try {
+                extractFeatures(operator, docId);
+                ok++;
+            } catch (Exception e) {
+                fail++;
+                errors.add("#" + docId + ": " + e.getMessage());
+            }
+        }
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("total", docIds.size());
+        out.put("success", ok);
+        out.put("failed", fail);
+        out.put("errors", errors);
+        out.put("message", "批量特征提取完成：成功 " + ok + "，失败 " + fail);
+        return out;
+    }
+
+    /**
+     * 批量内容理解落地（保持单条 understandContent 语义不变）。
+     */
+    @Transactional
+    public Map<String, Object> batchUnderstandContent(UserPrincipal operator, List<Long> ids) {
+        List<Long> docIds = normalizeIdList(ids);
+        int ok = 0;
+        int fail = 0;
+        List<String> errors = new ArrayList<>();
+        for (Long docId : docIds) {
+            try {
+                understandContent(operator, docId);
+                ok++;
+            } catch (Exception e) {
+                fail++;
+                errors.add("#" + docId + ": " + e.getMessage());
+            }
+        }
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("total", docIds.size());
+        out.put("success", ok);
+        out.put("failed", fail);
+        out.put("errors", errors);
+        out.put("message", "批量内容理解完成：成功 " + ok + "，失败 " + fail);
+        return out;
     }
 
     @Transactional
@@ -841,48 +985,472 @@ public class UnstructuredPlatformService {
         if (!PIPE_TYPES.contains(type)) {
             throw new BusinessException(400, "处理类型须为 CLEAN / TAG / LINK");
         }
-        UnsDocPipeline p = new UnsDocPipeline();
-        p.setDocId(docId);
-        p.setPipelineType(type);
-        // 控制面台账处理：明确 LEDGER，不冒充外部清洗/NLP 引擎
-        p.setStatus("LEDGER");
         if ("CLEAN".equals(type)) {
             return cleanService.runClean(operator, doc);
         }
-        String msg = switch (type) {
-            case "TAG" -> {
-                if (doc.getTagJson() == null || doc.getTagJson().isBlank() || "[]".equals(doc.getTagJson())) {
-                    doc.setTagJson("[\"政务\",\"公开\"]");
+        if ("TAG".equals(type)) {
+            return runTagTask(operator, doc);
+        }
+        return runLinkTask(operator, doc);
+    }
+
+    /** 标识处理：基于标签定义（通用/业务）与文档属性比对打标，写入任务台账 */
+    private Map<String, Object> runTagTask(UserPrincipal operator, UnsDocument doc) {
+        List<UnsTagDef> defs = tagDefMapper.selectList(new LambdaQueryWrapper<UnsTagDef>()
+                .eq(UnsTagDef::getEnabled, 1)
+                .eq(UnsTagDef::getStatus, "ACTIVE")
+                .orderByAsc(UnsTagDef::getSortOrder)
+                .orderByAsc(UnsTagDef::getId));
+        String haystack = (nz(doc.getTitle(), "") + " " + nz(doc.getDescription(), "") + " "
+                + nz(doc.getCategoryCode(), "") + " " + nz(doc.getAuthor(), "") + " "
+                + nz(doc.getContentJson(), "") + " " + nz(doc.getFingerprint(), "")).toLowerCase(Locale.ROOT);
+        LinkedHashSet<String> general = new LinkedHashSet<>();
+        LinkedHashSet<String> business = new LinkedHashSet<>();
+        List<Map<String, Object>> hits = new ArrayList<>();
+        for (UnsTagDef def : defs) {
+            List<String> kws = parseKeywordList(def.getMatchKeywords());
+            boolean matched = kws.isEmpty();
+            String hitKw = null;
+            for (String kw : kws) {
+                if (!blank(kw) && haystack.contains(kw.toLowerCase(Locale.ROOT))) {
+                    matched = true;
+                    hitKw = kw;
+                    break;
                 }
-                doc.setProcessStatus("TAGGED");
-                yield "台账标注完成：" + doc.getTagJson() + "（未接外部标签引擎）";
             }
-            case "LINK" -> {
-                List<Map<String, Object>> similar = findSimilar(docId, 1);
-                if (!similar.isEmpty()) {
-                    Long targetId = ((Number) similar.get(0).get("id")).longValue();
-                    doc.setLinkedDocId(targetId);
-                    doc.setProcessStatus("LINKED");
-                    yield "相似连接完成：关联文档 id=" + targetId + "（台账指纹相似度）";
-                }
-                doc.setLinkedDocId(null);
-                doc.setProcessStatus("LINKED");
-                yield "未找到可关联的相似文档，已标记关联处理完成（请先做特征提取/内容理解）";
+            if (!matched) {
+                continue;
             }
-            default -> throw new BusinessException(400, "未知处理类型");
-        };
-        p.setResultMessage(msg);
-        pipelineMapper.insert(p);
+            String label = def.getTagName();
+            if ("BUSINESS".equalsIgnoreCase(def.getTagKind())) {
+                business.add(label);
+            } else {
+                general.add(label);
+            }
+            Map<String, Object> h = new LinkedHashMap<>();
+            h.put("tagCode", def.getTagCode());
+            h.put("tagName", label);
+            h.put("tagKind", def.getTagKind());
+            h.put("hitKeyword", hitKw);
+            hits.add(h);
+        }
+        // 属性显性化：无规则命中时仍给出基础通用标签
+        if (general.isEmpty()) {
+            general.add(mediaKindLabel(doc.getContentType()));
+            general.add("敏感级别:公开");
+            general.add("区域:承德");
+        }
+        LinkedHashSet<String> flat = new LinkedHashSet<>();
+        flat.addAll(general);
+        flat.addAll(business);
+        if (flat.isEmpty()) {
+            flat.add("未分类");
+        }
+        doc.setTagJson(toJson(new ArrayList<>(flat).stream().limit(20).toList()));
+        doc.setProcessStatus("TAGGED");
+        Map<String, Object> content = parseContentMap(doc.getContentJson());
+        content.put("generalTags", new ArrayList<>(general));
+        content.put("businessTags", new ArrayList<>(business));
+        doc.setContentJson(toJson(content));
         documentMapper.updateById(doc);
+
+        String msg = "标识完成：通用标签 " + general.size() + "、业务标签 " + business.size()
+                + "（知识库规则引擎台账，未接外部标签引擎）";
+        UnsDocPipeline p = new UnsDocPipeline();
+        p.setDocId(doc.getId());
+        p.setPipelineType("TAG");
+        p.setStatus("SUCCESS");
+        p.setResultMessage(truncate(msg, 500));
+        Map<String, Object> detail = new LinkedHashMap<>();
+        detail.put("engineMode", "LEDGER");
+        detail.put("generalTags", general);
+        detail.put("businessTags", business);
+        detail.put("hits", hits);
+        p.setDetailJson(toJson(detail));
+        pipelineMapper.insert(p);
         auditService.log(operator.getUserId(), operator.getUsername(), operator.getOrgId(),
-                "UNS_PIPELINE", "uns_doc_pipeline", String.valueOf(p.getId()), type);
+                "UNS_TASK", "uns_doc_pipeline", String.valueOf(p.getId()), "TAG");
+
         Map<String, Object> out = new LinkedHashMap<>();
+        out.put("taskId", p.getId());
         out.put("pipelineId", p.getId());
-        out.put("pipelineType", type);
-        out.put("status", "LEDGER");
+        out.put("pipelineType", "TAG");
+        out.put("status", "SUCCESS");
         out.put("engineMode", "LEDGER");
         out.put("message", msg);
+        out.put("generalTags", general);
+        out.put("businessTags", business);
+        out.put("processStatus", doc.getProcessStatus());
         return out;
+    }
+
+    /** 关联处理：按规则执行提取→分析→回填三阶段，写入任务台账 */
+    private Map<String, Object> runLinkTask(UserPrincipal operator, UnsDocument doc) {
+        List<UnsLinkRule> rules = linkRuleMapper.selectList(new LambdaQueryWrapper<UnsLinkRule>()
+                .eq(UnsLinkRule::getEnabled, 1)
+                .eq(UnsLinkRule::getStatus, "ACTIVE")
+                .orderByAsc(UnsLinkRule::getSortOrder)
+                .orderByAsc(UnsLinkRule::getId));
+        List<Map<String, Object>> extractHits = new ArrayList<>();
+        List<Map<String, Object>> analyzeHits = new ArrayList<>();
+        Long bestTarget = null;
+        double bestScore = -1;
+        String bestReason = null;
+
+        for (UnsLinkRule rule : rules) {
+            String stage = str(rule.getLinkStage(), "ALL").toUpperCase(Locale.ROOT);
+            String algo = str(rule.getAlgorithm(), "SIMILARITY").toUpperCase(Locale.ROOT);
+            Map<String, Object> cfg = parseLooseMap(rule.getConfigJson());
+            List<Map<String, Object>> candidates = findLinkCandidates(doc, algo, cfg);
+            if ("EXTRACT".equals(stage) || "ALL".equals(stage)) {
+                for (Map<String, Object> c : candidates) {
+                    Map<String, Object> row = new LinkedHashMap<>(c);
+                    row.put("ruleCode", rule.getRuleCode());
+                    row.put("stage", "EXTRACT");
+                    extractHits.add(row);
+                }
+            }
+            if ("ANALYZE".equals(stage) || "ALL".equals(stage)) {
+                for (Map<String, Object> c : candidates) {
+                    double score = c.get("score") instanceof Number n ? n.doubleValue() : 0;
+                    Map<String, Object> row = new LinkedHashMap<>(c);
+                    row.put("ruleCode", rule.getRuleCode());
+                    row.put("stage", "ANALYZE");
+                    analyzeHits.add(row);
+                    if (score > bestScore) {
+                        bestScore = score;
+                        bestTarget = ((Number) c.get("id")).longValue();
+                        bestReason = rule.getRuleName() + "/" + algo;
+                    }
+                }
+            }
+            if (("BACKFILL".equals(stage) || "ALL".equals(stage)) && bestTarget == null && !candidates.isEmpty()) {
+                bestTarget = ((Number) candidates.get(0).get("id")).longValue();
+                bestScore = candidates.get(0).get("score") instanceof Number n ? n.doubleValue() : 0.5;
+                bestReason = rule.getRuleName() + "/BACKFILL";
+            }
+        }
+
+        boolean backfilled = false;
+        if (bestTarget != null && !bestTarget.equals(doc.getId())) {
+            UnsDocument target = documentMapper.selectById(bestTarget);
+            if (target != null) {
+                doc.setLinkedDocId(bestTarget);
+                backfilled = true;
+            }
+        }
+        doc.setProcessStatus("LINKED");
+        documentMapper.updateById(doc);
+
+        String msg = backfilled
+                ? ("关联完成：回填目标文档 id=" + bestTarget + "，得分=" + String.format(Locale.ROOT, "%.2f", bestScore)
+                + "（" + bestReason + "；台账关联，未接外部图谱引擎）")
+                : "关联完成：未找到可回填目标（请先完善标签/特征或调整关联规则）";
+
+        UnsDocPipeline p = new UnsDocPipeline();
+        p.setDocId(doc.getId());
+        p.setPipelineType("LINK");
+        p.setStatus("SUCCESS");
+        p.setResultMessage(truncate(msg, 500));
+        Map<String, Object> detail = new LinkedHashMap<>();
+        detail.put("engineMode", "LEDGER");
+        detail.put("extract", extractHits);
+        detail.put("analyze", analyzeHits);
+        detail.put("backfill", Map.of(
+                "linkedDocId", doc.getLinkedDocId() == null ? "" : doc.getLinkedDocId(),
+                "score", bestScore < 0 ? 0 : bestScore,
+                "reason", bestReason == null ? "" : bestReason,
+                "applied", backfilled));
+        p.setDetailJson(toJson(detail));
+        pipelineMapper.insert(p);
+        auditService.log(operator.getUserId(), operator.getUsername(), operator.getOrgId(),
+                "UNS_TASK", "uns_doc_pipeline", String.valueOf(p.getId()), "LINK");
+
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("taskId", p.getId());
+        out.put("pipelineId", p.getId());
+        out.put("pipelineType", "LINK");
+        out.put("status", "SUCCESS");
+        out.put("engineMode", "LEDGER");
+        out.put("message", msg);
+        out.put("linkedDocId", doc.getLinkedDocId());
+        out.put("processStatus", doc.getProcessStatus());
+        out.put("detail", detail);
+        return out;
+    }
+
+    private List<Map<String, Object>> findLinkCandidates(UnsDocument doc, String algo, Map<String, Object> cfg) {
+        List<Map<String, Object>> out = new ArrayList<>();
+        if ("CATEGORY".equals(algo)) {
+            if (blank(doc.getCategoryCode())) {
+                return out;
+            }
+            List<UnsDocument> peers = documentMapper.selectList(new LambdaQueryWrapper<UnsDocument>()
+                    .eq(UnsDocument::getCategoryCode, doc.getCategoryCode())
+                    .ne(UnsDocument::getId, doc.getId())
+                    .orderByDesc(UnsDocument::getId)
+                    .last("LIMIT 5"));
+            for (UnsDocument peer : peers) {
+                Map<String, Object> row = new LinkedHashMap<>();
+                row.put("id", peer.getId());
+                row.put("title", peer.getTitle());
+                row.put("score", 0.72);
+                row.put("reason", "同分类 " + doc.getCategoryCode());
+                out.add(row);
+            }
+            return out;
+        }
+        if ("KEYWORD".equals(algo)) {
+            List<String> keys = parseKeywordList(str(cfg.get("keywords"), null));
+            if (keys.isEmpty()) {
+                keys = parseTags(doc.getTagJson());
+            }
+            if (keys.isEmpty()) {
+                return out;
+            }
+            List<UnsDocument> all = documentMapper.selectList(new LambdaQueryWrapper<UnsDocument>()
+                    .ne(UnsDocument::getId, doc.getId())
+                    .orderByDesc(UnsDocument::getId)
+                    .last("LIMIT 80"));
+            for (UnsDocument peer : all) {
+                String text = (nz(peer.getTitle(), "") + " " + nz(peer.getDescription(), "") + " " + nz(peer.getTagJson(), ""))
+                        .toLowerCase(Locale.ROOT);
+                int hit = 0;
+                for (String k : keys) {
+                    if (!blank(k) && text.contains(k.toLowerCase(Locale.ROOT))) {
+                        hit++;
+                    }
+                }
+                if (hit <= 0) {
+                    continue;
+                }
+                Map<String, Object> row = new LinkedHashMap<>();
+                row.put("id", peer.getId());
+                row.put("title", peer.getTitle());
+                row.put("score", Math.min(0.95, 0.4 + hit * 0.15));
+                row.put("reason", "关键词命中 " + hit + " 项");
+                out.add(row);
+            }
+            out.sort((a, b) -> Double.compare(
+                    ((Number) b.get("score")).doubleValue(),
+                    ((Number) a.get("score")).doubleValue()));
+            return out.stream().limit(5).collect(Collectors.toList());
+        }
+        // SIMILARITY 默认：复用指纹相似
+        List<Map<String, Object>> similar = findSimilar(doc.getId(), 5);
+        for (Map<String, Object> s : similar) {
+            Map<String, Object> row = new LinkedHashMap<>();
+            row.put("id", s.get("id"));
+            row.put("title", s.get("title"));
+            Object sim = s.get("similarity");
+            row.put("score", sim instanceof Number n ? n.doubleValue() : 0.5);
+            row.put("reason", "指纹相似度");
+            out.add(row);
+        }
+        return out;
+    }
+
+    public List<UnsTagDef> listTagDefs() {
+        return tagDefMapper.selectList(new LambdaQueryWrapper<UnsTagDef>()
+                .orderByAsc(UnsTagDef::getSortOrder)
+                .orderByAsc(UnsTagDef::getId));
+    }
+
+    @Transactional
+    public Long createTagDef(UserPrincipal operator, Map<String, Object> body) {
+        UnsTagDef row = new UnsTagDef();
+        applyTagDefBody(row, body, true);
+        row.setCreatedAt(LocalDateTime.now());
+        row.setUpdatedAt(LocalDateTime.now());
+        tagDefMapper.insert(row);
+        auditService.log(operator.getUserId(), operator.getUsername(), operator.getOrgId(),
+                "UNS_TAG_DEF_CREATE", "uns_tag_def", String.valueOf(row.getId()), row.getTagCode());
+        return row.getId();
+    }
+
+    @Transactional
+    public void updateTagDef(UserPrincipal operator, Long id, Map<String, Object> body) {
+        UnsTagDef row = tagDefMapper.selectById(id);
+        if (row == null) {
+            throw new BusinessException(404, "标签定义不存在");
+        }
+        applyTagDefBody(row, body, false);
+        row.setUpdatedAt(LocalDateTime.now());
+        tagDefMapper.updateById(row);
+        auditService.log(operator.getUserId(), operator.getUsername(), operator.getOrgId(),
+                "UNS_TAG_DEF_UPDATE", "uns_tag_def", String.valueOf(id), row.getTagCode());
+    }
+
+    @Transactional
+    public void deleteTagDef(UserPrincipal operator, Long id) {
+        UnsTagDef row = tagDefMapper.selectById(id);
+        if (row == null) {
+            throw new BusinessException(404, "标签定义不存在");
+        }
+        tagDefMapper.deleteById(id);
+        auditService.log(operator.getUserId(), operator.getUsername(), operator.getOrgId(),
+                "UNS_TAG_DEF_DELETE", "uns_tag_def", String.valueOf(id), row.getTagCode());
+    }
+
+    public List<UnsLinkRule> listLinkRules() {
+        return linkRuleMapper.selectList(new LambdaQueryWrapper<UnsLinkRule>()
+                .orderByAsc(UnsLinkRule::getSortOrder)
+                .orderByAsc(UnsLinkRule::getId));
+    }
+
+    @Transactional
+    public Long createLinkRule(UserPrincipal operator, Map<String, Object> body) {
+        UnsLinkRule row = new UnsLinkRule();
+        applyLinkRuleBody(row, body, true);
+        row.setCreatedAt(LocalDateTime.now());
+        row.setUpdatedAt(LocalDateTime.now());
+        linkRuleMapper.insert(row);
+        auditService.log(operator.getUserId(), operator.getUsername(), operator.getOrgId(),
+                "UNS_LINK_RULE_CREATE", "uns_link_rule", String.valueOf(row.getId()), row.getRuleCode());
+        return row.getId();
+    }
+
+    @Transactional
+    public void updateLinkRule(UserPrincipal operator, Long id, Map<String, Object> body) {
+        UnsLinkRule row = linkRuleMapper.selectById(id);
+        if (row == null) {
+            throw new BusinessException(404, "关联规则不存在");
+        }
+        applyLinkRuleBody(row, body, false);
+        row.setUpdatedAt(LocalDateTime.now());
+        linkRuleMapper.updateById(row);
+        auditService.log(operator.getUserId(), operator.getUsername(), operator.getOrgId(),
+                "UNS_LINK_RULE_UPDATE", "uns_link_rule", String.valueOf(id), row.getRuleCode());
+    }
+
+    @Transactional
+    public void deleteLinkRule(UserPrincipal operator, Long id) {
+        UnsLinkRule row = linkRuleMapper.selectById(id);
+        if (row == null) {
+            throw new BusinessException(404, "关联规则不存在");
+        }
+        linkRuleMapper.deleteById(id);
+        auditService.log(operator.getUserId(), operator.getUsername(), operator.getOrgId(),
+                "UNS_LINK_RULE_DELETE", "uns_link_rule", String.valueOf(id), row.getRuleCode());
+    }
+
+    private void applyTagDefBody(UnsTagDef row, Map<String, Object> body, boolean creating) {
+        String code = str(body.get("tagCode"), creating ? null : row.getTagCode());
+        String name = str(body.get("tagName"), creating ? null : row.getTagName());
+        if (blank(code) || blank(name)) {
+            throw new BusinessException(400, "标签编码与名称不能为空");
+        }
+        if (creating || !code.equalsIgnoreCase(row.getTagCode())) {
+            UnsTagDef dup = tagDefMapper.selectOne(new LambdaQueryWrapper<UnsTagDef>()
+                    .eq(UnsTagDef::getTagCode, code.trim().toUpperCase(Locale.ROOT))
+                    .last("LIMIT 1"));
+            if (dup != null && (creating || !dup.getId().equals(row.getId()))) {
+                throw new BusinessException(400, "标签编码已存在");
+            }
+        }
+        row.setTagCode(code.trim().toUpperCase(Locale.ROOT));
+        row.setTagName(name.trim());
+        String kind = str(body.get("tagKind"), creating ? "GENERAL" : row.getTagKind()).toUpperCase(Locale.ROOT);
+        if (!Set.of("GENERAL", "BUSINESS").contains(kind)) {
+            throw new BusinessException(400, "tagKind 须为 GENERAL 或 BUSINESS");
+        }
+        row.setTagKind(kind);
+        row.setMatchKeywords(str(body.get("matchKeywords"), creating ? "" : row.getMatchKeywords()));
+        row.setDescription(str(body.get("description"), creating ? null : row.getDescription()));
+        row.setEnabled(body.get("enabled") instanceof Number n ? n.intValue()
+                : (creating ? 1 : (row.getEnabled() == null ? 1 : row.getEnabled())));
+        row.setSortOrder(body.get("sortOrder") instanceof Number n ? n.intValue()
+                : (creating ? 0 : (row.getSortOrder() == null ? 0 : row.getSortOrder())));
+        row.setStatus(str(body.get("status"), creating ? "ACTIVE" : row.getStatus()));
+    }
+
+    private void applyLinkRuleBody(UnsLinkRule row, Map<String, Object> body, boolean creating) {
+        String code = str(body.get("ruleCode"), creating ? null : row.getRuleCode());
+        String name = str(body.get("ruleName"), creating ? null : row.getRuleName());
+        if (blank(code) || blank(name)) {
+            throw new BusinessException(400, "规则编码与名称不能为空");
+        }
+        UnsLinkRule dup = linkRuleMapper.selectOne(new LambdaQueryWrapper<UnsLinkRule>()
+                .eq(UnsLinkRule::getRuleCode, code.trim().toUpperCase(Locale.ROOT))
+                .last("LIMIT 1"));
+        if (dup != null && (creating || !dup.getId().equals(row.getId()))) {
+            throw new BusinessException(400, "关联规则编码已存在");
+        }
+        row.setRuleCode(code.trim().toUpperCase(Locale.ROOT));
+        row.setRuleName(name.trim());
+        String stage = str(body.get("linkStage"), creating ? "ALL" : row.getLinkStage()).toUpperCase(Locale.ROOT);
+        if (!Set.of("EXTRACT", "ANALYZE", "BACKFILL", "ALL").contains(stage)) {
+            throw new BusinessException(400, "linkStage 须为 EXTRACT/ANALYZE/BACKFILL/ALL");
+        }
+        row.setLinkStage(stage);
+        String algo = str(body.get("algorithm"), creating ? "SIMILARITY" : row.getAlgorithm()).toUpperCase(Locale.ROOT);
+        if (!Set.of("SIMILARITY", "CATEGORY", "KEYWORD").contains(algo)) {
+            throw new BusinessException(400, "algorithm 须为 SIMILARITY/CATEGORY/KEYWORD");
+        }
+        row.setAlgorithm(algo);
+        row.setConfigJson(str(body.get("configJson"), creating ? "{}" : row.getConfigJson()));
+        row.setDescription(str(body.get("description"), creating ? null : row.getDescription()));
+        row.setEnabled(body.get("enabled") instanceof Number n ? n.intValue()
+                : (creating ? 1 : (row.getEnabled() == null ? 1 : row.getEnabled())));
+        row.setSortOrder(body.get("sortOrder") instanceof Number n ? n.intValue()
+                : (creating ? 0 : (row.getSortOrder() == null ? 0 : row.getSortOrder())));
+        row.setStatus(str(body.get("status"), creating ? "ACTIVE" : row.getStatus()));
+    }
+
+    private List<String> parseKeywordList(String raw) {
+        if (blank(raw)) {
+            return List.of();
+        }
+        String text = raw.trim();
+        if (text.startsWith("[")) {
+            try {
+                List<String> list = OM.readValue(text, new TypeReference<List<String>>() {});
+                return list.stream().filter(s -> !blank(s)).map(String::trim).toList();
+            } catch (Exception ignored) {
+                /* fallthrough */
+            }
+        }
+        return Arrays.stream(text.split("[,，;；\\s]+"))
+                .map(String::trim)
+                .filter(s -> !s.isEmpty())
+                .toList();
+    }
+
+    private Map<String, Object> parseContentMap(String json) {
+        if (blank(json)) {
+            return new LinkedHashMap<>();
+        }
+        try {
+            Map<String, Object> m = OM.readValue(json, new TypeReference<Map<String, Object>>() {});
+            return m == null ? new LinkedHashMap<>() : new LinkedHashMap<>(m);
+        } catch (Exception e) {
+            return new LinkedHashMap<>();
+        }
+    }
+
+    private Map<String, Object> parseLooseMap(String json) {
+        if (blank(json)) {
+            return Map.of();
+        }
+        try {
+            Map<String, Object> m = OM.readValue(json, new TypeReference<Map<String, Object>>() {});
+            return m == null ? Map.of() : m;
+        } catch (Exception e) {
+            return Map.of();
+        }
+    }
+
+    private String mediaKindLabel(String contentType) {
+        String ct = str(contentType, "").toLowerCase(Locale.ROOT);
+        if (ct.startsWith("image/")) return "媒介:图片";
+        if (ct.startsWith("video/")) return "媒介:视频";
+        if (ct.startsWith("audio/")) return "媒介:音频";
+        return "媒介:文档";
+    }
+
+    private String truncate(String s, int max) {
+        if (s == null) return null;
+        return s.length() <= max ? s : s.substring(0, max);
     }
 
     public List<UnsDocPipeline> listPipelines(Long docId, String pipelineType) {
@@ -905,6 +1473,7 @@ public class UnstructuredPlatformService {
         out.put("indexed", documentMapper.selectCount(new LambdaQueryWrapper<UnsDocument>()
                 .eq(UnsDocument::getIndexStatus, "INDEXED")));
         out.put("pipelines", pipelineMapper.selectCount(null));
+        out.put("tasks", pipelineMapper.selectCount(null));
         out.put("seaweedHealthy", storageClient.isSeaweedHealthy());
         out.put("esHealthy", storageClient.isElasticsearchHealthy());
         return out;
@@ -1438,6 +2007,85 @@ public class UnstructuredPlatformService {
 
     private String normalizeTagJson(String raw) {
         return toJson(parseTags(raw));
+    }
+
+    private String mergeContentUnderstanding(String existingJson, Map<String, Object> body) {
+        Map<String, Object> content = new LinkedHashMap<>();
+        if (!blank(existingJson)) {
+            try {
+                Map<String, Object> parsed = OM.readValue(existingJson, new TypeReference<Map<String, Object>>() {});
+                if (parsed != null) {
+                    content.putAll(parsed);
+                }
+            } catch (Exception ignored) {
+                // 覆盖为新结构
+            }
+        }
+        if (body.containsKey("keywords")) {
+            content.put("keywords", parseStringListInput(body.get("keywords")));
+        }
+        if (body.containsKey("topics")) {
+            content.put("topics", parseStringListInput(body.get("topics")));
+        }
+        if (body.containsKey("sentiment")) {
+            String sentiment = str(body.get("sentiment"), "NEUTRAL").toUpperCase(Locale.ROOT);
+            if (!Set.of("POSITIVE", "NEGATIVE", "NEUTRAL").contains(sentiment)) {
+                sentiment = "NEUTRAL";
+            }
+            content.put("sentiment", sentiment);
+        }
+        if (body.containsKey("summary")) {
+            content.put("summary", str(body.get("summary"), ""));
+        }
+        return toJson(content);
+    }
+
+    private List<String> parseStringListInput(Object raw) {
+        if (raw == null) {
+            return List.of();
+        }
+        if (raw instanceof List<?> list) {
+            return list.stream()
+                    .filter(Objects::nonNull)
+                    .map(String::valueOf)
+                    .map(String::trim)
+                    .filter(s -> !s.isEmpty())
+                    .distinct()
+                    .toList();
+        }
+        String text = String.valueOf(raw).trim();
+        if (blank(text)) {
+            return List.of();
+        }
+        if (text.startsWith("[")) {
+            try {
+                List<String> parsed = OM.readValue(text, new TypeReference<List<String>>() {});
+                return parsed == null ? List.of() : parseStringListInput(parsed);
+            } catch (Exception ignored) {
+                // fall through
+            }
+        }
+        return Arrays.stream(text.split("[,，、;；\\s]+"))
+                .map(String::trim)
+                .filter(s -> !s.isEmpty())
+                .distinct()
+                .toList();
+    }
+
+    private List<Long> normalizeIdList(List<Long> ids) {
+        if (ids == null || ids.isEmpty()) {
+            throw new BusinessException(400, "请选择文档");
+        }
+        List<Long> out = new ArrayList<>();
+        for (Long id : ids) {
+            if (id != null && id > 0 && !out.contains(id)) {
+                out.add(id);
+            }
+        }
+        if (out.isEmpty()) {
+            throw new BusinessException(400, "请选择文档");
+        }
+        return out;
     }
 
     private String toJson(Object value) {

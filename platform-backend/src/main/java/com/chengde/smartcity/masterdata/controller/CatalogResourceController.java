@@ -266,6 +266,17 @@ public class CatalogResourceController {
         return ApiResponse.ok(null);
     }
 
+    /**
+     * 提供方上报数据变更/新增：通知已通过订阅方，并按分发目标自动推送。
+     */
+    @PostMapping("/{id}/report-change")
+    @PreAuthorize("isAuthenticated()")
+    public ApiResponse<Map<String, Object>> reportChange(@AuthenticationPrincipal UserPrincipal principal,
+                                                         @PathVariable Long id,
+                                                         @RequestBody(required = false) Map<String, Object> body) {
+        return ApiResponse.ok(service.reportDataChange(principal, id, body == null ? Map.of() : body));
+    }
+
     @PostMapping("/approvals/{approvalId}/approve")
     @PreAuthorize("isAuthenticated()")
     public ApiResponse<GovCatalogApproval> approve(@AuthenticationPrincipal UserPrincipal principal,

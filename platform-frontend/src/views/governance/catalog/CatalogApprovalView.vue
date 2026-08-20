@@ -39,6 +39,7 @@ interface ApprovalRow {
   publishStatus?: string
   approvalStatus?: string
   resourceAlive?: boolean
+  resourceFormat?: string
   actionType: string
   status: string
   submitComment?: string
@@ -84,6 +85,10 @@ const statusFilter = ref('')
 const selected = ref<ApprovalRow[]>([])
 /** RESOURCE=资源目录；CATEGORY=资源分类 */
 const activeScope = ref<'RESOURCE' | 'CATEGORY'>('RESOURCE')
+/** 数据资源=库表/文件；服务资源=接口 */
+const resourceKind = ref<'DATA' | 'SERVICE'>('DATA')
+const DATA_FORMATS = new Set(['DATABASE', 'FILE'])
+const SERVICE_FORMATS = new Set(['API'])
 const page = ref(1)
 const pageSize = ref(10)
 const sortProp = ref('')
@@ -175,9 +180,30 @@ const sortedRows = computed(() => {
   return list
 })
 
+function resolveApprovalFormat(row: ApprovalRow): string {
+  const direct = String(row.resourceFormat || '').toUpperCase()
+  if (direct) return direct
+  try {
+    const p = JSON.parse(row.payloadJson || '{}') as Record<string, unknown>
+    return String(p.resourceFormat || '').toUpperCase()
+  } catch {
+    return ''
+  }
+}
+
+function matchResourceKind(row: ApprovalRow) {
+  // 分类审批不属于库表/接口资源，两个 Tab 均展示（归集侧资源分类）
+  if (activeScope.value === 'CATEGORY') return true
+  const fmt = resolveApprovalFormat(row) || 'DATABASE'
+  if (resourceKind.value === 'SERVICE') return SERVICE_FORMATS.has(fmt)
+  return DATA_FORMATS.has(fmt)
+}
+
+const kindFilteredRows = computed(() => sortedRows.value.filter(matchResourceKind))
+
 const pageRows = computed(() => {
   const start = (page.value - 1) * pageSize.value
-  return sortedRows.value.slice(start, start + pageSize.value)
+  return kindFilteredRows.value.slice(start, start + pageSize.value)
 })
 
 function onSortChange(payload: { prop?: string; order?: 'ascending' | 'descending' | null }) {
@@ -185,9 +211,11 @@ function onSortChange(payload: { prop?: string; order?: 'ascending' | 'descendin
   sortOrder.value = payload.order || null
   page.value = 1
 }
-const emptyText = computed(() =>
-  activeScope.value === 'CATEGORY' ? '暂无资源分类审批记录' : '暂无资源目录审批记录',
-)
+const emptyText = computed(() => {
+  if (activeScope.value === 'CATEGORY') return '暂无资源分类审批记录'
+  return resourceKind.value === 'SERVICE' ? '暂无服务资源目录审批记录' : '暂无数据资源目录审批记录'
+})
+const kindFilteredTotal = computed(() => kindFilteredRows.value.length)
 
 /** 每个数据目录（或分类）仅保留最新一条审批记录 */
 function collapseLatestPerDirectory(list: ApprovalRow[]): ApprovalRow[] {
@@ -266,8 +294,7 @@ async function load() {
     const all = collapseLatestPerDirectory((res.data || []) as ApprovalRow[])
     const st = statusFilter.value
     rows.value = st ? all.filter((r) => r.status === st) : all
-    const maxPage = Math.max(1, Math.ceil(rows.value.length / pageSize.value) || 1)
-    if (page.value > maxPage) page.value = maxPage
+    page.value = 1
   } catch {
     ElMessage.error('加载审批列表失败')
   } finally {
@@ -279,6 +306,11 @@ function onScopeChange() {
   selected.value = []
   page.value = 1
   void load()
+}
+
+function onResourceKindChange() {
+  selected.value = []
+  page.value = 1
 }
 
 function onQuery() {
@@ -752,10 +784,15 @@ onActivated(() => {
 <template>
   <div class="approval-page">
     <component :is="embedded ? 'div' : PageCard" :title="embedded ? undefined : pageTitle">
+      <el-tabs v-model="resourceKind" class="approval-tabs" @tab-change="onResourceKindChange">
+        <el-tab-pane label="数据资源" name="DATA" />
+        <el-tab-pane label="服务资源" name="SERVICE" />
+      </el-tabs>
+
       <el-tabs
         v-if="showCategoryScope"
         v-model="activeScope"
-        class="approval-tabs"
+        class="approval-tabs approval-tabs--scope"
         @tab-change="onScopeChange"
       >
         <el-tab-pane label="资源目录" name="RESOURCE" />
@@ -840,7 +877,7 @@ onActivated(() => {
       <PortalPagination
         v-model:page="page"
         v-model:page-size="pageSize"
-        :total="rows.length"
+        :total="kindFilteredTotal"
       />
     </component>
 

@@ -8,6 +8,7 @@ import PageCard from '@/components/common/PageCard.vue'
 import PortalPagination from '@/components/common/PortalPagination.vue'
 import { useClientPager } from '@/composables/useClientPager'
 import { statusLabel, statusTagType } from '@/utils/status-label'
+import FusionVisualModeler from './FusionVisualModeler.vue'
 import {
   groupSourcesByRole,
   loadQualitySourceOptions,
@@ -175,6 +176,20 @@ const physicalForm = reactive({
 const selectedDomain = computed(() => domains.value.find((d) => d.id === selectedDomainId.value) || null)
 const selectedEntity = computed(() => entities.value.find((e) => e.id === selectedEntityId.value) || null)
 const exportingReport = ref(false)
+const visualModelerOpen = ref(false)
+
+function openVisualModeler() {
+  if (!selectedDomainId.value) {
+    ElMessage.warning('请先选择业务域')
+    return
+  }
+  visualModelerOpen.value = true
+}
+
+async function onVisualModelChanged() {
+  await loadDomainDetail()
+  await loadEntityDetail()
+}
 
 async function loadDomains() {
   loading.value = true
@@ -622,9 +637,12 @@ onMounted(async () => {
                   <span class="crumb-strong">{{ selectedEntity.entityName }}</span>
                 </template>
               </div>
-              <el-button type="primary" plain :loading="exportingReport" @click="exportModelReport">
-                导出模型报告
-              </el-button>
+              <div class="detail-header-actions">
+                <el-button type="primary" @click="openVisualModeler">可视化建模功能</el-button>
+                <el-button type="primary" plain :loading="exportingReport" @click="exportModelReport">
+                  导出模型报告
+                </el-button>
+              </div>
             </div>
           </div>
 
@@ -984,6 +1002,13 @@ onMounted(async () => {
       <el-table v-if="previewRows.length" :data="previewRows" stripe size="small" max-height="480" />
       <el-empty v-else description="无数据行" />
     </el-drawer>
+
+    <FusionVisualModeler
+      v-model="visualModelerOpen"
+      :domain-id="selectedDomainId"
+      :domain-name="selectedDomain?.domainName"
+      @changed="onVisualModelChanged"
+    />
   </PageCard>
 </template>
 
@@ -1091,6 +1116,13 @@ onMounted(async () => {
   align-items: center;
   justify-content: space-between;
   gap: 12px;
+  flex-wrap: wrap;
+}
+
+.detail-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
   flex-wrap: wrap;
 }
 

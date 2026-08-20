@@ -5,34 +5,40 @@ import com.baomidou.mybatisplus.annotation.TableId;
 import com.baomidou.mybatisplus.annotation.TableName;
 import java.time.LocalDateTime;
 
-@TableName("gov_fusion_domain")
-public class GovFusionDomain {
+@TableName("uns_tag_def")
+public class UnsTagDef {
     @TableId(type = IdType.AUTO)
     private Long id;
-    private String domainCode;
-    private String domainName;
+    private String tagCode;
+    private String tagName;
+    /** GENERAL=通用标签；BUSINESS=业务标签 */
+    private String tagKind;
+    private String matchKeywords;
     private String description;
-    /** 可视化建模画布布局 JSON */
-    private String canvasLayout;
+    private Integer enabled;
+    private Integer sortOrder;
     private String status;
-    private String createdBy;
     private LocalDateTime createdAt;
     private LocalDateTime updatedAt;
 
     public Long getId() { return id; }
     public void setId(Long id) { this.id = id; }
-    public String getDomainCode() { return domainCode; }
-    public void setDomainCode(String domainCode) { this.domainCode = domainCode; }
-    public String getDomainName() { return domainName; }
-    public void setDomainName(String domainName) { this.domainName = domainName; }
+    public String getTagCode() { return tagCode; }
+    public void setTagCode(String tagCode) { this.tagCode = tagCode; }
+    public String getTagName() { return tagName; }
+    public void setTagName(String tagName) { this.tagName = tagName; }
+    public String getTagKind() { return tagKind; }
+    public void setTagKind(String tagKind) { this.tagKind = tagKind; }
+    public String getMatchKeywords() { return matchKeywords; }
+    public void setMatchKeywords(String matchKeywords) { this.matchKeywords = matchKeywords; }
     public String getDescription() { return description; }
     public void setDescription(String description) { this.description = description; }
-    public String getCanvasLayout() { return canvasLayout; }
-    public void setCanvasLayout(String canvasLayout) { this.canvasLayout = canvasLayout; }
+    public Integer getEnabled() { return enabled; }
+    public void setEnabled(Integer enabled) { this.enabled = enabled; }
+    public Integer getSortOrder() { return sortOrder; }
+    public void setSortOrder(Integer sortOrder) { this.sortOrder = sortOrder; }
     public String getStatus() { return status; }
     public void setStatus(String status) { this.status = status; }
-    public String getCreatedBy() { return createdBy; }
-    public void setCreatedBy(String createdBy) { this.createdBy = createdBy; }
     public LocalDateTime getCreatedAt() { return createdAt; }
     public void setCreatedAt(LocalDateTime createdAt) { this.createdAt = createdAt; }
     public LocalDateTime getUpdatedAt() { return updatedAt; }

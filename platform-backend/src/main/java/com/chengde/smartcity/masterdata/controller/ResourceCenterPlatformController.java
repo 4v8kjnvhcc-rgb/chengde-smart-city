@@ -79,6 +79,22 @@ public class ResourceCenterPlatformController {
         return ApiResponse.ok(service.createLibrary(principal, body));
     }
 
+    @PutMapping("/libraries/{id}")
+    @PreAuthorize("isAuthenticated()")
+    public ApiResponse<RcBaseLibrary> updateLibrary(@AuthenticationPrincipal UserPrincipal principal,
+                                                    @PathVariable Long id,
+                                                    @RequestBody Map<String, Object> body) {
+        return ApiResponse.ok(service.updateLibrary(principal, id, body));
+    }
+
+    @DeleteMapping("/libraries/{id}")
+    @PreAuthorize("isAuthenticated()")
+    public ApiResponse<Void> deleteLibrary(@AuthenticationPrincipal UserPrincipal principal,
+                                           @PathVariable Long id) {
+        service.deleteLibrary(principal, id);
+        return ApiResponse.ok(null);
+    }
+
     @GetMapping("/themes")
     @PreAuthorize("isAuthenticated()")
     public ApiResponse<List<Map<String, Object>>> themes(@RequestParam(required = false) String libraryKind) {
@@ -90,6 +106,22 @@ public class ResourceCenterPlatformController {
     public ApiResponse<Long> createTheme(@AuthenticationPrincipal UserPrincipal principal,
                                          @RequestBody Map<String, Object> body) {
         return ApiResponse.ok(service.createTheme(principal, body));
+    }
+
+    @PutMapping("/themes/{id}")
+    @PreAuthorize("isAuthenticated()")
+    public ApiResponse<Map<String, Object>> updateTheme(@AuthenticationPrincipal UserPrincipal principal,
+                                                        @PathVariable Long id,
+                                                        @RequestBody Map<String, Object> body) {
+        return ApiResponse.ok(service.updateTheme(principal, id, body));
+    }
+
+    @DeleteMapping("/themes/{id}")
+    @PreAuthorize("isAuthenticated()")
+    public ApiResponse<Void> deleteTheme(@AuthenticationPrincipal UserPrincipal principal,
+                                         @PathVariable Long id) {
+        service.deleteTheme(principal, id);
+        return ApiResponse.ok(null);
     }
 
     @GetMapping("/managed-tables")
@@ -111,6 +143,14 @@ public class ResourceCenterPlatformController {
         return ApiResponse.ok(service.manageTable(principal, body));
     }
 
+    @PutMapping("/managed-tables/{id}")
+    @PreAuthorize("isAuthenticated()")
+    public ApiResponse<Map<String, Object>> updateManagedTable(@AuthenticationPrincipal UserPrincipal principal,
+                                                               @PathVariable Long id,
+                                                               @RequestBody Map<String, Object> body) {
+        return ApiResponse.ok(service.updateManagedTable(principal, id, body));
+    }
+
     @DeleteMapping("/managed-tables/{id}")
     @PreAuthorize("isAuthenticated()")
     public ApiResponse<Void> unmanage(@AuthenticationPrincipal UserPrincipal principal, @PathVariable Long id) {
@@ -118,17 +158,20 @@ public class ResourceCenterPlatformController {
         return ApiResponse.ok(null);
     }
 
+    /**
+     * 纳管表逻辑备份（资产区库管理用）。定时策略仍走「数据库存储管理」；
+     * 此处提供即时备份台账，满足基础库备份/恢复场景演示。
+     */
     @PostMapping("/managed-tables/{id}/backup")
     @PreAuthorize("isAuthenticated()")
     public ApiResponse<Map<String, Object>> backup(@AuthenticationPrincipal UserPrincipal principal,
                                                    @PathVariable Long id,
                                                    @RequestBody(required = false) Map<String, Object> body) {
-        Integer days = null;
+        Integer days = 30;
         if (body != null && body.get("retentionDays") != null) {
             days = Integer.valueOf(String.valueOf(body.get("retentionDays")));
         }
-        throw new com.chengde.smartcity.common.exception.BusinessException(400,
-                "请到「数据备份」配置定时策略，不再支持对纳管表立即备份");
+        return ApiResponse.ok(service.runLogicalBackup(principal, id, days));
     }
 
     @GetMapping("/partition/overview")

@@ -64,6 +64,17 @@ function formatLabel(fmt?: string) {
   return FORMAT_ZH[fmt] || statusLabel(fmt) || fmt
 }
 
+/** 数据资源=库表/文件；服务资源=接口 */
+const resourceKind = ref<'DATA' | 'SERVICE'>('DATA')
+const DATA_FORMATS = new Set(['DATABASE', 'FILE'])
+const SERVICE_FORMATS = new Set(['API'])
+
+function matchResourceKind(row: CatalogRes) {
+  const fmt = String(row.resourceFormat || 'DATABASE').toUpperCase()
+  if (resourceKind.value === 'SERVICE') return SERVICE_FORMATS.has(fmt)
+  return DATA_FORMATS.has(fmt)
+}
+
 const categoryOptions = ref<{ id: number; label: string }[]>([])
 /** 筛选「分类下已关联资源」列表 */
 const filterCategoryId = ref<number | undefined>()
@@ -108,7 +119,7 @@ function matchCategoryPath(row: CatalogRes) {
   return (row.categoryPath || '').toLowerCase().includes(kw)
 }
 
-const boundRows = computed(() => boundAll.value.filter(matchCategoryPath))
+const boundRows = computed(() => boundAll.value.filter((r) => matchResourceKind(r) && matchCategoryPath(r)))
 const {
   page: boundPage,
   pageSize: boundPageSize,
@@ -117,7 +128,7 @@ const {
   resetPage: resetBoundPage,
 } = useClientPager(boundRows)
 
-const unboundRows = computed(() => unboundAll.value)
+const unboundRows = computed(() => unboundAll.value.filter(matchResourceKind))
 const {
   page: unboundPage,
   pageSize: unboundPageSize,
@@ -125,6 +136,13 @@ const {
   total: unboundTotal,
   resetPage: resetUnboundPage,
 } = useClientPager(unboundRows)
+
+function onResourceKindChange() {
+  selectedBound.value = []
+  selectedUnbound.value = []
+  resetBoundPage()
+  resetUnboundPage()
+}
 
 async function loadCategoryOptions() {
   try {
@@ -333,6 +351,39 @@ async function publishOne(row: CatalogRes) {
   }
 }
 
+/** 已发布资源数据变更/新增：通知订阅方并按分发目标自动推送 */
+async function reportDataChange(row: CatalogRes) {
+  if (row.publishStatus !== 'PUBLISHED') {
+    ElMessage.warning('仅已发布到门户的资源可上报变更')
+    return
+  }
+  try {
+    const { value } = await ElMessageBox.prompt(
+      '选择变更类型后将通知已通过订阅的单位，并按分发目标推送。',
+      '上报数据变更',
+      {
+        confirmButtonText: '上报并通知',
+        cancelButtonText: '取消',
+        inputValue: 'DATA_UPDATE',
+        inputPlaceholder: 'DATA_UPDATE / DATA_INSERT / META_UPDATE / SCHEMA_CHANGE',
+        inputPattern: /^(DATA_UPDATE|DATA_INSERT|META_UPDATE|SCHEMA_CHANGE|REPUBLISH)$/,
+        inputErrorMessage: '请输入合法变更类型',
+      },
+    )
+    const res = await api.post(`/governance/catalog/resources-mgmt/${row.id}/report-change`, {
+      changeType: value,
+      detail: `提供方在目录注册发布上报：${row.resourceName}`,
+    })
+    const d = res.data || {}
+    ElMessage.success(
+      `已通知 ${d.noticeCount ?? 0} 个订阅方，自动分发 ${d.distributeCount ?? 0} 次`,
+    )
+  } catch (e: unknown) {
+    if (e === 'cancel' || (e as { message?: string })?.message === 'cancel') return
+    ElMessage.error((e as Error)?.message || '上报失败')
+  }
+}
+
 interface ApprovalFlowRow {
   id: number
   actionType?: string
@@ -480,6 +531,11 @@ onActivated(() => {
 
 <template>
   <PageCard :title="pageTitle">
+    <el-tabs v-model="resourceKind" class="catalog-kind-tabs" @tab-change="onResourceKindChange">
+      <el-tab-pane label="数据资源" name="DATA" />
+      <el-tab-pane label="服务资源" name="SERVICE" />
+    </el-tabs>
+
     <el-form inline class="portal-inline-form portal-inline-form--block">
       <el-form-item label="名称" class="portal-field-lg">
         <el-input
@@ -556,10 +612,18 @@ onActivated(() => {
             </el-tag>
           </template>
         </el-table-column>
-        <el-table-column label="操作" width="220" fixed="right">
+        <el-table-column label="操作" width="280" fixed="right">
           <template #default="{ row }">
             <el-button link type="primary" @click="openView(row)">查看</el-button>
             <el-button link @click="openVersions(row)">版本</el-button>
+            <el-button
+              v-if="row.publishStatus === 'PUBLISHED'"
+              link
+              type="warning"
+              @click="reportDataChange(row)"
+            >
+              通知订阅方
+            </el-button>
             <el-button
               v-if="row.publishStatus !== 'PUBLISHED' && row.approvalStatus !== 'PENDING'"
               link
@@ -704,6 +768,12 @@ onActivated(() => {
 </template>
 
 <style scoped>
+.catalog-kind-tabs {
+  margin-bottom: 4px;
+}
+.catalog-kind-tabs :deep(.el-tabs__header) {
+  margin-bottom: 12px;
+}
 .reg-main h4 {
   margin: 0 0 8px;
   font-size: 14px;

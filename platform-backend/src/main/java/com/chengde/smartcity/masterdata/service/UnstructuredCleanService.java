@@ -182,6 +182,8 @@ public class UnstructuredCleanService {
                 .eq(UnsCleanIssue::getIssueStatus, "OPEN")));
         out.put("pipelines", pipelineMapper.selectCount(new LambdaQueryWrapper<UnsDocPipeline>()
                 .eq(UnsDocPipeline::getPipelineType, "CLEAN")));
+        out.put("tasks", pipelineMapper.selectCount(new LambdaQueryWrapper<UnsDocPipeline>()
+                .eq(UnsDocPipeline::getPipelineType, "CLEAN")));
         out.put("engineMode", "LEDGER");
         return out;
     }

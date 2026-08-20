@@ -345,6 +345,7 @@ const catalogTabMap: Record<string, string> = {
 const DEFAULT_NAV = 'asset'
 const activeNav = ref(DEFAULT_NAV)
 const assetTab = ref('libraries')
+const moduleTab = ref('')
 const storageTab = ref('backup')
 const partitionTab = ref('design')
 const searchTab = ref('fulltext')
@@ -409,11 +410,36 @@ const queryResult = ref<Record<string, unknown> | null>(null)
 const lastPolicyRun = ref<Record<string, unknown> | null>(null)
 
 const libForm = reactive({ libName: '', libType: 'BASE', description: '', ownerOrg: '' })
+const libEdit = reactive({
+  visible: false,
+  id: null as number | null,
+  libName: '',
+  libType: 'BASE',
+  description: '',
+  ownerOrg: '',
+})
 const themeForm = reactive({
   themeName: '',
   libraryKind: 'THEME',
   zoneCode: 'MODULE_POPULATION',
   ownerOrg: '示范单位',
+})
+const themeEdit = reactive({
+  visible: false,
+  id: null as number | null,
+  themeName: '',
+  libraryKind: 'THEME',
+  zoneCode: 'MODULE_POPULATION',
+  ownerOrg: '',
+  description: '',
+})
+const managedEdit = reactive({
+  visible: false,
+  id: null as number | null,
+  physicalTable: '',
+  themeId: undefined as number | undefined,
+  libId: undefined as number | undefined,
+  assetType: 'BASE',
 })
 const manageForm = reactive({
   themeId: undefined as number | undefined,
@@ -488,6 +514,13 @@ const themesByZone = computed(() => {
     map.get(zone)!.push(t)
   }
   return [...map.entries()].map(([zone, items]) => ({ zone, items }))
+})
+
+/** 纳管下拉：数据中心模块主题优先，避免默认挂到企业主题库 */
+const themesForManage = computed(() => {
+  const center = themes.value.filter((t) => String(t.zoneCode || '').startsWith('MODULE_'))
+  const other = themes.value.filter((t) => !String(t.zoneCode || '').startsWith('MODULE_'))
+  return [...center, ...other]
 })
 
 const allLibraries = computed(() => {
@@ -616,6 +649,10 @@ async function loadCandidates() {
 
 async function loadAssetModules() {
   assetModules.value = (await api.get('/resource-center/platform/asset/modules')).data || []
+  if (!moduleTab.value || !assetModules.value.some((m) => m.moduleCode === moduleTab.value)) {
+    const withTables = assetModules.value.find((m) => (m.managedCount ?? 0) > 0)
+    moduleTab.value = withTables?.moduleCode || assetModules.value[0]?.moduleCode || ''
+  }
 }
 
 async function loadFileLibraries() {
@@ -762,6 +799,39 @@ async function createLib() {
   await loadLibraryOverview()
 }
 
+function openEditLib(row: Library) {
+  libEdit.visible = true
+  libEdit.id = row.id
+  libEdit.libName = row.libName
+  libEdit.libType = row.libType || 'BASE'
+  libEdit.description = row.description || ''
+  libEdit.ownerOrg = row.ownerOrg || ''
+}
+
+async function saveLibEdit() {
+  if (!libEdit.id) return
+  if (!libEdit.libName.trim()) {
+    ElMessage.warning('请填写库名称')
+    return
+  }
+  await api.put(`/resource-center/platform/libraries/${libEdit.id}`, {
+    libName: libEdit.libName.trim(),
+    libType: libEdit.libType,
+    description: libEdit.description,
+    ownerOrg: libEdit.ownerOrg,
+  })
+  ElMessage.success('库已更新')
+  libEdit.visible = false
+  await loadLibraryOverview()
+}
+
+async function deleteLib(row: Library) {
+  await ElMessageBox.confirm(`确认删除库「${row.libName}」？须无关联纳管表。`, '删除库', { type: 'warning' })
+  await api.delete(`/resource-center/platform/libraries/${row.id}`)
+  ElMessage.success('库已删除')
+  await loadLibraryOverview()
+}
+
 async function createTheme() {
   if (!themeForm.themeName.trim()) {
     ElMessage.warning('请填写主题/专题库名称')
@@ -771,6 +841,73 @@ async function createTheme() {
   ElMessage.success('主题/专题库已创建')
   themeForm.themeName = ''
   await loadLibraryOverview()
+}
+
+function openEditTheme(row: Theme) {
+  themeEdit.visible = true
+  themeEdit.id = row.id
+  themeEdit.themeName = row.themeName
+  themeEdit.libraryKind = row.libraryKind || 'THEME'
+  themeEdit.zoneCode = row.zoneCode || 'MODULE_POPULATION'
+  themeEdit.ownerOrg = row.ownerOrg || ''
+  themeEdit.description = (row as Theme & { description?: string }).description || ''
+}
+
+async function saveThemeEdit() {
+  if (!themeEdit.id) return
+  if (!themeEdit.themeName.trim()) {
+    ElMessage.warning('请填写名称')
+    return
+  }
+  await api.put(`/resource-center/platform/themes/${themeEdit.id}`, {
+    themeName: themeEdit.themeName.trim(),
+    libraryKind: themeEdit.libraryKind,
+    zoneCode: themeEdit.zoneCode,
+    ownerOrg: themeEdit.ownerOrg,
+    description: themeEdit.description,
+  })
+  ElMessage.success('主题已更新')
+  themeEdit.visible = false
+  await Promise.all([loadLibraryOverview(), loadAssetModules()])
+}
+
+async function deleteTheme(row: Theme) {
+  await ElMessageBox.confirm(`确认删除「${row.themeName}」？须无纳管表。`, '删除主题', { type: 'warning' })
+  await api.delete(`/resource-center/platform/themes/${row.id}`)
+  ElMessage.success('主题已删除')
+  await Promise.all([loadLibraryOverview(), loadAssetModules()])
+}
+
+function openEditManaged(row: ManagedTable) {
+  managedEdit.visible = true
+  managedEdit.id = row.id
+  managedEdit.physicalTable = row.physicalTable
+  managedEdit.themeId = row.themeId
+  managedEdit.libId = row.libId
+  managedEdit.assetType = row.assetType || 'BASE'
+}
+
+async function saveManagedEdit() {
+  if (!managedEdit.id) return
+  if (!managedEdit.themeId) {
+    ElMessage.warning('请选择主题/模块')
+    return
+  }
+  await api.put(`/resource-center/platform/managed-tables/${managedEdit.id}`, {
+    themeId: managedEdit.themeId,
+    libId: managedEdit.libId,
+    assetType: managedEdit.assetType,
+  })
+  ElMessage.success('资产分类已更新')
+  managedEdit.visible = false
+  await Promise.all([loadLibraryOverview(), loadAssetModules()])
+}
+
+function goStorage(tab: string) {
+  activeNav.value = 'storage'
+  storageTab.value = tab
+  syncQuery()
+  loadTabData()
 }
 
 function onLibChange(libId: number | undefined) {
@@ -787,10 +924,9 @@ function pickCandidate(row: Candidate) {
   manageForm.physicalTable = row.physicalTable
   manageForm.metaEntryCode = row.entryCode
   manageForm.entryName = row.entryName
+  // 不自动改挂到「企业主题库」等无关主题；须用户显式选择数据中心对应主题/模块
   if (!manageForm.themeId) {
-    const topic = themes.value.find((t) => t.libraryKind === 'TOPIC')
-    const theme = themes.value.find((t) => t.libraryKind === 'THEME')
-    manageForm.themeId = topic?.id || theme?.id
+    ElMessage.info('请在上方「主题/模块」中选择对应数据中心（如人口库数据中心），再点「纳管」')
   }
 }
 
@@ -811,17 +947,20 @@ async function manageTable() {
     metaEntryCode: manageForm.metaEntryCode,
   })
   ElMessage.success('物理表已纳管')
+  const theme = themes.value.find((t) => t.id === manageForm.themeId)
+  if (theme && !String(theme.zoneCode || '').startsWith('MODULE_')) {
+    ElMessage.warning(
+      `当前挂在「${theme.themeName}」（非数据中心库区），模块化管理中请查看「未归入数据中心」；若要进人口/法人等中心，请改选对应主题后重新纳管`,
+    )
+  }
   manageForm.physicalTable = ''
   manageForm.metaEntryCode = ''
   manageForm.entryName = ''
-  await Promise.all([loadLibraryOverview(), loadCandidates()])
+  await Promise.all([loadLibraryOverview(), loadCandidates(), loadAssetModules()])
 }
 
 function goStoragePolicy() {
-  activeNav.value = 'storage'
-  storageTab.value = 'policy'
-  syncQuery()
-  loadTabData()
+  goStorage('policy')
 }
 
 function goUnstructuredHub() {
@@ -1381,9 +1520,15 @@ onMounted(() => {
               </el-form-item>
               <el-form-item class="portal-form-actions">
                 <el-button type="primary" @click="createLib">新增库</el-button>
-                <el-button @click="goStoragePolicy">存储策略</el-button>
+                <el-button @click="goStorage('backup')">备份</el-button>
+                <el-button @click="goStorage('archive')">归档</el-button>
+                <el-button @click="goStorage('monitor')">恢复/监控</el-button>
+                <el-button @click="goStorage('policy')">迁移/策略</el-button>
               </el-form-item>
             </el-form>
+            <p class="hint" style="margin:0 0 12px;color:#606266;font-size:13px">
+              盘点：上方按基础/半结构/非结构统计；下方纳管表可即时备份，归档/恢复/迁移策略在「数据库存储管理」。
+            </p>
             <template v-if="libOverview">
               <template v-for="grp in [
                 { key: 'BASE', title: '基础库（人口/法人/证照/宏观/企业/地理/部件/科技/其他/行政审批）' },
@@ -1391,7 +1536,7 @@ onMounted(() => {
                 { key: 'UNSTRUCT', title: '非结构化库（含文件目录/索引/分布式存储）' },
               ]" :key="grp.key">
                 <el-divider content-position="left">{{ grp.title }}</el-divider>
-                <el-table :data="libsOfType(grp.key)" stripe size="small" style="margin-bottom:8px">
+                <el-table :data="libsOfType(grp.key)" stripe border size="small" style="margin-bottom:8px">
                   <el-table-column prop="libCode" label="编码" width="150" />
                   <el-table-column prop="libName" label="名称" min-width="140" />
                   <el-table-column prop="ownerOrg" label="责任单位" width="140" show-overflow-tooltip />
@@ -1403,17 +1548,32 @@ onMounted(() => {
                       <el-tag :type="statusTagType(row.status)" size="small">{{ statusLabel(row.status) }}</el-tag>
                     </template>
                   </el-table-column>
+                  <el-table-column label="操作" width="140" fixed="right">
+                    <template #default="{ row }">
+                      <el-button link type="primary" @click="openEditLib(row)">编辑</el-button>
+                      <el-button link type="danger" @click="deleteLib(row)">删除</el-button>
+                    </template>
+                  </el-table-column>
                 </el-table>
               </template>
-              <el-divider content-position="left">纳管表（备份请到「数据备份」配置定时策略）</el-divider>
-              <el-table :data="managedTables" stripe size="small">
-                <el-table-column prop="physicalTable" label="物理表" min-width="140" />
+              <el-divider content-position="left">纳管表（表=资产单元；可备份/解绑/调整分类）</el-divider>
+              <el-table :data="managedTables" stripe border size="small">
+                <el-table-column prop="physicalTable" label="物理表" min-width="140" show-overflow-tooltip />
                 <el-table-column label="资产类型" width="110">
                   <template #default="{ row }">{{ libTypeLabel(row.assetType || row.libType) }}</template>
                 </el-table-column>
                 <el-table-column prop="libName" label="所属库" width="140" show-overflow-tooltip />
                 <el-table-column prop="themeName" label="模块/主题" width="140" show-overflow-tooltip />
                 <el-table-column prop="recordCount" label="行数" width="90" />
+                <el-table-column label="操作" width="280" fixed="right">
+                  <template #default="{ row }">
+                    <el-button link type="primary" @click="openEditManaged(row)">调整分类</el-button>
+                    <el-button link type="success" @click="backupManaged(row.id)">备份</el-button>
+                    <el-button link @click="goStorage('archive')">归档</el-button>
+                    <el-button link @click="goStorage('monitor')">恢复</el-button>
+                    <el-button link type="danger" @click="unmanageTable(row.id)">解绑</el-button>
+                  </template>
+                </el-table-column>
               </el-table>
             </template>
           </el-tab-pane>
@@ -1445,9 +1605,9 @@ onMounted(() => {
                 <el-button type="primary" @click="createTheme">新增主题库</el-button>
               </el-form-item>
             </el-form>
-            <el-table :data="themes" stripe size="small" style="margin-bottom:16px">
+            <el-table :data="themes" stripe border size="small" style="margin-bottom:16px">
               <el-table-column prop="themeCode" label="编码" width="160" />
-              <el-table-column prop="themeName" label="名称" />
+              <el-table-column prop="themeName" label="名称" min-width="140" />
               <el-table-column label="类型" width="90">
                 <template #default="{ row }">{{ kindLabel(row.libraryKind) }}</template>
               </el-table-column>
@@ -1460,13 +1620,19 @@ onMounted(() => {
                   <el-tag :type="statusTagType(row.status)" size="small">{{ statusLabel(row.status) }}</el-tag>
                 </template>
               </el-table-column>
+              <el-table-column label="操作" width="140" fixed="right">
+                <template #default="{ row }">
+                  <el-button link type="primary" @click="openEditTheme(row)">编辑</el-button>
+                  <el-button link type="danger" @click="deleteTheme(row)">删除</el-button>
+                </template>
+              </el-table-column>
             </el-table>
             <el-divider content-position="left">物理表纳管（须选用候选 + 关联资源类型）</el-divider>
             <el-form inline class="portal-inline-form portal-inline-form--block">
               <el-form-item label="主题/模块" class="portal-field-lg">
-                <el-select v-model="manageForm.themeId" placeholder="必选主题/专题库" filterable>
+                <el-select v-model="manageForm.themeId" placeholder="必选：请选数据中心对应主题" filterable>
                   <el-option
-                    v-for="t in themes"
+                    v-for="t in themesForManage"
                     :key="t.id"
                     :label="`${t.themeName}（${kindLabel(t.libraryKind)} · ${zoneLabel(t.zoneCode)}）`"
                     :value="t.id"
@@ -1535,63 +1701,87 @@ onMounted(() => {
                 </el-select>
               </el-form-item>
             </el-form>
-            <el-table :data="filteredManagedTables" stripe size="small">
-              <el-table-column prop="physicalTable" label="物理表（资产单元）" min-width="150" />
+            <el-table :data="filteredManagedTables" stripe border size="small">
+              <el-table-column prop="physicalTable" label="物理表（资产单元）" min-width="150" show-overflow-tooltip />
               <el-table-column prop="metaEntryCode" label="元数据码" width="200" show-overflow-tooltip />
               <el-table-column label="资产类型" width="110">
                 <template #default="{ row }">{{ libTypeLabel(row.assetType) }}</template>
               </el-table-column>
               <el-table-column prop="libName" label="所属库" width="140" show-overflow-tooltip />
-              <el-table-column prop="themeName" label="所属模块/主题" min-width="140" />
+              <el-table-column prop="themeName" label="所属模块/主题" min-width="140" show-overflow-tooltip />
               <el-table-column prop="recordCount" label="行数" width="90" />
               <el-table-column label="状态" width="90">
                 <template #default="{ row }">
                   <el-tag :type="statusTagType(row.status)" size="small">{{ statusLabel(row.status) }}</el-tag>
                 </template>
               </el-table-column>
-              <el-table-column label="操作" width="100">
+              <el-table-column label="操作" width="160" fixed="right">
                 <template #default="{ row }">
-                  <el-button link @click="unmanageTable(row.id)">解绑</el-button>
+                  <el-button link type="primary" @click="openEditManaged(row)">调整分类</el-button>
+                  <el-button link type="danger" @click="unmanageTable(row.id)">解绑</el-button>
                 </template>
               </el-table-column>
             </el-table>
           </el-tab-pane>
 
           <el-tab-pane label="数据资产中心模块化管理" name="modules">
-<el-row :gutter="12" style="margin-bottom:16px">
-              <el-col v-for="m in assetModules" :key="m.moduleCode" :xs="24" :sm="12" :md="8" style="margin-bottom:12px">
-                <el-card shadow="hover" body-style="padding:12px">
-                  <div style="font-weight:600;margin-bottom:6px">{{ m.moduleName }}</div>
-                  <div style="color:#606266;font-size:13px;margin-bottom:8px">
-                    {{ m.ownerOrg || '责任单位待定' }} · 纳管 {{ m.managedCount ?? 0 }} 表
-                  </div>
+            <p class="hint" style="margin:0 0 12px;color:#606266;font-size:13px">
+              按数据中心 Tab 查看已纳管表。纳管时请选择名称/库区为对应中心的主题（如「人口库数据中心」）；若挂到企业主题库等，会出现在「未归入数据中心」。
+            </p>
+            <el-empty v-if="!assetModules.length" description="暂无数据中心模块" />
+            <el-tabs v-else v-model="moduleTab" type="card" class="module-center-tabs">
+              <el-tab-pane
+                v-for="m in assetModules"
+                :key="m.moduleCode"
+                :name="m.moduleCode"
+                :label="`${m.moduleName}（${m.managedCount ?? 0}）`"
+              >
+                <div class="module-pane-meta">
                   <el-tag :type="statusTagType(m.status)" size="small">{{ statusLabel(m.status) }}</el-tag>
-                  <el-table
-                    v-if="m.tables && m.tables.length"
-                    :data="m.tables"
-                    stripe
-                    size="small"
-                    style="margin-top:8px"
-                    max-height="160"
-                  >
-                    <el-table-column prop="physicalTable" label="表" show-overflow-tooltip />
-                    <el-table-column prop="recordCount" label="行" width="70" />
-                  </el-table>
-                  <el-empty v-else description="暂无纳管表" :image-size="48" />
-                </el-card>
-              </el-col>
-            </el-row>
+                  <span>{{ m.ownerOrg || '责任单位待定' }}</span>
+                  <span>纳管 {{ m.managedCount ?? 0 }} 表</span>
+                </div>
+                <p v-if="m.description" class="module-pane-desc">{{ m.description }}</p>
+                <el-table
+                  v-if="m.tables && m.tables.length"
+                  :data="m.tables"
+                  stripe
+                  border
+                  size="small"
+                  class="portal-table"
+                >
+                  <el-table-column prop="physicalTable" label="物理表" min-width="160" show-overflow-tooltip />
+                  <el-table-column prop="metaEntryCode" label="元数据码" min-width="180" show-overflow-tooltip />
+                  <el-table-column prop="themeName" label="主题/模块" min-width="140" show-overflow-tooltip />
+                  <el-table-column label="资产类型" width="100">
+                    <template #default="{ row }">{{ libTypeLabel(row.assetType) || '—' }}</template>
+                  </el-table-column>
+                  <el-table-column prop="recordCount" label="行数" width="90" />
+                  <el-table-column label="状态" width="90">
+                    <template #default="{ row }">
+                      <el-tag size="small" :type="statusTagType(row.status)">{{ statusLabel(row.status) }}</el-tag>
+                    </template>
+                  </el-table-column>
+                  <el-table-column label="操作" width="100" fixed="right">
+                    <template #default="{ row }">
+                      <el-button link type="danger" @click="unmanageTable(row.id)">解绑</el-button>
+                    </template>
+                  </el-table-column>
+                </el-table>
+                <el-empty v-else description="暂无纳管表，请到「数据资产管理与分类」选用候选后纳管到本中心主题" :image-size="64" />
+              </el-tab-pane>
+            </el-tabs>
             <el-divider content-position="left">全部主题/专题（按库区）</el-divider>
             <el-empty v-if="!themesByZone.length" description="暂无主题/专题库，请先在「数据资产管理与分类」创建" />
             <div v-for="group in themesByZone" :key="group.zone" style="margin-bottom:16px">
               <el-divider content-position="left">{{ zoneLabel(group.zone) }}</el-divider>
-              <el-table :data="group.items" stripe size="small">
+              <el-table :data="group.items" stripe border size="small">
                 <el-table-column prop="themeCode" label="编码" width="160" />
-                <el-table-column prop="themeName" label="名称" />
+                <el-table-column prop="themeName" label="名称" min-width="140" />
                 <el-table-column label="类型" width="90">
                   <template #default="{ row }">{{ kindLabel(row.libraryKind) }}</template>
                 </el-table-column>
-                <el-table-column prop="ownerOrg" label="责任单位" width="140" />
+                <el-table-column prop="ownerOrg" label="责任单位" width="140" show-overflow-tooltip />
                 <el-table-column prop="managedCount" label="纳管表" width="80" />
                 <el-table-column label="状态" width="90">
                   <template #default="{ row }">
@@ -1618,6 +1808,9 @@ onMounted(() => {
                 <el-button @click="loadFileLibraries">刷新</el-button>
               </el-form-item>
             </el-form>
+            <p class="hint" style="margin:0 0 12px;color:#606266;font-size:13px">
+              文件目录库维护存储键与发布态；文件索引库维护建索态；「关联结构化表」展示半结构/非结构资产类型纳管表（如证照扫描件元数据抽取表），实现非结构化与结构化互查。
+            </p>
             <el-tabs v-model="fileSubTab">
               <el-tab-pane label="文件目录库" name="catalog">
                 <el-table :data="fileLibOverview?.catalogDocs || unsDocs" stripe size="small">
@@ -1675,6 +1868,106 @@ onMounted(() => {
             </el-tabs>
           </el-tab-pane>
         </el-tabs>
+
+        <el-dialog v-model="libEdit.visible" title="编辑库" width="480px" destroy-on-close>
+          <el-form label-width="96px">
+            <el-form-item label="名称" required>
+              <el-input v-model="libEdit.libName" maxlength="128" />
+            </el-form-item>
+            <el-form-item label="类型">
+              <el-select v-model="libEdit.libType" style="width:100%">
+                <el-option label="基础库" value="BASE" />
+                <el-option label="半结构化" value="SEMI" />
+                <el-option label="非结构化" value="UNSTRUCT" />
+              </el-select>
+            </el-form-item>
+            <el-form-item label="责任单位">
+              <el-input v-model="libEdit.ownerOrg" maxlength="128" />
+            </el-form-item>
+            <el-form-item label="说明">
+              <el-input v-model="libEdit.description" type="textarea" :rows="2" maxlength="500" />
+            </el-form-item>
+          </el-form>
+          <template #footer>
+            <el-button @click="libEdit.visible = false">取消</el-button>
+            <el-button type="primary" @click="saveLibEdit">保存</el-button>
+          </template>
+        </el-dialog>
+
+        <el-dialog v-model="themeEdit.visible" title="编辑主题/模块" width="520px" destroy-on-close>
+          <el-form label-width="96px">
+            <el-form-item label="名称" required>
+              <el-input v-model="themeEdit.themeName" maxlength="128" />
+            </el-form-item>
+            <el-form-item label="类型">
+              <el-select v-model="themeEdit.libraryKind" style="width:100%">
+                <el-option label="主题库" value="THEME" />
+                <el-option label="专题库" value="TOPIC" />
+              </el-select>
+            </el-form-item>
+            <el-form-item label="库区/模块">
+              <el-select v-model="themeEdit.zoneCode" filterable style="width:100%">
+                <el-option
+                  v-for="m in assetModules.filter((x) => x.moduleCode !== 'MOD_UNASSIGNED')"
+                  :key="m.zoneCode"
+                  :label="m.moduleName"
+                  :value="m.zoneCode"
+                />
+                <el-option label="主题库区" value="ZONE_THEME" />
+                <el-option label="专题库区" value="ZONE_TOPIC" />
+              </el-select>
+            </el-form-item>
+            <el-form-item label="责任单位">
+              <el-input v-model="themeEdit.ownerOrg" maxlength="128" />
+            </el-form-item>
+            <el-form-item label="说明">
+              <el-input v-model="themeEdit.description" type="textarea" :rows="2" maxlength="500" />
+            </el-form-item>
+          </el-form>
+          <template #footer>
+            <el-button @click="themeEdit.visible = false">取消</el-button>
+            <el-button type="primary" @click="saveThemeEdit">保存</el-button>
+          </template>
+        </el-dialog>
+
+        <el-dialog v-model="managedEdit.visible" title="调整资产分类" width="520px" destroy-on-close>
+          <p class="hint" style="margin:0 0 12px;color:#606266;font-size:13px">
+            表：{{ managedEdit.physicalTable }} — 调整所属数据中心主题与资源类型库，确保分类准确。
+          </p>
+          <el-form label-width="110px">
+            <el-form-item label="主题/模块" required>
+              <el-select v-model="managedEdit.themeId" filterable style="width:100%">
+                <el-option
+                  v-for="t in themesForManage"
+                  :key="t.id"
+                  :label="`${t.themeName}（${zoneLabel(t.zoneCode)}）`"
+                  :value="t.id"
+                />
+              </el-select>
+            </el-form-item>
+            <el-form-item label="所属库">
+              <el-select v-model="managedEdit.libId" clearable filterable style="width:100%">
+                <el-option
+                  v-for="l in allLibraries"
+                  :key="l.id"
+                  :label="`${l.libName}（${libTypeLabel(l.libType)}）`"
+                  :value="l.id"
+                />
+              </el-select>
+            </el-form-item>
+            <el-form-item label="资产类型">
+              <el-select v-model="managedEdit.assetType" style="width:100%">
+                <el-option label="基础库" value="BASE" />
+                <el-option label="半结构化" value="SEMI" />
+                <el-option label="非结构化" value="UNSTRUCT" />
+              </el-select>
+            </el-form-item>
+          </el-form>
+          <template #footer>
+            <el-button @click="managedEdit.visible = false">取消</el-button>
+            <el-button type="primary" @click="saveManagedEdit">保存</el-button>
+          </template>
+        </el-dialog>
       </PageCard>
 
       <!-- 分区设计管理：策略 / 监控 / 维护 / 备份恢复 -->
@@ -2106,5 +2399,22 @@ onMounted(() => {
 .rc-hub-root {
   height: calc(100vh - var(--portal-header-height) - 40px);
   min-height: 0;
+}
+.module-pane-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  margin-bottom: 8px;
+  color: #606266;
+  font-size: 13px;
+}
+.module-pane-desc {
+  margin: 0 0 12px;
+  color: #909399;
+  font-size: 12px;
+}
+.module-center-tabs :deep(.el-tabs__header) {
+  margin-bottom: 12px;
 }
 </style>

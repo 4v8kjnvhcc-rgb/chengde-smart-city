@@ -14,6 +14,9 @@ public class UnsExternalPlatform {
     private String apiConfig;
     private String syncFrequency;
     private String status;
+    private LocalDateTime lastSyncAt;
+    private Integer lastSyncCount;
+    private String lastSyncMessage;
     private String createdBy;
     private LocalDateTime createdAt;
     private LocalDateTime updatedAt;
@@ -30,6 +33,12 @@ public class UnsExternalPlatform {
     public void setSyncFrequency(String syncFrequency) { this.syncFrequency = syncFrequency; }
     public String getStatus() { return status; }
     public void setStatus(String status) { this.status = status; }
+    public LocalDateTime getLastSyncAt() { return lastSyncAt; }
+    public void setLastSyncAt(LocalDateTime lastSyncAt) { this.lastSyncAt = lastSyncAt; }
+    public Integer getLastSyncCount() { return lastSyncCount; }
+    public void setLastSyncCount(Integer lastSyncCount) { this.lastSyncCount = lastSyncCount; }
+    public String getLastSyncMessage() { return lastSyncMessage; }
+    public void setLastSyncMessage(String lastSyncMessage) { this.lastSyncMessage = lastSyncMessage; }
     public String getCreatedBy() { return createdBy; }
     public void setCreatedBy(String createdBy) { this.createdBy = createdBy; }
     public LocalDateTime getCreatedAt() { return createdAt; }

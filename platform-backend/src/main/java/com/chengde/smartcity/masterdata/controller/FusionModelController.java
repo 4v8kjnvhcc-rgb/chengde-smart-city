@@ -62,6 +62,22 @@ public class FusionModelController {
                 .body(bytes);
     }
 
+    /** 可视化建模画布布局 */
+    @GetMapping("/domains/{id}/canvas")
+    @PreAuthorize("isAuthenticated()")
+    public ApiResponse<Map<String, Object>> getCanvas(@PathVariable Long id) {
+        return ApiResponse.ok(service.getDomainCanvas(id));
+    }
+
+    @PutMapping("/domains/{id}/canvas")
+    @PreAuthorize("isAuthenticated()")
+    public ApiResponse<Void> saveCanvas(@AuthenticationPrincipal UserPrincipal principal,
+                                        @PathVariable Long id,
+                                        @RequestBody Map<String, Object> body) {
+        service.saveDomainCanvas(principal, id, body);
+        return ApiResponse.ok(null);
+    }
+
     @PostMapping("/domains")
     @PreAuthorize("isAuthenticated()")
     public ApiResponse<Long> createDomain(@AuthenticationPrincipal UserPrincipal principal,

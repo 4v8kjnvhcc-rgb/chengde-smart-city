@@ -256,8 +256,24 @@ const categoryRows = ref<
     parentId?: number | null
   }>
 >([])
+/** 数据资源=库表/文件；服务资源=接口（与 V3.0 编制 Tab 划分一致） */
+const resourceKind = ref<'DATA' | 'SERVICE'>('DATA')
+const DATA_FORMATS = new Set(['DATABASE', 'FILE'])
+const SERVICE_FORMATS = new Set(['API'])
+
+function formatsForKind(kind: 'DATA' | 'SERVICE') {
+  return kind === 'SERVICE' ? SERVICE_FORMATS : DATA_FORMATS
+}
+
 const resources = ref<CatalogRes[]>([])
-const { page, pageSize, paged: pagedResources, total: resourceTotal, resetPage } = useClientPager(resources)
+const filteredResources = computed(() => {
+  const allowed = formatsForKind(resourceKind.value)
+  return resources.value.filter((r) => {
+    const fmt = String(r.resourceFormat || 'DATABASE').toUpperCase()
+    return allowed.has(fmt)
+  })
+})
+const { page, pageSize, paged: pagedResources, total: resourceTotal, resetPage } = useClientPager(filteredResources)
 const loading = ref(false)
 const selectedRows = ref<CatalogRes[]>([])
 const query = reactive({
@@ -268,6 +284,24 @@ const query = reactive({
   resourceFormat: '',
   categoryId: undefined as number | undefined,
 })
+/** 当前 Tab 下可选的信息资源格式（查询/表单共用） */
+const kindFormatOptions = computed(() => {
+  const allowed = formatsForKind(resourceKind.value)
+  return Object.entries(FORMAT_ZH).filter(([code]) => allowed.has(code))
+})
+const defaultFormatForKind = computed(() => (resourceKind.value === 'SERVICE' ? 'API' : 'DATABASE'))
+
+function onResourceKindChange() {
+  selectedRows.value = []
+  const allowed = formatsForKind(resourceKind.value)
+  const cur = (query.resourceFormat || '').toUpperCase()
+  if (cur && !allowed.has(cur)) {
+    query.resourceFormat = ''
+    void loadResources()
+  } else {
+    resetPage()
+  }
+}
 const dialogVisible = ref(false)
 const editMode = ref(false)
 const viewMode = ref(false)
@@ -751,7 +785,7 @@ function resetForm() {
   form.categoryId = undefined
   form.providerOrg = ''
   applyLockedProviderOrg()
-  form.resourceFormat = 'DATABASE'
+  form.resourceFormat = defaultFormatForKind.value
   form.shareType = 'OPEN'
   form.shareCondition = ''
   form.notShareReason = ''
@@ -813,6 +847,10 @@ function openCreate() {
 }
 
 async function openBatchCreate() {
+  if (resourceKind.value === 'SERVICE') {
+    ElMessage.warning('服务资源请使用「手动新增」编制接口目录')
+    return
+  }
   batchEntryCodes.value = []
   batchShareType.value = 'OPEN'
   batchVisible.value = true
@@ -2046,6 +2084,11 @@ onActivated(async () => {
 
 <template>
   <component :is="embedded ? 'div' : PageCard" :title="embedded ? undefined : pageTitle">
+    <el-tabs v-model="resourceKind" class="catalog-kind-tabs" @tab-change="onResourceKindChange">
+      <el-tab-pane label="数据资源" name="DATA" />
+      <el-tab-pane label="服务资源" name="SERVICE" />
+    </el-tabs>
+
     <el-form inline class="portal-inline-form portal-inline-form--block">
       <el-form-item label="资源名称" class="portal-field-lg">
         <el-input
@@ -2088,14 +2131,14 @@ onActivated(async () => {
       </el-form-item>
       <el-form-item label="数据格式" class="portal-field-md">
         <el-select v-model="query.resourceFormat" clearable placeholder="全部">
-          <el-option v-for="(lab, val) in FORMAT_ZH" :key="val" :label="lab" :value="val" />
+          <el-option v-for="[val, lab] in kindFormatOptions" :key="val" :label="lab" :value="val" />
         </el-select>
       </el-form-item>
       <el-form-item class="portal-form-actions">
         <el-button type="primary" @click="loadResources">查询</el-button>
         <el-button @click="resetQuery">重置</el-button>
         <el-button type="primary" @click="openCreate">手动新增</el-button>
-        <el-button @click="openBatchCreate">批量新增</el-button>
+        <el-button v-if="resourceKind === 'DATA'" @click="openBatchCreate">批量新增</el-button>
         <el-button @click="openImport">导入</el-button>
         <el-button @click="exportResources('json')">导出 JSON</el-button>
         <el-button @click="exportResources('csv')">导出 CSV</el-button>
@@ -2214,12 +2257,11 @@ onActivated(async () => {
           <el-input v-else :model-value="form.providerOrg || currentDeptName" disabled />
         </el-form-item>
         <el-form-item label="信息资源格式" required>
-          <el-select v-model="form.resourceFormat" style="width: 100%" placeholder="决定下一步关联形态">
-            <el-option label="库表" value="DATABASE" />
-            <el-option label="接口" value="API" />
-            <el-option label="文件" value="FILE" />
+          <el-select v-model="form.resourceFormat" style="width: 100%" placeholder="决定下一步关联形态" :disabled="viewMode">
+            <el-option v-for="[val, lab] in kindFormatOptions" :key="val" :label="lab === '数据库' ? '库表' : lab" :value="val" />
           </el-select>
-          <div class="hint">选择「库表」后，下一步将选择数据源→数据表→维护字段共享属性</div>
+          <div v-if="resourceKind === 'DATA'" class="hint">选择「库表」后，下一步将选择数据源→数据表→维护字段共享属性</div>
+          <div v-else class="hint">服务资源固定为接口格式，下一步维护接口基本信息与请求/响应参数</div>
         </el-form-item>
         <el-form-item label="共享类型" required>
           <el-select v-model="form.shareType" style="width: 100%">
@@ -3107,5 +3149,11 @@ onActivated(async () => {
 .code-area :deep(textarea) {
   font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
   font-size: 12px;
+}
+.catalog-kind-tabs {
+  margin-bottom: 4px;
+}
+.catalog-kind-tabs :deep(.el-tabs__header) {
+  margin-bottom: 12px;
 }
 </style>

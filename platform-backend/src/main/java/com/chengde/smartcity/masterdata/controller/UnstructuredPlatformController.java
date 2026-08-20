@@ -108,6 +108,14 @@ public class UnstructuredPlatformController {
         return ApiResponse.ok(null);
     }
 
+    @PostMapping("/external-platforms/{id}/sync")
+    @PreAuthorize("isAuthenticated()")
+    public ApiResponse<Map<String, Object>> syncExternalPlatform(
+            @AuthenticationPrincipal UserPrincipal principal,
+            @PathVariable Long id) {
+        return ApiResponse.ok(service.syncExternalPlatform(principal, id));
+    }
+
     @GetMapping("/documents")
     @PreAuthorize("isAuthenticated()")
     public ApiResponse<List<Map<String, Object>>> documents(@RequestParam(required = false) String keyword,
@@ -187,6 +195,28 @@ public class UnstructuredPlatformController {
         return ApiResponse.ok(null);
     }
 
+    @PostMapping("/documents/batch-publish")
+    @PreAuthorize("isAuthenticated()")
+    public ApiResponse<Map<String, Object>> batchPublish(@AuthenticationPrincipal UserPrincipal principal,
+                                                         @RequestBody Map<String, Object> body) {
+        Object raw = body == null ? null : body.get("ids");
+        List<Long> ids = new java.util.ArrayList<>();
+        if (raw instanceof List<?> list) {
+            for (Object o : list) {
+                if (o instanceof Number n) {
+                    ids.add(n.longValue());
+                } else if (o != null) {
+                    try {
+                        ids.add(Long.parseLong(String.valueOf(o)));
+                    } catch (Exception ignored) {
+                        /* skip */
+                    }
+                }
+            }
+        }
+        return ApiResponse.ok(service.batchPublishDocuments(principal, ids));
+    }
+
     @PostMapping("/documents/{id}/offline")
     @PreAuthorize("isAuthenticated()")
     public ApiResponse<Void> offline(@AuthenticationPrincipal UserPrincipal principal, @PathVariable Long id) {
@@ -210,11 +240,25 @@ public class UnstructuredPlatformController {
         return ApiResponse.ok(service.extractFeatures(principal, id));
     }
 
+    @PostMapping("/documents/batch-extract-features")
+    @PreAuthorize("isAuthenticated()")
+    public ApiResponse<Map<String, Object>> batchExtractFeatures(@AuthenticationPrincipal UserPrincipal principal,
+                                                              @RequestBody Map<String, Object> body) {
+        return ApiResponse.ok(service.batchExtractFeatures(principal, parseIdList(body)));
+    }
+
     @PostMapping("/documents/{id}/understand")
     @PreAuthorize("isAuthenticated()")
     public ApiResponse<Map<String, Object>> understand(@AuthenticationPrincipal UserPrincipal principal,
                                                        @PathVariable Long id) {
         return ApiResponse.ok(service.understandContent(principal, id));
+    }
+
+    @PostMapping("/documents/batch-understand")
+    @PreAuthorize("isAuthenticated()")
+    public ApiResponse<Map<String, Object>> batchUnderstand(@AuthenticationPrincipal UserPrincipal principal,
+                                                          @RequestBody Map<String, Object> body) {
+        return ApiResponse.ok(service.batchUnderstandContent(principal, parseIdList(body)));
     }
 
     @GetMapping("/documents/{id}/similar")
@@ -285,6 +329,74 @@ public class UnstructuredPlatformController {
         return ApiResponse.ok(service.listPipelines(docId, pipelineType));
     }
 
+    /** 任务管理列表（与 pipelines 同数据，前端统一称「任务」） */
+    @GetMapping("/tasks")
+    @PreAuthorize("isAuthenticated()")
+    public ApiResponse<List<UnsDocPipeline>> tasks(@RequestParam(required = false) Long docId,
+                                                   @RequestParam(required = false) String pipelineType) {
+        return ApiResponse.ok(service.listPipelines(docId, pipelineType));
+    }
+
+    @GetMapping("/tag-defs")
+    @PreAuthorize("isAuthenticated()")
+    public ApiResponse<List<com.chengde.smartcity.masterdata.entity.UnsTagDef>> tagDefs() {
+        return ApiResponse.ok(service.listTagDefs());
+    }
+
+    @PostMapping("/tag-defs")
+    @PreAuthorize("isAuthenticated()")
+    public ApiResponse<Long> createTagDef(@AuthenticationPrincipal UserPrincipal principal,
+                                          @RequestBody Map<String, Object> body) {
+        return ApiResponse.ok(service.createTagDef(principal, body));
+    }
+
+    @PutMapping("/tag-defs/{id}")
+    @PreAuthorize("isAuthenticated()")
+    public ApiResponse<Void> updateTagDef(@AuthenticationPrincipal UserPrincipal principal,
+                                          @PathVariable Long id,
+                                          @RequestBody Map<String, Object> body) {
+        service.updateTagDef(principal, id, body);
+        return ApiResponse.ok(null);
+    }
+
+    @DeleteMapping("/tag-defs/{id}")
+    @PreAuthorize("isAuthenticated()")
+    public ApiResponse<Void> deleteTagDef(@AuthenticationPrincipal UserPrincipal principal,
+                                          @PathVariable Long id) {
+        service.deleteTagDef(principal, id);
+        return ApiResponse.ok(null);
+    }
+
+    @GetMapping("/link-rules")
+    @PreAuthorize("isAuthenticated()")
+    public ApiResponse<List<com.chengde.smartcity.masterdata.entity.UnsLinkRule>> linkRules() {
+        return ApiResponse.ok(service.listLinkRules());
+    }
+
+    @PostMapping("/link-rules")
+    @PreAuthorize("isAuthenticated()")
+    public ApiResponse<Long> createLinkRule(@AuthenticationPrincipal UserPrincipal principal,
+                                            @RequestBody Map<String, Object> body) {
+        return ApiResponse.ok(service.createLinkRule(principal, body));
+    }
+
+    @PutMapping("/link-rules/{id}")
+    @PreAuthorize("isAuthenticated()")
+    public ApiResponse<Void> updateLinkRule(@AuthenticationPrincipal UserPrincipal principal,
+                                            @PathVariable Long id,
+                                            @RequestBody Map<String, Object> body) {
+        service.updateLinkRule(principal, id, body);
+        return ApiResponse.ok(null);
+    }
+
+    @DeleteMapping("/link-rules/{id}")
+    @PreAuthorize("isAuthenticated()")
+    public ApiResponse<Void> deleteLinkRule(@AuthenticationPrincipal UserPrincipal principal,
+                                            @PathVariable Long id) {
+        service.deleteLinkRule(principal, id);
+        return ApiResponse.ok(null);
+    }
+
     @GetMapping("/clean/overview")
     @PreAuthorize("isAuthenticated()")
     public ApiResponse<Map<String, Object>> cleanOverview() {
@@ -336,5 +448,24 @@ public class UnstructuredPlatformController {
                                               @RequestBody Map<String, Object> body) {
         cleanService.handleIssue(principal, id, body);
         return ApiResponse.ok(null);
+    }
+
+    private List<Long> parseIdList(Map<String, Object> body) {
+        Object raw = body == null ? null : body.get("ids");
+        List<Long> ids = new java.util.ArrayList<>();
+        if (raw instanceof List<?> list) {
+            for (Object o : list) {
+                if (o instanceof Number n) {
+                    ids.add(n.longValue());
+                } else if (o != null) {
+                    try {
+                        ids.add(Long.parseLong(String.valueOf(o)));
+                    } catch (Exception ignored) {
+                        /* skip */
+                    }
+                }
+            }
+        }
+        return ids;
     }
 }

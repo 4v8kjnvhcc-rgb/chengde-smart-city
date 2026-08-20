@@ -6,6 +6,7 @@ import { ElMessage, ElMessageBox } from 'element-plus'
 import PageCard from '@/components/common/PageCard.vue'
 import PortalPagination from '@/components/common/PortalPagination.vue'
 import { statusLabel, statusTagType } from '@/utils/status-label'
+import { formatDateTime } from '@/utils/datetime'
 import { useAuthStore } from '@/stores/auth'
 import {
   fetchFavorites,
@@ -68,6 +69,69 @@ const SHARE_ZH: Record<string, string> = {
   FILE: '文件同步',
 }
 
+const TARGET_TYPE_OPTS = [
+  { value: 'INTERNAL_SYSTEM', label: '内部系统' },
+  { value: 'SUPERIOR', label: '上级单位' },
+  { value: 'CITY_BIGDATA', label: '市大数据中心' },
+  { value: 'NATIONAL_LOCAL_BIGDATA', label: '国家/地方大数据中心' },
+  { value: 'THIRD_PARTY', label: '第三方业务应用' },
+]
+
+interface NoticeRow {
+  id: number
+  subscriptionId: number
+  resourceId: number
+  changeType: string
+  title: string
+  detail?: string
+  notifyUser?: string
+  notifyOrg?: string
+  status: string
+  ackedAt?: string
+  createdAt?: string
+  resourceCode?: string
+  resourceName?: string
+  providerOrg?: string
+  physicalTableName?: string
+  versionNo?: number
+}
+
+interface TargetRow {
+  id: number
+  subscriptionId: number
+  resourceId: number
+  targetType: string
+  targetName: string
+  targetOrg?: string
+  targetEndpoint?: string
+  shareMode?: string
+  autoPush?: boolean
+  status: string
+  remark?: string
+  resourceName?: string
+  applicantOrg?: string
+  subscriptionStatus?: string
+  createdAt?: string
+}
+
+interface DistLogRow {
+  id: number
+  subscriptionId: number
+  targetId?: number
+  resourceId: number
+  triggerType: string
+  changeType?: string
+  targetType?: string
+  targetName?: string
+  shareMode?: string
+  status: string
+  resultSummary?: string
+  createdAt?: string
+  finishedAt?: string
+  resourceName?: string
+  resourceCode?: string
+}
+
 const route = useRoute()
 const router = useRouter()
 const auth = useAuthStore()
@@ -76,8 +140,13 @@ const mineRows = ref<SubRow[]>([])
 const pendingRows = ref<SubRow[]>([])
 const reviewedRows = ref<SubRow[]>([])
 const favoriteRows = ref<PortalFavorite[]>([])
+const noticeRows = ref<NoticeRow[]>([])
+const targetRows = ref<TargetRow[]>([])
+const distLogRows = ref<DistLogRow[]>([])
 const loading = ref(false)
 const statusFilter = ref('')
+const noticeStatusFilter = ref('')
+const distScope = ref<'targets' | 'logs'>('targets')
 const minePage = ref(1)
 const minePageSize = ref(10)
 const pendingPage = ref(1)
@@ -86,11 +155,30 @@ const reviewedPage = ref(1)
 const reviewedPageSize = ref(10)
 const favPage = ref(1)
 const favPageSize = ref(10)
+const noticePage = ref(1)
+const noticePageSize = ref(10)
+const targetPage = ref(1)
+const targetPageSize = ref(10)
+const logPage = ref(1)
+const logPageSize = ref(10)
 const reviewForm = reactive({
   reviewerName: '',
   reviewerContact: '',
   note: '',
 })
+const targetForm = reactive({
+  visible: false,
+  id: null as number | null,
+  subscriptionId: null as number | null,
+  targetType: 'INTERNAL_SYSTEM',
+  targetName: '',
+  targetOrg: '',
+  targetEndpoint: '',
+  shareMode: 'DB_SYNC',
+  autoPush: true,
+  remark: '',
+})
+const approvedSubs = ref<SubRow[]>([])
 
 const subDetail = reactive<{
   visible: boolean
@@ -114,10 +202,26 @@ const pagedFav = computed(() => {
   const start = (favPage.value - 1) * favPageSize.value
   return favoriteRows.value.slice(start, start + favPageSize.value)
 })
+const pagedNotices = computed(() => {
+  const start = (noticePage.value - 1) * noticePageSize.value
+  return noticeRows.value.slice(start, start + noticePageSize.value)
+})
+const pagedTargets = computed(() => {
+  const start = (targetPage.value - 1) * targetPageSize.value
+  return targetRows.value.slice(start, start + targetPageSize.value)
+})
+const pagedLogs = computed(() => {
+  const start = (logPage.value - 1) * logPageSize.value
+  return distLogRows.value.slice(start, start + logPageSize.value)
+})
 
 function shareLabel(mode?: string) {
   if (!mode) return '—'
   return SHARE_ZH[mode] || statusLabel(mode)
+}
+
+function targetTypeLabel(t?: string) {
+  return TARGET_TYPE_OPTS.find((x) => x.value === t)?.label || statusLabel(t) || '—'
 }
 
 function showApiCredential(row: SubRow | null) {
@@ -158,7 +262,7 @@ function payloadVal(obj: Record<string, unknown>, key: string) {
 }
 
 function fmtTime(v?: string) {
-  return v ? String(v).replace('T', ' ').slice(0, 19) : '—'
+  return formatDateTime(v)
 }
 
 async function loadMine() {
@@ -216,16 +320,66 @@ async function loadFavorites() {
   favPage.value = 1
 }
 
+async function loadNotices() {
+  loading.value = true
+  try {
+    const res = await api.get('/governance/catalog/subscriptions/notices', {
+      params: { status: noticeStatusFilter.value || undefined },
+    })
+    noticeRows.value = res.data || []
+    noticePage.value = 1
+  } catch {
+    ElMessage.error('加载变更通知失败')
+  } finally {
+    loading.value = false
+  }
+}
+
+async function loadDistribute() {
+  loading.value = true
+  try {
+    if (distScope.value === 'targets') {
+      const [tRes, sRes] = await Promise.all([
+        api.get('/governance/catalog/subscriptions/distribute-targets'),
+        api.get('/governance/catalog/subscriptions', { params: { status: undefined } }),
+      ])
+      targetRows.value = tRes.data || []
+      const all = (sRes.data || []) as SubRow[]
+      approvedSubs.value = all.filter((r) =>
+        ['APPROVED', 'DISTRIBUTED'].includes(String(r.status || '').toUpperCase()),
+      )
+      targetPage.value = 1
+    } else {
+      const res = await api.get('/governance/catalog/subscriptions/distribute-logs')
+      distLogRows.value = res.data || []
+      logPage.value = 1
+    }
+  } catch {
+    ElMessage.error('加载分发数据失败')
+  } finally {
+    loading.value = false
+  }
+}
+
 async function load() {
   if (activeTab.value === 'mine') await loadMine()
   else if (activeTab.value === 'pending') await loadPending()
   else if (activeTab.value === 'reviewed') await loadReviewed()
+  else if (activeTab.value === 'notices') await loadNotices()
+  else if (activeTab.value === 'distribute') await loadDistribute()
   else await loadFavorites()
 }
 
 function syncTabFromRoute() {
   const t = String(route.query.subTab || '')
-  if (t === 'favorites' || t === 'pending' || t === 'mine' || t === 'reviewed') {
+  if (
+    t === 'favorites' ||
+    t === 'pending' ||
+    t === 'mine' ||
+    t === 'reviewed' ||
+    t === 'notices' ||
+    t === 'distribute'
+  ) {
     activeTab.value = t
   }
 }
@@ -370,10 +524,119 @@ function openFavorite(row: PortalFavorite) {
   })
 }
 
+async function markNoticeRead(row: NoticeRow) {
+  await api.post(`/governance/catalog/subscriptions/notices/${row.id}/read`)
+  await loadNotices()
+}
+
+async function ackNotice(row: NoticeRow) {
+  await ElMessageBox.confirm(
+    '确认已了解最新情况并完成/安排本地数据更新？',
+    '确认已知晓',
+    { type: 'info' },
+  )
+  await api.post(`/governance/catalog/subscriptions/notices/${row.id}/ack`)
+  ElMessage.success('已确认')
+  await loadNotices()
+}
+
+function openNoticeResource(row: NoticeRow) {
+  router.push({
+    query: {
+      ...route.query,
+      tab: 'catalog',
+      cSub: 'portal',
+      resourceId: String(row.resourceId),
+    },
+  })
+}
+
+function openTargetDialog(row?: TargetRow) {
+  if (row) {
+    targetForm.visible = true
+    targetForm.id = row.id
+    targetForm.subscriptionId = row.subscriptionId
+    targetForm.targetType = row.targetType || 'INTERNAL_SYSTEM'
+    targetForm.targetName = row.targetName || ''
+    targetForm.targetOrg = row.targetOrg || ''
+    targetForm.targetEndpoint = row.targetEndpoint || ''
+    targetForm.shareMode = row.shareMode || 'DB_SYNC'
+    targetForm.autoPush = row.autoPush !== false
+    targetForm.remark = row.remark || ''
+    return
+  }
+  if (!approvedSubs.value.length) {
+    ElMessage.warning('暂无已通过的订阅，请先在门户申请并审批通过')
+    return
+  }
+  targetForm.visible = true
+  targetForm.id = null
+  targetForm.subscriptionId = approvedSubs.value[0]?.id ?? null
+  targetForm.targetType = 'INTERNAL_SYSTEM'
+  targetForm.targetName = ''
+  targetForm.targetOrg = ''
+  targetForm.targetEndpoint = ''
+  targetForm.shareMode = 'DB_SYNC'
+  targetForm.autoPush = true
+  targetForm.remark = ''
+}
+
+async function saveTarget() {
+  if (!targetForm.subscriptionId) {
+    ElMessage.warning('请选择订阅申请')
+    return
+  }
+  if (!targetForm.targetName.trim()) {
+    ElMessage.warning('请填写目标名称')
+    return
+  }
+  const body = {
+    id: targetForm.id,
+    subscriptionId: targetForm.subscriptionId,
+    targetType: targetForm.targetType,
+    targetName: targetForm.targetName.trim(),
+    targetOrg: targetForm.targetOrg.trim() || undefined,
+    targetEndpoint: targetForm.targetEndpoint.trim() || undefined,
+    shareMode: targetForm.shareMode,
+    autoPush: targetForm.autoPush,
+    remark: targetForm.remark.trim() || undefined,
+    status: 'ACTIVE',
+  }
+  if (targetForm.id) {
+    await api.put(`/governance/catalog/subscriptions/distribute-targets/${targetForm.id}`, body)
+  } else {
+    await api.post('/governance/catalog/subscriptions/distribute-targets', body)
+  }
+  ElMessage.success('已保存分发目标')
+  targetForm.visible = false
+  distScope.value = 'targets'
+  await loadDistribute()
+}
+
+async function removeTarget(row: TargetRow) {
+  await ElMessageBox.confirm(`确认删除分发目标「${row.targetName}」？`, '删除', { type: 'warning' })
+  await api.delete(`/governance/catalog/subscriptions/distribute-targets/${row.id}`)
+  ElMessage.success('已删除')
+  await loadDistribute()
+}
+
+async function pushTarget(row: TargetRow) {
+  const res = await api.post(`/governance/catalog/subscriptions/${row.subscriptionId}/distribute-now`, {
+    targetId: row.id,
+  })
+  ElMessage.success(`已触发分发（${res.data?.count ?? 0}）`)
+  distScope.value = 'logs'
+  await loadDistribute()
+}
+
 watch(activeTab, (t) => {
   const q = { ...route.query, subTab: t }
   router.replace({ query: q })
   void load()
+})
+
+watch(distScope, () => {
+  if (activeTab.value === 'distribute') void loadDistribute()
 })
 
 watch(
@@ -599,6 +862,181 @@ onActivated(() => {
           :total="favoriteRows.length"
         />
       </el-tab-pane>
+
+      <el-tab-pane label="变更通知" name="notices" lazy>
+        <p class="hint">
+          共用基础数据与专业数据发布到门户并被订阅后，资源发生变更、新增或再发布时，订阅单位可在此及时了解最新情况并确认更新。
+        </p>
+        <el-form inline class="portal-inline-form portal-inline-form--block">
+          <el-form-item label="状态" class="portal-field-sm">
+            <el-select v-model="noticeStatusFilter" clearable placeholder="全部">
+              <el-option label="未读" value="UNREAD" />
+              <el-option label="已读" value="READ" />
+              <el-option label="已确认" value="ACKED" />
+            </el-select>
+          </el-form-item>
+          <el-form-item class="portal-form-actions">
+            <el-button type="primary" @click="loadNotices">查询</el-button>
+            <el-button
+              @click="
+                () => {
+                  noticeStatusFilter = ''
+                  void loadNotices()
+                }
+              "
+            >
+              重置
+            </el-button>
+          </el-form-item>
+        </el-form>
+        <el-empty v-if="!noticeRows.length && !loading" description="暂无变更通知" :image-size="72" />
+        <el-table v-else v-loading="loading" :data="pagedNotices" stripe size="small" border>
+          <el-table-column label="标题" min-width="200" show-overflow-tooltip>
+            <template #default="{ row }">
+              <button type="button" class="link-title" @click="openNoticeResource(row)">
+                {{ row.title }}
+              </button>
+            </template>
+          </el-table-column>
+          <el-table-column label="变更类型" width="110">
+            <template #default="{ row }">{{ statusLabel(row.changeType) }}</template>
+          </el-table-column>
+          <el-table-column prop="resourceName" label="资源" min-width="140" show-overflow-tooltip />
+          <el-table-column prop="providerOrg" label="提供方" width="120" show-overflow-tooltip />
+          <el-table-column label="说明" min-width="180" show-overflow-tooltip>
+            <template #default="{ row }">{{ row.detail || '—' }}</template>
+          </el-table-column>
+          <el-table-column label="状态" width="90">
+            <template #default="{ row }">
+              <el-tag size="small" :type="statusTagType(row.status)">{{ statusLabel(row.status) }}</el-tag>
+            </template>
+          </el-table-column>
+          <el-table-column label="通知时间" width="170">
+            <template #default="{ row }">{{ fmtTime(row.createdAt) }}</template>
+          </el-table-column>
+          <el-table-column label="操作" width="200" fixed="right">
+            <template #default="{ row }">
+              <el-button
+                v-if="row.status === 'UNREAD'"
+                link
+                type="primary"
+                @click="markNoticeRead(row)"
+              >
+                标已读
+              </el-button>
+              <el-button
+                v-if="row.status !== 'ACKED'"
+                link
+                type="success"
+                @click="ackNotice(row)"
+              >
+                确认已更新
+              </el-button>
+              <el-button link type="primary" @click="openNoticeResource(row)">查看资源</el-button>
+            </template>
+          </el-table-column>
+        </el-table>
+        <PortalPagination
+          v-if="noticeRows.length"
+          v-model:page="noticePage"
+          v-model:page-size="noticePageSize"
+          :total="noticeRows.length"
+        />
+      </el-tab-pane>
+
+      <el-tab-pane label="数据分发" name="distribute" lazy>
+        <p class="hint">
+          按订阅申请内容，将数据变更/新增推送至内部系统、上级、市大数据中心、国家/地方大数据中心及第三方业务应用。配置推送地址后将真实外呼；未配置则记分发台账。
+        </p>
+        <el-radio-group v-model="distScope" size="small" style="margin-bottom: 12px">
+          <el-radio-button value="targets">分发目标</el-radio-button>
+          <el-radio-button value="logs">分发台账</el-radio-button>
+        </el-radio-group>
+
+        <template v-if="distScope === 'targets'">
+          <el-form inline class="portal-inline-form portal-inline-form--block">
+            <el-form-item class="portal-form-actions">
+              <el-button type="primary" @click="openTargetDialog()">新增目标</el-button>
+              <el-button @click="loadDistribute">刷新</el-button>
+            </el-form-item>
+          </el-form>
+          <el-empty v-if="!targetRows.length && !loading" description="暂无分发目标，审批通过后会按申请自动生成，也可手工新增" :image-size="72" />
+          <el-table v-else v-loading="loading" :data="pagedTargets" stripe size="small" border>
+            <el-table-column prop="resourceName" label="资源" min-width="140" show-overflow-tooltip />
+            <el-table-column label="目标类型" width="150">
+              <template #default="{ row }">{{ targetTypeLabel(row.targetType) }}</template>
+            </el-table-column>
+            <el-table-column prop="targetName" label="目标名称" min-width="140" show-overflow-tooltip />
+            <el-table-column prop="targetOrg" label="目标单位" width="120" show-overflow-tooltip />
+            <el-table-column label="共享方式" width="100">
+              <template #default="{ row }">{{ shareLabel(row.shareMode) }}</template>
+            </el-table-column>
+            <el-table-column label="自动推送" width="90">
+              <template #default="{ row }">{{ row.autoPush ? '是' : '否' }}</template>
+            </el-table-column>
+            <el-table-column label="推送地址" min-width="160" show-overflow-tooltip>
+              <template #default="{ row }">{{ row.targetEndpoint || '（仅台账）' }}</template>
+            </el-table-column>
+            <el-table-column label="状态" width="90">
+              <template #default="{ row }">
+                <el-tag size="small" :type="statusTagType(row.status)">{{ statusLabel(row.status) }}</el-tag>
+              </template>
+            </el-table-column>
+            <el-table-column label="操作" width="180" fixed="right">
+              <template #default="{ row }">
+                <el-button link type="primary" @click="openTargetDialog(row)">编辑</el-button>
+                <el-button link type="success" @click="pushTarget(row)">立即分发</el-button>
+                <el-button link type="danger" @click="removeTarget(row)">删除</el-button>
+              </template>
+            </el-table-column>
+          </el-table>
+          <PortalPagination
+            v-if="targetRows.length"
+            v-model:page="targetPage"
+            v-model:page-size="targetPageSize"
+            :total="targetRows.length"
+          />
+        </template>
+
+        <template v-else>
+          <el-form inline class="portal-inline-form portal-inline-form--block">
+            <el-form-item class="portal-form-actions">
+              <el-button type="primary" @click="loadDistribute">刷新</el-button>
+            </el-form-item>
+          </el-form>
+          <el-empty v-if="!distLogRows.length && !loading" description="暂无分发台账" :image-size="72" />
+          <el-table v-else v-loading="loading" :data="pagedLogs" stripe size="small" border>
+            <el-table-column prop="resourceName" label="资源" min-width="140" show-overflow-tooltip />
+            <el-table-column label="触发" width="90">
+              <template #default="{ row }">{{ statusLabel(row.triggerType) }}</template>
+            </el-table-column>
+            <el-table-column label="变更类型" width="100">
+              <template #default="{ row }">{{ row.changeType ? statusLabel(row.changeType) : '—' }}</template>
+            </el-table-column>
+            <el-table-column label="目标类型" width="140">
+              <template #default="{ row }">{{ targetTypeLabel(row.targetType) }}</template>
+            </el-table-column>
+            <el-table-column prop="targetName" label="目标" min-width="120" show-overflow-tooltip />
+            <el-table-column label="状态" width="90">
+              <template #default="{ row }">
+                <el-tag size="small" :type="statusTagType(row.status)">{{ statusLabel(row.status) }}</el-tag>
+              </template>
+            </el-table-column>
+            <el-table-column label="结果" min-width="200" show-overflow-tooltip>
+              <template #default="{ row }">{{ row.resultSummary || '—' }}</template>
+            </el-table-column>
+            <el-table-column label="时间" width="170">
+              <template #default="{ row }">{{ fmtTime(row.createdAt) }}</template>
+            </el-table-column>
+          </el-table>
+          <PortalPagination
+            v-if="distLogRows.length"
+            v-model:page="logPage"
+            v-model:page-size="logPageSize"
+            :total="distLogRows.length"
+          />
+        </template>
+      </el-tab-pane>
     </el-tabs>
 
     <el-drawer
@@ -784,6 +1222,52 @@ onActivated(() => {
         </div>
       </template>
     </el-drawer>
+
+    <el-dialog v-model="targetForm.visible" :title="targetForm.id ? '编辑分发目标' : '新增分发目标'" width="560px" destroy-on-close>
+      <el-form label-width="110px">
+        <el-form-item label="订阅申请" required>
+          <el-select v-model="targetForm.subscriptionId" filterable placeholder="选择已通过的订阅" style="width: 100%">
+            <el-option
+              v-for="s in approvedSubs"
+              :key="s.id"
+              :label="`${s.resourceName || s.resourceId}（#${s.id}）`"
+              :value="s.id"
+            />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="目标类型" required>
+          <el-select v-model="targetForm.targetType" style="width: 100%">
+            <el-option v-for="o in TARGET_TYPE_OPTS" :key="o.value" :label="o.label" :value="o.value" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="目标名称" required>
+          <el-input v-model="targetForm.targetName" maxlength="128" placeholder="系统/中心名称" />
+        </el-form-item>
+        <el-form-item label="目标单位">
+          <el-input v-model="targetForm.targetOrg" maxlength="128" />
+        </el-form-item>
+        <el-form-item label="推送地址">
+          <el-input v-model="targetForm.targetEndpoint" maxlength="512" placeholder="可选；填写后变更时 POST JSON 推送" />
+        </el-form-item>
+        <el-form-item label="共享方式">
+          <el-select v-model="targetForm.shareMode" style="width: 100%">
+            <el-option label="库表同步" value="DB_SYNC" />
+            <el-option label="文件同步" value="FILE_SYNC" />
+            <el-option label="接口服务" value="API" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="变更自动推送">
+          <el-switch v-model="targetForm.autoPush" />
+        </el-form-item>
+        <el-form-item label="备注">
+          <el-input v-model="targetForm.remark" type="textarea" :rows="2" maxlength="500" />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="targetForm.visible = false">取消</el-button>
+        <el-button type="primary" @click="saveTarget">保存</el-button>
+      </template>
+    </el-dialog>
   </PageCard>
 </template>
 
