@@ -64,7 +64,22 @@ public class SecurityConfigService {
     }
 
     public boolean isTwoFactorEnabled() {
-        return "true".equalsIgnoreCase(get("two_factor_enabled", "false"));
+        return "true".equalsIgnoreCase(get("two_factor_enabled", "false")) || isSecondFactorRequired();
+    }
+
+    /** 短信或 TOTP 任一开启时，登录需第二因子（验证码字段） */
+    public boolean isSecondFactorRequired() {
+        return isAuthMethodEnabled("sms", false) || isAuthMethodEnabled("totp", false);
+    }
+
+    public boolean isAuthMethodEnabled(String method, boolean defaultEnabled) {
+        String key = "auth_method_" + method;
+        String def = defaultEnabled ? "true" : "false";
+        return "true".equalsIgnoreCase(get(key, def));
+    }
+
+    public String smsDemoCode() {
+        return get("auth_sms_demo_code", "000000");
     }
 
     public boolean isAuditEnabled() {

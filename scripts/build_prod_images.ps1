@@ -1,4 +1,4 @@
-﻿# 按远程分支构建生产前后端镜像并 docker save
+# 按远程分支构建生产前后端镜像并 docker save
 # 用法: .\scripts\build_prod_images.ps1 -Branch feature_yxj
 # 默认 git fetch 后按 origin/<分支> 构建（不以本机工作区为准）
 # 默认输出到仓库根目录 release/
@@ -79,19 +79,30 @@ try {
   Write-Host "==> 本机构建前端 dist（npm）..."
   Push-Location $webDir
   try {
-    # 复用主仓库 node_modules，避免每次 npm ci 联网
+    # 复用主仓库 node_modules 须完整（含 .bin 与 rolldown 原生绑定）；残缺则在 worktree 里 npm ci
     $srcModules = Join-Path $Root "platform-frontend\node_modules"
-    if ((Test-Path $srcModules) -and (-not (Test-Path (Join-Path $webDir "node_modules")))) {
+    $reuseOk = (Test-Path $srcModules) `
+      -and (Test-Path (Join-Path $srcModules ".bin")) `
+      -and (Test-Path (Join-Path $srcModules "vite\bin\vite.js")) `
+      -and (Test-Path (Join-Path $srcModules "@rolldown\binding-win32-x64-msvc"))
+    if ($reuseOk -and (-not (Test-Path (Join-Path $webDir "node_modules")))) {
       Write-Host "    复用本仓库 node_modules"
       cmd /c mklink /J "$webDir\node_modules" "$srcModules" | Out-Null
     }
     if (-not (Test-Path (Join-Path $webDir "node_modules"))) {
+      Write-Host "    本仓库 node_modules 不完整，worktree 内 npm ci"
       npm ci
       if ($LASTEXITCODE -ne 0) { throw "npm ci 失败" }
     }
     # 只跑 vite build：npm run build 含 vue-tsc 类型检查，
     # 当前仓库存在未使用变量等历史类型告警，会阻断发版但不影响产物
-    npx vite build
+    # Windows 上 npx.ps1 常找不到 .bin/vite；本仓库 node_modules 也可能没有 .bin
+    $viteJs = Join-Path $webDir "node_modules\vite\bin\vite.js"
+    if (Test-Path $viteJs) {
+      node $viteJs build
+    } else {
+      npx.cmd vite build
+    }
     if ($LASTEXITCODE -ne 0) { throw "vite build 失败" }
   } finally {
     Pop-Location
@@ -172,7 +183,10 @@ finally {
   # 先摘掉 node_modules 联接，否则删除会顺着联接删主仓库依赖
   $linkedModules = Join-Path $work "platform-frontend\node_modules"
   if (Test-Path $linkedModules) {
-    cmd /c rmdir "$linkedModules" 2>$null | Out-Null
+    $item = Get-Item $linkedModules -Force
+    if ($item.Attributes -band [IO.FileAttributes]::ReparsePoint) {
+      cmd /c rmdir "$linkedModules" 2>$null | Out-Null
+    }
   }
   git worktree remove --force $work 2>$null
   if (Test-Path $work) { Remove-Item -Recurse -Force $work -ErrorAction SilentlyContinue }

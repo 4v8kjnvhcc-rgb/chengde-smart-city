@@ -10,6 +10,9 @@ import com.chengde.smartcity.analysis.entity.AnaPopBatchLedger;
 import com.chengde.smartcity.analysis.entity.AnaPopServiceContract;
 import com.chengde.smartcity.analysis.entity.AnaPopVerifyLedger;
 import com.chengde.smartcity.analysis.entity.AnaZoneBinding;
+import com.chengde.smartcity.analysis.entity.AnaZoneDimDesign;
+import com.chengde.smartcity.analysis.entity.AnaZoneInternalClassify;
+import com.chengde.smartcity.analysis.entity.AnaZoneInternalGrant;
 import com.chengde.smartcity.analysis.entity.IndArea;
 import com.chengde.smartcity.analysis.entity.IndField;
 import com.chengde.smartcity.analysis.entity.IndGroup;
@@ -21,6 +24,9 @@ import com.chengde.smartcity.analysis.mapper.AnaPopBatchLedgerMapper;
 import com.chengde.smartcity.analysis.mapper.AnaPopServiceContractMapper;
 import com.chengde.smartcity.analysis.mapper.AnaPopVerifyLedgerMapper;
 import com.chengde.smartcity.analysis.mapper.AnaZoneBindingMapper;
+import com.chengde.smartcity.analysis.mapper.AnaZoneDimDesignMapper;
+import com.chengde.smartcity.analysis.mapper.AnaZoneInternalClassifyMapper;
+import com.chengde.smartcity.analysis.mapper.AnaZoneInternalGrantMapper;
 import com.chengde.smartcity.audit.AuditService;
 import com.chengde.smartcity.common.exception.BusinessException;
 import com.chengde.smartcity.integration.config.IntegrationProperties;
@@ -56,10 +62,25 @@ public class AnalyticsDomainService {
 
     private static final Set<String> ZONES = Set.of("collect", "govern", "core", "internal", "share");
     private static final Set<String> AGGS = Set.of("COUNT", "SUM", "AVG", "MAX", "MIN", "EXPR");
+    private static final Set<String> DIM_CODES = Set.of(
+            "POSITION", "MODEL", "PROCESS", "RETENTION", "SOURCE", "CONSUMER", "FREQUENCY");
+    private static final Set<String> LEVEL_CODES = Set.of("GENERAL", "IMPORTANT", "SENSITIVE", "CORE");
+    private static final Set<String> GRANT_TYPES = Set.of("ROLE_GRANT", "DATA_ACCESS");
+    private static final Set<String> GRANTEE_TYPES = Set.of("USER", "ROLE", "ORG");
+    private static final Set<String> AUTH_MODES = Set.of("DUAL", "SINGLE");
+    private static final Set<String> PERMISSION_SCOPES = Set.of("READ", "EXPORT", "MASKED_READ");
+    private static final Map<String, String> LEVEL_NAME_MAP = Map.of(
+            "GENERAL", "一般数据",
+            "IMPORTANT", "重要数据",
+            "SENSITIVE", "敏感数据",
+            "CORE", "核心数据");
 
     private final AnaDomainModuleMapper moduleMapper;
     private final AnaAnalysisModelMapper modelMapper;
     private final AnaZoneBindingMapper zoneBindingMapper;
+    private final AnaZoneDimDesignMapper zoneDimDesignMapper;
+    private final AnaZoneInternalClassifyMapper zoneInternalClassifyMapper;
+    private final AnaZoneInternalGrantMapper zoneInternalGrantMapper;
     private final AnaIndicatorMapper indicatorMapper;
     private final IndicatorLedgerService indicatorLedgerService;
     private final IndicatorTaskService indicatorTaskService;
@@ -80,6 +101,9 @@ public class AnalyticsDomainService {
     public AnalyticsDomainService(AnaDomainModuleMapper moduleMapper,
                                   AnaAnalysisModelMapper modelMapper,
                                   AnaZoneBindingMapper zoneBindingMapper,
+                                  AnaZoneDimDesignMapper zoneDimDesignMapper,
+                                  AnaZoneInternalClassifyMapper zoneInternalClassifyMapper,
+                                  AnaZoneInternalGrantMapper zoneInternalGrantMapper,
                                   AnaIndicatorMapper indicatorMapper,
                                   IndicatorLedgerService indicatorLedgerService,
                                   @Lazy IndicatorTaskService indicatorTaskService,
@@ -98,6 +122,9 @@ public class AnalyticsDomainService {
                                   JdbcTemplate jdbcTemplate) {
         this.moduleMapper = moduleMapper;
         this.modelMapper = modelMapper;
+        this.zoneDimDesignMapper = zoneDimDesignMapper;
+        this.zoneInternalClassifyMapper = zoneInternalClassifyMapper;
+        this.zoneInternalGrantMapper = zoneInternalGrantMapper;
         this.zoneBindingMapper = zoneBindingMapper;
         this.indicatorMapper = indicatorMapper;
         this.indicatorLedgerService = indicatorLedgerService;
@@ -941,8 +968,8 @@ public class AnalyticsDomainService {
 
     public List<AnaPopVerifyLedger> listPopVerifyLedger(String domain, String mCode) {
         String d = normalizeDomain(domain);
-        if (!"population".equals(d)) {
-            throw new BusinessException(400, "校核台账仅支持人口域");
+        if (!"population".equals(d) && !"legal".equals(d)) {
+            throw new BusinessException(400, "校核台账仅支持人口/法人域");
         }
         LambdaQueryWrapper<AnaPopVerifyLedger> q = new LambdaQueryWrapper<AnaPopVerifyLedger>()
                 .eq(AnaPopVerifyLedger::getDomainCode, d)
@@ -956,12 +983,15 @@ public class AnalyticsDomainService {
     @Transactional
     public Long createPopVerifyLedger(UserPrincipal operator, String domain, Map<String, Object> body) {
         String d = normalizeDomain(domain);
-        if (!"population".equals(d)) {
-            throw new BusinessException(400, "校核台账仅支持人口域");
+        if (!"population".equals(d) && !"legal".equals(d)) {
+            throw new BusinessException(400, "校核台账仅支持人口/法人域");
         }
         String mCode = String.valueOf(required(body.get("mCode"), "mCode")).toUpperCase(Locale.ROOT);
-        if (!"M155".equals(mCode) && !"M156".equals(mCode)) {
-            throw new BusinessException(400, "mCode 须为 M155 或 M156");
+        if ("population".equals(d) && !"M155".equals(mCode) && !"M156".equals(mCode)) {
+            throw new BusinessException(400, "人口域 mCode 须为 M155 或 M156");
+        }
+        if ("legal".equals(d) && !"M178".equals(mCode) && !"M179".equals(mCode)) {
+            throw new BusinessException(400, "法人域 mCode 须为 M178 或 M179");
         }
         AnaPopVerifyLedger row = new AnaPopVerifyLedger();
         row.setDomainCode(d);
@@ -1158,6 +1188,461 @@ public class AnalyticsDomainService {
             if (ind != null && "ACTIVE".equalsIgnoreCase(ind.getStatus())) ordered.add(ind);
         }
         return ordered;
+    }
+
+    // ---------- 五区七维设计登记（D02 §5.7） ----------
+
+    public List<AnaZoneDimDesign> listZoneDimDesigns(String domain, String zone, String dimCode) {
+        String d = normalizeDomain(domain);
+        String z = normalizeZone(zone);
+        LambdaQueryWrapper<AnaZoneDimDesign> q = new LambdaQueryWrapper<AnaZoneDimDesign>()
+                .eq(AnaZoneDimDesign::getDomainCode, d)
+                .eq(AnaZoneDimDesign::getZoneCode, z)
+                .ne(AnaZoneDimDesign::getStatus, "DELETED")
+                .orderByAsc(AnaZoneDimDesign::getDimCode)
+                .orderByAsc(AnaZoneDimDesign::getSortNo)
+                .orderByDesc(AnaZoneDimDesign::getId);
+        if (dimCode != null && !dimCode.isBlank()) {
+            q.eq(AnaZoneDimDesign::getDimCode, normalizeDimCode(dimCode));
+        }
+        return zoneDimDesignMapper.selectList(q);
+    }
+
+    @Transactional
+    public Long createZoneDimDesign(UserPrincipal operator, String domain, String zone, Map<String, Object> body) {
+        String d = normalizeDomain(domain);
+        String z = normalizeZone(zone);
+        String dim = normalizeDimCode(required(body.get("dimCode"), "dimCode"));
+        String itemCode = String.valueOf(required(body.get("itemCode"), "itemCode")).trim();
+        String itemName = String.valueOf(required(body.get("itemName"), "itemName")).trim();
+        AnaZoneDimDesign exists = zoneDimDesignMapper.selectOne(new LambdaQueryWrapper<AnaZoneDimDesign>()
+                .eq(AnaZoneDimDesign::getDomainCode, d)
+                .eq(AnaZoneDimDesign::getZoneCode, z)
+                .eq(AnaZoneDimDesign::getDimCode, dim)
+                .eq(AnaZoneDimDesign::getItemCode, itemCode)
+                .last("LIMIT 1"));
+        if (exists != null && !"DELETED".equalsIgnoreCase(exists.getStatus())) {
+            throw new BusinessException(400, "同维度下 itemCode 已存在: " + itemCode);
+        }
+        AnaZoneDimDesign row = exists != null ? exists : new AnaZoneDimDesign();
+        row.setDomainCode(d);
+        row.setZoneCode(z);
+        row.setDimCode(dim);
+        row.setItemCode(itemCode);
+        row.setItemName(itemName);
+        row.setItemType(str(body.get("itemType"), null));
+        row.setContent(str(body.get("content"), null));
+        row.setConfigJson(str(body.get("configJson"), null));
+        row.setDeepLink(str(body.get("deepLink"), null));
+        row.setSortNo(body.get("sortNo") == null ? 0 : Integer.parseInt(String.valueOf(body.get("sortNo"))));
+        row.setStatus(str(body.get("status"), "ACTIVE"));
+        row.setCreatedBy(operator.getUsername());
+        row.setUpdatedAt(LocalDateTime.now());
+        if (exists == null) {
+            row.setCreatedAt(LocalDateTime.now());
+            zoneDimDesignMapper.insert(row);
+        } else {
+            zoneDimDesignMapper.updateById(row);
+        }
+        auditService.log(operator.getUserId(), operator.getUsername(), operator.getOrgId(),
+                "ANA_ZONE_DIM_CREATE", d + "/" + z, dim, itemCode);
+        return row.getId();
+    }
+
+    @Transactional
+    public void updateZoneDimDesign(UserPrincipal operator, Long id, Map<String, Object> body) {
+        AnaZoneDimDesign row = zoneDimDesignMapper.selectById(id);
+        if (row == null || "DELETED".equalsIgnoreCase(row.getStatus())) {
+            throw new BusinessException(404, "七维设计项不存在");
+        }
+        if (body.containsKey("itemName")) row.setItemName(String.valueOf(required(body.get("itemName"), "itemName")).trim());
+        if (body.containsKey("itemType")) row.setItemType(str(body.get("itemType"), null));
+        if (body.containsKey("content")) row.setContent(str(body.get("content"), null));
+        if (body.containsKey("configJson")) row.setConfigJson(str(body.get("configJson"), null));
+        if (body.containsKey("deepLink")) row.setDeepLink(str(body.get("deepLink"), null));
+        if (body.containsKey("sortNo") && body.get("sortNo") != null) {
+            row.setSortNo(Integer.parseInt(String.valueOf(body.get("sortNo"))));
+        }
+        if (body.containsKey("status")) {
+            String st = str(body.get("status"), "ACTIVE");
+            if (!Set.of("ACTIVE", "INACTIVE").contains(st)) {
+                throw new BusinessException(400, "status 须为 ACTIVE|INACTIVE");
+            }
+            row.setStatus(st);
+        }
+        if (body.containsKey("dimCode")) {
+            row.setDimCode(normalizeDimCode(body.get("dimCode")));
+        }
+        if (body.containsKey("itemCode")) {
+            String itemCode = String.valueOf(required(body.get("itemCode"), "itemCode")).trim();
+            AnaZoneDimDesign clash = zoneDimDesignMapper.selectOne(new LambdaQueryWrapper<AnaZoneDimDesign>()
+                    .eq(AnaZoneDimDesign::getDomainCode, row.getDomainCode())
+                    .eq(AnaZoneDimDesign::getZoneCode, row.getZoneCode())
+                    .eq(AnaZoneDimDesign::getDimCode, row.getDimCode())
+                    .eq(AnaZoneDimDesign::getItemCode, itemCode)
+                    .ne(AnaZoneDimDesign::getId, id)
+                    .ne(AnaZoneDimDesign::getStatus, "DELETED")
+                    .last("LIMIT 1"));
+            if (clash != null) throw new BusinessException(400, "同维度下 itemCode 已存在: " + itemCode);
+            row.setItemCode(itemCode);
+        }
+        row.setUpdatedAt(LocalDateTime.now());
+        zoneDimDesignMapper.updateById(row);
+        auditService.log(operator.getUserId(), operator.getUsername(), operator.getOrgId(),
+                "ANA_ZONE_DIM_UPDATE", row.getDomainCode() + "/" + row.getZoneCode(),
+                row.getDimCode(), row.getItemCode());
+    }
+
+    @Transactional
+    public void deleteZoneDimDesign(UserPrincipal operator, Long id) {
+        AnaZoneDimDesign row = zoneDimDesignMapper.selectById(id);
+        if (row == null || "DELETED".equalsIgnoreCase(row.getStatus())) {
+            throw new BusinessException(404, "七维设计项不存在");
+        }
+        row.setStatus("DELETED");
+        row.setUpdatedAt(LocalDateTime.now());
+        zoneDimDesignMapper.updateById(row);
+        auditService.log(operator.getUserId(), operator.getUsername(), operator.getOrgId(),
+                "ANA_ZONE_DIM_DELETE", row.getDomainCode() + "/" + row.getZoneCode(),
+                row.getDimCode(), row.getItemCode());
+    }
+
+    public List<AnaZoneInternalClassify> listInternalClassifies(String domain, String zone, String levelCode, String status) {
+        String d = normalizeDomain(domain);
+        String z = normalizeInternalZone(zone);
+        LambdaQueryWrapper<AnaZoneInternalClassify> q = new LambdaQueryWrapper<AnaZoneInternalClassify>()
+                .eq(AnaZoneInternalClassify::getDomainCode, d)
+                .eq(AnaZoneInternalClassify::getZoneCode, z)
+                .ne(AnaZoneInternalClassify::getStatus, "DELETED")
+                .orderByAsc(AnaZoneInternalClassify::getSortNo)
+                .orderByDesc(AnaZoneInternalClassify::getId);
+        if (levelCode != null && !levelCode.isBlank()) {
+            q.eq(AnaZoneInternalClassify::getLevelCode, normalizeLevelCode(levelCode));
+        }
+        if (status != null && !status.isBlank()) {
+            q.eq(AnaZoneInternalClassify::getStatus, status.trim().toUpperCase(Locale.ROOT));
+        }
+        return zoneInternalClassifyMapper.selectList(q);
+    }
+
+    @Transactional
+    public Long createInternalClassify(UserPrincipal operator, String domain, String zone, Map<String, Object> body) {
+        String d = normalizeDomain(domain);
+        String z = normalizeInternalZone(zone);
+        String assetCode = String.valueOf(required(body.get("assetCode"), "assetCode")).trim();
+        String assetName = String.valueOf(required(body.get("assetName"), "assetName")).trim();
+        String categoryCode = String.valueOf(required(body.get("categoryCode"), "categoryCode")).trim().toUpperCase(Locale.ROOT);
+        String categoryName = String.valueOf(required(body.get("categoryName"), "categoryName")).trim();
+        String levelCode = normalizeLevelCode(body.get("levelCode"));
+        AnaZoneInternalClassify exists = zoneInternalClassifyMapper.selectOne(new LambdaQueryWrapper<AnaZoneInternalClassify>()
+                .eq(AnaZoneInternalClassify::getDomainCode, d)
+                .eq(AnaZoneInternalClassify::getZoneCode, z)
+                .eq(AnaZoneInternalClassify::getAssetCode, assetCode)
+                .ne(AnaZoneInternalClassify::getStatus, "DELETED")
+                .last("LIMIT 1"));
+        if (exists != null) {
+            throw new BusinessException(400, "该资产已有分级分类登记：" + assetCode);
+        }
+        AnaZoneInternalClassify row = new AnaZoneInternalClassify();
+        row.setDomainCode(d);
+        row.setZoneCode(z);
+        row.setAssetCode(assetCode);
+        row.setAssetName(assetName);
+        row.setCategoryCode(categoryCode);
+        row.setCategoryName(categoryName);
+        row.setLevelCode(levelCode);
+        row.setLevelName(str(body.get("levelName"), LEVEL_NAME_MAP.getOrDefault(levelCode, levelCode)));
+        row.setClassifyBasis(str(body.get("classifyBasis"), null));
+        row.setControlHint(str(body.get("controlHint"), null));
+        row.setBindingId(longVal(body.get("bindingId")));
+        row.setSortNo(body.get("sortNo") instanceof Number n ? n.intValue() : 0);
+        row.setStatus(str(body.get("status"), "ACTIVE").toUpperCase(Locale.ROOT));
+        row.setCreatedBy(operator.getUsername());
+        row.setCreatedAt(LocalDateTime.now());
+        zoneInternalClassifyMapper.insert(row);
+        auditService.log(operator.getUserId(), operator.getUsername(), operator.getOrgId(),
+                "ANA_ZONE_CLS_CREATE", d + "/" + z, assetCode, levelCode);
+        return row.getId();
+    }
+
+    @Transactional
+    public void updateInternalClassify(UserPrincipal operator, Long id, Map<String, Object> body) {
+        AnaZoneInternalClassify row = zoneInternalClassifyMapper.selectById(id);
+        if (row == null || "DELETED".equalsIgnoreCase(row.getStatus())) {
+            throw new BusinessException(404, "分级分类登记不存在");
+        }
+        if (body.containsKey("assetName")) row.setAssetName(String.valueOf(required(body.get("assetName"), "assetName")).trim());
+        if (body.containsKey("categoryCode")) {
+            row.setCategoryCode(String.valueOf(required(body.get("categoryCode"), "categoryCode")).trim().toUpperCase(Locale.ROOT));
+        }
+        if (body.containsKey("categoryName")) {
+            row.setCategoryName(String.valueOf(required(body.get("categoryName"), "categoryName")).trim());
+        }
+        if (body.containsKey("levelCode")) {
+            String levelCode = normalizeLevelCode(body.get("levelCode"));
+            row.setLevelCode(levelCode);
+            row.setLevelName(str(body.get("levelName"), LEVEL_NAME_MAP.getOrDefault(levelCode, levelCode)));
+        } else if (body.containsKey("levelName")) {
+            row.setLevelName(str(body.get("levelName"), row.getLevelName()));
+        }
+        if (body.containsKey("classifyBasis")) row.setClassifyBasis(str(body.get("classifyBasis"), null));
+        if (body.containsKey("controlHint")) row.setControlHint(str(body.get("controlHint"), null));
+        if (body.containsKey("bindingId")) row.setBindingId(longVal(body.get("bindingId")));
+        if (body.containsKey("sortNo") && body.get("sortNo") instanceof Number n) row.setSortNo(n.intValue());
+        if (body.containsKey("status")) row.setStatus(str(body.get("status"), row.getStatus()).toUpperCase(Locale.ROOT));
+        row.setUpdatedAt(LocalDateTime.now());
+        zoneInternalClassifyMapper.updateById(row);
+        auditService.log(operator.getUserId(), operator.getUsername(), operator.getOrgId(),
+                "ANA_ZONE_CLS_UPDATE", row.getDomainCode() + "/" + row.getZoneCode(),
+                row.getAssetCode(), row.getLevelCode());
+    }
+
+    @Transactional
+    public void deleteInternalClassify(UserPrincipal operator, Long id) {
+        AnaZoneInternalClassify row = zoneInternalClassifyMapper.selectById(id);
+        if (row == null || "DELETED".equalsIgnoreCase(row.getStatus())) {
+            throw new BusinessException(404, "分级分类登记不存在");
+        }
+        row.setStatus("DELETED");
+        row.setUpdatedAt(LocalDateTime.now());
+        zoneInternalClassifyMapper.updateById(row);
+        auditService.log(operator.getUserId(), operator.getUsername(), operator.getOrgId(),
+                "ANA_ZONE_CLS_DELETE", row.getDomainCode() + "/" + row.getZoneCode(),
+                row.getAssetCode(), row.getLevelCode());
+    }
+
+    public List<AnaZoneInternalGrant> listInternalGrants(String domain, String zone, String grantType, String status) {
+        String d = normalizeDomain(domain);
+        String z = normalizeInternalZone(zone);
+        LambdaQueryWrapper<AnaZoneInternalGrant> q = new LambdaQueryWrapper<AnaZoneInternalGrant>()
+                .eq(AnaZoneInternalGrant::getDomainCode, d)
+                .eq(AnaZoneInternalGrant::getZoneCode, z)
+                .ne(AnaZoneInternalGrant::getStatus, "DELETED")
+                .orderByDesc(AnaZoneInternalGrant::getId);
+        if (grantType != null && !grantType.isBlank()) {
+            q.eq(AnaZoneInternalGrant::getGrantType, normalizeGrantType(grantType));
+        }
+        if (status != null && !status.isBlank()) {
+            q.eq(AnaZoneInternalGrant::getStatus, status.trim().toUpperCase(Locale.ROOT));
+        }
+        return zoneInternalGrantMapper.selectList(q);
+    }
+
+    @Transactional
+    public Long createInternalGrant(UserPrincipal operator, String domain, String zone, Map<String, Object> body) {
+        String d = normalizeDomain(domain);
+        String z = normalizeInternalZone(zone);
+        String grantType = normalizeGrantType(body.get("grantType"));
+        String granteeType = normalizeGranteeType(body.get("granteeType"));
+        String granteeCode = String.valueOf(required(body.get("granteeCode"), "granteeCode")).trim();
+        String assetCode = str(body.get("assetCode"), null);
+        if ("DATA_ACCESS".equals(grantType) && (assetCode == null || assetCode.isBlank())) {
+            throw new BusinessException(400, "数据访问授权必须指定资产编码 assetCode");
+        }
+        AnaZoneInternalGrant row = new AnaZoneInternalGrant();
+        row.setDomainCode(d);
+        row.setZoneCode(z);
+        row.setGrantType(grantType);
+        row.setGranteeType(granteeType);
+        row.setGranteeCode(granteeCode);
+        row.setGranteeName(str(body.get("granteeName"), granteeCode));
+        row.setAssetCode(assetCode);
+        row.setAssetName(str(body.get("assetName"), null));
+        if (body.get("levelCode") != null && !String.valueOf(body.get("levelCode")).isBlank()) {
+            row.setLevelCode(normalizeLevelCode(body.get("levelCode")));
+        }
+        row.setAuthMode(normalizeAuthMode(body.get("authMode"), "DATA_ACCESS".equals(grantType) ? "DUAL" : "SINGLE"));
+        if (body.get("permissionScope") != null && !String.valueOf(body.get("permissionScope")).isBlank()) {
+            row.setPermissionScope(normalizePermissionScope(body.get("permissionScope")));
+        } else if ("DATA_ACCESS".equals(grantType)) {
+            row.setPermissionScope("MASKED_READ");
+        }
+        row.setReason(str(body.get("reason"), null));
+        row.setApplicant(operator.getUsername());
+        row.setCreatedBy(operator.getUsername());
+        row.setCreatedAt(LocalDateTime.now());
+
+        // 双重授权硬口径：系统管理员不可直接将跨部门数据访问设为生效
+        String requested = str(body.get("status"), null);
+        if ("DATA_ACCESS".equals(grantType) && operator.isSystemAdmin() && !operator.isDeptAdmin()) {
+            row.setStatus("PENDING");
+            row.setAuthMode("DUAL");
+        } else if (requested != null) {
+            row.setStatus(requested.toUpperCase(Locale.ROOT));
+        } else if ("ROLE_GRANT".equals(grantType) && operator.isSystemAdmin()) {
+            row.setStatus("ACTIVE");
+        } else if (operator.isDeptAdmin()) {
+            row.setStatus("ACTIVE");
+            row.setApprovedBy(operator.getUsername());
+            row.setApprovedAt(LocalDateTime.now());
+        } else {
+            row.setStatus("PENDING");
+        }
+
+        zoneInternalGrantMapper.insert(row);
+        auditService.log(operator.getUserId(), operator.getUsername(), operator.getOrgId(),
+                "ANA_ZONE_GRANT_CREATE", d + "/" + z, grantType, granteeCode);
+        return row.getId();
+    }
+
+    @Transactional
+    public void updateInternalGrant(UserPrincipal operator, Long id, Map<String, Object> body) {
+        AnaZoneInternalGrant row = zoneInternalGrantMapper.selectById(id);
+        if (row == null || "DELETED".equalsIgnoreCase(row.getStatus())) {
+            throw new BusinessException(404, "授权记录不存在");
+        }
+        if ("ACTIVE".equalsIgnoreCase(row.getStatus()) || "REVOKED".equalsIgnoreCase(row.getStatus())) {
+            throw new BusinessException(400, "已生效或已撤销的授权请通过审批/撤销操作变更，不可直接改主档");
+        }
+        if (body.containsKey("granteeName")) row.setGranteeName(str(body.get("granteeName"), row.getGranteeName()));
+        if (body.containsKey("assetName")) row.setAssetName(str(body.get("assetName"), row.getAssetName()));
+        if (body.containsKey("levelCode") && body.get("levelCode") != null && !String.valueOf(body.get("levelCode")).isBlank()) {
+            row.setLevelCode(normalizeLevelCode(body.get("levelCode")));
+        }
+        if (body.containsKey("permissionScope") && body.get("permissionScope") != null
+                && !String.valueOf(body.get("permissionScope")).isBlank()) {
+            row.setPermissionScope(normalizePermissionScope(body.get("permissionScope")));
+        }
+        if (body.containsKey("reason")) row.setReason(str(body.get("reason"), null));
+        if (body.containsKey("authMode")) {
+            row.setAuthMode(normalizeAuthMode(body.get("authMode"), row.getAuthMode()));
+        }
+        row.setUpdatedAt(LocalDateTime.now());
+        zoneInternalGrantMapper.updateById(row);
+        auditService.log(operator.getUserId(), operator.getUsername(), operator.getOrgId(),
+                "ANA_ZONE_GRANT_UPDATE", row.getDomainCode() + "/" + row.getZoneCode(),
+                row.getGrantType(), row.getGranteeCode());
+    }
+
+    @Transactional
+    public void decideInternalGrant(UserPrincipal operator, Long id, String action) {
+        AnaZoneInternalGrant row = zoneInternalGrantMapper.selectById(id);
+        if (row == null || "DELETED".equalsIgnoreCase(row.getStatus())) {
+            throw new BusinessException(404, "授权记录不存在");
+        }
+        String act = action == null ? "" : action.trim().toUpperCase(Locale.ROOT);
+        if ("APPROVE".equals(act)) {
+            if (!"PENDING".equalsIgnoreCase(row.getStatus())) {
+                throw new BusinessException(400, "仅待审核记录可审批通过");
+            }
+            // 双重授权：数据访问须部门管理员审批；系统管理员不能单独终审把自己创建的 DATA_ACCESS 变生效
+            if ("DATA_ACCESS".equalsIgnoreCase(row.getGrantType()) && "DUAL".equalsIgnoreCase(row.getAuthMode())) {
+                if (operator.isSystemAdmin() && !operator.isDeptAdmin()
+                        && operator.getUsername() != null
+                        && operator.getUsername().equalsIgnoreCase(row.getApplicant())) {
+                    throw new BusinessException(403, "双重授权：系统管理员不可独自终审本人发起的数据访问授权，请由部门管理员审批");
+                }
+                if (!operator.isDeptAdmin() && !operator.isSystemAdmin()) {
+                    throw new BusinessException(403, "无审批权限");
+                }
+            } else if (!operator.isSystemAdmin() && !operator.isDeptAdmin()) {
+                throw new BusinessException(403, "无审批权限");
+            }
+            row.setStatus("ACTIVE");
+            row.setApprovedBy(operator.getUsername());
+            row.setApprovedAt(LocalDateTime.now());
+        } else if ("REJECT".equals(act)) {
+            if (!"PENDING".equalsIgnoreCase(row.getStatus())) {
+                throw new BusinessException(400, "仅待审核记录可驳回");
+            }
+            if (!operator.isDeptAdmin() && !operator.isSystemAdmin()) {
+                throw new BusinessException(403, "无审批权限");
+            }
+            row.setStatus("REJECTED");
+            row.setApprovedBy(operator.getUsername());
+            row.setApprovedAt(LocalDateTime.now());
+        } else if ("REVOKE".equals(act)) {
+            if (!"ACTIVE".equalsIgnoreCase(row.getStatus())) {
+                throw new BusinessException(400, "仅已生效授权可撤销");
+            }
+            if (!operator.isDeptAdmin() && !operator.isSystemAdmin()) {
+                throw new BusinessException(403, "无撤销权限");
+            }
+            row.setStatus("REVOKED");
+            row.setUpdatedAt(LocalDateTime.now());
+        } else {
+            throw new BusinessException(400, "action 须为 APPROVE|REJECT|REVOKE");
+        }
+        row.setUpdatedAt(LocalDateTime.now());
+        zoneInternalGrantMapper.updateById(row);
+        auditService.log(operator.getUserId(), operator.getUsername(), operator.getOrgId(),
+                "ANA_ZONE_GRANT_" + act, row.getDomainCode() + "/" + row.getZoneCode(),
+                row.getGrantType(), row.getGranteeCode());
+    }
+
+    @Transactional
+    public void deleteInternalGrant(UserPrincipal operator, Long id) {
+        AnaZoneInternalGrant row = zoneInternalGrantMapper.selectById(id);
+        if (row == null || "DELETED".equalsIgnoreCase(row.getStatus())) {
+            throw new BusinessException(404, "授权记录不存在");
+        }
+        if ("ACTIVE".equalsIgnoreCase(row.getStatus())) {
+            throw new BusinessException(400, "已生效授权请先撤销再删除");
+        }
+        row.setStatus("DELETED");
+        row.setUpdatedAt(LocalDateTime.now());
+        zoneInternalGrantMapper.updateById(row);
+        auditService.log(operator.getUserId(), operator.getUsername(), operator.getOrgId(),
+                "ANA_ZONE_GRANT_DELETE", row.getDomainCode() + "/" + row.getZoneCode(),
+                row.getGrantType(), row.getGranteeCode());
+    }
+
+    private static String normalizeInternalZone(String zone) {
+        String z = normalizeZone(zone);
+        if (!"internal".equals(z)) {
+            throw new BusinessException(400, "分级分类/双重授权仅适用于内部服务区 zone=internal");
+        }
+        return z;
+    }
+
+    private static String normalizeLevelCode(Object v) {
+        String s = String.valueOf(required(v, "levelCode")).trim().toUpperCase(Locale.ROOT);
+        if (!LEVEL_CODES.contains(s)) {
+            throw new BusinessException(400, "levelCode 须为 GENERAL|IMPORTANT|SENSITIVE|CORE");
+        }
+        return s;
+    }
+
+    private static String normalizeGrantType(Object v) {
+        String s = String.valueOf(required(v, "grantType")).trim().toUpperCase(Locale.ROOT);
+        if (!GRANT_TYPES.contains(s)) {
+            throw new BusinessException(400, "grantType 须为 ROLE_GRANT|DATA_ACCESS");
+        }
+        return s;
+    }
+
+    private static String normalizeGranteeType(Object v) {
+        String s = String.valueOf(required(v, "granteeType")).trim().toUpperCase(Locale.ROOT);
+        if (!GRANTEE_TYPES.contains(s)) {
+            throw new BusinessException(400, "granteeType 须为 USER|ROLE|ORG");
+        }
+        return s;
+    }
+
+    private static String normalizeAuthMode(Object v, String def) {
+        String s = str(v, def);
+        if (s == null) s = def;
+        s = s.trim().toUpperCase(Locale.ROOT);
+        if (!AUTH_MODES.contains(s)) {
+            throw new BusinessException(400, "authMode 须为 DUAL|SINGLE");
+        }
+        return s;
+    }
+
+    private static String normalizePermissionScope(Object v) {
+        String s = String.valueOf(required(v, "permissionScope")).trim().toUpperCase(Locale.ROOT);
+        if (!PERMISSION_SCOPES.contains(s)) {
+            throw new BusinessException(400, "permissionScope 须为 READ|EXPORT|MASKED_READ");
+        }
+        return s;
+    }
+
+    private static String normalizeDimCode(Object v) {
+        String s = String.valueOf(required(v, "dimCode")).trim().toUpperCase(Locale.ROOT);
+        if (!DIM_CODES.contains(s)) {
+            throw new BusinessException(400, "dimCode 须为 POSITION|MODEL|PROCESS|RETENTION|SOURCE|CONSUMER|FREQUENCY");
+        }
+        return s;
     }
 
     private AnaDomainModule getModule(String mCode) {

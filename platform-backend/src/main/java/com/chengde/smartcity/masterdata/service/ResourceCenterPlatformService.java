@@ -370,11 +370,13 @@ public class ResourceCenterPlatformService {
         lib.setLibName(required(body.get("libName"), "libName").toString());
         lib.setLibType(str(body.get("libType"), "BASE").toUpperCase(Locale.ROOT));
         lib.setRecordCount(0);
-        lib.setStatus("ACTIVE");
+        lib.setStatus(str(body.get("status"), "ACTIVE").toUpperCase(Locale.ROOT));
         lib.setDescription(str(body.get("description"), null));
         lib.setOwnerOrg(str(body.get("ownerOrg"), null));
         lib.setSortOrder(intVal(body.get("sortOrder"), 999));
         libraryMapper.insert(lib);
+        auditService.log(operator.getUserId(), operator.getUsername(), operator.getOrgId(),
+                "RC_LIB_CREATE", "rc_base_library", String.valueOf(lib.getId()), lib.getLibCode());
         return lib.getId();
     }
 
@@ -401,6 +403,18 @@ public class ResourceCenterPlatformService {
         }
         if (body.get("status") != null) {
             lib.setStatus(str(body.get("status"), lib.getStatus()).toUpperCase(Locale.ROOT));
+        }
+        if (body.get("libCode") != null) {
+            String code = String.valueOf(body.get("libCode")).trim();
+            if (!code.isEmpty() && !code.equals(lib.getLibCode())) {
+                Long dup = libraryMapper.selectCount(new LambdaQueryWrapper<RcBaseLibrary>()
+                        .eq(RcBaseLibrary::getLibCode, code)
+                        .ne(RcBaseLibrary::getId, id));
+                if (dup != null && dup > 0) {
+                    throw new BusinessException(400, "库编码已存在");
+                }
+                lib.setLibCode(code);
+            }
         }
         libraryMapper.updateById(lib);
         auditService.log(operator.getUserId(), operator.getUsername(), operator.getOrgId(),
@@ -2194,6 +2208,7 @@ public class ResourceCenterPlatformService {
 
     @Transactional
     public Map<String, Object> driveAllPublicCatalogExchange(UserPrincipal operator) {
+        Map<String, Object> sync = syncFromPublishedGovCatalogs(operator);
         List<RcAssetCatalogEntry> pubs = catalogMapper.selectList(new LambdaQueryWrapper<RcAssetCatalogEntry>()
                 .eq(RcAssetCatalogEntry::getVisibility, "PUBLIC")
                 .eq(RcAssetCatalogEntry::getPublishStatus, "PUBLISHED")
@@ -2210,7 +2225,99 @@ public class ResourceCenterPlatformService {
                 results.add(Map.of("entryId", e.getId(), "error", ex.getMessage()));
             }
         }
-        return Map.of("total", pubs.size(), "success", ok, "failed", fail, "results", results);
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("total", pubs.size());
+        out.put("success", ok);
+        out.put("failed", fail);
+        out.put("results", results);
+        out.put("syncedFromGov", sync);
+        return out;
+    }
+
+    /**
+     * 读取目录管理流程中已公开/已审核的资源，同步为资源中心公开目录，供各子系统共享并驱动交换。
+     */
+    @Transactional
+    public Map<String, Object> syncFromPublishedGovCatalogs(UserPrincipal operator) {
+        List<GovCatalogResource> pubs = catalogResourceMapper.selectList(new LambdaQueryWrapper<GovCatalogResource>()
+                .eq(GovCatalogResource::getPublishStatus, "PUBLISHED")
+                .orderByDesc(GovCatalogResource::getId)
+                .last("LIMIT 500"));
+        int created = 0;
+        int updated = 0;
+        int skipped = 0;
+        for (GovCatalogResource r : pubs) {
+            if (r.getResourceCode() == null || r.getResourceCode().isBlank()) {
+                skipped++;
+                continue;
+            }
+            RcAssetCatalogEntry exist = catalogMapper.selectOne(new LambdaQueryWrapper<RcAssetCatalogEntry>()
+                    .eq(RcAssetCatalogEntry::getEntryCode, r.getResourceCode())
+                    .last("LIMIT 1"));
+            Long managedTableId = null;
+            String physical = r.getPhysicalTableName();
+            if (physical != null && !physical.isBlank()) {
+                RcManagedTable mt = managedTableMapper.selectOne(new LambdaQueryWrapper<RcManagedTable>()
+                        .eq(RcManagedTable::getPhysicalTable, physical.trim())
+                        .last("LIMIT 1"));
+                if (mt != null) {
+                    managedTableId = mt.getId();
+                }
+            }
+            if (exist == null && r.getMetadataEntryCode() != null && !r.getMetadataEntryCode().isBlank()) {
+                exist = catalogMapper.selectOne(new LambdaQueryWrapper<RcAssetCatalogEntry>()
+                        .eq(RcAssetCatalogEntry::getEntryCode, r.getMetadataEntryCode())
+                        .last("LIMIT 1"));
+            }
+            if (exist == null) {
+                RcAssetCatalogEntry e = new RcAssetCatalogEntry();
+                e.setEntryCode(r.getResourceCode());
+                e.setEntryName(r.getResourceName() == null ? r.getResourceCode() : r.getResourceName());
+                e.setManagedTableId(managedTableId);
+                e.setSubsystemCode("SHARED");
+                e.setVisibility("PUBLIC");
+                e.setEncryptEnabled(r.getSecretFlag() != null && r.getSecretFlag() == 1 ? 1 : 0);
+                e.setEncryptAlgo(e.getEncryptEnabled() == 1 ? "AES256" : "NONE");
+                e.setPublishStatus("PUBLISHED");
+                e.setDescription("由公开资源目录同步：" + nullToEmpty(r.getProviderOrg()));
+                e.setDriveTask("gov-catalog:" + r.getResourceCode());
+                e.setStatus("ACTIVE");
+                e.setCreatedBy(operator.getUsername());
+                e.setCreatedAt(LocalDateTime.now());
+                e.setUpdatedAt(LocalDateTime.now());
+                catalogMapper.insert(e);
+                created++;
+            } else {
+                boolean changed = false;
+                if (!"PUBLIC".equalsIgnoreCase(nullToEmpty(exist.getVisibility()))
+                        || !"PUBLISHED".equalsIgnoreCase(nullToEmpty(exist.getPublishStatus()))) {
+                    exist.setVisibility("PUBLIC");
+                    exist.setPublishStatus("PUBLISHED");
+                    exist.setSubsystemCode("SHARED");
+                    changed = true;
+                }
+                if (managedTableId != null && !managedTableId.equals(exist.getManagedTableId())) {
+                    exist.setManagedTableId(managedTableId);
+                    changed = true;
+                }
+                if (changed) {
+                    exist.setUpdatedAt(LocalDateTime.now());
+                    catalogMapper.updateById(exist);
+                    updated++;
+                } else {
+                    skipped++;
+                }
+            }
+        }
+        Map<String, Object> out = new LinkedHashMap<>();
+        out.put("govPublished", pubs.size());
+        out.put("created", created);
+        out.put("updated", updated);
+        out.put("skipped", skipped);
+        auditService.log(operator.getUserId(), operator.getUsername(), operator.getOrgId(),
+                "RC_CATALOG_SYNC_GOV", "rc_asset_catalog_entry", "batch",
+                "created=" + created + ",updated=" + updated);
+        return out;
     }
 
     public List<Map<String, Object>> listCatalogExchangeJobs(Long entryId) {

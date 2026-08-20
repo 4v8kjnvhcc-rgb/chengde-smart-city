@@ -24,6 +24,7 @@ import PortalNavConfigPanel from '@/views/system/PortalNavConfigPanel.vue'
 import SysDictManagePanel from '@/views/system/SysDictManagePanel.vue'
 import BuiltinAttrManageView from '@/views/system/BuiltinAttrManageView.vue'
 import AuthConfigManagePanel from '@/views/system/AuthConfigManagePanel.vue'
+import ServiceCenterView from '@/views/system/ServiceCenterView.vue'
 import KettleView from '@/views/integration/KettleView.vue'
 import SchedulerView from '@/views/integration/SchedulerView.vue'
 import { useAuthStore } from '@/stores/auth'
@@ -161,9 +162,6 @@ const integrationRules: FormRules = {
 const apps = ref<Record<string, unknown>[]>([])
 const appGrants = ref<Record<string, unknown>[]>([])
 const systemConfigs = ref<Record<string, unknown>[]>([])
-const services = ref<Record<string, unknown>[]>([])
-const serviceStats = ref<Record<string, unknown>[]>([])
-const approvals = ref<Record<string, unknown>[]>([])
 const users = ref<Array<{ id: number; displayName: string; username: string }>>([])
 const roles = ref<Array<{ id: number; roleName: string; roleCode?: string }>>([])
 const loading = ref(false)
@@ -175,8 +173,6 @@ const grantForm = reactive({
   granteeId: undefined as number | undefined,
   perm: 'ACCESS',
 })
-const svcForm = reactive({ serviceName: '', servicePath: '/api/v1/', protocol: 'REST' })
-const applyForm = reactive({ serviceId: undefined as number | undefined, reason: '' })
 
 const paneTitle = computed(() => {
   const find = (items: HubNavItem[]): string | null => {
@@ -235,17 +231,6 @@ async function loadAppsTab() {
 
 async function loadSystemConfigs() {
   systemConfigs.value = (await api.get('/system/uum/system-configs')).data || []
-}
-
-async function loadServicesTab() {
-  const [s, st, ap] = await Promise.all([
-    api.get('/system/uum/services'),
-    api.get('/system/uum/service-stats'),
-    api.get('/system/uum/service-approvals'),
-  ])
-  services.value = s.data || []
-  serviceStats.value = st.data || []
-  approvals.value = ap.data || []
 }
 
 async function loadUumIntegrations() {
@@ -316,7 +301,6 @@ async function loadTabData() {
     if (tab.value === 'apps.manage') await loadAppsTab()
     else if (tab.value === 'apps.integration') await loadUumIntegrations()
     else if (tab.value === 'sys.cfg.general') await loadSystemConfigs()
-    else if (tab.value === 'services') await loadServicesTab()
   } catch {
     ElMessage.error('加载失败')
   } finally {
@@ -342,23 +326,6 @@ async function removeGrant(id: number) {
 async function saveSystemConfig(row: Record<string, unknown>) {
   await api.put(`/system/uum/system-configs/${row.id}`, { configValue: row.configValue })
   ElMessage.success('已保存')
-}
-async function createService() {
-  await api.post('/system/uum/services', { ...svcForm })
-  ElMessage.success('服务已发布')
-  await loadServicesTab()
-}
-async function applyService() {
-  await api.post('/system/uum/service-approvals', { ...applyForm })
-  ElMessage.success('已提交')
-  await loadServicesTab()
-}
-async function decide(id: number, pass: boolean) {
-  await api.post(`/system/uum/service-approvals/${id}/${pass ? 'approve' : 'reject'}`, {
-    comment: pass ? '同意' : '拒绝',
-  })
-  ElMessage.success(pass ? '已通过' : '已拒绝')
-  await loadServicesTab()
 }
 async function testUumIntegration(id: number) {
   const res = await api.post(`/system/uum/integrations/${id}/test`, {})
@@ -530,54 +497,7 @@ onMounted(() => {
         </div>
 
         <PageCard v-else-if="tab === 'services'" title="服务中心">
-          <el-form inline class="portal-inline-form portal-inline-form--block">
-            <el-form-item label="服务名" class="portal-field-lg"><el-input v-model="svcForm.serviceName" /></el-form-item>
-            <el-form-item label="路径" class="portal-field-xl"><el-input v-model="svcForm.servicePath" /></el-form-item>
-            <el-form-item class="portal-form-actions"><el-button type="primary" @click="createService">发布服务</el-button></el-form-item>
-          </el-form>
-          <el-table :data="services" stripe size="small" style="margin-bottom:16px">
-            <el-table-column prop="serviceCode" label="编码" width="140" />
-            <el-table-column prop="serviceName" label="名称" />
-            <el-table-column prop="servicePath" label="路径" />
-            <el-table-column prop="protocol" label="协议" width="80" />
-            <el-table-column label="状态" width="100">
-              <template #default="{ row }">{{ statusLabel(row.status) }}</template>
-            </el-table-column>
-          </el-table>
-          <h4>调用统计</h4>
-          <el-table :data="serviceStats" stripe size="small" style="margin-bottom:16px">
-            <el-table-column prop="serviceName" label="服务" />
-            <el-table-column prop="callDate" label="日期" width="120" />
-            <el-table-column prop="callCount" label="调用次数" width="100" />
-            <el-table-column prop="successCount" label="成功" width="80" />
-            <el-table-column prop="failCount" label="失败" width="80" />
-          </el-table>
-          <h4>敏感调用审批</h4>
-          <el-form inline class="portal-inline-form portal-inline-form--block">
-            <el-form-item label="服务" class="portal-field-lg">
-              <el-select v-model="applyForm.serviceId" filterable>
-                <el-option v-for="s in services" :key="s.id as number" :label="String(s.serviceName)" :value="s.id as number" />
-              </el-select>
-            </el-form-item>
-            <el-form-item label="原因" class="portal-field-xl"><el-input v-model="applyForm.reason" /></el-form-item>
-            <el-form-item class="portal-form-actions"><el-button type="primary" @click="applyService">提交申请</el-button></el-form-item>
-          </el-form>
-          <el-table :data="approvals" stripe size="small">
-            <el-table-column prop="serviceName" label="服务" />
-            <el-table-column prop="applicantName" label="申请人" width="120" />
-            <el-table-column prop="reason" label="原因" show-overflow-tooltip />
-            <el-table-column label="状态" width="100">
-              <template #default="{ row }">{{ statusLabel(row.status) }}</template>
-            </el-table-column>
-            <el-table-column label="操作" width="140">
-              <template #default="{ row }">
-                <template v-if="row.status === 'PENDING'">
-                  <el-button link type="primary" @click="decide(row.id as number, true)">通过</el-button>
-                  <el-button link type="danger" @click="decide(row.id as number, false)">拒绝</el-button>
-                </template>
-              </template>
-            </el-table-column>
-          </el-table>
+          <ServiceCenterView />
         </PageCard>
 
         <!-- 系统管理 -->

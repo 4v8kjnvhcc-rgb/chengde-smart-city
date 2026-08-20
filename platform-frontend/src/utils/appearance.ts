@@ -16,6 +16,13 @@ export interface AppearancePublic {
   watermarkEnabled?: boolean
   watermarkText?: string | null
   watermarkShowUsername?: boolean
+  authMethods?: {
+    password?: boolean
+    sms?: boolean
+    totp?: boolean
+    fingerprint?: boolean
+    twoFactorRequired?: boolean
+  }
   themes?: Array<{
     id: string
     name: string

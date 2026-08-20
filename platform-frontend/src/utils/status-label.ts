@@ -212,6 +212,23 @@ const STATUS_ZH: Record<string, string> = {
   SENSITIVE: '敏感',
   SECRET: '核心',
   CORE: '核心',
+  REVOKED: '已撤销',
+  ROLE_GRANT: '角色授权',
+  DATA_ACCESS: '数据访问授权',
+  DUAL: '双重授权',
+  SINGLE: '单重授权',
+  MASKED_READ: '脱敏只读',
+  LEGAL_BASE: '法人基础数据',
+  LEGAL_BIZ: '法人业务主题',
+  POP_BASE: '人口基础数据',
+  POP_BIZ: '人口业务主题',
+  IDENTITY: '身份证件信息',
+  CONTACT: '联系信息',
+  HIGH_SENSITIVE_BOUNDARY: '高敏独立边界',
+  CONSUME_CORE: '消费核心权威',
+  CLASSIFY_DUAL_AUTH: '分级分类与双重授权',
+  FROM_CORE: '来源核心区',
+  DEPT_HIGH_SENS: '部门高敏应用',
   AES256: 'AES-256',
   SM4: '国密SM4',
   NO_ENCRYPTION: '不加密',
@@ -616,7 +633,7 @@ export function statusTagType(value: unknown): 'success' | 'warning' | 'info' | 
   if (['PENDING', 'PENDING_ARCHIVE', 'PENDING_REVIEW', 'RUNNING', 'ANALYZING', 'PRE_AUDITING', 'CORRECTION', 'WAITING', 'DRAFT', 'TO_REGISTER', 'SUPERVISING', 'DISPATCHED', 'PROVIDER_RETURNED', 'FULFILLING', 'PARTIAL', 'WARN', 'POC', 'MEDIUM', 'RAW', 'EXTRACTED', 'TAGGED', 'LEDGER', 'OPEN', 'OTHER', 'PRIVATE', 'UNEVEN', 'WITHDRAW_PENDING', 'IN_ANALYSIS', 'PARTIAL_MAP', 'UNREAD'].includes(key)) {
     return 'warning'
   }
-  if (['REJECTED', 'FAILED', 'ERROR', 'FATAL', 'CANCELLED', 'ABNORMAL', 'EXPIRED', 'RETURNED', 'STOPPED', 'UNMAPPED', 'UNMATCHED', 'CRITICAL', 'BLOCKED', 'MISSING', 'HIGH', 'DOWN', 'FAIL', 'NEGATIVE', 'PROBLEM', 'ABANDONED'].includes(key)) {
+  if (['REJECTED', 'FAILED', 'ERROR', 'FATAL', 'CANCELLED', 'ABNORMAL', 'EXPIRED', 'RETURNED', 'STOPPED', 'UNMAPPED', 'UNMATCHED', 'CRITICAL', 'BLOCKED', 'MISSING', 'HIGH', 'DOWN', 'FAIL', 'NEGATIVE', 'PROBLEM', 'ABANDONED', 'REVOKED'].includes(key)) {
     return 'danger'
   }
   if (['INACTIVE', 'DISABLED', 'OFFLINE', 'CLOSED', 'WITHDRAWN', 'ARCHIVED', 'DESTROYED', 'STUB', 'EXTERNAL', 'SKIPPED', 'UNTESTED', 'LOW', 'NONE', 'NOT_RUN', 'NOT_GENERATED'].includes(key)) {

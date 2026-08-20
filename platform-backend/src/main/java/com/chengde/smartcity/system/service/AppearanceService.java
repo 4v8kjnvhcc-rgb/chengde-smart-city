@@ -33,12 +33,15 @@ public class AppearanceService {
 
     private final SysAppearanceConfigMapper mapper;
     private final ObjectMapper objectMapper;
+    private final SecurityConfigService securityConfigService;
     private final Path storageRoot;
 
     public AppearanceService(SysAppearanceConfigMapper mapper, ObjectMapper objectMapper,
+                             SecurityConfigService securityConfigService,
                              @Value("${app.data-dir:./data}") String dataDir) {
         this.mapper = mapper;
         this.objectMapper = objectMapper;
+        this.securityConfigService = securityConfigService;
         this.storageRoot = Paths.get(dataDir, "appearance").toAbsolutePath().normalize();
         try {
             Files.createDirectories(storageRoot);
@@ -85,6 +88,14 @@ public class AppearanceService {
         m.put("watermarkText", c.getWatermarkText());
         m.put("watermarkShowUsername", c.getWatermarkShowUsername() != null && c.getWatermarkShowUsername() == 1);
         m.put("themes", listThemes(c));
+        Map<String, Object> authMethods = new HashMap<>();
+        authMethods.put("password", securityConfigService.isAuthMethodEnabled("password", true));
+        authMethods.put("sms", securityConfigService.isAuthMethodEnabled("sms", false));
+        authMethods.put("totp", securityConfigService.isAuthMethodEnabled("totp", false));
+        authMethods.put("fingerprint", securityConfigService.isAuthMethodEnabled("fingerprint", false));
+        authMethods.put("twoFactorRequired", securityConfigService.isSecondFactorRequired()
+                || "true".equalsIgnoreCase(securityConfigService.get("two_factor_enabled", "false")));
+        m.put("authMethods", authMethods);
         return m;
     }
 

@@ -13,7 +13,9 @@ import RcStatsAnalysisPanel from '@/views/resource/RcStatsAnalysisPanel.vue'
 import CatalogPortalView from '@/views/governance/catalog/CatalogPortalView.vue'
 import CatalogResourceView from '@/views/governance/catalog/CatalogResourceView.vue'
 import CatalogApprovalView from '@/views/governance/catalog/CatalogApprovalView.vue'
+import RcAssetCatalogPanel from '@/views/resource/RcAssetCatalogPanel.vue'
 import RcDbSearchPanel from '@/views/resource/RcDbSearchPanel.vue'
+import PortalPagination from '@/components/common/PortalPagination.vue'
 import { statusLabel, statusTagType } from '@/utils/status-label'
 import { formatDateTime } from '@/utils/datetime'
 import ExecCycleSelect from '@/views/system/ExecCycleSelect.vue'
@@ -403,6 +405,12 @@ const fileLibOverview = ref<FileLibOverview | null>(null)
 const fileSubTab = ref('catalog')
 const inventory = ref<Record<string, unknown> | null>(null)
 const classifyAssetType = ref('')
+const candidateKeyword = ref('')
+const candidateKeywordApplied = ref('')
+const managedKeyword = ref('')
+const managedKeywordApplied = ref('')
+const relatedKeyword = ref('')
+const relatedKeywordApplied = ref('')
 const queryTableId = ref<number | undefined>()
 const queryKeyword = ref('')
 const queryColumn = ref('')
@@ -533,9 +541,45 @@ const allLibraries = computed(() => {
 })
 
 const filteredManagedTables = computed(() => {
-  if (!classifyAssetType.value) return managedTables.value
-  return managedTables.value.filter((t) => (t.assetType || 'BASE') === classifyAssetType.value)
+  const kw = managedKeywordApplied.value.trim().toLowerCase()
+  return managedTables.value.filter((t) => {
+    if (classifyAssetType.value && (t.assetType || 'BASE') !== classifyAssetType.value) return false
+    if (!kw) return true
+    const blob = `${t.physicalTable || ''} ${t.metaEntryCode || ''} ${t.libName || ''} ${t.themeName || ''}`.toLowerCase()
+    return blob.includes(kw)
+  })
 })
+
+const filteredCandidates = computed(() => {
+  const kw = candidateKeywordApplied.value.trim().toLowerCase()
+  if (!kw) return candidates.value
+  return candidates.value.filter((row) => {
+    const blob = `${row.entryName || ''} ${row.physicalTable || ''} ${row.entryCode || ''} ${row.dataLayer || ''}`.toLowerCase()
+    return blob.includes(kw)
+  })
+})
+
+const filteredRelatedStructuredTables = computed(() => {
+  const rows = (fileLibOverview.value?.relatedStructuredTables || []) as ManagedTable[]
+  const kw = relatedKeywordApplied.value.trim().toLowerCase()
+  if (!kw) return rows
+  return rows.filter((row) => {
+    const blob = `${row.physicalTable || ''} ${row.assetType || ''} ${row.themeName || ''} ${row.metaEntryCode || ''}`.toLowerCase()
+    return blob.includes(kw)
+  })
+})
+
+function queryCandidates() {
+  candidateKeywordApplied.value = candidateKeyword.value.trim()
+}
+
+function queryManagedTables() {
+  managedKeywordApplied.value = managedKeyword.value.trim()
+}
+
+function queryRelatedStructuredTables() {
+  relatedKeywordApplied.value = relatedKeyword.value.trim()
+}
 
 const artifacts = computed(() => ((partOverview.value?.artifacts as Artifact[]) || []))
 const partitionList = computed(() => ((partOverview.value?.partitions as Partition[]) || []))
@@ -767,14 +811,7 @@ async function loadTabData() {
     } else if (nav === 'storage') {
       // backup/archive/destroy/policy/monitor 各子面板自加载
     } else if (nav === 'catalog') {
-      await loadCatalogSubsystems()
-      if (catalogTab.value === 'register') {
-        await loadManagedTablesOnly()
-      } else if (catalogTab.value === 'exchange') {
-        await Promise.all([loadCatalog(), loadCatalogExchangeJobs()])
-      } else {
-        await loadCatalog()
-      }
+      // 目录查询/编目/审批/驱动交换由子组件按 Tab 自加载（并行≤3）
     } else if (nav === 'search') {
       if (searchTab.value === 'query') await loadManagedTablesOnly()
     } else if (nav === 'stats') {
@@ -826,10 +863,15 @@ async function saveLibEdit() {
 }
 
 async function deleteLib(row: Library) {
-  await ElMessageBox.confirm(`确认删除库「${row.libName}」？须无关联纳管表。`, '删除库', { type: 'warning' })
-  await api.delete(`/resource-center/platform/libraries/${row.id}`)
-  ElMessage.success('库已删除')
-  await loadLibraryOverview()
+  try {
+    await ElMessageBox.confirm(`确认删除库「${row.libName}」？须无关联纳管表。`, '删除库', { type: 'warning' })
+    await api.delete(`/resource-center/platform/libraries/${row.id}`)
+    ElMessage.success('库已删除')
+    await loadLibraryOverview()
+  } catch (e: unknown) {
+    if (e === 'cancel' || e === 'close') return
+    ElMessage.error(e instanceof Error ? e.message : '删除失败')
+  }
 }
 
 async function createTheme() {
@@ -1493,6 +1535,13 @@ onMounted(() => {
       <PageCard v-if="activeNav === 'asset'" title="数据资产区">
         <el-tabs v-model="assetTab">
           <el-tab-pane label="基础库、半结构化和非结构化库管理" name="libraries">
+            <el-alert
+              type="info"
+              :closable="false"
+              show-icon
+              style="margin-bottom:12px"
+              title="实现基础库、半结构化库和非结构化库的管理功能，包括数据归档、备份、恢复和迁移等。提供数据资产梳理和盘点功能，支持多角度查看和管理城市数据资源中心的资产。"
+            />
             <el-descriptions v-if="inventory" :column="4" border size="small" style="margin-bottom:12px">
               <el-descriptions-item label="基础库">{{ invTypeCount('BASE') }} 个</el-descriptions-item>
               <el-descriptions-item label="半结构化库">{{ invTypeCount('SEMI') }} 个</el-descriptions-item>
@@ -1676,7 +1725,15 @@ onMounted(() => {
                 <el-button @click="loadCandidates">刷新候选</el-button>
               </el-form-item>
             </el-form>
-            <el-table :data="candidates" stripe size="small" style="margin-bottom:12px">
+            <el-form inline class="portal-inline-form portal-inline-form--block">
+              <el-form-item label="关键字" class="portal-field-lg">
+                <el-input v-model="candidateKeyword" clearable placeholder="条目名称/产出表/元数据码" @keyup.enter="queryCandidates" />
+              </el-form-item>
+              <el-form-item class="portal-form-actions">
+                <el-button type="primary" @click="queryCandidates">查询</el-button>
+              </el-form-item>
+            </el-form>
+            <el-table :data="filteredCandidates" stripe size="small" style="margin-bottom:12px">
               <el-table-column prop="entryName" label="条目名称" min-width="140" />
               <el-table-column prop="physicalTable" label="产出表" min-width="140" />
               <el-table-column prop="entryCode" label="元数据码" width="200" show-overflow-tooltip />
@@ -1693,12 +1750,18 @@ onMounted(() => {
               </el-table-column>
             </el-table>
             <el-form inline class="portal-inline-form portal-inline-form--block">
+              <el-form-item label="关键字" class="portal-field-lg">
+                <el-input v-model="managedKeyword" clearable placeholder="物理表/元数据码/所属库/模块" @keyup.enter="queryManagedTables" />
+              </el-form-item>
               <el-form-item label="按资产类型筛选" class="portal-field-sm">
                 <el-select v-model="classifyAssetType" clearable placeholder="全部">
                   <el-option label="基础库" value="BASE" />
                   <el-option label="半结构化" value="SEMI" />
                   <el-option label="非结构化" value="UNSTRUCT" />
                 </el-select>
+              </el-form-item>
+              <el-form-item class="portal-form-actions">
+                <el-button type="primary" @click="queryManagedTables">查询</el-button>
               </el-form-item>
             </el-form>
             <el-table :data="filteredManagedTables" stripe border size="small">
@@ -1851,7 +1914,20 @@ onMounted(() => {
                 />
               </el-tab-pane>
               <el-tab-pane label="关联结构化表" name="related">
-                <el-table :data="fileLibOverview?.relatedStructuredTables || []" stripe size="small">
+                <el-form inline class="portal-inline-form portal-inline-form--block">
+                  <el-form-item label="关键字" class="portal-field-lg">
+                    <el-input
+                      v-model="relatedKeyword"
+                      clearable
+                      placeholder="物理表/模块/元数据码"
+                      @keyup.enter="queryRelatedStructuredTables"
+                    />
+                  </el-form-item>
+                  <el-form-item class="portal-form-actions">
+                    <el-button type="primary" @click="queryRelatedStructuredTables">查询</el-button>
+                  </el-form-item>
+                </el-form>
+                <el-table :data="filteredRelatedStructuredTables" stripe size="small">
                   <el-table-column prop="physicalTable" label="物理表" min-width="160" />
                   <el-table-column label="资产类型" width="110">
                     <template #default="{ row }">{{ libTypeLabel(row.assetType) }}</template>
@@ -2326,53 +2402,37 @@ onMounted(() => {
 
       <!-- 资产目录 -->
       <PageCard v-else-if="activeNav === 'catalog'" title="资产目录管理">
-<el-tabs v-model="catalogTab">
+        <el-tabs v-model="catalogTab">
           <el-tab-pane label="目录查询" name="query">
+            <p class="catalog-hint">门户多子系统共享同一套<strong>公开资源目录</strong>；此处查询已发布可共享资源。</p>
             <CatalogPortalView v-if="catalogTab === 'query'" embedded />
           </el-tab-pane>
 
           <el-tab-pane label="资源编目" name="register">
-            <CatalogResourceView v-if="catalogTab === 'register'" embedded />
+            <el-tabs type="card" class="catalog-inner">
+              <el-tab-pane label="治理资源编目" name="gov">
+                <CatalogResourceView v-if="catalogTab === 'register'" embedded />
+              </el-tab-pane>
+              <el-tab-pane label="子系统目录挂载" name="rc-mount" lazy>
+                <RcAssetCatalogPanel v-if="catalogTab === 'register'" mode="mount" />
+              </el-tab-pane>
+            </el-tabs>
           </el-tab-pane>
 
           <el-tab-pane label="公开审批" name="approve">
-            <CatalogApprovalView v-if="catalogTab === 'approve'" embedded />
+            <el-tabs type="card" class="catalog-inner">
+              <el-tab-pane label="公开目录审批" name="rc-approve">
+                <p class="catalog-hint">系统管理员控制目录公开；批准后进入共享公开目录，供各子系统共用并驱动交换。</p>
+                <RcAssetCatalogPanel v-if="catalogTab === 'approve'" mode="approve" />
+              </el-tab-pane>
+              <el-tab-pane label="资源目录审批" name="gov-approve" lazy>
+                <CatalogApprovalView v-if="catalogTab === 'approve'" embedded />
+              </el-tab-pane>
+            </el-tabs>
           </el-tab-pane>
 
           <el-tab-pane label="驱动交换" name="exchange">
-            <el-form inline class="portal-inline-form portal-inline-form--block">
-              <el-form-item class="portal-form-actions">
-                <el-button type="primary" @click="driveAllPublicCatalogExchange">按公开目录批量驱动交换</el-button>
-                <el-button @click="loadCatalogExchangeJobs()">刷新交换台账</el-button>
-              </el-form-item>
-            </el-form>
-            <el-table :data="catalogEntries" stripe size="small" style="margin-bottom:16px">
-              <el-table-column prop="entryCode" label="编码" width="140" />
-              <el-table-column prop="entryName" label="公开目录" min-width="120" />
-              <el-table-column prop="physicalTable" label="纳管表" width="140" show-overflow-tooltip />
-              <el-table-column prop="driveTask" label="驱动任务" min-width="140" show-overflow-tooltip />
-              <el-table-column prop="lastExchangeAt" label="最近交换" width="170" />
-              <el-table-column prop="lastExchangeMessage" label="交换结果" min-width="180" show-overflow-tooltip />
-              <el-table-column label="操作" width="120" fixed="right">
-                <template #default="{ row }">
-                  <el-button link type="primary" @click="driveCatalogExchange(row.id)">生成并交换</el-button>
-                </template>
-              </el-table-column>
-            </el-table>
-            <el-divider content-position="left">交换任务台账</el-divider>
-            <el-table :data="catalogExchangeJobs" stripe size="small">
-              <el-table-column prop="jobCode" label="任务编码" width="180" show-overflow-tooltip />
-              <el-table-column prop="jobName" label="任务名称" min-width="140" show-overflow-tooltip />
-              <el-table-column prop="physicalTable" label="源表" width="140" show-overflow-tooltip />
-              <el-table-column prop="rowCount" label="行数" width="80" />
-              <el-table-column label="状态" width="100">
-                <template #default="{ row }">
-                  <el-tag :type="statusTagType(row.runStatus)" size="small">{{ statusLabel(row.runStatus) }}</el-tag>
-                </template>
-              </el-table-column>
-              <el-table-column prop="message" label="说明" min-width="200" show-overflow-tooltip />
-              <el-table-column prop="createdAt" label="时间" width="170" />
-            </el-table>
+            <RcAssetCatalogPanel v-if="catalogTab === 'exchange'" mode="exchange" />
           </el-tab-pane>
         </el-tabs>
       </PageCard>
@@ -2416,5 +2476,15 @@ onMounted(() => {
 }
 .module-center-tabs :deep(.el-tabs__header) {
   margin-bottom: 12px;
+}
+.catalog-hint {
+  color: var(--el-text-color-secondary);
+  margin: 0 0 12px;
+  line-height: 1.5;
+  font-size: 13px;
+}
+.catalog-inner {
+  margin-top: 4px;
+}
 }
 </style>

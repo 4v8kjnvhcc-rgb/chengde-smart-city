@@ -10,6 +10,9 @@ import com.chengde.smartcity.analysis.entity.AnaPopBatchLedger;
 import com.chengde.smartcity.analysis.entity.AnaPopServiceContract;
 import com.chengde.smartcity.analysis.entity.AnaPopVerifyLedger;
 import com.chengde.smartcity.analysis.entity.AnaZoneBinding;
+import com.chengde.smartcity.analysis.entity.AnaZoneDimDesign;
+import com.chengde.smartcity.analysis.entity.AnaZoneInternalClassify;
+import com.chengde.smartcity.analysis.entity.AnaZoneInternalGrant;
 import com.chengde.smartcity.analysis.service.AnalyticsDomainService;
 import com.chengde.smartcity.analysis.service.IndicatorTaskService;
 import com.chengde.smartcity.common.api.ApiResponse;
@@ -92,6 +95,121 @@ public class AnalyticsDomainController {
     @PreAuthorize("isAuthenticated()")
     public ApiResponse<Void> unbind(@AuthenticationPrincipal UserPrincipal principal, @PathVariable Long id) {
         service.unbindAsset(principal, id);
+        return ApiResponse.ok(null);
+    }
+
+    @GetMapping("/{domain}/zones/{zone}/dim-designs")
+    @PreAuthorize("isAuthenticated()")
+    public ApiResponse<List<AnaZoneDimDesign>> listDimDesigns(@PathVariable String domain,
+                                                              @PathVariable String zone,
+                                                              @RequestParam(required = false) String dimCode) {
+        return ApiResponse.ok(service.listZoneDimDesigns(domain, zone, dimCode));
+    }
+
+    @PostMapping("/{domain}/zones/{zone}/dim-designs")
+    @PreAuthorize("isAuthenticated()")
+    public ApiResponse<Long> createDimDesign(@AuthenticationPrincipal UserPrincipal principal,
+                                             @PathVariable String domain,
+                                             @PathVariable String zone,
+                                             @RequestBody Map<String, Object> body) {
+        return ApiResponse.ok(service.createZoneDimDesign(principal, domain, zone, body));
+    }
+
+    @PutMapping("/dim-designs/{id}")
+    @PreAuthorize("isAuthenticated()")
+    public ApiResponse<Void> updateDimDesign(@AuthenticationPrincipal UserPrincipal principal,
+                                             @PathVariable Long id,
+                                             @RequestBody Map<String, Object> body) {
+        service.updateZoneDimDesign(principal, id, body);
+        return ApiResponse.ok(null);
+    }
+
+    @DeleteMapping("/dim-designs/{id}")
+    @PreAuthorize("isAuthenticated()")
+    public ApiResponse<Void> deleteDimDesign(@AuthenticationPrincipal UserPrincipal principal, @PathVariable Long id) {
+        service.deleteZoneDimDesign(principal, id);
+        return ApiResponse.ok(null);
+    }
+
+    @GetMapping("/{domain}/zones/{zone}/internal-classifies")
+    @PreAuthorize("isAuthenticated()")
+    public ApiResponse<List<AnaZoneInternalClassify>> listInternalClassifies(
+            @PathVariable String domain,
+            @PathVariable String zone,
+            @RequestParam(required = false) String levelCode,
+            @RequestParam(required = false) String status) {
+        return ApiResponse.ok(service.listInternalClassifies(domain, zone, levelCode, status));
+    }
+
+    @PostMapping("/{domain}/zones/{zone}/internal-classifies")
+    @PreAuthorize("isAuthenticated()")
+    public ApiResponse<Long> createInternalClassify(@AuthenticationPrincipal UserPrincipal principal,
+                                                    @PathVariable String domain,
+                                                    @PathVariable String zone,
+                                                    @RequestBody Map<String, Object> body) {
+        return ApiResponse.ok(service.createInternalClassify(principal, domain, zone, body));
+    }
+
+    @PutMapping("/internal-classifies/{id}")
+    @PreAuthorize("isAuthenticated()")
+    public ApiResponse<Void> updateInternalClassify(@AuthenticationPrincipal UserPrincipal principal,
+                                                    @PathVariable Long id,
+                                                    @RequestBody Map<String, Object> body) {
+        service.updateInternalClassify(principal, id, body);
+        return ApiResponse.ok(null);
+    }
+
+    @DeleteMapping("/internal-classifies/{id}")
+    @PreAuthorize("isAuthenticated()")
+    public ApiResponse<Void> deleteInternalClassify(@AuthenticationPrincipal UserPrincipal principal,
+                                                    @PathVariable Long id) {
+        service.deleteInternalClassify(principal, id);
+        return ApiResponse.ok(null);
+    }
+
+    @GetMapping("/{domain}/zones/{zone}/internal-grants")
+    @PreAuthorize("isAuthenticated()")
+    public ApiResponse<List<AnaZoneInternalGrant>> listInternalGrants(
+            @PathVariable String domain,
+            @PathVariable String zone,
+            @RequestParam(required = false) String grantType,
+            @RequestParam(required = false) String status) {
+        return ApiResponse.ok(service.listInternalGrants(domain, zone, grantType, status));
+    }
+
+    @PostMapping("/{domain}/zones/{zone}/internal-grants")
+    @PreAuthorize("isAuthenticated()")
+    public ApiResponse<Long> createInternalGrant(@AuthenticationPrincipal UserPrincipal principal,
+                                                 @PathVariable String domain,
+                                                 @PathVariable String zone,
+                                                 @RequestBody Map<String, Object> body) {
+        return ApiResponse.ok(service.createInternalGrant(principal, domain, zone, body));
+    }
+
+    @PutMapping("/internal-grants/{id}")
+    @PreAuthorize("isAuthenticated()")
+    public ApiResponse<Void> updateInternalGrant(@AuthenticationPrincipal UserPrincipal principal,
+                                                 @PathVariable Long id,
+                                                 @RequestBody Map<String, Object> body) {
+        service.updateInternalGrant(principal, id, body);
+        return ApiResponse.ok(null);
+    }
+
+    @PostMapping("/internal-grants/{id}/decide")
+    @PreAuthorize("isAuthenticated()")
+    public ApiResponse<Void> decideInternalGrant(@AuthenticationPrincipal UserPrincipal principal,
+                                                 @PathVariable Long id,
+                                                 @RequestBody Map<String, Object> body) {
+        Object action = body == null ? null : body.get("action");
+        service.decideInternalGrant(principal, id, action == null ? null : String.valueOf(action));
+        return ApiResponse.ok(null);
+    }
+
+    @DeleteMapping("/internal-grants/{id}")
+    @PreAuthorize("isAuthenticated()")
+    public ApiResponse<Void> deleteInternalGrant(@AuthenticationPrincipal UserPrincipal principal,
+                                                 @PathVariable Long id) {
+        service.deleteInternalGrant(principal, id);
         return ApiResponse.ok(null);
     }
 

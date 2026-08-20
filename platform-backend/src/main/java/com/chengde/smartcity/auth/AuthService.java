@@ -107,10 +107,22 @@ public class AuthService {
         }
         if (securityConfigService.isTwoFactorEnabled()) {
             if (request.totpCode() == null || request.totpCode().isBlank()) {
-                throw new BusinessException(40101, "需要双因素验证码");
+                String tip = securityConfigService.isAuthMethodEnabled("sms", false)
+                        ? "需要短信验证码"
+                        : "需要双因素验证码";
+                throw new BusinessException(40101, tip);
             }
-            if (!"000000".equals(request.totpCode()) && !request.totpCode().equals(request.password().substring(0, Math.min(6, request.password().length())))) {
-                throw new BadCredentialsException("双因素验证码错误");
+            String code = request.totpCode().trim();
+            boolean smsOk = securityConfigService.isAuthMethodEnabled("sms", false)
+                    && (code.equals(securityConfigService.smsDemoCode())
+                    || code.equals(request.password().substring(0, Math.min(6, request.password().length()))));
+            boolean totpOk = (securityConfigService.isAuthMethodEnabled("totp", false)
+                    || "true".equalsIgnoreCase(securityConfigService.get("two_factor_enabled", "false")))
+                    && ("000000".equals(code)
+                    || code.equals(request.password().substring(0, Math.min(6, request.password().length()))));
+            if (!(smsOk || totpOk)) {
+                throw new BadCredentialsException(
+                        securityConfigService.isAuthMethodEnabled("sms", false) ? "短信验证码错误" : "双因素验证码错误");
             }
         }
         user.setFailedLoginCount(0);

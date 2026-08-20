@@ -460,6 +460,13 @@ public class ResourceCenterPlatformController {
         return ApiResponse.ok(service.driveAllPublicCatalogExchange(principal));
     }
 
+    @PostMapping("/catalog/entries/sync-from-published")
+    @PreAuthorize("isAuthenticated()")
+    public ApiResponse<Map<String, Object>> syncFromPublished(
+            @AuthenticationPrincipal UserPrincipal principal) {
+        return ApiResponse.ok(service.syncFromPublishedGovCatalogs(principal));
+    }
+
     @GetMapping("/catalog/exchange-jobs")
     @PreAuthorize("isAuthenticated()")
     public ApiResponse<List<Map<String, Object>>> catalogExchangeJobs(

@@ -81,7 +81,10 @@ async function submit() {
   } catch (e: unknown) {
     const err = e as Error & { code?: number }
     if (err.code === 40101) {
-      ElMessage.warning('已开启双因素认证，请填写验证码（演示可用 000000）后重试')
+      const sms = appearance.value?.authMethods?.sms
+      ElMessage.warning(sms
+        ? '已开启短信验证，请填写短信验证码（演示可用 000000）后重试'
+        : '已开启双因素认证，请填写验证码（演示可用 000000）后重试')
     } else {
       ElMessage.error(err instanceof Error ? err.message : '登录失败')
     }
@@ -128,7 +131,17 @@ async function submit() {
               <img v-if="captchaImg" :src="captchaImg" class="captcha-img" alt="captcha" @click="refreshCaptcha" />
             </div>
           </el-form-item>
-          <el-form-item label="双因素验证码">
+          <el-form-item
+            v-if="appearance?.authMethods?.twoFactorRequired || appearance?.authMethods?.sms || appearance?.authMethods?.totp"
+            :label="appearance?.authMethods?.sms ? '短信验证码' : '双因素验证码'"
+          >
+            <el-input
+              v-model="form.totpCode"
+              :placeholder="appearance?.authMethods?.sms ? '请输入短信验证码' : '请输入动态令牌'"
+              size="large"
+            />
+          </el-form-item>
+          <el-form-item v-else label="双因素验证码">
             <el-input v-model="form.totpCode" placeholder="未开启可留空" size="large" />
           </el-form-item>
           <el-button type="primary" size="large" class="login-card__btn" :loading="loading" @click="submit">

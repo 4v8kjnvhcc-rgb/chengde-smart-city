@@ -9,6 +9,7 @@ import DomainIndicatorSqlLibrary from '@/views/analytics/DomainIndicatorSqlLibra
 import DomainIndicatorGroupManage from '@/views/analytics/DomainIndicatorGroupManage.vue'
 import DomainIndicatorTaskPanel from '@/views/analytics/DomainIndicatorTaskPanel.vue'
 import { statusLabel, statusTagType } from '@/utils/status-label'
+import { formatDateTime } from '@/utils/datetime'
 import { ingestionApi } from '@/views/exchange/ingestion/useIngestionHub'
 import { fetchDataSourceTableNames } from '@/utils/layer-tables'
 
@@ -248,13 +249,13 @@ const POPULATION_ZONE_DIMS: Record<string, DimItem[]> = {
     { key: '更新频度', tip: '默认月更；可按日/周/季/半年/年配置（ExecCycle + DS）' },
   ],
   govern: [
-    { key: '定位', tip: '存放问题数据、半结构/非结构转结构结果；供质量分析与问题反馈' },
-    { key: '数据模型', tip: '贴源 + 规范化；流水类周期增量切片' },
-    { key: '加工处理', tip: '技术性/合法性检核清洗；时点记录变更；半结构预处理' },
-    { key: '存储周期', tip: '长期可存；预处理/反馈库中等体量、高吞吐' },
-    { key: '数据来源', tip: '采集区；外部数据区' },
-    { key: '使用者', tip: '核心区；服务区（须经核心分流，禁止旁路权威）' },
-    { key: '更新频度', tip: '默认月更；可按日/周/季/半年/年' },
+    { key: '定位', tip: '存放治理过程发现的问题数据；存放半结构化数据；存放非结构化数据转结构化数据；提供周期全量脏数据，供数据质量分析以及数据问题反馈使用' },
+    { key: '数据模型', tip: '数据模型采取贴源结构；采用模型规范化设计；流水类表采用周期增量切片表存储' },
+    { key: '加工处理', tip: '完成技术性及合法性检核清洗；以数据时点记录历史变更事实；提供半结构/非结构转结构化与预处理' },
+    { key: '存储周期', tip: '支持长期存储；具体周期随存储空间容量扩大而延长' },
+    { key: '数据来源', tip: '采集区数据；外部数据区数据' },
+    { key: '使用者', tip: '数据核心区使用者；服务区使用者' },
+    { key: '更新频度', tip: '一般每月更新一次；可按一天、一周、一季度、半年或一年更新' },
   ],
   core: [
     { key: '定位', tip: '统一标准的人口基础/主题权威区；「一数一源」；按业务分类存放' },
@@ -285,6 +286,39 @@ const POPULATION_ZONE_DIMS: Record<string, DimItem[]> = {
   ],
 }
 
+/** 法人域五区七维度 — 同构人口，文案全部为法人（禁止残留「人口」） */
+const LEGAL_ZONE_DIMS: Record<string, DimItem[]> = {
+  collect: [
+    { key: '定位', tip: '多源异构法人数据统一汇入平台；含结构化与非结构化；按时效区分行为类/档案类通道' },
+    { key: '数据模型', tip: '贴源结构为主；通道类型覆盖库表、文件、API' },
+    { key: '加工处理', tip: '本区不做主题整合；仅接入、落 ODS、登记元数据' },
+    { key: '存储周期', tip: '长期可存；容量策略随存储扩展' },
+    { key: '数据来源', tip: '市场监管、税务、社保及行业主管部门等业务系统' },
+    { key: '使用者', tip: '治理反馈区（下游清洗校核）' },
+    { key: '更新频度', tip: '默认月更；可按日/周/季/半年/年配置（ExecCycle + DS）' },
+  ],
+  govern: [
+    { key: '定位', tip: '存放治理过程发现的问题数据；存放半结构化数据；存放非结构化数据转结构化数据；提供周期全量脏数据，供数据质量分析以及数据问题反馈使用' },
+    { key: '数据模型', tip: '数据模型采取贴源结构；采用模型规范化设计；流水类表采用周期增量切片表存储' },
+    { key: '加工处理', tip: '完成技术性及合法性检核清洗；以数据时点记录历史变更事实；提供半结构/非结构转结构化与预处理' },
+    { key: '存储周期', tip: '支持长期存储；具体周期随存储空间容量扩大而延长' },
+    { key: '数据来源', tip: '采集区数据；外部数据区数据' },
+    { key: '使用者', tip: '数据核心区使用者；服务区使用者' },
+    { key: '更新频度', tip: '一般每月更新一次；可按一天、一周、一季度、半年或一年更新' },
+  ],
+  core: [
+    { key: '定位', tip: '统一标准的法人基础/主题权威区；「一数一源」；按业务分类存放' },
+    { key: '数据模型', tip: '宽表、多维；允许冗余；可在基础/主题上扩展专业库（逻辑分层）' },
+    { key: '加工处理', tip: '多源合并到同一法人实体；跨业务计算；提取服务区特征' },
+    { key: '存储周期', tip: '长期可存；垂直分片/水平分区；历史与审计近线' },
+    { key: '数据来源', tip: '治理及反馈区（经融合落入 DWS）' },
+    { key: '使用者', tip: '内部服务区；共享服务区' },
+    { key: '更新频度', tip: '默认月更；可按日/周/季/半年/年按业务配置' },
+  ],
+  internal: POPULATION_ZONE_DIMS.internal.map((d) => ({ ...d, tip: d.tip.replace(/人口/g, '法人') })),
+  share: POPULATION_ZONE_DIMS.share.map((d) => ({ ...d, tip: d.tip.replace(/人口/g, '法人') })),
+}
+
 function modelRowClassName({ row }: { row: AnalysisModel }) {
   return highlightModelCode.value && row.mCode === highlightModelCode.value ? 'row-hl' : ''
 }
@@ -301,7 +335,7 @@ const ZONE_DEFS: Record<string, ZoneDef[]> = {
     { key: 'zone.collect', zoneCode: 'collect', label: '法人数据采集区设计', mCodes: ['M175'], deepLink: '/exchange/ingestion?system=collect&module=ingest.structured&section=structured-table', deepLabel: '打开数据归集' },
     { key: 'zone.govern', zoneCode: 'govern', label: '法人数据治理及反馈区设计', mCodes: ['M176', 'M178', 'M179'], deepLink: '/governance?tab=etl&etlSub=task-mgmt', deepLabel: '打开数据治理' },
     { key: 'zone.core', zoneCode: 'core', label: '法人核心数据区设计', mCodes: ['M180'], deepLink: '/governance?tab=model&mSub=clean', deepLabel: '打开数据融合' },
-    { key: 'zone.internal', zoneCode: 'internal', label: '法人数据内部服务区设计', mCodes: ['M181'], deepLink: '/resource-center', deepLabel: '打开资源中心' },
+    { key: 'zone.internal', zoneCode: 'internal', label: '法人数据内部服务区设计', mCodes: ['M181'], deepLink: '/exchange/ingestion?system=register&module=m048', deepLabel: '打开访问控制' },
     { key: 'zone.share', zoneCode: 'share', label: '法人数据共享服务区设计', mCodes: ['M177', 'M182', 'M183', 'M184', 'M185', 'M186', 'M187', 'M188', 'M189', 'M190', 'M191', 'M192', 'M193', 'M194', 'M195', 'M196', 'M197'], deepLink: '/catalog', deepLabel: '打开资源目录' },
   ],
   macro: [],
@@ -346,11 +380,254 @@ const indicatorScopeName = computed(() => INDICATOR_SCOPE_NAME[meta.value.domain
 const dataEaseHealthy = ref(false)
 const activeNav = ref('')
 const shareTab = ref<'mount' | 'api' | 'indicators' | 'tasks' | 'models'>('mount')
-const governTab = ref<'mount' | 'verify'>('mount')
+const governTab = ref<'design' | 'mount' | 'verify'>('design')
 const collectTab = ref<'mount'>('mount')
-const coreTab = ref<'mount' | 'storage'>('mount')
-const internalTab = ref<'mount'>('mount')
+const coreTab = ref<'design' | 'mount' | 'storage'>('design')
+const internalTab = ref<'design' | 'classify' | 'grant' | 'mount'>('design')
 const highlightModelCode = ref('')
+
+interface ZoneDimDesignRow {
+  id: number
+  domainCode?: string
+  zoneCode?: string
+  dimCode: string
+  itemCode: string
+  itemName: string
+  itemType?: string
+  content?: string
+  configJson?: string
+  deepLink?: string
+  sortNo?: number
+  status: string
+  createdAt?: string
+  updatedAt?: string
+}
+
+const DIM_CODE_OPTIONS = [
+  { value: 'POSITION', label: '定位' },
+  { value: 'MODEL', label: '数据模型' },
+  { value: 'PROCESS', label: '加工处理' },
+  { value: 'RETENTION', label: '存储周期' },
+  { value: 'SOURCE', label: '数据来源' },
+  { value: 'CONSUMER', label: '使用者' },
+  { value: 'FREQUENCY', label: '更新频度' },
+] as const
+
+const DIM_KEY_TO_CODE: Record<string, string> = {
+  定位: 'POSITION',
+  数据模型: 'MODEL',
+  加工处理: 'PROCESS',
+  存储周期: 'RETENTION',
+  数据来源: 'SOURCE',
+  使用者: 'CONSUMER',
+  更新频度: 'FREQUENCY',
+}
+
+const ITEM_TYPE_OPTIONS: Record<string, { value: string; label: string }[]> = {
+  POSITION: [
+    { value: 'PROBLEM_DATA', label: '问题数据' },
+    { value: 'SEMI', label: '半结构化数据' },
+    { value: 'UNSTRUCT_TO_STRUCT', label: '非结构转结构化' },
+    { value: 'DIRTY_FULL', label: '周期全量脏数据' },
+    { value: 'AUTHORITY_BASE', label: '基础/主题权威区' },
+    { value: 'ONE_SOURCE', label: '一数一源' },
+    { value: 'BIZ_CLASSIFY', label: '按业务分类存放' },
+    { value: 'HIGH_SENSITIVE_BOUNDARY', label: '高敏独立边界' },
+  ],
+  MODEL: [
+    { value: 'SOURCE_ALIGN', label: '贴源结构' },
+    { value: 'NORMALIZED', label: '规范化设计' },
+    { value: 'INCREMENTAL_SLICE', label: '周期增量切片' },
+    { value: 'WIDE_TABLE', label: '宽表模型' },
+    { value: 'MULTIDIM', label: '多维模型' },
+    { value: 'SPECIALTY_EXT', label: '专业库扩展' },
+    { value: 'CONSUME_CORE', label: '消费核心权威' },
+  ],
+  PROCESS: [
+    { value: 'TECH_LEGAL_CLEAN', label: '技术/合法性检核清洗' },
+    { value: 'POINT_IN_TIME', label: '历史时点变更' },
+    { value: 'SEMI_UNSTRUCT_PREP', label: '半/非结构预处理' },
+    { value: 'ENTITY_MERGE', label: '多源实体合并' },
+    { value: 'CROSS_CALC', label: '跨业务计算' },
+    { value: 'SERVICE_FEATURE', label: '提取服务区特征' },
+    { value: 'CLASSIFY_DUAL_AUTH', label: '分级分类与双重授权' },
+  ],
+  RETENTION: [
+    { value: 'LONG_TERM', label: '长期存储' },
+    { value: 'CAPACITY_BASED', label: '随容量延长' },
+    { value: 'LONG_TERM_PARTITION', label: '长期存储与分区' },
+  ],
+  SOURCE: [
+    { value: 'COLLECT_ZONE', label: '采集区' },
+    { value: 'EXTERNAL_ZONE', label: '外部数据区' },
+    { value: 'FROM_GOVERN', label: '治理及反馈区' },
+    { value: 'FROM_CORE', label: '来源核心区' },
+  ],
+  CONSUMER: [
+    { value: 'CORE_ZONE', label: '核心区使用者' },
+    { value: 'SERVICE_ZONE', label: '服务区使用者' },
+    { value: 'INTERNAL_ZONE', label: '内部服务区使用者' },
+    { value: 'SHARE_ZONE', label: '共享服务区使用者' },
+    { value: 'DEPT_HIGH_SENS', label: '部门高敏应用' },
+  ],
+  FREQUENCY: [
+    { value: 'DAILY', label: '一天' },
+    { value: 'WEEKLY', label: '一周' },
+    { value: 'MONTHLY', label: '每月' },
+    { value: 'QUARTERLY', label: '一季度' },
+    { value: 'HALF_YEAR', label: '半年' },
+    { value: 'YEARLY', label: '一年' },
+  ],
+}
+
+function dimCodeLabel(code?: string) {
+  return DIM_CODE_OPTIONS.find((d) => d.value === code)?.label || statusLabel(code || '')
+}
+
+function itemTypeLabel(dimCode: string, itemType?: string) {
+  if (!itemType) return '—'
+  return ITEM_TYPE_OPTIONS[dimCode]?.find((x) => x.value === itemType)?.label || statusLabel(itemType)
+}
+
+const designRows = ref<ZoneDimDesignRow[]>([])
+const designLoading = ref(false)
+const designDimFilter = ref('')
+const designDialog = ref(false)
+const designEditingId = ref<number | null>(null)
+const designForm = ref({
+  dimCode: 'POSITION',
+  itemCode: '',
+  itemName: '',
+  itemType: '',
+  content: '',
+  deepLink: '',
+  sortNo: 0,
+  status: 'ACTIVE',
+})
+
+const filteredDesignRows = computed(() => {
+  if (!designDimFilter.value) return designRows.value
+  return designRows.value.filter((r) => r.dimCode === designDimFilter.value)
+})
+
+const designItemTypeOptions = computed(() => ITEM_TYPE_OPTIONS[designForm.value.dimCode] || [])
+
+interface InternalClassifyRow {
+  id: number
+  assetCode: string
+  assetName: string
+  categoryCode: string
+  categoryName: string
+  levelCode: string
+  levelName?: string
+  classifyBasis?: string
+  controlHint?: string
+  bindingId?: number
+  sortNo?: number
+  status: string
+  createdAt?: string
+  updatedAt?: string
+}
+
+interface InternalGrantRow {
+  id: number
+  grantType: string
+  granteeType: string
+  granteeCode: string
+  granteeName?: string
+  assetCode?: string
+  assetName?: string
+  levelCode?: string
+  authMode?: string
+  permissionScope?: string
+  reason?: string
+  status: string
+  applicant?: string
+  approvedBy?: string
+  approvedAt?: string
+  createdAt?: string
+  updatedAt?: string
+}
+
+const LEVEL_OPTIONS = [
+  { value: 'GENERAL', label: '一般数据' },
+  { value: 'IMPORTANT', label: '重要数据' },
+  { value: 'SENSITIVE', label: '敏感数据' },
+  { value: 'CORE', label: '核心数据' },
+] as const
+
+const LEGAL_CATEGORY_OPTIONS = [
+  { value: 'LEGAL_BASE', label: '法人基础数据' },
+  { value: 'LEGAL_BIZ', label: '法人业务主题' },
+  { value: 'CONTACT', label: '联系信息' },
+  { value: 'FINANCE', label: '财务相关' },
+  { value: 'OTHER', label: '其他' },
+] as const
+
+const POPULATION_CATEGORY_OPTIONS = [
+  { value: 'POP_BASE', label: '人口基础数据' },
+  { value: 'POP_BIZ', label: '人口业务主题' },
+  { value: 'IDENTITY', label: '身份证件信息' },
+  { value: 'CONTACT', label: '联系信息' },
+  { value: 'OTHER', label: '其他' },
+] as const
+
+const CATEGORY_OPTIONS = computed(() =>
+  isPopulation.value ? POPULATION_CATEGORY_OPTIONS : LEGAL_CATEGORY_OPTIONS,
+)
+
+const defaultClassifyCategory = computed(() =>
+  isPopulation.value
+    ? { code: 'POP_BASE', name: '人口基础数据' }
+    : { code: 'LEGAL_BASE', name: '法人基础数据' },
+)
+
+const internalClassifyAlert = computed(() =>
+  isPopulation.value
+    ? '内部服务区对高敏人口基础数据做分级分类登记；访问须配合「数据权限」双重授权。'
+    : '内部服务区对高敏法人基础数据做分级分类登记；访问须配合「数据权限」双重授权。',
+)
+
+const classifyAssetPlaceholder = computed(() =>
+  isPopulation.value ? '如 dws_population_base' : '如 dws_legal_entity_base',
+)
+
+const classifyRows = ref<InternalClassifyRow[]>([])
+const classifyLoading = ref(false)
+const classifyLevelFilter = ref('')
+const classifyDialog = ref(false)
+const classifyEditingId = ref<number | null>(null)
+const classifyForm = ref({
+  assetCode: '',
+  assetName: '',
+  categoryCode: 'POP_BASE',
+  categoryName: '人口基础数据',
+  levelCode: 'SENSITIVE',
+  levelName: '敏感数据',
+  classifyBasis: '',
+  controlHint: '',
+  sortNo: 0,
+  status: 'ACTIVE',
+})
+
+const grantRows = ref<InternalGrantRow[]>([])
+const grantLoading = ref(false)
+const grantTypeFilter = ref('')
+const grantStatusFilter = ref('')
+const grantDialog = ref(false)
+const grantEditingId = ref<number | null>(null)
+const grantForm = ref({
+  grantType: 'DATA_ACCESS',
+  granteeType: 'ORG',
+  granteeCode: '',
+  granteeName: '',
+  assetCode: '',
+  assetName: '',
+  levelCode: 'SENSITIVE',
+  authMode: 'DUAL',
+  permissionScope: 'MASKED_READ',
+  reason: '',
+})
 
 const bindings = ref<Binding[]>([])
 const candidates = ref<Candidate[]>([])
@@ -370,7 +647,7 @@ const batchLoading = ref(false)
 const storageSummary = ref<Record<string, unknown> | null>(null)
 const storageLoading = ref(false)
 const verifyForm = ref({
-  mCode: 'M156',
+  mCode: 'M179',
   sceneCode: '',
   sceneName: '',
   checkType: 'MULTI_SOURCE',
@@ -558,11 +835,35 @@ const pageTitle = computed(() => {
 
 const zoneDims = computed<DimItem[]>(() => {
   const z = activeZone.value?.zoneCode
-  if (useFiveZoneMount.value && z && POPULATION_ZONE_DIMS[z]) {
-    return POPULATION_ZONE_DIMS[z]
-  }
+  if (!z) return SEVEN_DIMS_GENERIC
+  if (isLegal.value && LEGAL_ZONE_DIMS[z]) return LEGAL_ZONE_DIMS[z]
+  if (useFiveZoneMount.value && POPULATION_ZONE_DIMS[z]) return POPULATION_ZONE_DIMS[z]
   return SEVEN_DIMS_GENERIC
 })
+
+/** 治理/核心/内部：顶部七维卡片可点筛选设计列表 */
+const dimCardFilterEnabled = computed(() =>
+  useFiveZoneMount.value && (isGovern.value || isCore.value || isInternal.value),
+)
+
+function dimKeyToCode(key: string) {
+  return DIM_KEY_TO_CODE[key] || ''
+}
+
+function isDimCardActive(key: string) {
+  const code = dimKeyToCode(key)
+  return !!code && designDimFilter.value === code
+}
+
+function onDimCardClick(d: DimItem) {
+  if (!dimCardFilterEnabled.value) return
+  const code = dimKeyToCode(d.key)
+  if (!code) return
+  if (isGovern.value) governTab.value = 'design'
+  else if (isCore.value) coreTab.value = 'design'
+  else if (isInternal.value) internalTab.value = 'design'
+  designDimFilter.value = designDimFilter.value === code ? '' : code
+}
 
 function zoneApiPath(zoneKey: string) {
   return zoneKey.startsWith('zone.') ? zoneKey.slice(5) : zoneKey
@@ -616,7 +917,7 @@ function resolveFromRoute() {
       } else if (parentZone.zoneCode === 'core' && (code === 'M157' || code === 'M180')) {
         coreTab.value = 'storage'
       } else if (parentZone.zoneCode === 'internal' && (code === 'M158' || code === 'M181')) {
-        internalTab.value = 'mount'
+        internalTab.value = 'classify'
       } else if (parentZone.zoneCode === 'collect' && (code === 'M152' || code === 'M175')) {
         collectTab.value = 'mount'
       }
@@ -783,6 +1084,290 @@ async function loadIndicatorTablePreviews() {
   }
 }
 
+async function loadZoneDimDesigns() {
+  if (!activeZone.value || !useFiveZoneMount.value) return
+  designLoading.value = true
+  try {
+    const zone = activeZone.value.zoneCode
+    const res = await api.get(`/analytics/domain/${meta.value.domain}/zones/${zone}/dim-designs`)
+    designRows.value = res.data || []
+  } catch (e: unknown) {
+    ElMessage.error(e instanceof Error ? e.message : '加载七维设计失败')
+  } finally {
+    designLoading.value = false
+  }
+}
+
+function openDesignCreate() {
+  designEditingId.value = null
+  designForm.value = {
+    dimCode: designDimFilter.value || 'POSITION',
+    itemCode: '',
+    itemName: '',
+    itemType: '',
+    content: '',
+    deepLink: '',
+    sortNo: 0,
+    status: 'ACTIVE',
+  }
+  designDialog.value = true
+}
+
+function openDesignEdit(row: ZoneDimDesignRow) {
+  designEditingId.value = row.id
+  designForm.value = {
+    dimCode: row.dimCode,
+    itemCode: row.itemCode,
+    itemName: row.itemName,
+    itemType: row.itemType || '',
+    content: row.content || '',
+    deepLink: row.deepLink || '',
+    sortNo: row.sortNo || 0,
+    status: row.status || 'ACTIVE',
+  }
+  designDialog.value = true
+}
+
+async function saveDesignRow() {
+  if (!activeZone.value) return
+  if (!designForm.value.itemCode.trim() || !designForm.value.itemName.trim()) {
+    ElMessage.warning('请填写编码与名称')
+    return
+  }
+  const zone = activeZone.value.zoneCode
+  const body = { ...designForm.value }
+  if (designEditingId.value == null) {
+    await api.post(`/analytics/domain/${meta.value.domain}/zones/${zone}/dim-designs`, body)
+    ElMessage.success('已新增七维设计项')
+  } else {
+    await api.put(`/analytics/domain/dim-designs/${designEditingId.value}`, body)
+    ElMessage.success('已更新七维设计项')
+  }
+  designDialog.value = false
+  await loadZoneDimDesigns()
+}
+
+async function removeDesignRow(row: ZoneDimDesignRow) {
+  await ElMessageBox.confirm(`确认删除「${row.itemName}」？`, '删除确认', { type: 'warning' })
+  await api.delete(`/analytics/domain/dim-designs/${row.id}`)
+  ElMessage.success('已删除')
+  await loadZoneDimDesigns()
+}
+
+async function loadInternalClassifies() {
+  if (!activeZone.value || !useFiveZoneMount.value) return
+  classifyLoading.value = true
+  try {
+    const zone = activeZone.value.zoneCode
+    const res = await api.get(`/analytics/domain/${meta.value.domain}/zones/${zone}/internal-classifies`, {
+      params: {
+        levelCode: classifyLevelFilter.value || undefined,
+      },
+    })
+    classifyRows.value = res.data || []
+  } catch (e: unknown) {
+    ElMessage.error(e instanceof Error ? e.message : '加载分级分类失败')
+  } finally {
+    classifyLoading.value = false
+  }
+}
+
+function onClassifyCategoryChange(code: string) {
+  classifyForm.value.categoryName = CATEGORY_OPTIONS.value.find((c) => c.value === code)?.label || code
+}
+
+function onClassifyLevelChange(code: string) {
+  classifyForm.value.levelName = LEVEL_OPTIONS.find((c) => c.value === code)?.label || code
+}
+
+function openClassifyCreate() {
+  classifyEditingId.value = null
+  const cat = defaultClassifyCategory.value
+  classifyForm.value = {
+    assetCode: '',
+    assetName: '',
+    categoryCode: cat.code,
+    categoryName: cat.name,
+    levelCode: 'SENSITIVE',
+    levelName: '敏感数据',
+    classifyBasis: '',
+    controlHint: '访问须双重授权；系统管理员不可直接授跨部门数据访问权',
+    sortNo: 0,
+    status: 'ACTIVE',
+  }
+  classifyDialog.value = true
+}
+
+function openClassifyEdit(row: InternalClassifyRow) {
+  classifyEditingId.value = row.id
+  classifyForm.value = {
+    assetCode: row.assetCode,
+    assetName: row.assetName,
+    categoryCode: row.categoryCode,
+    categoryName: row.categoryName,
+    levelCode: row.levelCode,
+    levelName: row.levelName || '',
+    classifyBasis: row.classifyBasis || '',
+    controlHint: row.controlHint || '',
+    sortNo: row.sortNo || 0,
+    status: row.status || 'ACTIVE',
+  }
+  classifyDialog.value = true
+}
+
+function fillClassifyFromBinding(b: Binding) {
+  classifyForm.value.assetCode = b.physicalTable || b.assetRef || ''
+  classifyForm.value.assetName = b.assetName || ''
+}
+
+function onClassifyPickBinding(ref: string) {
+  const b = bindings.value.find((x) => (x.physicalTable || x.assetRef) === ref)
+  if (b) fillClassifyFromBinding(b)
+}
+
+function onGrantPickClassify(code: string) {
+  const r = classifyRows.value.find((x) => x.assetCode === code)
+  if (r) fillGrantFromClassify(r)
+}
+
+async function saveClassifyRow() {
+  if (!activeZone.value) return
+  if (!classifyForm.value.assetCode.trim() || !classifyForm.value.assetName.trim()) {
+    ElMessage.warning('请填写资产编码与名称')
+    return
+  }
+  const zone = activeZone.value.zoneCode
+  const body = { ...classifyForm.value }
+  if (classifyEditingId.value == null) {
+    await api.post(`/analytics/domain/${meta.value.domain}/zones/${zone}/internal-classifies`, body)
+    ElMessage.success('已新增分级分类')
+  } else {
+    const { assetCode: _a, ...patch } = body
+    await api.put(`/analytics/domain/internal-classifies/${classifyEditingId.value}`, patch)
+    ElMessage.success('已更新分级分类')
+  }
+  classifyDialog.value = false
+  await loadInternalClassifies()
+}
+
+async function removeClassifyRow(row: InternalClassifyRow) {
+  await ElMessageBox.confirm(`确认删除「${row.assetName}」的分级分类？`, '删除确认', { type: 'warning' })
+  await api.delete(`/analytics/domain/internal-classifies/${row.id}`)
+  ElMessage.success('已删除')
+  await loadInternalClassifies()
+}
+
+async function loadInternalGrants() {
+  if (!activeZone.value || !useFiveZoneMount.value) return
+  grantLoading.value = true
+  try {
+    const zone = activeZone.value.zoneCode
+    const res = await api.get(`/analytics/domain/${meta.value.domain}/zones/${zone}/internal-grants`, {
+      params: {
+        grantType: grantTypeFilter.value || undefined,
+        status: grantStatusFilter.value || undefined,
+      },
+    })
+    grantRows.value = res.data || []
+  } catch (e: unknown) {
+    ElMessage.error(e instanceof Error ? e.message : '加载数据权限失败')
+  } finally {
+    grantLoading.value = false
+  }
+}
+
+function openGrantCreate() {
+  grantEditingId.value = null
+  grantForm.value = {
+    grantType: 'DATA_ACCESS',
+    granteeType: 'ORG',
+    granteeCode: '',
+    granteeName: '',
+    assetCode: '',
+    assetName: '',
+    levelCode: 'SENSITIVE',
+    authMode: 'DUAL',
+    permissionScope: 'MASKED_READ',
+    reason: '',
+  }
+  grantDialog.value = true
+}
+
+function openGrantEdit(row: InternalGrantRow) {
+  grantEditingId.value = row.id
+  grantForm.value = {
+    grantType: row.grantType,
+    granteeType: row.granteeType,
+    granteeCode: row.granteeCode,
+    granteeName: row.granteeName || '',
+    assetCode: row.assetCode || '',
+    assetName: row.assetName || '',
+    levelCode: row.levelCode || 'SENSITIVE',
+    authMode: row.authMode || 'DUAL',
+    permissionScope: row.permissionScope || 'MASKED_READ',
+    reason: row.reason || '',
+  }
+  grantDialog.value = true
+}
+
+function fillGrantFromClassify(row: InternalClassifyRow) {
+  grantForm.value.assetCode = row.assetCode
+  grantForm.value.assetName = row.assetName
+  grantForm.value.levelCode = row.levelCode
+}
+
+function startGrantFromClassify(row: InternalClassifyRow) {
+  internalTab.value = 'grant'
+  openGrantCreate()
+  fillGrantFromClassify(row)
+}
+
+async function saveGrantRow() {
+  if (!activeZone.value) return
+  if (!grantForm.value.granteeCode.trim()) {
+    ElMessage.warning('请填写授权对象编码')
+    return
+  }
+  if (grantForm.value.grantType === 'DATA_ACCESS' && !grantForm.value.assetCode.trim()) {
+    ElMessage.warning('数据访问授权须指定资产编码')
+    return
+  }
+  const zone = activeZone.value.zoneCode
+  if (grantEditingId.value == null) {
+    await api.post(`/analytics/domain/${meta.value.domain}/zones/${zone}/internal-grants`, { ...grantForm.value })
+    ElMessage.success(grantForm.value.grantType === 'DATA_ACCESS'
+      ? '已提交授权（系统管理员发起的数据访问默认待部门管理员审批）'
+      : '已新增授权')
+  } else {
+    await api.put(`/analytics/domain/internal-grants/${grantEditingId.value}`, {
+      granteeName: grantForm.value.granteeName,
+      assetName: grantForm.value.assetName,
+      levelCode: grantForm.value.levelCode,
+      permissionScope: grantForm.value.permissionScope,
+      reason: grantForm.value.reason,
+      authMode: grantForm.value.authMode,
+    })
+    ElMessage.success('已更新授权申请')
+  }
+  grantDialog.value = false
+  await loadInternalGrants()
+}
+
+async function decideGrant(row: InternalGrantRow, action: 'APPROVE' | 'REJECT' | 'REVOKE') {
+  const tip = action === 'APPROVE' ? '通过' : action === 'REJECT' ? '驳回' : '撤销'
+  await ElMessageBox.confirm(`确认${tip}「${row.granteeName || row.granteeCode}」的授权？`, '操作确认', { type: 'warning' })
+  await api.post(`/analytics/domain/internal-grants/${row.id}/decide`, { action })
+  ElMessage.success(`已${tip}`)
+  await loadInternalGrants()
+}
+
+async function removeGrantRow(row: InternalGrantRow) {
+  await ElMessageBox.confirm(`确认删除授权记录「${row.granteeName || row.granteeCode}」？`, '删除确认', { type: 'warning' })
+  await api.delete(`/analytics/domain/internal-grants/${row.id}`)
+  ElMessage.success('已删除')
+  await loadInternalGrants()
+}
+
 async function loadVerifyLedger() {
   if (!isPopulation.value && !isLegal.value) return
   verifyLoading.value = true
@@ -846,6 +1431,11 @@ async function createVerifyRow() {
   await loadVerifyLedger()
 }
 
+function openVerifyDialog() {
+  verifyForm.value.mCode = isLegal.value ? 'M179' : 'M156'
+  verifyDialog.value = true
+}
+
 async function createBatchRow() {
   await api.post(`/analytics/domain/${meta.value.domain}/batch-ledger`, {
     batchCode: batchForm.value.batchCode || undefined,
@@ -897,11 +1487,18 @@ async function loadCurrentView() {
     if (isPopulation.value && isShare.value && shareTab.value === 'api') {
       await Promise.all([loadServiceContracts(), loadBatchLedger()])
     }
-    if ((isPopulation.value || isLegal.value) && isGovern.value && governTab.value === 'verify') {
-      await loadVerifyLedger()
+    if ((isPopulation.value || isLegal.value) && isGovern.value) {
+      if (governTab.value === 'design') await loadZoneDimDesigns()
+      if (governTab.value === 'verify') await loadVerifyLedger()
     }
-    if ((isPopulation.value || isLegal.value) && isCore.value && coreTab.value === 'storage') {
-      await loadStorageSummary()
+    if ((isPopulation.value || isLegal.value) && isCore.value) {
+      if (coreTab.value === 'design') await loadZoneDimDesigns()
+      if (coreTab.value === 'storage') await loadStorageSummary()
+    }
+    if ((isPopulation.value || isLegal.value) && isInternal.value) {
+      if (internalTab.value === 'design') await loadZoneDimDesigns()
+      if (internalTab.value === 'classify') await loadInternalClassifies()
+      if (internalTab.value === 'grant') await loadInternalGrants()
     }
   } else if (isDesignerOnly.value) {
     await loadDesigner()
@@ -1317,13 +1914,14 @@ async function issueModelEmbed() {
 
 function onHubSelect(key: string) {
   activeNav.value = key
+  designDimFilter.value = ''
   if (key.endsWith('share')) {
     shareTab.value = 'mount'
   }
-  if (key.endsWith('govern')) governTab.value = 'mount'
+  if (key.endsWith('govern')) governTab.value = 'design'
   if (key.endsWith('collect')) collectTab.value = 'mount'
-  if (key.endsWith('core')) coreTab.value = 'mount'
-  if (key.endsWith('internal')) internalTab.value = 'mount'
+  if (key.endsWith('core')) coreTab.value = 'design'
+  if (key.endsWith('internal')) internalTab.value = 'design'
   if (!applyingRoute) syncQuery()
   loadCurrentView()
 }
@@ -1360,6 +1958,7 @@ watch(shareTab, async (t) => {
 
 watch(governTab, async (t) => {
   if ((!isPopulation.value && !isLegal.value) || !isGovern.value) return
+  if (t === 'design') await loadZoneDimDesigns()
   if (t === 'mount') await loadBindings()
   if (t === 'verify') await loadVerifyLedger()
 })
@@ -1371,12 +1970,16 @@ watch(collectTab, async (t) => {
 
 watch(coreTab, async (t) => {
   if ((!isPopulation.value && !isLegal.value) || !isCore.value) return
+  if (t === 'design') await loadZoneDimDesigns()
   if (t === 'mount') await loadBindings()
   if (t === 'storage') await loadStorageSummary()
 })
 
 watch(internalTab, async (t) => {
   if ((!isPopulation.value && !isLegal.value) || !isInternal.value) return
+  if (t === 'design') await loadZoneDimDesigns()
+  if (t === 'classify') await loadInternalClassifies()
+  if (t === 'grant') await loadInternalGrants()
   if (t === 'mount') await loadBindings()
 })
 
@@ -1397,8 +2000,18 @@ onMounted(async () => {
     <HubSideLayout v-model="activeNav" :groups="navGroups" @select="onHubSelect">
       <!-- 五区：资产挂载设计 -->
       <PageCard v-if="activeZone && !isShare" :title="pageTitle">
-<div class="dim-grid">
-          <div v-for="d in zoneDims" :key="d.key" class="dim-item">
+        <!-- 采集区不展示顶部七维说明卡片，仅挂载操作区 -->
+        <div v-if="!isCollect" class="dim-grid">
+          <div
+            v-for="d in zoneDims"
+            :key="d.key"
+            class="dim-item"
+            :class="{
+              'dim-item--clickable': dimCardFilterEnabled,
+              'dim-item--active': dimCardFilterEnabled && isDimCardActive(d.key),
+            }"
+            @click="onDimCardClick(d)"
+          >
             <div class="dim-key">{{ d.key }}</div>
             <div class="dim-tip">{{ d.tip }}</div>
           </div>
@@ -1406,6 +2019,51 @@ onMounted(async () => {
 
         <template v-if="useFiveZoneMount && isGovern">
           <el-tabs v-model="governTab">
+            <el-tab-pane label="七维设计" name="design">
+              <el-form inline class="portal-inline-form portal-inline-form--block">
+                <el-form-item label="维度" class="portal-field-md">
+                  <el-select v-model="designDimFilter" clearable placeholder="全部">
+                    <el-option v-for="d in DIM_CODE_OPTIONS" :key="d.value" :label="d.label" :value="d.value" />
+                  </el-select>
+                </el-form-item>
+                <el-form-item class="portal-form-actions">
+                  <el-button type="primary" @click="openDesignCreate">新增设计项</el-button>
+                  <el-button :loading="designLoading" @click="loadZoneDimDesigns">刷新</el-button>
+                  <el-button @click="$router.push(activeZone.deepLink)">{{ activeZone.deepLabel }}</el-button>
+                </el-form-item>
+              </el-form>
+              <el-table v-loading="designLoading" :data="filteredDesignRows" stripe border class="portal-table" empty-text="暂无七维设计项">
+                <el-table-column label="维度" width="110">
+                  <template #default="{ row }">{{ dimCodeLabel(row.dimCode) }}</template>
+                </el-table-column>
+                <el-table-column prop="itemCode" label="编码" width="160" show-overflow-tooltip />
+                <el-table-column prop="itemName" label="名称" min-width="160" show-overflow-tooltip />
+                <el-table-column label="子类型" width="150">
+                  <template #default="{ row }">{{ itemTypeLabel(row.dimCode, row.itemType) }}</template>
+                </el-table-column>
+                <el-table-column prop="content" label="设计说明" min-width="220" show-overflow-tooltip />
+                <el-table-column label="深链" width="100">
+                  <template #default="{ row }">
+                    <el-button v-if="row.deepLink" link type="primary" @click="$router.push(row.deepLink)">打开</el-button>
+                    <span v-else>—</span>
+                  </template>
+                </el-table-column>
+                <el-table-column label="状态" width="90">
+                  <template #default="{ row }">
+                    <el-tag :type="statusTagType(row.status)" size="small">{{ statusLabel(row.status) }}</el-tag>
+                  </template>
+                </el-table-column>
+                <el-table-column label="更新时间" width="170">
+                  <template #default="{ row }">{{ formatDateTime(row.updatedAt || row.createdAt) }}</template>
+                </el-table-column>
+                <el-table-column label="操作" width="140" fixed="right">
+                  <template #default="{ row }">
+                    <el-button link type="primary" @click="openDesignEdit(row)">编辑</el-button>
+                    <el-button link type="danger" @click="removeDesignRow(row)">删除</el-button>
+                  </template>
+                </el-table-column>
+              </el-table>
+            </el-tab-pane>
             <el-tab-pane label="资产挂载" name="mount">
               <el-form inline class="portal-inline-form portal-inline-form--block">
                 <el-form-item class="portal-form-actions">
@@ -1414,7 +2072,7 @@ onMounted(async () => {
                   <el-button @click="loadBindings(true)">刷新</el-button>
                 </el-form-item>
               </el-form>
-              <el-table :data="bindings" stripe size="small" empty-text="尚未挂载资产，请从候选中选型">
+              <el-table :data="bindings" stripe border class="portal-table" size="small" empty-text="尚未挂载资产，请从候选中选型">
                 <el-table-column prop="assetName" label="资产名称" min-width="160" />
                 <el-table-column label="维度分组" width="110">
                   <template #default="{ row }">{{ dimGroupLabel(row.dimGroup) }}</template>
@@ -1432,8 +2090,10 @@ onMounted(async () => {
                     <el-tag :type="statusTagType(row.status)" size="small">{{ statusLabel(row.status) }}</el-tag>
                   </template>
                 </el-table-column>
-                <el-table-column prop="createdAt" label="挂载时间" width="170" />
-                <el-table-column label="操作" width="90">
+                <el-table-column label="挂载时间" width="170">
+                  <template #default="{ row }">{{ formatDateTime(row.createdAt) }}</template>
+                </el-table-column>
+                <el-table-column label="操作" width="90" fixed="right">
                   <template #default="{ row }">
                     <el-button link type="danger" @click="unbind(row)">解除</el-button>
                   </template>
@@ -1443,24 +2103,26 @@ onMounted(async () => {
             <el-tab-pane v-if="isPopulation || isLegal" label="校核台账" name="verify">
               <el-form inline class="portal-inline-form">
                 <el-form-item class="portal-form-actions">
-                  <el-button type="primary" @click="verifyDialog = true">登记台账</el-button>
+                  <el-button type="primary" @click="openVerifyDialog">登记台账</el-button>
                   <el-button :loading="verifyLoading" @click="loadVerifyLedger">刷新</el-button>
                 </el-form-item>
               </el-form>
-              <el-table v-loading="verifyLoading" :data="verifyRows" stripe size="small" empty-text="暂无校核台账">
+              <el-table v-loading="verifyLoading" :data="verifyRows" stripe border class="portal-table" size="small" empty-text="暂无校核台账">
                 <el-table-column prop="mCode" label="模块" width="80" />
                 <el-table-column prop="sceneName" label="场景" min-width="140" />
-                <el-table-column prop="checkType" label="类型" width="120" />
+                <el-table-column label="类型" width="120">
+                  <template #default="{ row }">{{ statusLabel(row.checkType) }}</template>
+                </el-table-column>
                 <el-table-column prop="sourceDept" label="来源部门" width="120" />
                 <el-table-column prop="issueSummary" label="问题摘要" min-width="180" show-overflow-tooltip />
-                <el-table-column prop="feedbackStatus" label="反馈" width="100">
+                <el-table-column label="反馈" width="100">
                   <template #default="{ row }">
-                    <el-tag size="small" :type="row.feedbackStatus === 'CLOSED' ? 'success' : row.feedbackStatus === 'FEEDBACK' ? 'warning' : 'info'">
-                      {{ row.feedbackStatus }}
+                    <el-tag size="small" :type="statusTagType(row.feedbackStatus)">
+                      {{ statusLabel(row.feedbackStatus) }}
                     </el-tag>
                   </template>
                 </el-table-column>
-                <el-table-column label="操作" width="200">
+                <el-table-column label="操作" width="200" fixed="right">
                   <template #default="{ row }">
                     <el-button link type="primary" @click="setVerifyFeedback(row, 'FEEDBACK')">已反馈</el-button>
                     <el-button link type="success" @click="setVerifyFeedback(row, 'CLOSED')">关闭</el-button>
@@ -1508,6 +2170,51 @@ onMounted(async () => {
 
         <template v-else-if="useFiveZoneMount && isCore">
           <el-tabs v-model="coreTab">
+            <el-tab-pane label="七维设计" name="design">
+              <el-form inline class="portal-inline-form portal-inline-form--block">
+                <el-form-item label="维度" class="portal-field-md">
+                  <el-select v-model="designDimFilter" clearable placeholder="全部">
+                    <el-option v-for="d in DIM_CODE_OPTIONS" :key="d.value" :label="d.label" :value="d.value" />
+                  </el-select>
+                </el-form-item>
+                <el-form-item class="portal-form-actions">
+                  <el-button type="primary" @click="openDesignCreate">新增设计项</el-button>
+                  <el-button :loading="designLoading" @click="loadZoneDimDesigns">刷新</el-button>
+                  <el-button @click="$router.push(activeZone.deepLink)">{{ activeZone.deepLabel }}</el-button>
+                </el-form-item>
+              </el-form>
+              <el-table v-loading="designLoading" :data="filteredDesignRows" stripe border class="portal-table" empty-text="暂无七维设计项">
+                <el-table-column label="维度" width="110">
+                  <template #default="{ row }">{{ dimCodeLabel(row.dimCode) }}</template>
+                </el-table-column>
+                <el-table-column prop="itemCode" label="编码" width="160" show-overflow-tooltip />
+                <el-table-column prop="itemName" label="名称" min-width="160" show-overflow-tooltip />
+                <el-table-column label="子类型" width="150">
+                  <template #default="{ row }">{{ itemTypeLabel(row.dimCode, row.itemType) }}</template>
+                </el-table-column>
+                <el-table-column prop="content" label="设计说明" min-width="220" show-overflow-tooltip />
+                <el-table-column label="深链" width="100">
+                  <template #default="{ row }">
+                    <el-button v-if="row.deepLink" link type="primary" @click="$router.push(row.deepLink)">打开</el-button>
+                    <span v-else>—</span>
+                  </template>
+                </el-table-column>
+                <el-table-column label="状态" width="90">
+                  <template #default="{ row }">
+                    <el-tag :type="statusTagType(row.status)" size="small">{{ statusLabel(row.status) }}</el-tag>
+                  </template>
+                </el-table-column>
+                <el-table-column label="更新时间" width="170">
+                  <template #default="{ row }">{{ formatDateTime(row.updatedAt || row.createdAt) }}</template>
+                </el-table-column>
+                <el-table-column label="操作" width="140" fixed="right">
+                  <template #default="{ row }">
+                    <el-button link type="primary" @click="openDesignEdit(row)">编辑</el-button>
+                    <el-button link type="danger" @click="removeDesignRow(row)">删除</el-button>
+                  </template>
+                </el-table-column>
+              </el-table>
+            </el-tab-pane>
             <el-tab-pane label="资产挂载" name="mount">
               <el-form inline class="portal-inline-form portal-inline-form--block">
                 <el-form-item class="portal-form-actions">
@@ -1516,7 +2223,7 @@ onMounted(async () => {
                   <el-button @click="loadBindings(true)">刷新</el-button>
                 </el-form-item>
               </el-form>
-              <el-table :data="bindings" stripe size="small" empty-text="尚未挂载资产，请从候选中选型">
+              <el-table :data="bindings" stripe border class="portal-table" size="small" empty-text="尚未挂载资产，请从候选中选型">
                 <el-table-column prop="assetName" label="资产名称" min-width="160" />
                 <el-table-column label="维度分组" width="110">
                   <template #default="{ row }">{{ dimGroupLabel(row.dimGroup) }}</template>
@@ -1534,8 +2241,10 @@ onMounted(async () => {
                     <el-tag :type="statusTagType(row.status)" size="small">{{ statusLabel(row.status) }}</el-tag>
                   </template>
                 </el-table-column>
-                <el-table-column prop="createdAt" label="挂载时间" width="170" />
-                <el-table-column label="操作" width="90">
+                <el-table-column label="挂载时间" width="170">
+                  <template #default="{ row }">{{ formatDateTime(row.createdAt) }}</template>
+                </el-table-column>
+                <el-table-column label="操作" width="90" fixed="right">
                   <template #default="{ row }">
                     <el-button link type="danger" @click="unbind(row)">解除</el-button>
                   </template>
@@ -1573,45 +2282,163 @@ onMounted(async () => {
 
         <template v-else-if="useFiveZoneMount && isInternal">
           <el-tabs v-model="internalTab">
-            <el-tab-pane label="资产挂载" name="mount">
+            <el-tab-pane label="规范设计" name="design">
               <el-form inline class="portal-inline-form portal-inline-form--block">
+                <el-form-item label="维度" class="portal-field-md">
+                  <el-select v-model="designDimFilter" clearable placeholder="全部">
+                    <el-option v-for="d in DIM_CODE_OPTIONS" :key="d.value" :label="d.label" :value="d.value" />
+                  </el-select>
+                </el-form-item>
                 <el-form-item class="portal-form-actions">
-                  <el-button type="primary" @click="openBindDialog">选型挂载</el-button>
+                  <el-button type="primary" @click="openDesignCreate">新增规范项</el-button>
+                  <el-button :loading="designLoading" @click="loadZoneDimDesigns">刷新</el-button>
                   <el-button @click="$router.push(activeZone.deepLink)">{{ activeZone.deepLabel }}</el-button>
-                  <el-button @click="loadBindings(true)">刷新</el-button>
                 </el-form-item>
               </el-form>
-              <el-table :data="bindings" stripe size="small" empty-text="尚未挂载资产，请从候选中选型">
-                <el-table-column prop="assetName" label="资产名称" min-width="160" />
-                <el-table-column label="维度分组" width="110">
-                  <template #default="{ row }">{{ dimGroupLabel(row.dimGroup) }}</template>
+              <el-table v-loading="designLoading" :data="filteredDesignRows" stripe border class="portal-table" empty-text="暂无内部服务区规范项">
+                <el-table-column label="维度" width="110">
+                  <template #default="{ row }">{{ dimCodeLabel(row.dimCode) }}</template>
                 </el-table-column>
-                <el-table-column label="接入方式" width="140">
-                  <template #default="{ row }">{{ accessModeLabel(row.accessMode) }}</template>
+                <el-table-column prop="itemCode" label="编码" width="160" show-overflow-tooltip />
+                <el-table-column prop="itemName" label="名称" min-width="160" show-overflow-tooltip />
+                <el-table-column label="子类型" width="150">
+                  <template #default="{ row }">{{ itemTypeLabel(row.dimCode, row.itemType) }}</template>
                 </el-table-column>
-                <el-table-column label="来源类型" width="110">
-                  <template #default="{ row }">{{ assetTypeLabel(row.assetType) }}</template>
-                </el-table-column>
-                <el-table-column prop="physicalTable" label="物理表/引用" min-width="140" show-overflow-tooltip />
-                <el-table-column prop="dataLayer" label="分层" width="90" />
+                <el-table-column prop="content" label="管理规范说明" min-width="220" show-overflow-tooltip />
                 <el-table-column label="状态" width="90">
                   <template #default="{ row }">
                     <el-tag :type="statusTagType(row.status)" size="small">{{ statusLabel(row.status) }}</el-tag>
                   </template>
                 </el-table-column>
-                <el-table-column prop="createdAt" label="挂载时间" width="170" />
-                <el-table-column label="操作" width="90">
+                <el-table-column label="更新时间" width="170">
+                  <template #default="{ row }">{{ formatDateTime(row.updatedAt || row.createdAt) }}</template>
+                </el-table-column>
+                <el-table-column label="操作" width="140" fixed="right">
                   <template #default="{ row }">
-                    <el-button link type="danger" @click="unbind(row)">解除</el-button>
+                    <el-button link type="primary" @click="openDesignEdit(row)">编辑</el-button>
+                    <el-button link type="danger" @click="removeDesignRow(row)">删除</el-button>
                   </template>
                 </el-table-column>
               </el-table>
             </el-tab-pane>
-          </el-tabs>
-        </template>
 
-        <template v-else-if="useFiveZoneMount && isInternal">
-          <el-tabs v-model="internalTab">
+            <el-tab-pane label="分级分类" name="classify">
+              <el-alert
+                type="info"
+                :closable="false"
+                show-icon
+                style="margin-bottom:12px"
+                :title="internalClassifyAlert"
+              />
+              <el-form inline class="portal-inline-form portal-inline-form--block">
+                <el-form-item label="敏感等级" class="portal-field-md">
+                  <el-select v-model="classifyLevelFilter" clearable placeholder="全部" @change="loadInternalClassifies">
+                    <el-option v-for="l in LEVEL_OPTIONS" :key="l.value" :label="l.label" :value="l.value" />
+                  </el-select>
+                </el-form-item>
+                <el-form-item class="portal-form-actions">
+                  <el-button type="primary" @click="openClassifyCreate">新增分级</el-button>
+                  <el-button :loading="classifyLoading" @click="loadInternalClassifies">刷新</el-button>
+                </el-form-item>
+              </el-form>
+              <el-table v-loading="classifyLoading" :data="classifyRows" stripe border class="portal-table" empty-text="暂无分级分类登记">
+                <el-table-column prop="assetCode" label="资产编码" min-width="150" show-overflow-tooltip />
+                <el-table-column prop="assetName" label="资产名称" min-width="150" show-overflow-tooltip />
+                <el-table-column label="分类" width="130">
+                  <template #default="{ row }">{{ statusLabel(row.categoryCode) || row.categoryName }}</template>
+                </el-table-column>
+                <el-table-column label="敏感等级" width="110">
+                  <template #default="{ row }">
+                    <el-tag size="small" :type="statusTagType(row.levelCode)">{{ statusLabel(row.levelCode) }}</el-tag>
+                  </template>
+                </el-table-column>
+                <el-table-column prop="classifyBasis" label="分级依据" min-width="180" show-overflow-tooltip />
+                <el-table-column prop="controlHint" label="管控要求" min-width="180" show-overflow-tooltip />
+                <el-table-column label="状态" width="90">
+                  <template #default="{ row }">
+                    <el-tag :type="statusTagType(row.status)" size="small">{{ statusLabel(row.status) }}</el-tag>
+                  </template>
+                </el-table-column>
+                <el-table-column label="更新时间" width="170">
+                  <template #default="{ row }">{{ formatDateTime(row.updatedAt || row.createdAt) }}</template>
+                </el-table-column>
+                <el-table-column label="操作" width="200" fixed="right">
+                  <template #default="{ row }">
+                    <el-button link type="primary" @click="openClassifyEdit(row)">编辑</el-button>
+                    <el-button link type="primary" @click="startGrantFromClassify(row)">授权</el-button>
+                    <el-button link type="danger" @click="removeClassifyRow(row)">删除</el-button>
+                  </template>
+                </el-table-column>
+              </el-table>
+            </el-tab-pane>
+
+            <el-tab-pane label="数据权限" name="grant">
+              <el-alert
+                type="warning"
+                :closable="false"
+                show-icon
+                style="margin-bottom:12px"
+                title="双重授权：系统管理员可授部门管理员角色，但不可独自终审本人发起的跨部门数据访问；数据访问须待部门管理员审批后生效。"
+              />
+              <el-form inline class="portal-inline-form portal-inline-form--block">
+                <el-form-item label="授权类型" class="portal-field-md">
+                  <el-select v-model="grantTypeFilter" clearable placeholder="全部" @change="loadInternalGrants">
+                    <el-option label="角色授权" value="ROLE_GRANT" />
+                    <el-option label="数据访问授权" value="DATA_ACCESS" />
+                  </el-select>
+                </el-form-item>
+                <el-form-item label="状态" class="portal-field-md">
+                  <el-select v-model="grantStatusFilter" clearable placeholder="全部" @change="loadInternalGrants">
+                    <el-option label="待审核" value="PENDING" />
+                    <el-option label="已生效" value="ACTIVE" />
+                    <el-option label="已驳回" value="REJECTED" />
+                    <el-option label="已撤销" value="REVOKED" />
+                  </el-select>
+                </el-form-item>
+                <el-form-item class="portal-form-actions">
+                  <el-button type="primary" @click="openGrantCreate">新增授权</el-button>
+                  <el-button :loading="grantLoading" @click="loadInternalGrants">刷新</el-button>
+                </el-form-item>
+              </el-form>
+              <el-table v-loading="grantLoading" :data="grantRows" stripe border class="portal-table" empty-text="暂无数据权限记录">
+                <el-table-column label="授权类型" width="120">
+                  <template #default="{ row }">{{ statusLabel(row.grantType) }}</template>
+                </el-table-column>
+                <el-table-column label="对象类型" width="90">
+                  <template #default="{ row }">{{ statusLabel(row.granteeType) }}</template>
+                </el-table-column>
+                <el-table-column prop="granteeName" label="授权对象" min-width="130" show-overflow-tooltip />
+                <el-table-column prop="assetName" label="资产" min-width="140" show-overflow-tooltip />
+                <el-table-column label="敏感级" width="100">
+                  <template #default="{ row }">{{ row.levelCode ? statusLabel(row.levelCode) : '—' }}</template>
+                </el-table-column>
+                <el-table-column label="授权模式" width="100">
+                  <template #default="{ row }">{{ statusLabel(row.authMode) }}</template>
+                </el-table-column>
+                <el-table-column label="权限范围" width="110">
+                  <template #default="{ row }">{{ row.permissionScope ? statusLabel(row.permissionScope) : '—' }}</template>
+                </el-table-column>
+                <el-table-column label="状态" width="90">
+                  <template #default="{ row }">
+                    <el-tag :type="statusTagType(row.status)" size="small">{{ statusLabel(row.status) }}</el-tag>
+                  </template>
+                </el-table-column>
+                <el-table-column prop="applicant" label="申请人" width="110" show-overflow-tooltip />
+                <el-table-column label="审批时间" width="170">
+                  <template #default="{ row }">{{ formatDateTime(row.approvedAt) }}</template>
+                </el-table-column>
+                <el-table-column label="操作" width="240" fixed="right">
+                  <template #default="{ row }">
+                    <el-button v-if="row.status === 'PENDING'" link type="primary" @click="openGrantEdit(row)">编辑</el-button>
+                    <el-button v-if="row.status === 'PENDING'" link type="success" @click="decideGrant(row, 'APPROVE')">通过</el-button>
+                    <el-button v-if="row.status === 'PENDING'" link type="warning" @click="decideGrant(row, 'REJECT')">驳回</el-button>
+                    <el-button v-if="row.status === 'ACTIVE'" link type="danger" @click="decideGrant(row, 'REVOKE')">撤销</el-button>
+                    <el-button v-if="row.status !== 'ACTIVE'" link type="danger" @click="removeGrantRow(row)">删除</el-button>
+                  </template>
+                </el-table-column>
+              </el-table>
+            </el-tab-pane>
+
             <el-tab-pane label="资产挂载" name="mount">
               <el-form inline class="portal-inline-form portal-inline-form--block">
                 <el-form-item class="portal-form-actions">
@@ -1620,7 +2447,7 @@ onMounted(async () => {
                   <el-button @click="loadBindings(true)">刷新</el-button>
                 </el-form-item>
               </el-form>
-              <el-table :data="bindings" stripe size="small" empty-text="尚未挂载资产，请从候选中选型">
+              <el-table :data="bindings" stripe border class="portal-table" size="small" empty-text="尚未挂载资产，请从候选中选型">
                 <el-table-column prop="assetName" label="资产名称" min-width="160" />
                 <el-table-column label="维度分组" width="110">
                   <template #default="{ row }">{{ dimGroupLabel(row.dimGroup) }}</template>
@@ -1638,8 +2465,10 @@ onMounted(async () => {
                     <el-tag :type="statusTagType(row.status)" size="small">{{ statusLabel(row.status) }}</el-tag>
                   </template>
                 </el-table-column>
-                <el-table-column prop="createdAt" label="挂载时间" width="170" />
-                <el-table-column label="操作" width="90">
+                <el-table-column label="挂载时间" width="170">
+                  <template #default="{ row }">{{ formatDateTime(row.createdAt) }}</template>
+                </el-table-column>
+                <el-table-column label="操作" width="90" fixed="right">
                   <template #default="{ row }">
                     <el-button link type="danger" @click="unbind(row)">解除</el-button>
                   </template>
@@ -1919,17 +2748,23 @@ onMounted(async () => {
       <el-form label-width="100px">
         <el-form-item label="模块">
           <el-select v-model="verifyForm.mCode" style="width:100%">
-            <el-option label="M155 更新维护" value="M155" />
-            <el-option label="M156 信息校核" value="M156" />
+            <template v-if="isLegal">
+              <el-option label="M178 更新维护" value="M178" />
+              <el-option label="M179 信息校核" value="M179" />
+            </template>
+            <template v-else>
+              <el-option label="M155 更新维护" value="M155" />
+              <el-option label="M156 信息校核" value="M156" />
+            </template>
           </el-select>
         </el-form-item>
         <el-form-item label="场景编码"><el-input v-model="verifyForm.sceneCode" /></el-form-item>
         <el-form-item label="场景名称"><el-input v-model="verifyForm.sceneName" /></el-form-item>
         <el-form-item label="校核类型">
           <el-select v-model="verifyForm.checkType" style="width:100%">
-            <el-option label="MULTI_SOURCE" value="MULTI_SOURCE" />
-            <el-option label="BASELINE" value="BASELINE" />
-            <el-option label="UPDATE" value="UPDATE" />
+            <el-option label="多源校核" value="MULTI_SOURCE" />
+            <el-option label="基线比对" value="BASELINE" />
+            <el-option label="更新登记" value="UPDATE" />
           </el-select>
         </el-form-item>
         <el-form-item label="来源部门"><el-input v-model="verifyForm.sourceDept" /></el-form-item>
@@ -1938,6 +2773,170 @@ onMounted(async () => {
       <template #footer>
         <el-button @click="verifyDialog = false">取消</el-button>
         <el-button type="primary" @click="createVerifyRow">保存</el-button>
+      </template>
+    </el-dialog>
+
+    <el-dialog v-model="designDialog" :title="designEditingId == null ? '新增七维设计项' : '编辑七维设计项'" width="620px" destroy-on-close>
+      <el-form label-width="100px">
+        <el-form-item label="维度" required>
+          <el-select v-model="designForm.dimCode" style="width:100%" :disabled="designEditingId != null">
+            <el-option v-for="d in DIM_CODE_OPTIONS" :key="d.value" :label="d.label" :value="d.value" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="编码" required>
+          <el-input v-model="designForm.itemCode" :disabled="designEditingId != null" placeholder="如 PROBLEM_DATA" />
+        </el-form-item>
+        <el-form-item label="名称" required>
+          <el-input v-model="designForm.itemName" />
+        </el-form-item>
+        <el-form-item label="子类型">
+          <el-select v-model="designForm.itemType" clearable style="width:100%" placeholder="可选">
+            <el-option v-for="t in designItemTypeOptions" :key="t.value" :label="t.label" :value="t.value" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="设计说明">
+          <el-input v-model="designForm.content" type="textarea" :rows="3" />
+        </el-form-item>
+        <el-form-item label="深链">
+          <el-input v-model="designForm.deepLink" placeholder="如 /governance?tab=etl&etlSub=task-mgmt" />
+        </el-form-item>
+        <el-form-item label="排序">
+          <el-input-number v-model="designForm.sortNo" :min="0" :max="9999" />
+        </el-form-item>
+        <el-form-item label="状态">
+          <el-select v-model="designForm.status" style="width:100%">
+            <el-option label="启用" value="ACTIVE" />
+            <el-option label="停用" value="INACTIVE" />
+          </el-select>
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="designDialog = false">取消</el-button>
+        <el-button type="primary" @click="saveDesignRow">保存</el-button>
+      </template>
+    </el-dialog>
+
+    <el-dialog v-model="classifyDialog" :title="classifyEditingId == null ? '新增分级分类' : '编辑分级分类'" width="640px" destroy-on-close>
+      <el-form label-width="110px">
+        <el-form-item label="资产编码" required>
+          <el-input v-model="classifyForm.assetCode" :disabled="classifyEditingId != null" :placeholder="classifyAssetPlaceholder" />
+        </el-form-item>
+        <el-form-item label="资产名称" required>
+          <el-input v-model="classifyForm.assetName" />
+        </el-form-item>
+        <el-form-item v-if="bindings.length" label="从挂载选">
+          <el-select
+            filterable
+            clearable
+            style="width:100%"
+            placeholder="可选：从本区已挂载资产带入"
+            @change="onClassifyPickBinding"
+          >
+            <el-option
+              v-for="b in bindings"
+              :key="b.id"
+              :label="`${b.assetName}（${b.physicalTable || b.assetRef}）`"
+              :value="b.physicalTable || b.assetRef"
+            />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="分类" required>
+          <el-select v-model="classifyForm.categoryCode" style="width:100%" @change="onClassifyCategoryChange">
+            <el-option v-for="c in CATEGORY_OPTIONS" :key="c.value" :label="c.label" :value="c.value" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="敏感等级" required>
+          <el-select v-model="classifyForm.levelCode" style="width:100%" @change="onClassifyLevelChange">
+            <el-option v-for="l in LEVEL_OPTIONS" :key="l.value" :label="l.label" :value="l.value" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="分级依据">
+          <el-input v-model="classifyForm.classifyBasis" type="textarea" :rows="2" />
+        </el-form-item>
+        <el-form-item label="管控要求">
+          <el-input v-model="classifyForm.controlHint" type="textarea" :rows="2" />
+        </el-form-item>
+        <el-form-item label="排序">
+          <el-input-number v-model="classifyForm.sortNo" :min="0" :max="9999" />
+        </el-form-item>
+        <el-form-item label="状态">
+          <el-select v-model="classifyForm.status" style="width:100%">
+            <el-option label="启用" value="ACTIVE" />
+            <el-option label="停用" value="INACTIVE" />
+          </el-select>
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="classifyDialog = false">取消</el-button>
+        <el-button type="primary" @click="saveClassifyRow">保存</el-button>
+      </template>
+    </el-dialog>
+
+    <el-dialog v-model="grantDialog" :title="grantEditingId == null ? '新增数据权限' : '编辑授权申请'" width="640px" destroy-on-close>
+      <el-form label-width="110px">
+        <el-form-item label="授权类型" required>
+          <el-select v-model="grantForm.grantType" style="width:100%" :disabled="grantEditingId != null">
+            <el-option label="角色授权" value="ROLE_GRANT" />
+            <el-option label="数据访问授权" value="DATA_ACCESS" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="对象类型" required>
+          <el-select v-model="grantForm.granteeType" style="width:100%" :disabled="grantEditingId != null">
+            <el-option label="机构" value="ORG" />
+            <el-option label="角色" value="ROLE" />
+            <el-option label="用户" value="USER" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="对象编码" required>
+          <el-input v-model="grantForm.granteeCode" :disabled="grantEditingId != null" placeholder="如 DEPT_ADMIN / 机构编码 / 用户名" />
+        </el-form-item>
+        <el-form-item label="对象名称">
+          <el-input v-model="grantForm.granteeName" />
+        </el-form-item>
+        <template v-if="grantForm.grantType === 'DATA_ACCESS'">
+          <el-form-item label="资产编码" required>
+            <el-input v-model="grantForm.assetCode" :disabled="grantEditingId != null" placeholder="须与分级分类资产编码一致" />
+          </el-form-item>
+          <el-form-item label="资产名称">
+            <el-input v-model="grantForm.assetName" />
+          </el-form-item>
+          <el-form-item v-if="classifyRows.length" label="从分级选">
+            <el-select
+              filterable
+              clearable
+              style="width:100%"
+              placeholder="从已登记分级分类带入"
+              @change="onGrantPickClassify"
+            >
+              <el-option v-for="r in classifyRows" :key="r.id" :label="`${r.assetName}（${r.assetCode}）`" :value="r.assetCode" />
+            </el-select>
+          </el-form-item>
+          <el-form-item label="敏感等级">
+            <el-select v-model="grantForm.levelCode" style="width:100%">
+              <el-option v-for="l in LEVEL_OPTIONS" :key="l.value" :label="l.label" :value="l.value" />
+            </el-select>
+          </el-form-item>
+          <el-form-item label="权限范围">
+            <el-select v-model="grantForm.permissionScope" style="width:100%">
+              <el-option label="脱敏只读" value="MASKED_READ" />
+              <el-option label="只读" value="READ" />
+              <el-option label="导出" value="EXPORT" />
+            </el-select>
+          </el-form-item>
+          <el-form-item label="授权模式">
+            <el-select v-model="grantForm.authMode" style="width:100%">
+              <el-option label="双重授权" value="DUAL" />
+              <el-option label="单重授权" value="SINGLE" />
+            </el-select>
+          </el-form-item>
+        </template>
+        <el-form-item label="申请理由">
+          <el-input v-model="grantForm.reason" type="textarea" :rows="2" />
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="grantDialog = false">取消</el-button>
+        <el-button type="primary" @click="saveGrantRow">保存</el-button>
       </template>
     </el-dialog>
 
@@ -2331,6 +3330,19 @@ onMounted(async () => {
   border-radius: 6px;
   padding: 8px 10px;
   background: var(--el-fill-color-blank, #fff);
+  transition: border-color 0.15s ease, box-shadow 0.15s ease, background 0.15s ease;
+}
+.dim-item--clickable {
+  cursor: pointer;
+}
+.dim-item--clickable:hover {
+  border-color: var(--el-color-primary-light-5, #a0cfff);
+  background: var(--el-color-primary-light-9, #ecf5ff);
+}
+.dim-item--active {
+  border-color: var(--el-color-primary, #409eff);
+  background: var(--el-color-primary-light-9, #ecf5ff);
+  box-shadow: inset 0 0 0 1px var(--el-color-primary-light-5, #a0cfff);
 }
 .dim-key { font-weight: 600; font-size: 13px; margin-bottom: 4px; }
 .dim-tip { font-size: 12px; color: var(--el-text-color-secondary); line-height: 1.4; }
