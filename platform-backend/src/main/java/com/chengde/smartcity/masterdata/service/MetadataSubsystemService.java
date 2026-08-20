@@ -1076,7 +1076,7 @@ public class MetadataSubsystemService {
                         + " added=" + compact.get("addedCount")
                         + " removed=" + compact.get("removedCount")
                         + " changed=" + compact.get("changedCount");
-                run.setLogText(run.getLogText() + "\njdbc tables=" + tableCount + "\ndiff=" + toJson(runDiff));
+                run.setLogText(clip(run.getLogText() + "\njdbc tables=" + tableCount + "\ndiff=" + toJson(compact), 60000));
                 run.setSummary(clip(toJson(compact), 480));
             } else if (integrationProperties.isEnabled() && openMetadataClient.isHealthy()) {
                 Map<String, Object> om = openMetadataClient.ingestService(connector.getConnectorName());
@@ -1199,7 +1199,7 @@ public class MetadataSubsystemService {
         run.setStatus("STOPPED");
         run.setEndedAt(LocalDateTime.now());
         run.setSummary("stopped by " + operator.getUsername());
-        run.setLogText((run.getLogText() == null ? "" : run.getLogText()) + "\nSTOPPED");
+        run.setLogText(clip((run.getLogText() == null ? "" : run.getLogText()) + "\nSTOPPED", 60000));
         runMapper.updateById(run);
 
         if (task == null) {

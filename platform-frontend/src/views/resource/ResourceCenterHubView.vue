@@ -2486,5 +2486,4 @@ onMounted(() => {
 .catalog-inner {
   margin-top: 4px;
 }
-}
 </style>
