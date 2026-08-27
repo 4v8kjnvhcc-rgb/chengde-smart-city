@@ -7,7 +7,7 @@ import { statusLabel } from '@/utils/status-label'
 import PortalPagination from '@/components/common/PortalPagination.vue'
 import ResourceApplyDialog from './ResourceApplyDialog.vue'
 import type { ApplyResource } from './ResourceApplyDialog.vue'
-import { applyColumnsFromDetail } from './ResourceApplyDialog.vue'
+import { applyColumnsFromDetail, applyTableMetaFromDetail, applyApiMetaFromDetail } from './ResourceApplyDialog.vue'
 import { addFavorite, fetchFavorites, isFavorited, removeFavorite } from './portal-favorites'
 
 export interface CatalogFacet {
@@ -285,6 +285,8 @@ function openApplyForm(row?: CatalogRow | Record<string, unknown> | null) {
     ElMessage.warning('该目录已申请，不能再次申请')
     return
   }
+  const tableMeta = applyTableMetaFromDetail(src as Record<string, unknown>)
+  const apiMeta = applyApiMetaFromDetail(src as Record<string, unknown>)
   applyTarget.value = {
     id: src.id as number | string,
     title: String(src.title || ''),
@@ -296,6 +298,9 @@ function openApplyForm(row?: CatalogRow | Record<string, unknown> | null) {
     resourceType: (src.resourceType as string) || 'TABLE',
     resourceTypeLabel: src.resourceTypeLabel as string | undefined,
     columns: applyColumnsFromDetail(src as Record<string, unknown>),
+    physicalTableName: tableMeta.physicalTableName,
+    databaseName: tableMeta.databaseName,
+    ...apiMeta,
   }
   applyVisible.value = true
 }

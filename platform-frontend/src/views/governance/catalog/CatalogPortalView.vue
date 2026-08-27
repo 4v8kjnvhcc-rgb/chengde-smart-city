@@ -9,7 +9,7 @@ import { useClientPager } from '@/composables/useClientPager'
 import { statusLabel } from '@/utils/status-label'
 import ResourceApplyDialog from '@/views/exchange/application/ResourceApplyDialog.vue'
 import type { ApplyResource } from '@/views/exchange/application/ResourceApplyDialog.vue'
-import { applyColumnsFromDetail } from '@/views/exchange/application/ResourceApplyDialog.vue'
+import { applyColumnsFromDetail, applyTableMetaFromDetail, applyApiMetaFromDetail } from '@/views/exchange/application/ResourceApplyDialog.vue'
 import { addFavorite, fetchFavorites, isFavorited, removeFavorite } from '@/views/exchange/application/portal-favorites'
 
 withDefaults(defineProps<{ embedded?: boolean }>(), { embedded: false })
@@ -412,6 +412,8 @@ function openApplyForm() {
     return
   }
   const rt = toApplyResourceType(d.resourceType ? d : row)
+  const tableMeta = applyTableMetaFromDetail(d as Record<string, unknown>)
+  const apiMeta = applyApiMetaFromDetail(d as Record<string, unknown>)
   applyTarget.value = {
     id: row.portalCatalogId || row.id,
     title: String(d.title || row.resourceName || ''),
@@ -423,6 +425,9 @@ function openApplyForm() {
     resourceType: rt,
     resourceTypeLabel: String(d.resourceTypeLabel || (rt === 'API' ? '接口' : rt === 'FILE' ? '文件' : '库表')),
     columns: applyColumnsFromDetail(d as Record<string, unknown>),
+    physicalTableName: tableMeta.physicalTableName || row.physicalTableName,
+    databaseName: tableMeta.databaseName,
+    ...apiMeta,
   }
   applyVisible.value = true
 }

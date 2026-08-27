@@ -1,4 +1,4 @@
-# 按远程分支构建生产前后端镜像并 docker save
+﻿# 按远程分支构建生产前后端镜像并 docker save
 # 用法: .\scripts\build_prod_images.ps1 -Branch feature_yxj
 # 默认 git fetch 后按 origin/<分支> 构建（不以本机工作区为准）
 # 默认输出到仓库根目录 release/
@@ -168,7 +168,7 @@ try {
   Write-Host "  分支/提交: $ref ($sha)"
   Write-Host "  镜像标签: $backendTagLocal / $webTagLocal"
   Write-Host "           $backendTagVer / $webTagVer"
-  Write-Host "  镜像文件: $outFile ($sizeMb MB)"
+  Write-Host "  镜像文件: $outFile ($($sizeMb) MB)"
   Write-Host "  配置文件: $OutDir\prod-mid.env  （拷到 .51 的 compose/）"
   Write-Host "            $OutDir\prod-app.env  （拷到 .55 的 compose/）"
   Write-Host ""

@@ -152,17 +152,26 @@ public class IntegrationProperties {
         public void setCanalUrl(String canalUrl) { this.canalUrl = canalUrl; }
     }
 
-    /** AEAI ESB 网关：获取 Token + 创建消费者 */
+    /** AEAI ESB 网关：获取 Token + gatewayonline + 创建消费者 */
     public static class Esb {
         private String baseUrl = "http://10.10.10.61:7000";
         private String appCode = "ESB";
         private String appPwd = "";
-        /** 业务网关根地址，用于拼接口 URL 展示；可空 */
+        /** 业务网关根地址，用于拼接口 URL 展示；可空则回落 baseUrl */
         private String gatewayBase = "";
         /** 连接超时（毫秒），建连失败尽快返回 */
         private int connectTimeoutMs = 5000;
-        /** 读超时（毫秒），单次 Token / 创建消费者等待上限 */
+        /** 读超时（毫秒），单次 Token / 上线 / 创建消费者等待上限 */
         private int readTimeoutMs = 10000;
+        /** gatewayonline：ESB 侧数据源配置 UUID */
+        private String dbConfigId = "";
+        private String customerId = "esb";
+        private String serverName = "esb";
+        private String onlineBasePath = "http://localhost:9090/";
+        private String apiName = "esb";
+        private String sourceName = "esb";
+        /** gatewayonline Body.method（最终对外方法以响应 data.method 为准） */
+        private String onlineMethod = "get";
 
         public String getBaseUrl() { return baseUrl; }
         public void setBaseUrl(String baseUrl) { this.baseUrl = baseUrl; }
@@ -176,5 +185,19 @@ public class IntegrationProperties {
         public void setConnectTimeoutMs(int connectTimeoutMs) { this.connectTimeoutMs = connectTimeoutMs; }
         public int getReadTimeoutMs() { return readTimeoutMs; }
         public void setReadTimeoutMs(int readTimeoutMs) { this.readTimeoutMs = readTimeoutMs; }
+        public String getDbConfigId() { return dbConfigId; }
+        public void setDbConfigId(String dbConfigId) { this.dbConfigId = dbConfigId; }
+        public String getCustomerId() { return customerId; }
+        public void setCustomerId(String customerId) { this.customerId = customerId; }
+        public String getServerName() { return serverName; }
+        public void setServerName(String serverName) { this.serverName = serverName; }
+        public String getOnlineBasePath() { return onlineBasePath; }
+        public void setOnlineBasePath(String onlineBasePath) { this.onlineBasePath = onlineBasePath; }
+        public String getApiName() { return apiName; }
+        public void setApiName(String apiName) { this.apiName = apiName; }
+        public String getSourceName() { return sourceName; }
+        public void setSourceName(String sourceName) { this.sourceName = sourceName; }
+        public String getOnlineMethod() { return onlineMethod; }
+        public void setOnlineMethod(String onlineMethod) { this.onlineMethod = onlineMethod; }
     }
 }

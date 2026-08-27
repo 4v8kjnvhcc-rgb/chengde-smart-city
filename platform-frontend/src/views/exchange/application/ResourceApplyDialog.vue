@@ -19,6 +19,18 @@ export interface ApplyResource {
   resourceType?: string
   resourceTypeLabel?: string
   columns?: ApplyColumn[]
+  /** 库表物理表名（如 cd_population），用于拼 ESB SQL */
+  physicalTableName?: string
+  databaseName?: string
+  /** 接口类资源：目标地址 + 请求路径 + 入参 */
+  apiUrl?: string
+  apiPath?: string
+  apiMethod?: string
+  apiCode?: string
+  requestParams?: Record<string, unknown>[]
+  responseParams?: Record<string, unknown>[]
+  apiResultJson?: string
+  successExample?: unknown
 }
 
 export function applyColumnsFromDetail(src: Record<string, unknown> | null | undefined): ApplyColumn[] {
@@ -28,6 +40,57 @@ export function applyColumnsFromDetail(src: Record<string, unknown> | null | und
   if (!Array.isArray(tables) || !tables.length) return []
   const first = tables[0] as { columns?: ApplyColumn[] }
   return Array.isArray(first?.columns) ? first.columns : []
+}
+
+export function applyTableMetaFromDetail(src: Record<string, unknown> | null | undefined): {
+  physicalTableName?: string
+  databaseName?: string
+} {
+  if (!src) return {}
+  const tables = src.tables
+  if (Array.isArray(tables) && tables.length) {
+    const first = tables[0] as { tableName?: string; databaseName?: string }
+    const name = String(first?.tableName || '').trim()
+    return {
+      physicalTableName: name && name !== '—' ? name : undefined,
+      databaseName: first?.databaseName ? String(first.databaseName) : undefined,
+    }
+  }
+  const name = String(src.physicalTableName || src.bindTableName || '').trim()
+  return {
+    physicalTableName: name && name !== '—' ? name : undefined,
+    databaseName: src.databaseName ? String(src.databaseName) : undefined,
+  }
+}
+
+export function applyApiMetaFromDetail(src: Record<string, unknown> | null | undefined): {
+  apiUrl?: string
+  apiPath?: string
+  apiMethod?: string
+  apiCode?: string
+  requestParams?: Record<string, unknown>[]
+  responseParams?: Record<string, unknown>[]
+  apiResultJson?: string
+  successExample?: unknown
+} {
+  if (!src) return {}
+  const apis = src.apis
+  if (!Array.isArray(apis) || !apis.length) return {}
+  const api = apis[0] as Record<string, unknown>
+  const requestPath = String(api.requestPath || api.apiPath || '').trim()
+  const apiUrl = String(api.apiUrl || api.targetAddress || '').trim()
+  const pathOnly = requestPath.startsWith('http://') || requestPath.startsWith('https://') ? '' : requestPath
+  const urlOnly = requestPath.startsWith('http://') || requestPath.startsWith('https://') ? requestPath : apiUrl
+  return {
+    apiUrl: urlOnly || undefined,
+    apiPath: pathOnly || undefined,
+    apiMethod: api.httpMethod ? String(api.httpMethod) : api.apiMethod ? String(api.apiMethod) : undefined,
+    apiCode: api.apiCode ? String(api.apiCode) : undefined,
+    requestParams: Array.isArray(api.requestParams) ? (api.requestParams as Record<string, unknown>[]) : undefined,
+    responseParams: Array.isArray(api.responseParams) ? (api.responseParams as Record<string, unknown>[]) : undefined,
+    apiResultJson: api.apiResultJson ? String(api.apiResultJson) : undefined,
+    successExample: api.successExample,
+  }
 }
 </script>
 
@@ -286,6 +349,18 @@ async function onSubmit() {
       techReq: form.techReq,
       inputParams: isTable.value ? selectedParams(inputRows.value) : undefined,
       outputParams: isTable.value ? selectedParams(outputRows.value) : undefined,
+      physicalTableName: isTable.value ? props.resource.physicalTableName : undefined,
+      tableName: isTable.value ? props.resource.physicalTableName : undefined,
+      databaseName: isTable.value ? props.resource.databaseName : undefined,
+      apiUrl: isApi.value ? props.resource.apiUrl : undefined,
+      apiPath: isApi.value ? props.resource.apiPath : undefined,
+      requestPath: isApi.value ? props.resource.apiPath : undefined,
+      apiMethod: isApi.value ? props.resource.apiMethod : undefined,
+      apiCode: isApi.value ? props.resource.apiCode : undefined,
+      requestParams: isApi.value ? props.resource.requestParams : undefined,
+      responseParams: isApi.value ? props.resource.responseParams : undefined,
+      apiResultJson: isApi.value ? props.resource.apiResultJson : undefined,
+      successExample: isApi.value ? props.resource.successExample : undefined,
     })
   } finally {
     submitting.value = false

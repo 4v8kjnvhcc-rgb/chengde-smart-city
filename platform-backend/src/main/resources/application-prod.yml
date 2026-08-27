@@ -70,6 +70,13 @@ app:
       gateway-base: ${ESB_GATEWAY_BASE:}
       connect-timeout-ms: ${ESB_CONNECT_TIMEOUT_MS:5000}
       read-timeout-ms: ${ESB_READ_TIMEOUT_MS:10000}
+      db-config-id: ${ESB_DB_CONFIG_ID:}
+      customer-id: ${ESB_CUSTOMER_ID:esb}
+      server-name: ${ESB_SERVER_NAME:esb}
+      online-base-path: ${ESB_ONLINE_BASE_PATH:http://localhost:9090/}
+      api-name: ${ESB_API_NAME:esb}
+      source-name: ${ESB_SOURCE_NAME:esb}
+      online-method: ${ESB_ONLINE_METHOD:get}
     storage:
       es-url: ${ES_URL:http://oss-elasticsearch:9200}
       seaweed-s3-endpoint: ${SEAWEED_S3_ENDPOINT:http://seaweedfs:8333}

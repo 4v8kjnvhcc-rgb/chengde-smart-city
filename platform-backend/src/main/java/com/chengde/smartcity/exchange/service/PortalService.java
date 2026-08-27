@@ -594,6 +594,20 @@ public class PortalService {
             }
         }
 
+        // 库表/接口：提交后立即 ESB 串联，回填 URL / OAuth
+        if (esbConsumerProvisionService.isTableSubscription(sub)) {
+            BizPortalSubscription latest = subscriptionMapper.selectById(sub.getId());
+            if (latest != null) {
+                esbConsumerProvisionService.provisionTableOnSubmit(latest);
+            }
+        }
+        if (esbConsumerProvisionService.isApiSubscription(sub)) {
+            BizPortalSubscription latest = subscriptionMapper.selectById(sub.getId());
+            if (latest != null) {
+                esbConsumerProvisionService.provisionApiOnSubmit(latest);
+            }
+        }
+
         auditService.log(operator.getUserId(), operator.getUsername(), operator.getOrgId(),
                 "PORTAL_SUBSCRIBE", "biz_portal_subscription", String.valueOf(sub.getId()), catalog.getTitle());
         return sub.getId();
@@ -714,7 +728,9 @@ public class PortalService {
                 catalogMapper.updateById(catalog);
             }
             log.info("portal subscription {} approved, task {}", id, task.getId());
-            if (esbConsumerProvisionService.needsEsbProvision(sub)) {
+            // 库表/接口：审核通过时补发凭证（提交时已发则幂等跳过）
+            if (esbConsumerProvisionService.isApiSubscription(sub)
+                    || esbConsumerProvisionService.isTableSubscription(sub)) {
                 esbConsumerProvisionService.provisionOnApprove(sub);
                 out.put("oauthClientId", sub.getOauthClientId());
                 out.put("apiUrl", sub.getApiUrl());
@@ -1589,6 +1605,7 @@ public class PortalService {
             api.put("catalogCode", nz(catalog.getCatalogCode(), ""));
             api.put("version", str(apiMap.get("apiVersion"), ""));
             api.put("targetAddressHint", "资源申请通过后前往个人中心查看");
+            api.put("apiUrl", str(apiMap.get("apiUrl"), ""));
             api.put("requestPath", firstNonBlank(str(apiMap.get("apiPath"), null), str(apiMap.get("apiUrl"), null), ""));
             api.put("httpMethod", str(apiMap.get("apiMethod"), "GET"));
             api.put("registeredAt", str(apiMap.get("registerAt"), ""));
@@ -1596,6 +1613,7 @@ public class PortalService {
             api.put("expireAt", str(apiMap.get("expireAt"), ""));
             api.put("requestParams", mapPortalApiParams(apiMap.get("requestParams")));
             api.put("responseParams", mapPortalApiParams(apiMap.get("responseParams")));
+            api.put("apiResultJson", str(apiMap.get("apiResultJson"), ""));
             Object example = apiMap.get("apiResultJson");
             if (example instanceof String s && !s.isBlank()) {
                 try {
