@@ -68,7 +68,7 @@ app:
         "localhost:3306": host.docker.internal:3306
         "127.0.0.1:3306": host.docker.internal:3306
     esb:
-      base-url: ${ESB_SMC_BASE:http://10.10.10.61:7000}
+      base-url: ${ESB_SMC_BASE:http://10.216.131.100:7000}
       app-code: ${ESB_APP_CODE:ESB}
       app-pwd: "${ESB_APP_PWD:encrypt-S214ejBpeFJjcFNlRFpqRnlpWWFCUnhJUFkrclRTYUczU1Z2WldHeUZnLzBjamRab09Vd0YzblorYVA2MG9aMzhjUHlaZ3Q1NjVSdkRoUE55ZDhGNE1uMGJQUGYxYU1LVGhMVVd1NVB4NDFpb2l0dVRZNUFBUjY5NzNPaDg0Y1l5WG9VbmlQZndqbUIyMlNqOFlaZnFTRzRyNnB5MjBtakp2NWZRTXNoN2VnPQ==}"
       gateway-base: ${ESB_GATEWAY_BASE:}

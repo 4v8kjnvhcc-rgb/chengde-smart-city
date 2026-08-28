@@ -25,8 +25,8 @@ import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Service;
 
 /**
- * 库表：申请提交后 Token → gatewayonline → 创建消费者，回填 URL / OAuth。
- * 接口：申请提交后 Token → gatewayService → 创建消费者，回填 URL / OAuth。
+ * 库表/接口：仅审核通过后调用 ESB（提交/拒绝不调用），回填 URL / OAuth。
+ * 库表：Token → gatewayonline → 创建消费者；接口：Token → gatewayService → 创建消费者。
  * dbConfigId / sourceName = gov_meta_data_source.source_code；sql = 物理表名。
  * 流程见 docs/vendor/库表接口调用流程.md、docs/vendor/ESB-注册服务接口.md。
  */
@@ -70,15 +70,15 @@ public class EsbConsumerProvisionService {
         return "TABLE".equals(t) || "DATABASE".equals(t) || "DB".equals(t) || "DB_SYNC".equals(t);
     }
 
-    /** 接口/库表审核通过后若提交时未发放则补发（幂等）。 */
+    /** 接口/库表是否需要在审核通过时调用 ESB。 */
     public boolean needsEsbProvision(BizPortalSubscription sub) {
         return isApiSubscription(sub) || isTableSubscription(sub);
     }
 
     /**
-     * 库表资源申请提交后：表名 + 元数据 source_code → Token → gatewayonline → 创建消费者 → 回填。
+     * 库表资源审核通过后：表名 + 元数据 source_code → Token → gatewayonline → 创建消费者 → 回填。
      */
-    public void provisionTableOnSubmit(BizPortalSubscription sub) {
+    public void provisionTable(BizPortalSubscription sub) {
         if (!isTableSubscription(sub)) {
             return;
         }
@@ -106,14 +106,14 @@ public class EsbConsumerProvisionService {
         payload.put("esbSourceName", sourceCode);
         payload.put("metaDataSourceId", mds.getId());
         persist(sub, payload);
-        log.info("ESB table provisioned on submit subscriptionId={} table={} sourceCode={} url={} clientId={}",
+        log.info("ESB table provisioned on approve subscriptionId={} table={} sourceCode={} url={} clientId={}",
                 sub.getId(), tableName, sourceCode, sub.getApiUrl(), sub.getOauthClientId());
     }
 
     /**
-     * 接口资源申请提交后：请求路径 + 入参 → 生成 code → Token → gatewayService → 创建消费者 → 回填。
+     * 接口资源审核通过后：请求路径 + 入参 → 生成 code → Token → gatewayService → 创建消费者 → 回填。
      */
-    public void provisionApiOnSubmit(BizPortalSubscription sub) {
+    public void provisionApi(BizPortalSubscription sub) {
         if (!isApiSubscription(sub)) {
             return;
         }
@@ -159,7 +159,7 @@ public class EsbConsumerProvisionService {
     }
 
     /**
-     * 审批通过后补发凭证；库表/接口若提交时已发放则跳过。
+     * 审核通过后发放凭证；已发放则幂等跳过。提交/拒绝不得调用本方法。
      */
     public void provisionOnApprove(BizPortalSubscription sub) {
         if (sub == null) {
@@ -167,13 +167,13 @@ public class EsbConsumerProvisionService {
         }
         if (isTableSubscription(sub)) {
             if (!alreadyProvisioned(sub)) {
-                provisionTableOnSubmit(sub);
+                provisionTable(sub);
             }
             return;
         }
         if (isApiSubscription(sub)) {
             if (!alreadyProvisioned(sub)) {
-                provisionApiOnSubmit(sub);
+                provisionApi(sub);
             }
         }
     }

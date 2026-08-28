@@ -154,7 +154,7 @@ public class IntegrationProperties {
 
     /** AEAI ESB 网关：获取 Token + gatewayonline + 创建消费者 */
     public static class Esb {
-        private String baseUrl = "http://10.10.10.61:7000";
+        private String baseUrl = "http://10.216.131.100:7000";
         private String appCode = "ESB";
         private String appPwd = "";
         /** 业务网关根地址，用于拼接口 URL 展示；可空则回落 baseUrl */

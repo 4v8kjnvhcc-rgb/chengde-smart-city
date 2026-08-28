@@ -274,18 +274,8 @@ public class CatalogSubscriptionService {
             linkPortalGovIds(portalSubscriptionId, sub.getId());
         } else {
             // 治理侧直申：同步写入门户申请表，保证双入口同数据
+            // 库表/接口 ESB 仅在审核通过时调用（提交/拒绝不调用）
             ensurePortalMirror(operator, sub, resource, applicantOrg);
-            // 库表/接口直申：提交后发放网关 URL / OAuth（门户入口由 PortalService 触发，此处避免重复）
-            if (sub.getPortalSubscriptionId() != null) {
-                BizPortalSubscription portal = portalSubscriptionMapper.selectById(sub.getPortalSubscriptionId());
-                if (portal != null) {
-                    if ("DB_SYNC".equalsIgnoreCase(shareMode)) {
-                        esbConsumerProvisionService.provisionTableOnSubmit(portal);
-                    } else if ("API".equalsIgnoreCase(shareMode)) {
-                        esbConsumerProvisionService.provisionApiOnSubmit(portal);
-                    }
-                }
-            }
         }
 
         auditService.log(operator.getUserId(), operator.getUsername(), operator.getOrgId(),

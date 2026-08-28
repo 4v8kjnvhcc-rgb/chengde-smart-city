@@ -594,19 +594,7 @@ public class PortalService {
             }
         }
 
-        // 库表/接口：提交后立即 ESB 串联，回填 URL / OAuth
-        if (esbConsumerProvisionService.isTableSubscription(sub)) {
-            BizPortalSubscription latest = subscriptionMapper.selectById(sub.getId());
-            if (latest != null) {
-                esbConsumerProvisionService.provisionTableOnSubmit(latest);
-            }
-        }
-        if (esbConsumerProvisionService.isApiSubscription(sub)) {
-            BizPortalSubscription latest = subscriptionMapper.selectById(sub.getId());
-            if (latest != null) {
-                esbConsumerProvisionService.provisionApiOnSubmit(latest);
-            }
-        }
+        // 库表/接口：ESB 仅在审核通过时调用（提交/拒绝不调用）
 
         auditService.log(operator.getUserId(), operator.getUsername(), operator.getOrgId(),
                 "PORTAL_SUBSCRIBE", "biz_portal_subscription", String.valueOf(sub.getId()), catalog.getTitle());
@@ -728,7 +716,7 @@ public class PortalService {
                 catalogMapper.updateById(catalog);
             }
             log.info("portal subscription {} approved, task {}", id, task.getId());
-            // 库表/接口：审核通过时补发凭证（提交时已发则幂等跳过）
+            // 库表/接口：仅审核通过时调用 ESB 串联并回填凭证（拒绝不调用）
             if (esbConsumerProvisionService.isApiSubscription(sub)
                     || esbConsumerProvisionService.isTableSubscription(sub)) {
                 esbConsumerProvisionService.provisionOnApprove(sub);

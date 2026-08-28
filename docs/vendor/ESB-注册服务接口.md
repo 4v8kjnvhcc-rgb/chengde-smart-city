@@ -7,7 +7,7 @@
 | **上位文档** | [`D03-ESB集成说明.md`](../D03-ESB集成说明.md)、[`库表接口调用流程.md`](库表接口调用流程.md) |
 | **来源** | `接口调用说明.docx`（V1.0） |
 | **编制日期** | 2026-08-27 |
-| **版本** | V1.1 |
+| **版本** | V1.2 |
 
 > **安全**：`appPwd`、Token、`param` 中的业务数据为敏感信息。本文只用占位/样例，**禁止**把现场明文或真实密文写入仓库。现场值放环境变量 / `esb.env.local`（已 `.gitignore`）。
 
@@ -31,7 +31,7 @@
 
 ```
 ┌─────────────────────────────────────────────────────────────┐
-│  业务系统接口注册到 ESB                                       │
+│  接口类资源申请 · 审核通过（提交/拒绝不调用）                     │
 └───────────────────────────┬─────────────────────────────────┘
                             ▼
 1) POST  …/SMC/services/ApiAuthenticater/security/authenticate
@@ -92,7 +92,7 @@ http://10.216.131.100:7000/SMC/services/ApiAuthenticater/security/authenticate
 **承德联调地址（与库表流程一致）**
 
 ```
-http://10.10.10.61:7000/SMC/services/ApiAuthenticater/security/authenticate
+http://10.216.131.100:7000/SMC/services/ApiAuthenticater/security/authenticate
 ```
 
 其它环境只改主机与端口，路径不变。
@@ -137,7 +137,7 @@ http://10.10.10.61:7000/SMC/services/ApiAuthenticater/security/authenticate
 
 ```bash
 TOKEN=$(curl -sS -X POST \
-  "http://10.10.10.61:7000/SMC/services/ApiAuthenticater/security/authenticate?appCode=ESB&appPwd=encrypt-<密文>")
+  "http://10.216.131.100:7000/SMC/services/ApiAuthenticater/security/authenticate?appCode=ESB&appPwd=encrypt-<密文>")
 echo "$TOKEN"
 ```
 
@@ -157,7 +157,7 @@ echo "$TOKEN"
 **请求地址（文档样例 / 承德联调）**
 
 ```
-http://10.10.10.61:7000/External/services/Gateway/gatewayService
+http://10.216.131.100:7000/External/services/Gateway/gatewayService
 ```
 
 ### 3.2 请求头
@@ -229,7 +229,7 @@ http://10.216.131.100:7000/External/services/ExternalService/externalservicePost
 ```bash
 # TOKEN 来自接口 1
 curl -sS -X POST \
-  "http://10.10.10.61:7000/External/services/Gateway/gatewayService" \
+  "http://10.216.131.100:7000/External/services/Gateway/gatewayService" \
   -H "token: ${TOKEN}" \
   -H "Content-Type: application/json" \
   -d '{
@@ -258,7 +258,7 @@ curl -sS -X POST \
 **请求地址**
 
 ```
-http://10.10.10.61:7000/External/services/Gateway/consumer/create
+http://10.216.131.100:7000/External/services/Gateway/consumer/create
 ```
 
 ### 4.2 请求头
@@ -309,7 +309,7 @@ http://10.10.10.61:7000/External/services/Gateway/consumer/create
 ```bash
 # TOKEN 须与调用 gatewayService 时相同（来自接口 1）
 curl -sS -X POST \
-  "http://10.10.10.61:7000/External/services/Gateway/consumer/create" \
+  "http://10.216.131.100:7000/External/services/Gateway/consumer/create" \
   -H "token: ${TOKEN}" \
   -H "Content-Type: application/json" \
   -d '{"clientName":"测试数据共享系统"}'
@@ -319,7 +319,7 @@ curl -sS -X POST \
 
 ## 5. 回填字段
 
-接口类资源申请提交后，三接口串联完成，结果写入申请单（审批详情「接口信息」即可看到）：
+接口类资源 **审核通过** 后，三接口串联完成，结果写入申请单（审批详情「接口信息」即可看到）；**提交、拒绝不调用 ESB**。
 
 | 回填字段（审批详情「接口信息」） | 来源 |
 |----------------------------------|------|
@@ -360,7 +360,7 @@ curl -sS -X POST \
 
 **回填**
 
-- [ ] 审批详情「接口 URL / 请求方式 / clientid / client secret」非空
+- [ ] **仅审核通过**后审批详情「接口 URL / 请求方式 / clientid / client secret」非空；提交/拒绝不调用 ESB
 - [ ] URL = `{ESB根}{data.path}`，请求方式以接口 2 响应 `method` 为准
 
 **安全**
@@ -375,3 +375,4 @@ curl -sS -X POST \
 |------|------|------|
 | V1.0 | 2026-08-27 | 自 `接口调用说明.docx` 整理：获取 Token + 注册服务（gatewayService）+ 已注册服务调用；明确请求头 `token` 依赖接口 1 |
 | V1.1 | 2026-08-27 | 取消「调用已注册服务」；第三步改为创建消费者，回填 Oauth2 `client_id` / `client_secret` |
+| V1.2 | 2026-08-28 | ESB 根改为 `10.216.131.100:7000`；仅审核通过调用，提交/拒绝不调用 |
