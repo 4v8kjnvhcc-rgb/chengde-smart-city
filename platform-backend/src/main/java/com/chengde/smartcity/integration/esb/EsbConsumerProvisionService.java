@@ -447,6 +447,10 @@ public class EsbConsumerProvisionService {
         String path = nz(apiPath).trim();
         if (path.contains("/")) {
             String last = path.substring(path.lastIndexOf('/') + 1).trim();
+            if (last.startsWith("{") && last.endsWith("}") && path.lastIndexOf('/') > 0) {
+                String parent = path.substring(0, path.lastIndexOf('/')).trim();
+                last = parent.substring(parent.lastIndexOf('/') + 1).trim();
+            }
             if (notBlank(last) && last.matches("[A-Za-z_][A-Za-z0-9_]*")) {
                 return last;
             }
@@ -460,36 +464,22 @@ public class EsbConsumerProvisionService {
     }
 
     private String buildGatewayServiceParam(Map<String, Object> api, Map<String, Object> payload) {
-        String raw = firstNonBlank(str(api.get("apiResultJson")), str(payload.get("apiResultJson")));
-        if (notBlank(raw) && !"{}".equals(raw.trim())) {
+        String explicit = firstNonBlank(
+                str(api.get("gatewayServiceParam")),
+                str(payload.get("gatewayServiceParam")));
+        if (notBlank(explicit)) {
             try {
-                OM.readTree(raw);
-                return raw.trim();
+                OM.readTree(explicit);
+                return explicit.trim();
             } catch (Exception e) {
-                log.warn("apiResultJson invalid, fallback to synthesized param: {}", e.getMessage());
+                log.warn("gatewayServiceParam invalid, fallback to requestParams: {}", e.getMessage());
             }
         }
-        Object example = payload.get("successExample");
-        if (example != null) {
-            try {
-                return OM.writeValueAsString(example);
-            } catch (Exception e) {
-                log.warn("serialize successExample failed: {}", e.getMessage());
-            }
-        }
-        Map<String, Object> shell = new LinkedHashMap<>();
-        shell.put("code", "");
-        shell.put("msg", "");
-        Map<String, Object> item = new LinkedHashMap<>();
-        appendParamDefaults(item, api.get("requestParams"));
-        appendParamDefaults(item, payload.get("requestParams"));
-        appendParamDefaults(item, api.get("responseParams"));
-        appendParamDefaults(item, payload.get("responseParams"));
-        shell.put("data", List.of(item));
-        shell.put("timestamp", "");
-        shell.put("executionTime", 0);
+        Map<String, Object> requestBody = new LinkedHashMap<>();
+        appendParamDefaults(requestBody, api.get("requestParams"));
+        appendParamDefaults(requestBody, payload.get("requestParams"));
         try {
-            return OM.writeValueAsString(shell);
+            return OM.writeValueAsString(requestBody);
         } catch (Exception e) {
             throw new BusinessException(500, "生成接口注册 param 失败");
         }
@@ -513,17 +503,18 @@ public class EsbConsumerProvisionService {
 
     private Object defaultValueForType(String type) {
         String t = nz(type).trim().toLowerCase(Locale.ROOT);
-        if (t.contains("int") || t.contains("long") || t.contains("num") || t.contains("double")
+        if (t.contains("int") || t.contains("long") || t.contains("整数")
+                || t.contains("num") || t.contains("double") || t.contains("浮点")
                 || t.contains("float") || t.contains("decimal")) {
             return 0;
         }
-        if (t.contains("bool")) {
+        if (t.contains("bool") || t.contains("布尔")) {
             return false;
         }
-        if (t.contains("array") || t.contains("list")) {
+        if (t.contains("array") || t.contains("list") || t.contains("数组")) {
             return new ArrayList<>();
         }
-        if (t.contains("object") || t.contains("map")) {
+        if (t.contains("object") || t.contains("map") || t.contains("对象")) {
             return new LinkedHashMap<>();
         }
         return "";
