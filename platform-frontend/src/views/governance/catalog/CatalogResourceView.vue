@@ -1054,6 +1054,7 @@ function openEdit(row: CatalogRes) {
 interface ApprovalFlowRow {
   id: number
   actionType?: string
+  approvalStep?: string
   status?: string
   submitComment?: string
   reviewComment?: string
@@ -1061,6 +1062,8 @@ interface ApprovalFlowRow {
   submittedAt?: string
   reviewedBy?: string
   reviewedAt?: string
+  reviewerContact?: string
+  providerOrg?: string
 }
 
 const approvalFlowRows = ref<ApprovalFlowRow[]>([])
@@ -1073,6 +1076,70 @@ const ACTION_FLOW_ZH: Record<string, string> = {
   DELETE: '删除',
   CREATE: '编目新增',
 }
+
+function approvalStepLabel(step?: string) {
+  if (String(step || '').toUpperCase() === 'PROVIDER') return '目录提供单位审核（历史）'
+  return '平台管理员审核'
+}
+
+interface ResourceFlowStep {
+  step: string
+  actionType?: string
+  status: string
+  actor?: string
+  time?: string
+  comment?: string
+}
+
+const resourceFlowSteps = computed(() => {
+  const sorted = [...approvalFlowRows.value].sort((a, b) => (a.id || 0) - (b.id || 0))
+  const out: ResourceFlowStep[] = []
+  let submitWritten = false
+  for (const row of sorted) {
+    if (!submitWritten) {
+      out.push({
+        step: '提交',
+        actionType: row.actionType,
+        status: 'DONE',
+        actor: row.submittedBy || '—',
+        time: row.submittedAt,
+        comment: row.submitComment || '已提交',
+      })
+      submitWritten = true
+    }
+    const st = String(row.status || '').toUpperCase()
+    const stepName = approvalStepLabel(row.approvalStep)
+    if (st === 'PENDING') {
+      out.push({
+        step: '平台管理员审核',
+        actionType: row.actionType,
+        status: 'PENDING',
+        actor: '—',
+        time: '',
+        comment: '待平台管理员审核',
+      })
+    } else if (st === 'WITHDRAWN') {
+      out.push({
+        step: '撤回',
+        actionType: row.actionType,
+        status: 'WITHDRAWN',
+        actor: row.reviewedBy || row.submittedBy || '—',
+        time: row.reviewedAt || row.submittedAt,
+        comment: row.reviewComment || '已撤回',
+      })
+    } else {
+      out.push({
+        step: stepName,
+        actionType: row.actionType,
+        status: st || String(row.status || ''),
+        actor: row.reviewedBy || '—',
+        time: row.reviewedAt,
+        comment: row.reviewComment || (st === 'APPROVED' ? '已通过' : st === 'REJECTED' ? '已驳回' : '—'),
+      })
+    }
+  }
+  return out
+})
 
 async function loadApprovalFlow(resourceId: number) {
   approvalFlowLoading.value = true
@@ -2662,20 +2729,23 @@ onActivated(async () => {
 
       <div v-if="viewMode" v-loading="approvalFlowLoading" class="approval-flow-block">
         <div class="approval-flow-title">审批流程</div>
-        <el-table :data="approvalFlowRows" stripe size="small" empty-text="暂无审批记录">
+        <el-table :data="resourceFlowSteps" stripe size="small" empty-text="暂无审批记录">
+          <el-table-column prop="step" label="环节" width="150" show-overflow-tooltip />
           <el-table-column label="操作类型" width="100">
             <template #default="{ row }">{{ ACTION_FLOW_ZH[row.actionType || ''] || statusLabel(row.actionType) || '—' }}</template>
           </el-table-column>
           <el-table-column label="状态" width="100">
             <template #default="{ row }">
-              <el-tag size="small" :type="statusTagType(row.status)">{{ statusLabel(row.status) }}</el-tag>
+              <el-tag size="small" :type="statusTagType(row.status === 'DONE' ? 'APPROVED' : row.status)">
+                {{ row.status === 'DONE' ? '已完成' : statusLabel(row.status) }}
+              </el-tag>
             </template>
           </el-table-column>
-          <el-table-column prop="submittedBy" label="提交人" width="120" show-overflow-tooltip />
-          <el-table-column prop="submittedAt" label="提交时间" width="166" />
-          <el-table-column prop="reviewedBy" label="审核人" width="120" show-overflow-tooltip />
-          <el-table-column prop="reviewedAt" label="审核时间" width="166" />
-          <el-table-column prop="reviewComment" label="审批结果/意见" min-width="140" show-overflow-tooltip />
+          <el-table-column prop="actor" label="处理人/单位" width="140" show-overflow-tooltip />
+          <el-table-column label="时间" width="166">
+            <template #default="{ row }">{{ formatDateTime(row.time) }}</template>
+          </el-table-column>
+          <el-table-column prop="comment" label="审批结果/意见" min-width="160" show-overflow-tooltip />
         </el-table>
       </div>
 

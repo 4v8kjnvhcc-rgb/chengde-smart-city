@@ -17,6 +17,12 @@ public class GovCatalogSubscription {
     private String applyPayload;
     private Long portalSubscriptionId;
     private String status;
+    /** PLATFORM=平台管理员；PROVIDER=目录提供单位 */
+    private String approvalStep;
+    private String platformReviewedBy;
+    private String platformReviewerContact;
+    private String platformApproverNote;
+    private LocalDateTime platformReviewedAt;
     private String reviewComment;
     private String reviewedBy;
     private String reviewerContact;
@@ -44,6 +50,16 @@ public class GovCatalogSubscription {
     public void setPortalSubscriptionId(Long portalSubscriptionId) { this.portalSubscriptionId = portalSubscriptionId; }
     public String getStatus() { return status; }
     public void setStatus(String status) { this.status = status; }
+    public String getApprovalStep() { return approvalStep; }
+    public void setApprovalStep(String approvalStep) { this.approvalStep = approvalStep; }
+    public String getPlatformReviewedBy() { return platformReviewedBy; }
+    public void setPlatformReviewedBy(String platformReviewedBy) { this.platformReviewedBy = platformReviewedBy; }
+    public String getPlatformReviewerContact() { return platformReviewerContact; }
+    public void setPlatformReviewerContact(String platformReviewerContact) { this.platformReviewerContact = platformReviewerContact; }
+    public String getPlatformApproverNote() { return platformApproverNote; }
+    public void setPlatformApproverNote(String platformApproverNote) { this.platformApproverNote = platformApproverNote; }
+    public LocalDateTime getPlatformReviewedAt() { return platformReviewedAt; }
+    public void setPlatformReviewedAt(LocalDateTime platformReviewedAt) { this.platformReviewedAt = platformReviewedAt; }
     public String getReviewComment() { return reviewComment; }
     public void setReviewComment(String reviewComment) { this.reviewComment = reviewComment; }
     public String getReviewedBy() { return reviewedBy; }

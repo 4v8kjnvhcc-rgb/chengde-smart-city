@@ -384,19 +384,6 @@ async function reportDataChange(row: CatalogRes) {
   }
 }
 
-interface ApprovalFlowRow {
-  id: number
-  actionType?: string
-  status?: string
-  submitComment?: string
-  reviewComment?: string
-  submittedBy?: string
-  submittedAt?: string
-  reviewedBy?: string
-  reviewerContact?: string
-  reviewedAt?: string
-}
-
 interface FlowStepRow {
   step: string
   actionType?: string
@@ -405,6 +392,21 @@ interface FlowStepRow {
   contact?: string
   time?: string
   comment?: string
+}
+
+interface ApprovalFlowRow {
+  id?: number
+  actionType?: string
+  approvalStep?: string
+  status?: string
+  submitComment?: string
+  reviewComment?: string
+  submittedBy?: string
+  submittedAt?: string
+  reviewedBy?: string
+  reviewedAt?: string
+  reviewerContact?: string
+  providerOrg?: string
 }
 
 const approvalFlowRows = ref<ApprovalFlowRow[]>([])
@@ -417,28 +419,39 @@ const ACTION_FLOW_ZH: Record<string, string> = {
   CREATE: '编目新增',
 }
 
+function approvalStepLabel(step?: string) {
+  if (String(step || '').toUpperCase() === 'PROVIDER') return '目录提供单位审核（历史）'
+  return '平台管理员审核'
+}
+
 function buildRegisterFlowSteps(rows: ApprovalFlowRow[]): FlowStepRow[] {
+  const sorted = [...rows].sort((a, b) => (a.id || 0) - (b.id || 0))
   const out: FlowStepRow[] = []
-  for (const row of rows) {
-    out.push({
-      step: '提交',
-      actionType: row.actionType,
-      status: 'DONE',
-      actor: row.submittedBy || '—',
-      contact: '—',
-      time: row.submittedAt,
-      comment: row.submitComment || '已提交',
-    })
+  let submitWritten = false
+  for (const row of sorted) {
+    if (!submitWritten) {
+      out.push({
+        step: '提交',
+        actionType: row.actionType,
+        status: 'DONE',
+        actor: row.submittedBy || '—',
+        contact: '—',
+        time: row.submittedAt,
+        comment: row.submitComment || '已提交',
+      })
+      submitWritten = true
+    }
     const st = String(row.status || '').toUpperCase()
+    const stepName = approvalStepLabel(row.approvalStep)
     if (st === 'PENDING') {
       out.push({
-        step: '审批',
+        step: '平台管理员审核',
         actionType: row.actionType,
         status: 'PENDING',
         actor: '—',
         contact: '—',
         time: '',
-        comment: '待审批',
+        comment: '待平台管理员审核',
       })
     } else if (st === 'WITHDRAWN') {
       out.push({
@@ -452,7 +465,7 @@ function buildRegisterFlowSteps(rows: ApprovalFlowRow[]): FlowStepRow[] {
       })
     } else {
       out.push({
-        step: '审批',
+        step: stepName,
         actionType: row.actionType,
         status: st || String(row.status || ''),
         actor: row.reviewedBy || '—',

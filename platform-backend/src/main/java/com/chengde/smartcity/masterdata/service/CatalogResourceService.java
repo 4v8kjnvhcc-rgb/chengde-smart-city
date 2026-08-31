@@ -239,7 +239,14 @@ public class CatalogResourceService {
             q.eq(GovCatalogResource::getId, -1L);
             return;
         }
-        q.eq(GovCatalogResource::getProviderOrg, orgName);
+        // 本机构作为提供方，或本账号创建的申请（提供方可能选其他组织）均可见
+        String username = operator.getUsername();
+        q.and(w -> {
+            w.eq(GovCatalogResource::getProviderOrg, orgName);
+            if (username != null && !username.isBlank()) {
+                w.or().eq(GovCatalogResource::getCreatedBy, username);
+            }
+        });
     }
 
     private String resolveOrgName(Long orgId) {
@@ -255,11 +262,16 @@ public class CatalogResourceService {
             return;
         }
         String orgName = resolveOrgName(operator.getOrgId());
-        if (orgName == null || orgName.isBlank()
-                || r.getProviderOrg() == null
-                || !orgName.equals(r.getProviderOrg())) {
-            throw new BusinessException(403, "无权访问其他部门的目录数据");
+        String provider = r.getProviderOrg() == null ? "" : r.getProviderOrg().trim();
+        if (orgName != null && !orgName.isBlank() && orgName.equals(provider)) {
+            return;
         }
+        String username = operator.getUsername();
+        if (username != null && !username.isBlank()
+                && username.equals(r.getCreatedBy() == null ? "" : r.getCreatedBy())) {
+            return;
+        }
+        throw new BusinessException(403, "无权访问其他部门的目录数据");
     }
 
     /** 可编目登记对象：TABLE/资产类，排除过程层 DWD */
@@ -920,6 +932,9 @@ public class CatalogResourceService {
         if (!ACTION_TYPES.contains(actionType)) {
             throw new BusinessException(400, "actionType 须为 PUBLISH/OFFLINE/UPDATE/DELETE/CREATE/BIND/UNBIND");
         }
+        if (r.getProviderOrg() == null || r.getProviderOrg().isBlank()) {
+            throw new BusinessException(400, "请先选择信息资源提供方后再提交审批");
+        }
         if ("OFFLINE".equals(actionType)) {
             if (!"PUBLISHED".equalsIgnoreCase(r.getPublishStatus())) {
                 throw new BusinessException(400, "仅已发布资源可提交下线审批");
@@ -942,7 +957,7 @@ public class CatalogResourceService {
             }
         }
         GovCatalogApproval a = insertApproval(operator, id, r.getCategoryId(), r.getCatalogOrigin(),
-                actionType, str(body.get("comment"), null), null);
+                actionType, str(body.get("comment"), null), null, "PLATFORM");
         r.setApprovalStatus("PENDING");
         touch(r, operator);
         resourceMapper.updateById(r);
@@ -995,49 +1010,102 @@ public class CatalogResourceService {
 
     @Transactional
     public GovCatalogApproval approve(UserPrincipal operator, Long approvalId, Map<String, Object> body) {
-        assertCatalogAdmin(operator);
         GovCatalogApproval a = requireApproval(approvalId);
         if (!"PENDING".equalsIgnoreCase(a.getStatus())) {
             throw new BusinessException(400, "仅待处理审批可通过");
         }
-        applyReviewerFields(a, body == null ? Map.of() : body);
-        a.setStatus("APPROVED");
-        a.setReviewComment(str(body == null ? null : body.get("comment"), "同意"));
-        a.setReviewedAt(LocalDateTime.now());
-        approvalMapper.updateById(a);
-
         String action = a.getActionType() == null ? "" : a.getActionType().toUpperCase(Locale.ROOT);
+        String step = normalizeApprovalStep(a.getApprovalStep());
+
         if (CATEGORY_ACTION_TYPES.contains(action)) {
+            assertCatalogAdmin(operator);
+            applyReviewerFields(a, body == null ? Map.of() : body);
+            a.setStatus("APPROVED");
+            a.setApprovalStep("PLATFORM");
+            a.setReviewComment(str(body == null ? null : body.get("comment"), "同意"));
+            a.setReviewedAt(LocalDateTime.now());
+            approvalMapper.updateById(a);
             applyCategoryApproval(operator, a, action);
             return a;
         }
 
+        assertCanApproveStep(operator, a, step);
+        applyReviewerFields(a, body == null ? Map.of() : body);
+        a.setStatus("APPROVED");
+        a.setApprovalStep(step);
+        a.setReviewComment(str(body == null ? null : body.get("comment"), "同意"));
+        a.setReviewedAt(LocalDateTime.now());
+        approvalMapper.updateById(a);
+
+        // 资源目录审批：平台/超管一审即生效，不再转交信息资源提供方
+        applyResourceApprovalEffect(operator, a, action);
+        return a;
+    }
+
+    @Transactional
+    public GovCatalogApproval reject(UserPrincipal operator, Long approvalId, Map<String, Object> body) {
+        GovCatalogApproval a = requireApproval(approvalId);
+        if (!"PENDING".equalsIgnoreCase(a.getStatus())) {
+            throw new BusinessException(400, "仅待处理审批可驳回");
+        }
+        Map<String, Object> payload = body == null ? Map.of() : body;
+        String comment = str(payload.get("comment"), null);
+        if (comment == null || comment.isBlank()) {
+            throw new BusinessException(400, "驳回须填写驳回意见");
+        }
+        String action = a.getActionType() == null ? "" : a.getActionType().toUpperCase(Locale.ROOT);
+        String step = normalizeApprovalStep(a.getApprovalStep());
+        if (CATEGORY_ACTION_TYPES.contains(action)) {
+            assertCatalogAdmin(operator);
+        } else {
+            assertCanApproveStep(operator, a, step);
+        }
+        applyReviewerFields(a, payload);
+        a.setStatus("REJECTED");
+        a.setApprovalStep(step);
+        a.setReviewComment(comment);
+        a.setReviewedAt(LocalDateTime.now());
+        approvalMapper.updateById(a);
+
+        if (CATEGORY_ACTION_TYPES.contains(action)) {
+            return a;
+        }
+        if (a.getResourceId() != null) {
+            GovCatalogResource r = require(a.getResourceId());
+            r.setApprovalStatus("REJECTED");
+            touch(r, operator);
+            resourceMapper.updateById(r);
+        }
+        return a;
+    }
+
+    /** 提供方审核通过后（或分类单级审核）执行资源侧生效逻辑 */
+    private void applyResourceApprovalEffect(UserPrincipal operator, GovCatalogApproval a, String action) {
         GovCatalogResource r = require(a.getResourceId());
         if ("DELETE".equals(action)) {
             offlinePortal(r);
             resourceMapper.deleteById(r.getId());
-            return a;
+            return;
         }
         if ("BIND".equals(action)) {
             applyBindFromApproval(operator, a, r);
             r.setApprovalStatus("APPROVED");
             touch(r, operator);
             resourceMapper.updateById(r);
-            return a;
+            return;
         }
         if ("UNBIND".equals(action)) {
             applyUnbindImmediate(operator, r);
             r.setApprovalStatus("APPROVED");
             touch(r, operator);
             resourceMapper.updateById(r);
-            return a;
+            return;
         }
         r.setApprovalStatus("APPROVED");
         if ("PUBLISH".equals(action)) {
             r.setPublishStatus("PUBLISHED");
             snapshotOnPublish(r, operator, "审批发布 v");
             syncPortal(r);
-            // 已发布资源再上架/版本变更：通知订阅方并按目标自动分发
             try {
                 int ver = r.getVersionNo() == null ? 1 : r.getVersionNo();
                 String changeType = ver <= 1 ? "REPUBLISH" : "REPUBLISH";
@@ -1049,47 +1117,39 @@ public class CatalogResourceService {
             }
         } else if ("OFFLINE".equals(action)) {
             r.setPublishStatus("OFFLINE");
-            // 下线审批通过后回到编目，须重新提交才进注册发布
             r.setApprovalStatus("DRAFT");
             offlinePortal(r);
         } else if ("CREATE".equals(action) || "UPDATE".equals(action)) {
-            // 编目新增/变更通过后进入待注册发布，可在注册发布页挂载
             r.setApprovalStatus("TO_REGISTER");
         }
         touch(r, operator);
         resourceMapper.updateById(r);
-        return a;
     }
 
-    @Transactional
-    public GovCatalogApproval reject(UserPrincipal operator, Long approvalId, Map<String, Object> body) {
-        assertCatalogAdmin(operator);
-        GovCatalogApproval a = requireApproval(approvalId);
-        if (!"PENDING".equalsIgnoreCase(a.getStatus())) {
-            throw new BusinessException(400, "仅待处理审批可驳回");
+    private static String normalizeApprovalStep(String step) {
+        if (step == null || step.isBlank()) {
+            return "PLATFORM";
         }
-        Map<String, Object> payload = body == null ? Map.of() : body;
-        String comment = str(payload.get("comment"), null);
-        if (comment == null || comment.isBlank()) {
-            throw new BusinessException(400, "驳回须填写驳回意见");
+        String s = step.trim().toUpperCase(Locale.ROOT);
+        if ("PROVIDER".equals(s)) {
+            return "PROVIDER";
         }
-        applyReviewerFields(a, payload);
-        a.setStatus("REJECTED");
-        a.setReviewComment(comment);
-        a.setReviewedAt(LocalDateTime.now());
-        approvalMapper.updateById(a);
+        return "PLATFORM";
+    }
 
-        String action = a.getActionType() == null ? "" : a.getActionType().toUpperCase(Locale.ROOT);
-        if (CATEGORY_ACTION_TYPES.contains(action)) {
-            return a;
+    /**
+     * 资源目录审批仅平台管理员/超级管理员可审（含历史遗留的 PROVIDER 待审单，由平台收口）。
+     */
+    private void assertCanApproveStep(UserPrincipal operator, GovCatalogApproval a, String step) {
+        if (operator == null) {
+            throw new BusinessException(403, "未登录，无法审批");
         }
-        if (a.getResourceId() != null) {
-            GovCatalogResource r = require(a.getResourceId());
-            r.setApprovalStatus("REJECTED");
-            touch(r, operator);
-            resourceMapper.updateById(r);
+        if (operator.isSystemAdmin()
+                || operator.isPlatformAdmin()
+                || "sys_admin".equalsIgnoreCase(operator.getUsername())) {
+            return;
         }
-        return a;
+        throw new BusinessException(403, "仅平台管理员或超级管理员可进行资源目录审批");
     }
 
     @Transactional
@@ -1245,7 +1305,7 @@ public class CatalogResourceService {
 
     private void insertApprovedAudit(UserPrincipal operator, GovCatalogResource r, String actionType, String comment) {
         GovCatalogApproval a = insertApproval(operator, r.getId(), r.getCategoryId(), r.getCatalogOrigin(),
-                actionType, comment, null);
+                actionType, comment, null, "PLATFORM");
         a.setStatus("APPROVED");
         a.setReviewComment(comment);
         if (operator != null) {
@@ -1464,18 +1524,16 @@ public class CatalogResourceService {
             q.notIn(GovCatalogApproval::getActionType, "CAT_CREATE", "CAT_UPDATE", "CAT_DELETE");
         }
         List<GovCatalogApproval> rows = approvalMapper.selectList(q);
-        // 组织隔离：非管理员仅看本部门资源相关审批
+        // 组织隔离：非管理员可见「本机构为提供方」或「本人创建/提交」的审批（申请部门也能看审核记录）
         if (operator != null && !operator.isSystemAdmin() && !operator.isPlatformAdmin()) {
             String orgName = resolveOrgName(operator.getOrgId());
-            if (orgName == null || orgName.isBlank()) {
+            String username = operator.getUsername();
+            if ((orgName == null || orgName.isBlank()) && (username == null || username.isBlank())) {
                 rows = List.of();
             } else {
-                final String scopeOrg = orgName;
-                rows = rows.stream().filter(a -> {
-                    if (a.getResourceId() == null) return false;
-                    GovCatalogResource r = resourceMapper.selectById(a.getResourceId());
-                    return r != null && scopeOrg.equals(r.getProviderOrg());
-                }).collect(Collectors.toList());
+                final String scopeOrg = orgName == null ? "" : orgName.trim();
+                final String scopeUser = username == null ? "" : username.trim();
+                rows = rows.stream().filter(a -> canViewApproval(a, scopeOrg, scopeUser)).collect(Collectors.toList());
             }
         }
         Set<String> usernames = new HashSet<>();
@@ -1496,6 +1554,7 @@ public class CatalogResourceService {
             m.put("categoryId", a.getCategoryId());
             m.put("catalogOrigin", a.getCatalogOrigin());
             m.put("actionType", a.getActionType());
+            m.put("approvalStep", normalizeApprovalStep(a.getApprovalStep()));
             m.put("status", a.getStatus());
             m.put("submitComment", a.getSubmitComment());
             m.put("reviewComment", a.getReviewComment());
@@ -1505,16 +1564,19 @@ public class CatalogResourceService {
             m.put("reviewerContact", a.getReviewerContact());
             m.put("reviewedAt", a.getReviewedAt());
             m.put("payloadJson", a.getPayloadJson());
+            GovCatalogResource linked = null;
             if (a.getResourceId() != null) {
-                GovCatalogResource r = resourceMapper.selectById(a.getResourceId());
-                if (r != null) {
+                linked = resourceMapper.selectById(a.getResourceId());
+                if (linked != null) {
                     m.put("resourceAlive", true);
-                    m.put("resourceCode", r.getResourceCode());
-                    m.put("resourceName", r.getResourceName());
-                    m.put("resourceType", r.getResourceType());
-                    m.put("resourceFormat", r.getResourceFormat());
-                    m.put("publishStatus", r.getPublishStatus());
-                    m.put("approvalStatus", r.getApprovalStatus());
+                    m.put("resourceCode", linked.getResourceCode());
+                    m.put("resourceName", linked.getResourceName());
+                    m.put("resourceType", linked.getResourceType());
+                    m.put("resourceFormat", linked.getResourceFormat());
+                    m.put("providerOrg", linked.getProviderOrg());
+                    m.put("publishStatus", linked.getPublishStatus());
+                    m.put("approvalStatus", linked.getApprovalStatus());
+                    m.put("createdBy", linked.getCreatedBy());
                 } else {
                     m.put("resourceAlive", false);
                 }
@@ -1542,9 +1604,43 @@ public class CatalogResourceService {
             if (m.get("resourceCode") == null && payload.get("categoryCode") != null) {
                 m.put("resourceCode", String.valueOf(payload.get("categoryCode")));
             }
+            m.put("canApprove", canOperatorApprove(operator, a, linked));
             out.add(m);
         }
         return out;
+    }
+
+    private boolean canViewApproval(GovCatalogApproval a, String scopeOrg, String scopeUser) {
+        if (a.getResourceId() == null) {
+            return false;
+        }
+        if (!scopeUser.isEmpty()) {
+            if (scopeUser.equals(a.getSubmittedBy() == null ? "" : a.getSubmittedBy().trim())) {
+                return true;
+            }
+        }
+        GovCatalogResource r = resourceMapper.selectById(a.getResourceId());
+        if (r == null) {
+            return false;
+        }
+        if (!scopeOrg.isEmpty() && scopeOrg.equals(r.getProviderOrg() == null ? "" : r.getProviderOrg().trim())) {
+            return true;
+        }
+        return !scopeUser.isEmpty() && scopeUser.equals(r.getCreatedBy() == null ? "" : r.getCreatedBy().trim());
+    }
+
+    private boolean canOperatorApprove(UserPrincipal operator, GovCatalogApproval a, GovCatalogResource linked) {
+        if (operator == null || !"PENDING".equalsIgnoreCase(a.getStatus())) {
+            return false;
+        }
+        String action = a.getActionType() == null ? "" : a.getActionType().toUpperCase(Locale.ROOT);
+        if (CATEGORY_ACTION_TYPES.contains(action)) {
+            return operator.isSystemAdmin() || operator.isPlatformAdmin();
+        }
+        // 资源目录审批：仅平台/超管（含历史 PROVIDER 待审单收口）
+        return operator.isSystemAdmin()
+                || operator.isPlatformAdmin()
+                || "sys_admin".equalsIgnoreCase(operator.getUsername());
     }
 
     public List<GovCatalogResourceVersion> listVersions(Long resourceId) {
@@ -2304,12 +2400,13 @@ public class CatalogResourceService {
 
     private GovCatalogApproval insertApproval(UserPrincipal operator, Long resourceId, Long categoryId,
                                               String catalogOrigin, String actionType, String comment,
-                                              Map<String, Object> payload) {
+                                              Map<String, Object> payload, String approvalStep) {
         GovCatalogApproval a = new GovCatalogApproval();
         a.setResourceId(resourceId);
         a.setCategoryId(categoryId);
         a.setCatalogOrigin(catalogOrigin == null ? null : catalogOrigin.toUpperCase(Locale.ROOT));
         a.setActionType(actionType);
+        a.setApprovalStep(normalizeApprovalStep(approvalStep));
         a.setStatus("PENDING");
         a.setSubmitComment(comment);
         if (operator != null) {

@@ -31,6 +31,8 @@ const STATUS_ZH: Record<string, string> = {
   CRITICAL: '严重',
   BLOCKED: '阻断',
   // 审批/订阅
+  PENDING_PLATFORM: '待平台审核',
+  PENDING_PROVIDER: '待提供方审核',
   PENDING: '待审核',
   APPROVED: '已审核',
   REJECTED: '驳回待提交',

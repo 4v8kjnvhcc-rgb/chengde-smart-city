@@ -424,7 +424,12 @@ async function approve(row: SubRow) {
       reviewerName: reviewForm.reviewerName.trim(),
       reviewerContact: reviewForm.reviewerContact.trim(),
     }, { timeout: 45_000 })
-    ElMessage.success(res.data?.oauthClientId ? '已通过，已发放接口调用凭证' : '已通过')
+    const nextStep = String((res.data as any)?.approvalStep || '').toUpperCase()
+    if (nextStep === 'PROVIDER' || String((res.data as any)?.status || '').toUpperCase() === 'PENDING') {
+      ElMessage.success(`平台审核已通过，已转交「${row.providerOrg || '目录提供单位'}」审核`)
+    } else {
+      ElMessage.success(res.data?.oauthClientId ? '部门审核已通过，已发放接口调用凭证' : '部门审核已通过')
+    }
     subDetail.visible = false
     await Promise.all([loadPending(), loadReviewed()])
   } catch (e: unknown) {
@@ -1187,7 +1192,7 @@ onActivated(() => {
           </el-table>
         </section>
 
-        <div v-if="subDetail.mode === 'pending' && subDetail.row.status === 'PENDING'" class="sub-detail-ops">
+        <div v-if="subDetail.mode === 'pending' && subDetail.row.status === 'PENDING' && (subDetail.row as any).canApprove !== false" class="sub-detail-ops">
           <el-form label-width="88px" class="review-meta-form" @submit.prevent>
             <el-form-item label="审批人" required>
               <el-input v-model="reviewForm.reviewerName" maxlength="64" placeholder="请填写审批人" clearable />

@@ -24,8 +24,22 @@ const pageTitle = computed(() =>
 /** 治理侧仅审批资源目录；归集侧仍含资源分类审批 */
 const showCategoryScope = computed(() => props.catalogOrigin === 'INGEST')
 
-/** 超级管理员：待审核可删除；已审核可下线（与后端 SYSTEM_ADMIN / PLATFORM_ADMIN 对齐） */
-const isCatalogAdmin = computed(() => auth.isSystemAdmin)
+/** 超级/平台管理员：资源目录审批（一审即生效） */
+const isCatalogAdmin = computed(() => auth.isSystemAdmin || auth.isPlatformAdmin)
+
+function approvalStepLabel(step?: string) {
+  // 现行：仅平台一审；历史 PROVIDER 节点仍按原名展示
+  if (String(step || '').toUpperCase() === 'PROVIDER') return '目录提供单位审核（历史）'
+  return '平台管理员审核'
+}
+
+/** 是否可审：仅平台/超管；以后端 canApprove 为准 */
+function canApproveRow(row: ApprovalRow) {
+  if (row.status !== 'PENDING') return false
+  if (row.canApprove === true) return true
+  if (row.canApprove === false) return false
+  return isCatalogAdmin.value
+}
 
 interface ApprovalRow {
   id: number
@@ -40,7 +54,10 @@ interface ApprovalRow {
   approvalStatus?: string
   resourceAlive?: boolean
   resourceFormat?: string
+  providerOrg?: string
   actionType: string
+  /** PLATFORM=平台审核；PROVIDER=目录提供单位审核 */
+  approvalStep?: string
   status: string
   submitComment?: string
   reviewComment?: string
@@ -50,6 +67,7 @@ interface ApprovalRow {
   reviewerContact?: string
   reviewedAt?: string
   payloadJson?: string
+  canApprove?: boolean
 }
 
 const ACTION_ZH: Record<string, string> = {
@@ -155,7 +173,7 @@ const detailTitle = computed(() => {
   return detailAllowAudit.value ? '审核 · 目录详情' : '查看 · 目录详情'
 })
 const selectedPendingCount = computed(
-  () => selected.value.filter((r) => r.status === 'PENDING').length,
+  () => selected.value.filter((r) => canApproveRow(r)).length,
 )
 function sortValue(row: ApprovalRow, prop: string): string {
   if (prop === 'resourceName') return displayName(row)
@@ -348,29 +366,35 @@ interface FlowStepRow {
   comment?: string
 }
 
-/** 审批流程按环节展开：提交 / 审批（撤回）各自成行，保证每个环节都有记录 */
+/** 审批流程按环节展开：提交 → 平台管理员审核（历史单可能仍含提供方节点） */
 function buildFlowSteps(rows: ApprovalRow[]): FlowStepRow[] {
+  const sorted = [...rows].sort((a, b) => (a.id || 0) - (b.id || 0))
   const out: FlowStepRow[] = []
-  for (const row of rows) {
-    out.push({
-      step: '提交',
-      actionType: row.actionType,
-      status: 'DONE',
-      actor: row.submittedBy || '—',
-      contact: '—',
-      time: row.submittedAt,
-      comment: row.submitComment || '已提交',
-    })
+  let submitWritten = false
+  for (const row of sorted) {
+    if (!submitWritten) {
+      out.push({
+        step: '提交',
+        actionType: row.actionType,
+        status: 'DONE',
+        actor: row.submittedBy || '—',
+        contact: '—',
+        time: row.submittedAt,
+        comment: row.submitComment || '已提交',
+      })
+      submitWritten = true
+    }
     const st = String(row.status || '').toUpperCase()
+    const stepName = approvalStepLabel(row.approvalStep)
     if (st === 'PENDING') {
       out.push({
-        step: '审批',
+        step: '平台管理员审核',
         actionType: row.actionType,
         status: 'PENDING',
         actor: '—',
         contact: '—',
         time: '',
-        comment: '待审批',
+        comment: '待平台管理员审核',
       })
     } else if (st === 'WITHDRAWN') {
       out.push({
@@ -384,7 +408,7 @@ function buildFlowSteps(rows: ApprovalRow[]): FlowStepRow[] {
       })
     } else {
       out.push({
-        step: '审批',
+        step: stepName,
         actionType: row.actionType,
         status: st || row.status,
         actor: row.reviewedBy || '—',
@@ -437,15 +461,19 @@ async function openDetail(row: ApprovalRow) {
  * 批量审核仍直接打开决策弹窗。
  */
 async function openReview(row: ApprovalRow) {
+  if (!canApproveRow(row)) {
+    ElMessage.warning('当前节点无权审核，或已处理')
+    return
+  }
   detailRow.value = row
-  detailAllowAudit.value = row.status === 'PENDING'
+  detailAllowAudit.value = true
   detailVisible.value = true
   await loadDetailResource(row)
 }
 
 /** 从详情进入单条审核决策 */
 function openReviewFromDetail() {
-  if (!detailRow.value || detailRow.value.status !== 'PENDING') return
+  if (!detailRow.value || !canApproveRow(detailRow.value)) return
   reviewMode.value = 'single'
   reviewTarget.value = detailRow.value
   resetReviewForm()
@@ -684,15 +712,15 @@ async function submitReview() {
       const id = reviewTarget.value.id
       if (reviewForm.decision === 'APPROVE') {
         await api.post(`/governance/catalog/resources-mgmt/approvals/${id}/approve`, payload)
-        ElMessage.success('审核通过')
+        ElMessage.success('审核已通过')
       } else {
         await api.post(`/governance/catalog/resources-mgmt/approvals/${id}/reject`, payload)
         ElMessage.success('已驳回')
       }
     } else {
-      const ids = selected.value.filter((r) => r.status === 'PENDING').map((r) => r.id)
+      const ids = selected.value.filter((r) => canApproveRow(r)).map((r) => r.id)
       if (!ids.length) {
-        ElMessage.warning('请勾选待处理审批')
+        ElMessage.warning('请勾选有权审核的待处理审批')
         return
       }
       if (reviewForm.decision === 'APPROVE') {
@@ -701,7 +729,7 @@ async function submitReview() {
           ...payload,
         })
         const d = res.data || {}
-        ElMessage.success(`已通过 ${d.approved || 0} 条`)
+        ElMessage.success(`已处理 ${d.approved || 0} 条`)
         if (d.errors?.length) ElMessage.warning(d.errors.slice(0, 3).join('；'))
       } else {
         const res = await api.post('/governance/catalog/resources-mgmt/approvals/batch-reject', {
@@ -829,7 +857,7 @@ onActivated(() => {
         @selection-change="(list: ApprovalRow[]) => (selected = list)"
         @sort-change="onSortChange"
       >
-        <el-table-column type="selection" width="46" :selectable="(row: ApprovalRow) => row.status === 'PENDING'" />
+        <el-table-column type="selection" width="46" :selectable="(row: ApprovalRow) => canApproveRow(row)" />
         <el-table-column label="目录名称" min-width="180" prop="resourceName" sortable="custom">
           <template #default="{ row }">
             <div class="obj">
@@ -845,9 +873,18 @@ onActivated(() => {
             </el-tag>
           </template>
         </el-table-column>
-        <el-table-column label="审批状态" prop="status" width="100" align="center" sortable="custom">
+        <el-table-column label="当前节点" width="140" show-overflow-tooltip>
           <template #default="{ row }">
-            <el-tag size="small" :type="statusTagType(row.status)">{{ statusLabel(row.status) }}</el-tag>
+            <span v-if="row.status === 'PENDING'">平台管理员审核</span>
+            <span v-else>—</span>
+          </template>
+        </el-table-column>
+        <el-table-column prop="providerOrg" label="提供方" width="120" show-overflow-tooltip />
+        <el-table-column label="审批状态" prop="status" width="110" align="center" sortable="custom">
+          <template #default="{ row }">
+            <el-tag size="small" :type="statusTagType(row.status)">
+              {{ statusLabel(row.status) }}
+            </el-tag>
           </template>
         </el-table-column>
         <el-table-column prop="submittedBy" label="提交人" width="120" show-overflow-tooltip sortable="custom" />
@@ -864,7 +901,7 @@ onActivated(() => {
               @click="openVersions(row)"
             >版本</el-button>
             <template v-if="row.status === 'PENDING'">
-              <el-button link type="primary" @click="openReview(row)">审核</el-button>
+              <el-button v-if="canApproveRow(row)" link type="primary" @click="openReview(row)">审核</el-button>
               <el-button v-if="canAdminDelete(row)" link type="danger" @click="adminDelete(row)">删除</el-button>
             </template>
             <template v-else-if="canAdminOffline(row)">

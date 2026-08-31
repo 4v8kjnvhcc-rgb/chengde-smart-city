@@ -15,6 +15,12 @@ public class BizPortalSubscription {
     private String purpose;
     private String applyPayload;
     private String status;
+    /** PLATFORM=平台管理员；PROVIDER=目录提供单位 */
+    private String approvalStep;
+    private String platformReviewedBy;
+    private String platformReviewerContact;
+    private String platformApproverNote;
+    private LocalDateTime platformReviewedAt;
     private String approverNote;
     private String reviewedBy;
     private String reviewerContact;
@@ -43,6 +49,16 @@ public class BizPortalSubscription {
     public void setApplyPayload(String applyPayload) { this.applyPayload = applyPayload; }
     public String getStatus() { return status; }
     public void setStatus(String status) { this.status = status; }
+    public String getApprovalStep() { return approvalStep; }
+    public void setApprovalStep(String approvalStep) { this.approvalStep = approvalStep; }
+    public String getPlatformReviewedBy() { return platformReviewedBy; }
+    public void setPlatformReviewedBy(String platformReviewedBy) { this.platformReviewedBy = platformReviewedBy; }
+    public String getPlatformReviewerContact() { return platformReviewerContact; }
+    public void setPlatformReviewerContact(String platformReviewerContact) { this.platformReviewerContact = platformReviewerContact; }
+    public String getPlatformApproverNote() { return platformApproverNote; }
+    public void setPlatformApproverNote(String platformApproverNote) { this.platformApproverNote = platformApproverNote; }
+    public LocalDateTime getPlatformReviewedAt() { return platformReviewedAt; }
+    public void setPlatformReviewedAt(LocalDateTime platformReviewedAt) { this.platformReviewedAt = platformReviewedAt; }
     public String getApproverNote() { return approverNote; }
     public void setApproverNote(String approverNote) { this.approverNote = approverNote; }
     public String getReviewedBy() { return reviewedBy; }

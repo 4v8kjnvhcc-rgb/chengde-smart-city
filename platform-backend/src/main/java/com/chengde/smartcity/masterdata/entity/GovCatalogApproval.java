@@ -13,6 +13,8 @@ public class GovCatalogApproval {
     private Long categoryId;
     private String catalogOrigin;
     private String actionType;
+    /** PLATFORM=平台管理员审核；PROVIDER=目录提供单位（信息资源提供方）审核 */
+    private String approvalStep;
     private String status;
     private String submitComment;
     private String reviewComment;
@@ -33,6 +35,8 @@ public class GovCatalogApproval {
     public void setCatalogOrigin(String catalogOrigin) { this.catalogOrigin = catalogOrigin; }
     public String getActionType() { return actionType; }
     public void setActionType(String actionType) { this.actionType = actionType; }
+    public String getApprovalStep() { return approvalStep; }
+    public void setApprovalStep(String approvalStep) { this.approvalStep = approvalStep; }
     public String getStatus() { return status; }
     public void setStatus(String status) { this.status = status; }
     public String getSubmitComment() { return submitComment; }

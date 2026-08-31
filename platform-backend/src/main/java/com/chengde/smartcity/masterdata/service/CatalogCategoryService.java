@@ -325,6 +325,7 @@ public class CatalogCategoryService {
         a.setCategoryId(categoryId);
         a.setCatalogOrigin(origin);
         a.setActionType(actionType);
+        a.setApprovalStep("PLATFORM");
         a.setStatus("PENDING");
         a.setSubmitComment(comment);
         if (operator != null) {

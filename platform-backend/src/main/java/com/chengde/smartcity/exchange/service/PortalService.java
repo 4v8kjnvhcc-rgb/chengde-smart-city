@@ -300,7 +300,7 @@ public class PortalService {
     }
 
     /**
-     * @param scope mine=本部门申请；pending=待本部门审批；reviewed=已审批历史；空=仅本部门相关
+     * @param scope mine=本部门申请；pending=待本部门审批；reviewed=已审批（仅平台/超管）；空=仅本部门相关
      */
     public List<Map<String, Object>> listSubscriptions(UserPrincipal operator, String status, String scope) {
         String scopeKey = nz(scope, "").trim().toLowerCase(Locale.ROOT);
@@ -338,30 +338,20 @@ public class PortalService {
                     }
                 }
             } else if ("pending".equals(scopeKey)) {
-                // 本部门作为资源提供方的待审申请
                 if (!"PENDING".equalsIgnoreCase(sub.getStatus())) {
                     continue;
                 }
-                if (!admin) {
-                    if (blank(myOrg) || !orgNameEquals(myOrg, providerOrg)) {
-                        continue;
-                    }
-                    // 本部门自己提的申请不算「待我审批」
-                    if (orgNameEquals(myOrg, sub.getApplicantOrg())
-                            || (username != null && username.equals(sub.getCreatedBy()))) {
-                        continue;
-                    }
+                if (!canSeePortalPending(operator, sub, providerOrg, myOrg, username)) {
+                    continue;
                 }
             } else if ("reviewed".equals(scopeKey)) {
-                // 本部门作为提供方的已审批历史
+                // 已审批：仅平台管理员/超级管理员可见审核记录；申请方请看「我的申请」
                 String st = nz(sub.getStatus(), "").toUpperCase(Locale.ROOT);
                 if (!"APPROVED".equals(st) && !"REJECTED".equals(st)) {
                     continue;
                 }
-                if (!admin) {
-                    if (blank(myOrg) || !orgNameEquals(myOrg, providerOrg)) {
-                        continue;
-                    }
+                if (!isPlatformOperator(operator)) {
+                    continue;
                 }
             } else if (!admin) {
                 // 未指定 scope：禁止返回全量，仅本部门相关
@@ -381,6 +371,11 @@ public class PortalService {
             row.put("purpose", sub.getPurpose());
             row.put("applyPayload", parseJsonSafe(sub.getApplyPayload()));
             row.put("status", sub.getStatus());
+            row.put("approvalStep", normalizeApprovalStep(sub.getApprovalStep()));
+            row.put("platformReviewedBy", sub.getPlatformReviewedBy());
+            row.put("platformReviewerContact", sub.getPlatformReviewerContact());
+            row.put("platformApproverNote", sub.getPlatformApproverNote());
+            row.put("platformReviewedAt", sub.getPlatformReviewedAt());
             row.put("approverNote", sub.getApproverNote());
             row.put("reviewComment", sub.getApproverNote());
             row.put("reviewedBy", sub.getReviewedBy());
@@ -390,6 +385,7 @@ public class PortalService {
             row.put("createdBy", sub.getCreatedBy());
             row.put("createdAt", sub.getCreatedAt());
             row.put("providerOrg", providerOrg);
+            row.put("canApprove", canApprovePortalSubscription(operator, sub, providerOrg));
             if (cat != null) {
                 row.put("catalogTitle", cat.getTitle());
                 row.put("catalogCode", cat.getCatalogCode());
@@ -420,81 +416,193 @@ public class PortalService {
 
     private List<Map<String, Object>> buildPortalApprovalFlow(BizPortalSubscription sub) {
         List<Map<String, Object>> flow = new ArrayList<>();
+        BizCatalogItem cat = sub.getCatalogId() == null ? null : catalogMapper.selectById(sub.getCatalogId());
+        String providerOrg = cat == null ? "" : nz(cat.getProviderOrg(), "");
+        String applicantLabel = firstNonBlank(sub.getApplicantOrg(), sub.getCreatedBy(), "申请人");
+
         Map<String, Object> submit = new LinkedHashMap<>();
         submit.put("step", "提交申请");
         submit.put("status", "DONE");
         submit.put("result", "已提交");
-        submit.put("actor", sub.getCreatedBy());
+        submit.put("actor", applicantLabel);
         submit.put("time", sub.getCreatedAt());
         submit.put("comment", "");
         flow.add(submit);
 
-        Map<String, Object> review = new LinkedHashMap<>();
-        review.put("step", "提供方审批");
         String st = nz(sub.getStatus(), "").toUpperCase(Locale.ROOT);
-        if ("PENDING".equals(st)) {
-            review.put("status", "PENDING");
-            review.put("result", "待审批");
-            review.put("actor", "");
-            review.put("time", null);
-            review.put("comment", "");
-        } else if ("APPROVED".equals(st)) {
-            review.put("status", "APPROVED");
-            review.put("result", "已通过");
-            review.put("actor", sub.getReviewedBy());
-            review.put("time", sub.getReviewedAt());
-            review.put("comment", sub.getApproverNote());
-        } else if ("REJECTED".equals(st)) {
-            review.put("status", "REJECTED");
-            review.put("result", "已驳回");
-            review.put("actor", sub.getReviewedBy());
-            review.put("time", sub.getReviewedAt());
-            review.put("comment", sub.getApproverNote());
-        } else if ("CANCELLED".equals(st)) {
-            review.put("status", "CANCELLED");
-            review.put("result", "已取消");
-            review.put("actor", sub.getCreatedBy());
-            review.put("time", sub.getUpdatedAt());
-            review.put("comment", "");
+        String step = normalizeApprovalStep(sub.getApprovalStep());
+        boolean cancelled = "CANCELLED".equals(st);
+
+        Map<String, Object> platform = new LinkedHashMap<>();
+        platform.put("step", "平台审核");
+        if (cancelled && sub.getPlatformReviewedAt() == null) {
+            platform.put("status", "SKIPPED");
+            platform.put("result", "—");
+            platform.put("actor", "平台管理员");
+            platform.put("time", null);
+            platform.put("comment", "");
+        } else if (sub.getPlatformReviewedAt() != null) {
+            platform.put("status", "APPROVED");
+            platform.put("result", "已通过");
+            platform.put("actor", firstNonBlank(sub.getPlatformReviewedBy(), "平台管理员"));
+            platform.put("time", sub.getPlatformReviewedAt());
+            platform.put("comment", sub.getPlatformApproverNote());
+        } else if ("PENDING".equals(st) && "PLATFORM".equals(step)) {
+            platform.put("status", "PENDING");
+            platform.put("result", "审批中");
+            platform.put("actor", "平台管理员");
+            platform.put("time", null);
+            platform.put("comment", "");
+        } else if ("REJECTED".equals(st) && "PLATFORM".equals(step)) {
+            platform.put("status", "REJECTED");
+            platform.put("result", "已驳回");
+            platform.put("actor", firstNonBlank(sub.getReviewedBy(), "平台管理员"));
+            platform.put("time", sub.getReviewedAt());
+            platform.put("comment", sub.getApproverNote());
+        } else if ("APPROVED".equals(st) || "PROVIDER".equals(step) || "REJECTED".equals(st)) {
+            platform.put("status", "APPROVED");
+            platform.put("result", "已通过");
+            platform.put("actor", firstNonBlank(sub.getPlatformReviewedBy(), "平台管理员"));
+            platform.put("time", sub.getPlatformReviewedAt() != null ? sub.getPlatformReviewedAt() : sub.getCreatedAt());
+            platform.put("comment", blank(sub.getPlatformApproverNote()) ? "（历史单）" : sub.getPlatformApproverNote());
         } else {
-            review.put("status", st);
-            review.put("result", st);
-            review.put("actor", sub.getReviewedBy());
-            review.put("time", sub.getReviewedAt());
-            review.put("comment", sub.getApproverNote());
+            platform.put("status", "WAITING");
+            platform.put("result", "未开始");
+            platform.put("actor", "平台管理员");
+            platform.put("time", null);
+            platform.put("comment", "");
         }
-        flow.add(review);
-        if ("API".equalsIgnoreCase(nz(sub.getResourceType(), ""))) {
-            Map<String, Object> cred = new LinkedHashMap<>();
-            cred.put("step", "发放调用凭证");
-            if ("APPROVED".equals(st) && !blank(sub.getOauthClientId())) {
-                cred.put("status", "DONE");
-                cred.put("result", "已发放");
-                cred.put("actor", sub.getReviewedBy());
-                cred.put("time", sub.getReviewedAt());
-                cred.put("comment", "");
-            } else if ("APPROVED".equals(st)) {
-                cred.put("status", "PENDING");
-                cred.put("result", "待发放");
-                cred.put("actor", "");
-                cred.put("time", null);
-                cred.put("comment", "");
-            } else if ("PENDING".equals(st)) {
-                cred.put("status", "WAITING");
-                cred.put("result", "待审批后发放");
-                cred.put("actor", "");
-                cred.put("time", null);
-                cred.put("comment", "");
+        flow.add(platform);
+
+        String deptActorExpected = blank(providerOrg) ? "目录提供单位" : providerOrg;
+        Map<String, Object> dept = new LinkedHashMap<>();
+        dept.put("step", "部门审核");
+        if (cancelled) {
+            dept.put("status", "SKIPPED");
+            dept.put("result", "—");
+            dept.put("actor", deptActorExpected);
+            dept.put("time", null);
+            dept.put("comment", "");
+        } else if ("PENDING".equals(st) && "PLATFORM".equals(step)) {
+            dept.put("status", "WAITING");
+            dept.put("result", "未开始");
+            dept.put("actor", deptActorExpected);
+            dept.put("time", null);
+            dept.put("comment", "");
+        } else if ("PENDING".equals(st) && "PROVIDER".equals(step)) {
+            dept.put("status", "PENDING");
+            dept.put("result", "审批中");
+            dept.put("actor", deptActorExpected);
+            dept.put("time", null);
+            dept.put("comment", "");
+        } else if ("APPROVED".equals(st)) {
+            dept.put("status", "APPROVED");
+            dept.put("result", "已通过");
+            dept.put("actor", firstNonBlank(sub.getReviewedBy(), deptActorExpected));
+            dept.put("time", sub.getReviewedAt());
+            dept.put("comment", sub.getApproverNote());
+        } else if ("REJECTED".equals(st) && "PROVIDER".equals(step)) {
+            dept.put("status", "REJECTED");
+            dept.put("result", "已驳回");
+            dept.put("actor", firstNonBlank(sub.getReviewedBy(), deptActorExpected));
+            dept.put("time", sub.getReviewedAt());
+            dept.put("comment", sub.getApproverNote());
+        } else if ("REJECTED".equals(st)) {
+            dept.put("status", "SKIPPED");
+            dept.put("result", "—");
+            dept.put("actor", deptActorExpected);
+            dept.put("time", null);
+            dept.put("comment", "");
+        } else {
+            dept.put("status", "WAITING");
+            dept.put("result", "未开始");
+            dept.put("actor", deptActorExpected);
+            dept.put("time", null);
+            dept.put("comment", "");
+        }
+        flow.add(dept);
+
+        Map<String, Object> sync = new LinkedHashMap<>();
+        sync.put("step", "权限同步");
+        boolean hasCred = !blank(sub.getOauthClientId());
+        if ("APPROVED".equals(st)) {
+            boolean needCred = "API".equalsIgnoreCase(nz(sub.getResourceType(), ""))
+                    || "TABLE".equalsIgnoreCase(nz(sub.getResourceType(), ""));
+            if (!needCred || hasCred) {
+                sync.put("status", "DONE");
+                sync.put("result", "已完成");
+                sync.put("actor", firstNonBlank(sub.getReviewedBy(), "系统"));
+                sync.put("time", sub.getReviewedAt());
+                sync.put("comment", "");
             } else {
-                cred.put("status", "SKIPPED");
-                cred.put("result", "—");
-                cred.put("actor", "");
-                cred.put("time", null);
-                cred.put("comment", "");
+                sync.put("status", "PENDING");
+                sync.put("result", "同步中");
+                sync.put("actor", "系统");
+                sync.put("time", null);
+                sync.put("comment", "");
             }
-            flow.add(cred);
+        } else {
+            sync.put("status", "WAITING");
+            sync.put("result", "未开始");
+            sync.put("actor", "系统");
+            sync.put("time", null);
+            sync.put("comment", "");
         }
+        flow.add(sync);
         return flow;
+    }
+
+    private static String normalizeApprovalStep(String step) {
+        if (step == null || step.isBlank()) {
+            return "PLATFORM";
+        }
+        return "PROVIDER".equalsIgnoreCase(step.trim()) ? "PROVIDER" : "PLATFORM";
+    }
+
+    private boolean isPlatformOperator(UserPrincipal operator) {
+        if (operator == null) {
+            return false;
+        }
+        return operator.isSystemAdmin() || operator.isPlatformAdmin()
+                || "sys_admin".equalsIgnoreCase(operator.getUsername());
+    }
+
+    private boolean canSeePortalPending(UserPrincipal operator, BizPortalSubscription sub,
+                                        String providerOrg, String myOrg, String username) {
+        String step = normalizeApprovalStep(sub.getApprovalStep());
+        if ("PLATFORM".equals(step)) {
+            return isPlatformOperator(operator);
+        }
+        // PROVIDER 步：仅信息资源提供方可见/可审，平台与超管不再代审
+        if (blank(myOrg) || !orgNameEquals(myOrg, providerOrg)) {
+            return false;
+        }
+        if (orgNameEquals(myOrg, sub.getApplicantOrg())
+                || (username != null && username.equals(sub.getCreatedBy()))) {
+            return false;
+        }
+        return true;
+    }
+
+    private boolean canApprovePortalSubscription(UserPrincipal operator, BizPortalSubscription sub,
+                                                 String providerOrg) {
+        if (operator == null || !"PENDING".equalsIgnoreCase(sub.getStatus())) {
+            return false;
+        }
+        String step = normalizeApprovalStep(sub.getApprovalStep());
+        if ("PLATFORM".equals(step)) {
+            return isPlatformOperator(operator);
+        }
+        // PROVIDER 步：仅提供方，平台/超管不可再审
+        String orgName = resolveOrgName(operator);
+        if (blank(orgName) || !orgNameEquals(orgName, providerOrg)) {
+            return false;
+        }
+        if (orgNameEquals(orgName, sub.getApplicantOrg())
+                || Objects.equals(operator.getUsername(), sub.getCreatedBy())) {
+            return false;
+        }
+        return true;
     }
 
     @Transactional
@@ -560,6 +668,7 @@ public class PortalService {
         sub.setPurpose(purpose);
         sub.setApplyPayload(payloadJson);
         sub.setStatus("PENDING");
+        sub.setApprovalStep("PLATFORM");
         sub.setCreatedBy(operator.getUsername());
         sub.setCreatedAt(LocalDateTime.now());
         sub.setUpdatedAt(LocalDateTime.now());
@@ -625,35 +734,16 @@ public class PortalService {
         return a.trim().equals(b.trim());
     }
 
-    /** 仅资源提供方部门（或系统管理员）可审批 */
-    private void assertProviderCanReview(UserPrincipal operator, BizPortalSubscription sub) {
-        if (operator != null && operator.isSystemAdmin()) {
-            return;
-        }
-        if (operator == null) {
-            throw new BusinessException(403, "未登录，无法审批");
-        }
-        String myOrg = resolveOrgName(operator);
+    /** 按当前节点校验审核权限 */
+    private void assertCanReviewPortalSubscription(UserPrincipal operator, BizPortalSubscription sub) {
         BizCatalogItem catalog = catalogMapper.selectById(sub.getCatalogId());
         String providerOrg = catalog == null ? null : catalog.getProviderOrg();
-        if (blank(myOrg) || !orgNameEquals(myOrg, providerOrg)) {
-            throw new BusinessException(403, "仅资源提供方部门可审批该申请");
-        }
-        if (orgNameEquals(myOrg, sub.getApplicantOrg())
-                || Objects.equals(operator.getUsername(), sub.getCreatedBy())) {
-            throw new BusinessException(403, "不能审批本部门自己提交的申请");
-        }
-    }
-
-    @SuppressWarnings("unchecked")
-    private Object parseJsonSafe(String json) {
-        if (blank(json)) {
-            return null;
-        }
-        try {
-            return OM.readValue(json, new TypeReference<Map<String, Object>>() {});
-        } catch (Exception e) {
-            return json;
+        if (!canApprovePortalSubscription(operator, sub, providerOrg)) {
+            String step = normalizeApprovalStep(sub.getApprovalStep());
+            if ("PLATFORM".equals(step)) {
+                throw new BusinessException(403, "仅平台管理员或超级管理员可进行平台审核");
+            }
+            throw new BusinessException(403, "仅资源提供方部门可进行部门审核");
         }
     }
 
@@ -666,7 +756,7 @@ public class PortalService {
         if (!"PENDING".equalsIgnoreCase(sub.getStatus())) {
             throw new BusinessException(400, "仅待审批申请可审核");
         }
-        assertProviderCanReview(operator, sub);
+        assertCanReviewPortalSubscription(operator, sub);
 
         String action = str(body.get("action"), "APPROVE").toUpperCase(Locale.ROOT);
         boolean approved = "APPROVE".equals(action) || "APPROVED".equals(action);
@@ -683,15 +773,66 @@ public class PortalService {
             throw new BusinessException(400, "驳回须填写驳回意见");
         }
         LocalDateTime now = LocalDateTime.now();
+        String step = normalizeApprovalStep(sub.getApprovalStep());
+
+        if ("PLATFORM".equals(step)) {
+            if (!approved) {
+                sub.setStatus("REJECTED");
+                sub.setApproverNote(note);
+                sub.setReviewedBy(reviewerName.trim());
+                sub.setReviewerContact(reviewerContact.trim());
+                sub.setReviewedAt(now);
+                sub.setApprovalStep("PLATFORM");
+                sub.setUpdatedAt(now);
+                subscriptionMapper.updateById(sub);
+                try {
+                    catalogSubscriptionService.syncReviewFromPortal(
+                            id, "REJECTED", note, reviewerName.trim(), now, reviewerContact.trim());
+                } catch (Exception ex) {
+                    log.warn("sync gov review from portal failed: {}", ex.getMessage());
+                }
+                Map<String, Object> out = new LinkedHashMap<>();
+                out.put("subscriptionId", id);
+                out.put("status", sub.getStatus());
+                out.put("approvalStep", sub.getApprovalStep());
+                out.put("approvalFlow", buildPortalApprovalFlow(sub));
+                auditService.log(operator.getUserId(), operator.getUsername(), operator.getOrgId(),
+                        "PORTAL_SUB_REVIEW", "biz_portal_subscription", String.valueOf(id), "PLATFORM_REJECTED");
+                return out;
+            }
+            sub.setPlatformReviewedBy(reviewerName.trim());
+            sub.setPlatformReviewerContact(reviewerContact.trim());
+            sub.setPlatformApproverNote(blank(note) ? "同意" : note);
+            sub.setPlatformReviewedAt(now);
+            sub.setApprovalStep("PROVIDER");
+            sub.setStatus("PENDING");
+            sub.setUpdatedAt(now);
+            subscriptionMapper.updateById(sub);
+            try {
+                catalogSubscriptionService.syncPlatformPassFromPortal(id, reviewerName.trim(),
+                        reviewerContact.trim(), blank(note) ? "同意" : note, now);
+            } catch (Exception ex) {
+                log.warn("sync gov platform pass from portal failed: {}", ex.getMessage());
+            }
+            Map<String, Object> out = new LinkedHashMap<>();
+            out.put("subscriptionId", id);
+            out.put("status", sub.getStatus());
+            out.put("approvalStep", "PROVIDER");
+            out.put("approvalFlow", buildPortalApprovalFlow(sub));
+            auditService.log(operator.getUserId(), operator.getUsername(), operator.getOrgId(),
+                    "PORTAL_SUB_REVIEW", "biz_portal_subscription", String.valueOf(id), "PLATFORM_APPROVED");
+            return out;
+        }
+
         sub.setStatus(approved ? "APPROVED" : "REJECTED");
         sub.setApproverNote(note);
         sub.setReviewedBy(reviewerName.trim());
         sub.setReviewerContact(reviewerContact.trim());
         sub.setReviewedAt(now);
+        sub.setApprovalStep("PROVIDER");
         sub.setUpdatedAt(now);
         subscriptionMapper.updateById(sub);
 
-        // 回写治理侧同一申请单
         try {
             catalogSubscriptionService.syncReviewFromPortal(
                     id, sub.getStatus(), note, reviewerName.trim(), now, reviewerContact.trim());
@@ -702,6 +843,7 @@ public class PortalService {
         Map<String, Object> out = new LinkedHashMap<>();
         out.put("subscriptionId", id);
         out.put("status", sub.getStatus());
+        out.put("approvalStep", sub.getApprovalStep());
         out.put("approvalFlow", buildPortalApprovalFlow(sub));
 
         if (approved) {
@@ -715,8 +857,7 @@ public class PortalService {
                 catalog.setHotScore(score + 1);
                 catalogMapper.updateById(catalog);
             }
-            log.info("portal subscription {} approved, task {}", id, task.getId());
-            // 库表/接口：仅审核通过时调用 ESB 串联并回填凭证（拒绝不调用）
+            log.info("portal subscription {} approved by provider, task {}", id, task.getId());
             if (esbConsumerProvisionService.isApiSubscription(sub)
                     || esbConsumerProvisionService.isTableSubscription(sub)) {
                 esbConsumerProvisionService.provisionOnApprove(sub);
@@ -1529,6 +1670,21 @@ public class PortalService {
         } catch (Exception e) {
             log.warn("parse ext_json failed: {}", e.getMessage());
             return null;
+        }
+    }
+
+    /** 申请载荷 JSON → Map；空/非法时返回空 Map，避免列表接口 500。 */
+    private Map<String, Object> parseJsonSafe(String json) {
+        if (blank(json)) {
+            return Map.of();
+        }
+        try {
+            return OM.readValue(json, new TypeReference<Map<String, Object>>() {});
+        } catch (Exception e) {
+            log.debug("applyPayload parse failed: {}", e.getMessage());
+            Map<String, Object> raw = new LinkedHashMap<>();
+            raw.put("raw", json);
+            return raw;
         }
     }
 

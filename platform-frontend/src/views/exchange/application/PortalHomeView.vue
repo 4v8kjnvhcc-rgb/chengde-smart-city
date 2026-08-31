@@ -68,6 +68,11 @@ interface Subscription {
   resourceType: string
   purpose: string
   status: string
+  approvalStep?: string
+  platformReviewedBy?: string
+  platformReviewerContact?: string
+  platformApproverNote?: string
+  platformReviewedAt?: string
   approverNote?: string
   reviewComment?: string
   reviewedBy?: string
@@ -77,6 +82,7 @@ interface Subscription {
   createdBy?: string
   createdAt?: string
   providerOrg?: string
+  canApprove?: boolean
   taskId?: number
   taskType?: string
   taskStatus?: string
@@ -336,15 +342,26 @@ async function reviewSub(id: number, action: 'APPROVE' | 'REJECT') {
     return
   }
   try {
+    const pendingRow = pendingSubsList.value.find((r) => r.id === id)
+      || (subDetail.row?.id === id ? subDetail.row : null)
+    const wasPlatform = String(pendingRow?.approvalStep || 'PLATFORM').toUpperCase() !== 'PROVIDER'
+    const providerName = pendingRow?.providerOrg || '目录提供单位'
     const res = await api.post(`/exchange/portal/subscriptions/${id}/review`, {
       action,
       approverNote: reviewForm.note,
       reviewerName: reviewForm.reviewerName.trim(),
       reviewerContact: reviewForm.reviewerContact.trim(),
     }, { timeout: 45_000 })
-    ElMessage.success(action === 'APPROVE'
-      ? `已通过${res.data?.taskId ? `，任务 #${res.data.taskId}` : ''}${res.data?.oauthClientId ? '，已发放接口调用凭证' : ''}`
-      : '已驳回')
+    if (action === 'APPROVE') {
+      const nextStep = String(res.data?.approvalStep || '').toUpperCase()
+      if (wasPlatform && (nextStep === 'PROVIDER' || res.data?.status === 'PENDING')) {
+        ElMessage.success(`平台审核已通过，已转交「${providerName}」进行部门审核`)
+      } else {
+        ElMessage.success(`部门审核已通过${res.data?.taskId ? `，任务 #${res.data.taskId}` : ''}${res.data?.oauthClientId ? '，已发放接口调用凭证' : ''}`)
+      }
+    } else {
+      ElMessage.success('已驳回')
+    }
     reviewForm.note = ''
     subDetail.visible = false
     await loadSubscriptions()
@@ -378,7 +395,10 @@ function flowStatusTag(s?: string) {
 function approvalProgressText(row: Subscription): string {
   const st = String(row.status || '').toUpperCase()
   const hasCred = isCredentialSub(row) && !!(row.oauthClientId || payloadStr(payloadObj(row), 'oauthClientId'))
-  if (st === 'PENDING') return '提交申请 → 待提供方审批'
+  if (st === 'PENDING') {
+    const step = String((row as any).approvalStep || 'PLATFORM').toUpperCase()
+    return step === 'PROVIDER' ? '提交申请 → 平台已通过 → 待提供方审批' : '提交申请 → 待平台审核'
+  }
   if (st === 'REJECTED') return '提交申请 → 已驳回'
   if (st === 'CANCELLED') return '已取消'
   if (st === 'APPROVED') {
@@ -399,20 +419,103 @@ function openApplyProgress(row: Subscription) {
 function applyProgressSteps(row: Subscription | null) {
   if (!row) return []
   const st = String(row.status || '').toUpperCase()
+  const step = String((row as any).approvalStep || 'PLATFORM').toUpperCase()
   const applyTime = formatDateTime(row.createdAt, '')
+  const platformTime = formatDateTime((row as any).platformReviewedAt, '')
   const reviewTime = formatDateTime(row.reviewedAt, '')
-  const reviewed = st === 'APPROVED' || st === 'REJECTED'
   const rejected = st === 'REJECTED'
   const cancelled = st === 'CANCELLED'
+  const approved = st === 'APPROVED'
   const hasCred = isCredentialSub(row) && !!(row.oauthClientId || payloadStr(payloadObj(row), 'oauthClientId'))
-  const synced = st === 'APPROVED' && (!isCredentialSub(row) || hasCred)
-  const deptState = rejected ? 'reject' : reviewed ? 'done' : cancelled ? 'wait' : 'current'
-  const syncState = synced ? 'done' : reviewed && !rejected ? 'current' : 'wait'
+  const synced = approved && (!isCredentialSub(row) || hasCred)
+  const providerName = (row.providerOrg || '').trim() || '目录提供单位'
+  const applicantName = (row.applicantOrg || row.createdBy || '').trim() || '申请人'
+  const platformName = String((row as any).platformReviewedBy || '').trim() || '平台管理员'
+  const deptName = String(row.reviewedBy || '').trim() || providerName
+  const flow = row.approvalFlow || []
+  const flowActor = (titleHint: string, fallback: string) => {
+    const hit = flow.find((f) => String(f.step || '').includes(titleHint) && f.actor)
+    return (hit?.actor || fallback).trim()
+  }
+
+  // 平台节点
+  let platformState: 'done' | 'current' | 'wait' | 'reject' = 'wait'
+  let platformHint = '未开始'
+  let platformAt = ''
+  let platformActor = flowActor('平台', '平台管理员')
+  if (cancelled && !(row as any).platformReviewedAt) {
+    platformState = 'wait'
+    platformHint = '—'
+  } else if ((row as any).platformReviewedAt) {
+    platformState = 'done'
+    platformHint = '已通过'
+    platformAt = platformTime
+    platformActor = platformName
+  } else if (st === 'PENDING' && step === 'PLATFORM') {
+    platformState = 'current'
+    platformHint = '审批中'
+    platformActor = '平台管理员'
+  } else if (rejected && step === 'PLATFORM') {
+    platformState = 'reject'
+    platformHint = '已驳回'
+    platformAt = reviewTime
+    platformActor = String(row.reviewedBy || '').trim() || '平台管理员'
+  } else if (approved || step === 'PROVIDER' || rejected) {
+    platformState = 'done'
+    platformHint = '已通过'
+    platformAt = platformTime || applyTime
+    platformActor = platformName
+  }
+
+  // 部门节点
+  let deptState: 'done' | 'current' | 'wait' | 'reject' = 'wait'
+  let deptHint = '未开始'
+  let deptAt = ''
+  let deptActor = flowActor('部门', providerName)
+  if (cancelled) {
+    deptHint = '—'
+    deptActor = providerName
+  } else if (st === 'PENDING' && step === 'PLATFORM') {
+    deptState = 'wait'
+    deptHint = '未开始'
+    deptActor = providerName
+  } else if (st === 'PENDING' && step === 'PROVIDER') {
+    deptState = 'current'
+    deptHint = '审批中'
+    deptActor = providerName
+  } else if (approved) {
+    deptState = 'done'
+    deptHint = '已通过'
+    deptAt = reviewTime
+    deptActor = deptName
+  } else if (rejected && step === 'PROVIDER') {
+    deptState = 'reject'
+    deptHint = '已驳回'
+    deptAt = reviewTime
+    deptActor = deptName
+  } else if (rejected) {
+    deptHint = '—'
+    deptActor = providerName
+  }
+
+  const syncState = synced ? 'done' : approved && !rejected ? 'current' : 'wait'
   return [
-    { title: '用户申请', time: applyTime, state: cancelled ? 'wait' : 'done', hint: cancelled ? '已取消' : '已提交' },
-    { title: '平台审核', time: applyTime, state: cancelled ? 'wait' : 'done', hint: cancelled ? '—' : '已通过' },
-    { title: '部门审核', time: reviewed ? reviewTime : '', state: deptState, hint: rejected ? '已驳回' : reviewed ? '已通过' : cancelled ? '—' : '审批中' },
-    { title: '权限同步', time: synced ? reviewTime : '', state: syncState, hint: synced ? '已完成' : syncState === 'current' ? '同步中' : '未开始' },
+    {
+      title: '用户申请',
+      time: applyTime,
+      state: cancelled ? 'wait' : 'done',
+      hint: cancelled ? '已取消' : '已提交',
+      actor: flowActor('提交', applicantName) || applicantName,
+    },
+    { title: '平台审核', time: platformAt, state: platformState, hint: platformHint, actor: platformActor },
+    { title: '部门审核', time: deptAt, state: deptState, hint: deptHint, actor: deptActor },
+    {
+      title: '权限同步',
+      time: synced ? reviewTime : '',
+      state: syncState,
+      hint: synced ? '已完成' : syncState === 'current' ? '同步中' : '未开始',
+      actor: synced ? (String(row.reviewedBy || '').trim() || '系统') : '系统',
+    },
   ]
 }
 
@@ -1089,7 +1192,12 @@ onMounted(() => {
                     <template #default="{ row }">
                       <el-button size="small" type="primary" plain @click.stop="openApplyProgress(row)">审批进度</el-button>
                       <el-button link type="primary" @click.stop="openSubDetail(row, 'reviewed')">详情</el-button>
-                      <el-button link type="primary" @click.stop="openSubDetail(row, 'pending')">审核</el-button>
+                      <el-button
+                        v-if="row.canApprove !== false"
+                        link
+                        type="primary"
+                        @click.stop="openSubDetail(row, 'pending')"
+                      >审核</el-button>
                     </template>
                   </el-table-column>
                 </el-table>
@@ -1292,7 +1400,7 @@ onMounted(() => {
             <el-table-column prop="comment" label="结果/意见" min-width="120" show-overflow-tooltip />
           </el-table>
         </section>
-        <div v-if="subDetail.mode === 'pending' && subDetail.row.status === 'PENDING'" class="sub-detail-ops">
+        <div v-if="subDetail.mode === 'pending' && subDetail.row.status === 'PENDING' && subDetail.row.canApprove !== false" class="sub-detail-ops">
           <el-form label-width="88px" class="review-meta-form" @submit.prevent>
             <el-form-item label="审批人" required>
               <el-input v-model="reviewForm.reviewerName" maxlength="64" placeholder="请填写审批人" clearable />
@@ -1380,6 +1488,7 @@ onMounted(() => {
               <span class="apply-progress__name">{{ s.title }}</span>
               <span class="apply-progress__tag">{{ s.hint }}</span>
             </div>
+            <div v-if="s.actor" class="apply-progress__actor">{{ s.actor }}</div>
             <div v-if="s.time" class="apply-progress__time">{{ s.time }}</div>
           </div>
         </li>
@@ -2158,6 +2267,15 @@ onMounted(() => {
 .apply-progress__item.is-reject .apply-progress__tag {
   background: #ffece8;
   color: #f53f3f;
+}
+.apply-progress__actor {
+  margin-top: 4px;
+  font-size: 13px;
+  color: #4e5969;
+  line-height: 18px;
+}
+.apply-progress__item.is-wait .apply-progress__actor {
+  color: #86909c;
 }
 .apply-progress__time {
   margin-top: 4px;

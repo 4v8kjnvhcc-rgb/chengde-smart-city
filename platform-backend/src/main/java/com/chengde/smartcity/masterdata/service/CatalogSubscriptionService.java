@@ -104,27 +104,65 @@ public class CatalogSubscriptionService {
                 new LambdaQueryWrapper<GovCatalogSubscription>()
                         .eq(GovCatalogSubscription::getStatus, "PENDING")
                         .orderByDesc(GovCatalogSubscription::getId));
-        if (operator == null || operator.isSystemAdmin()) {
+        if (operator == null) {
             return toRows(list);
-        }
-        String myOrg = resolveOrgName(operator);
-        if (myOrg == null || myOrg.isBlank()) {
-            return List.of();
         }
         List<GovCatalogSubscription> filtered = new ArrayList<>();
         for (GovCatalogSubscription sub : list) {
-            if (operator.getUsername() != null && operator.getUsername().equals(sub.getApplicantUser())) {
-                continue;
-            }
-            if (myOrg.trim().equals(nz(sub.getApplicantOrg()).trim())) {
-                continue;
-            }
-            GovCatalogResource resource = resourceMapper.selectById(sub.getResourceId());
-            if (resource != null && myOrg.trim().equals(nz(resource.getProviderOrg()).trim())) {
+            if (canSeeGovPending(operator, sub)) {
                 filtered.add(sub);
             }
         }
-        return toRows(filtered);
+        return toRows(operator, filtered);
+    }
+
+    private boolean isPlatformOperator(UserPrincipal operator) {
+        return operator != null && (operator.isSystemAdmin() || operator.isPlatformAdmin()
+                || "sys_admin".equalsIgnoreCase(operator.getUsername()));
+    }
+
+    private static String normalizeApprovalStep(String step) {
+        if (step == null || step.isBlank()) {
+            return "PLATFORM";
+        }
+        return "PROVIDER".equalsIgnoreCase(step.trim()) ? "PROVIDER" : "PLATFORM";
+    }
+
+    private boolean canSeeGovPending(UserPrincipal operator, GovCatalogSubscription sub) {
+        String step = normalizeApprovalStep(sub.getApprovalStep());
+        if ("PLATFORM".equals(step)) {
+            return isPlatformOperator(operator);
+        }
+        // PROVIDER 步：仅信息资源提供方，平台/超管不代审
+        String myOrg = resolveOrgName(operator);
+        if (myOrg == null || myOrg.isBlank()) {
+            return false;
+        }
+        if (operator.getUsername() != null && operator.getUsername().equals(sub.getApplicantUser())) {
+            return false;
+        }
+        if (myOrg.trim().equals(nz(sub.getApplicantOrg()).trim())) {
+            return false;
+        }
+        GovCatalogResource resource = resourceMapper.selectById(sub.getResourceId());
+        return resource != null && myOrg.trim().equals(nz(resource.getProviderOrg()).trim());
+    }
+
+    private boolean canApproveGovSubscription(UserPrincipal operator, GovCatalogSubscription sub) {
+        if (operator == null || !"PENDING".equalsIgnoreCase(sub.getStatus())) {
+            return false;
+        }
+        String step = normalizeApprovalStep(sub.getApprovalStep());
+        if ("PLATFORM".equals(step)) {
+            return isPlatformOperator(operator);
+        }
+        // PROVIDER 步：仅提供方
+        try {
+            assertProviderCanReview(operator, sub);
+            return true;
+        } catch (BusinessException ex) {
+            return false;
+        }
     }
 
     /**
@@ -169,9 +207,6 @@ public class CatalogSubscriptionService {
     }
 
     private void assertProviderCanReview(UserPrincipal operator, GovCatalogSubscription sub) {
-        if (operator != null && operator.isSystemAdmin()) {
-            return;
-        }
         if (operator == null) {
             throw new BusinessException(403, "未登录，无法审批");
         }
@@ -180,7 +215,7 @@ public class CatalogSubscriptionService {
         String providerOrg = resource == null ? null : resource.getProviderOrg();
         if (myOrg == null || myOrg.isBlank()
                 || providerOrg == null || !myOrg.trim().equals(providerOrg.trim())) {
-            throw new BusinessException(403, "仅资源提供方部门可审批该申请");
+            throw new BusinessException(403, "仅资源提供方部门可审批该申请（平台审核通过后不可由平台/超管代审）");
         }
         if ((myOrg.trim().equals(nz(sub.getApplicantOrg()).trim()))
                 || Objects.equals(operator.getUsername(), sub.getApplicantUser())) {
@@ -263,6 +298,7 @@ public class CatalogSubscriptionService {
         }
         sub.setPortalSubscriptionId(portalSubscriptionId);
         sub.setStatus("PENDING");
+        sub.setApprovalStep("PLATFORM");
         sub.setCreatedAt(LocalDateTime.now());
         sub.setUpdatedAt(LocalDateTime.now());
         subscriptionMapper.insert(sub);
@@ -283,6 +319,36 @@ public class CatalogSubscriptionService {
                 String.valueOf(sub.getId()), resource.getResourceName());
         log.info("catalog subscription created id={} resourceId={} mode={}", sub.getId(), resourceId, shareMode);
         return sub.getId();
+    }
+
+    /** 门户平台步通过：治理侧仍待审，转入提供方审核 */
+    @Transactional
+    public void syncPlatformPassFromPortal(Long portalSubscriptionId, String reviewedBy,
+                                           String reviewerContact, String note, LocalDateTime reviewedAt) {
+        if (portalSubscriptionId == null) {
+            return;
+        }
+        GovCatalogSubscription sub = subscriptionMapper.selectOne(new LambdaQueryWrapper<GovCatalogSubscription>()
+                .eq(GovCatalogSubscription::getPortalSubscriptionId, portalSubscriptionId)
+                .last("LIMIT 1"));
+        BizPortalSubscription portal = portalSubscriptionMapper.selectById(portalSubscriptionId);
+        if (sub == null && portal != null && portal.getGovSubscriptionId() != null) {
+            sub = subscriptionMapper.selectById(portal.getGovSubscriptionId());
+        }
+        if (sub == null || !"PENDING".equalsIgnoreCase(sub.getStatus())) {
+            return;
+        }
+        if (sub.getPortalSubscriptionId() == null) {
+            sub.setPortalSubscriptionId(portalSubscriptionId);
+        }
+        sub.setPlatformReviewedBy(reviewedBy);
+        sub.setPlatformReviewerContact(reviewerContact);
+        sub.setPlatformApproverNote(note);
+        sub.setPlatformReviewedAt(reviewedAt == null ? LocalDateTime.now() : reviewedAt);
+        sub.setApprovalStep("PROVIDER");
+        sub.setStatus("PENDING");
+        sub.setUpdatedAt(LocalDateTime.now());
+        subscriptionMapper.updateById(sub);
     }
 
     /** 门户审批结果回写治理侧（同一业务单）。 */
@@ -355,7 +421,14 @@ public class CatalogSubscriptionService {
         if (!"PENDING".equalsIgnoreCase(sub.getStatus())) {
             throw new BusinessException(400, "仅待处理申请可通过");
         }
-        assertProviderCanReview(operator, sub);
+        String step = normalizeApprovalStep(sub.getApprovalStep());
+        if ("PLATFORM".equals(step)) {
+            if (!isPlatformOperator(operator)) {
+                throw new BusinessException(403, "仅平台管理员或超级管理员可进行平台审核");
+            }
+        } else {
+            assertProviderCanReview(operator, sub);
+        }
         String reviewerName = str(body.get("reviewerName"), str(body.get("reviewedBy"), null));
         if (reviewerName == null || reviewerName.isBlank()) {
             throw new BusinessException(400, "请填写审批人");
@@ -364,12 +437,44 @@ public class CatalogSubscriptionService {
         if (reviewerContact == null || reviewerContact.isBlank()) {
             throw new BusinessException(400, "请填写联系方式");
         }
+        String comment = str(body.get("comment"), "同意");
+        LocalDateTime now = LocalDateTime.now();
+
+        if ("PLATFORM".equals(step)) {
+            sub.setPlatformReviewedBy(reviewerName.trim());
+            sub.setPlatformReviewerContact(reviewerContact.trim());
+            sub.setPlatformApproverNote(comment);
+            sub.setPlatformReviewedAt(now);
+            sub.setApprovalStep("PROVIDER");
+            sub.setStatus("PENDING");
+            sub.setUpdatedAt(now);
+            subscriptionMapper.updateById(sub);
+            // 同步门户：平台通过，转提供方
+            BizPortalSubscription portal = null;
+            if (sub.getPortalSubscriptionId() != null) {
+                portal = portalSubscriptionMapper.selectById(sub.getPortalSubscriptionId());
+            }
+            if (portal != null && "PENDING".equalsIgnoreCase(portal.getStatus())) {
+                portal.setPlatformReviewedBy(reviewerName.trim());
+                portal.setPlatformReviewerContact(reviewerContact.trim());
+                portal.setPlatformApproverNote(comment);
+                portal.setPlatformReviewedAt(now);
+                portal.setApprovalStep("PROVIDER");
+                portal.setUpdatedAt(now);
+                portalSubscriptionMapper.updateById(portal);
+            }
+            Map<String, Object> out = toRow(operator, sub);
+            out.put("message", "平台审核已通过，已转交目录提供单位审核");
+            return out;
+        }
+
         sub.setStatus("APPROVED");
-        sub.setReviewComment(str(body.get("comment"), "同意"));
+        sub.setReviewComment(comment);
         sub.setReviewedBy(reviewerName.trim());
         sub.setReviewerContact(reviewerContact.trim());
-        sub.setReviewedAt(LocalDateTime.now());
-        sub.setUpdatedAt(LocalDateTime.now());
+        sub.setReviewedAt(now);
+        sub.setApprovalStep("PROVIDER");
+        sub.setUpdatedAt(now);
         subscriptionMapper.updateById(sub);
 
         GovCatalogResource resource = requireResource(sub.getResourceId());
@@ -387,7 +492,7 @@ public class CatalogSubscriptionService {
         auditService.log(operator.getUserId(), operator.getUsername(), operator.getOrgId(),
                 "CATALOG_SUBSCRIBE_APPROVE", "gov_catalog_subscription",
                 String.valueOf(id), resource.getResourceName() + " auth=" + authorization.getAuthorizationCode());
-        Map<String, Object> out = toRow(sub);
+        Map<String, Object> out = toRow(operator, sub);
         out.put("authorization", toAuthorizationRow(authorization));
         return out;
     }
@@ -523,14 +628,22 @@ public class CatalogSubscriptionService {
     }
 
     private List<Map<String, Object>> toRows(List<GovCatalogSubscription> list) {
+        return toRows(null, list);
+    }
+
+    private List<Map<String, Object>> toRows(UserPrincipal operator, List<GovCatalogSubscription> list) {
         List<Map<String, Object>> out = new ArrayList<>();
         for (GovCatalogSubscription sub : list) {
-            out.add(toRow(sub));
+            out.add(toRow(operator, sub));
         }
         return out;
     }
 
     private Map<String, Object> toRow(GovCatalogSubscription sub) {
+        return toRow(null, sub);
+    }
+
+    private Map<String, Object> toRow(UserPrincipal operator, GovCatalogSubscription sub) {
         Map<String, Object> row = new LinkedHashMap<>();
         row.put("id", sub.getId());
         row.put("resourceId", sub.getResourceId());
@@ -539,10 +652,16 @@ public class CatalogSubscriptionService {
         row.put("shareMode", sub.getShareMode());
         row.put("purpose", sub.getPurpose());
         row.put("status", sub.getStatus());
+        row.put("approvalStep", normalizeApprovalStep(sub.getApprovalStep()));
+        row.put("platformReviewedBy", sub.getPlatformReviewedBy());
+        row.put("platformReviewerContact", sub.getPlatformReviewerContact());
+        row.put("platformApproverNote", sub.getPlatformApproverNote());
+        row.put("platformReviewedAt", sub.getPlatformReviewedAt());
         row.put("reviewComment", sub.getReviewComment());
         row.put("reviewedBy", sub.getReviewedBy());
         row.put("reviewerContact", sub.getReviewerContact());
         row.put("reviewedAt", sub.getReviewedAt());
+        row.put("canApprove", canApproveGovSubscription(operator, sub));
         row.put("distributeResult", sub.getDistributeResult());
         row.put("distributeAt", sub.getDistributeAt());
         row.put("createdAt", sub.getCreatedAt());
@@ -673,6 +792,7 @@ public class CatalogSubscriptionService {
         portal.setPurpose(sub.getPurpose());
         portal.setApplyPayload(sub.getApplyPayload());
         portal.setStatus("PENDING");
+        portal.setApprovalStep("PLATFORM");
         portal.setGovSubscriptionId(sub.getId());
         portal.setCreatedBy(operator == null ? sub.getApplicantUser() : operator.getUsername());
         portal.setCreatedAt(LocalDateTime.now());
@@ -719,6 +839,9 @@ public class CatalogSubscriptionService {
             portal.setReviewedAt(reviewedAt);
             if (reviewerContact != null && !reviewerContact.isBlank()) {
                 portal.setReviewerContact(reviewerContact.trim());
+            }
+            if ("APPROVED".equalsIgnoreCase(status) || "REJECTED".equalsIgnoreCase(status)) {
+                portal.setApprovalStep("PROVIDER");
             }
         }
         portal.setGovSubscriptionId(sub.getId());
