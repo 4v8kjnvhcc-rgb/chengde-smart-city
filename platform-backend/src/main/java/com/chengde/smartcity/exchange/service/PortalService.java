@@ -300,7 +300,8 @@ public class PortalService {
     }
 
     /**
-     * @param scope mine=本部门申请；pending=待本部门审批；reviewed=已审批（仅平台/超管）；空=仅本部门相关
+     * @param scope mine=本部门申请；pending=待本部门审批；
+     *              reviewed=已审批（平台/超管看全部；提供方看本部门已审结）；空=仅本部门相关
      */
     public List<Map<String, Object>> listSubscriptions(UserPrincipal operator, String status, String scope) {
         String scopeKey = nz(scope, "").trim().toLowerCase(Locale.ROOT);
@@ -345,12 +346,13 @@ public class PortalService {
                     continue;
                 }
             } else if ("reviewed".equals(scopeKey)) {
-                // 已审批：仅平台管理员/超级管理员可见审核记录；申请方请看「我的申请」
+                // 已审批：平台/超管看全部；目录提供方可看本部门已审结（通过或本部门驳回）
+                // 申请方请在「我的申请」查看详情与进度
                 String st = nz(sub.getStatus(), "").toUpperCase(Locale.ROOT);
                 if (!"APPROVED".equals(st) && !"REJECTED".equals(st)) {
                     continue;
                 }
-                if (!isPlatformOperator(operator)) {
+                if (!canSeePortalReviewed(operator, sub, providerOrg, myOrg)) {
                     continue;
                 }
             } else if (!admin) {
@@ -565,6 +567,29 @@ public class PortalService {
         }
         return operator.isSystemAdmin() || operator.isPlatformAdmin()
                 || "sys_admin".equalsIgnoreCase(operator.getUsername());
+    }
+
+    /**
+     * 「已审批」可见性：平台/超管全部；提供方仅本部门作为提供方且已审结的记录
+     * （终态通过，或提供方环节驳回；平台环节驳回对提供方不可见）。
+     */
+    private boolean canSeePortalReviewed(UserPrincipal operator, BizPortalSubscription sub,
+                                         String providerOrg, String myOrg) {
+        if (isPlatformOperator(operator)) {
+            return true;
+        }
+        if (blank(myOrg) || blank(providerOrg) || !orgNameEquals(myOrg, providerOrg)) {
+            return false;
+        }
+        String st = nz(sub.getStatus(), "").toUpperCase(Locale.ROOT);
+        if ("APPROVED".equals(st)) {
+            return true;
+        }
+        if ("REJECTED".equals(st)) {
+            // 平台驳回时仍停在 PLATFORM，提供方未参与审批
+            return "PROVIDER".equals(normalizeApprovalStep(sub.getApprovalStep()));
+        }
+        return false;
     }
 
     private boolean canSeePortalPending(UserPrincipal operator, BizPortalSubscription sub,

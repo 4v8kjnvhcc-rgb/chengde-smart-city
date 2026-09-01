@@ -1103,9 +1103,10 @@ onMounted(() => {
                     {{ row.createdAt ? String(row.createdAt).replace('T', ' ').slice(0, 19) : '—' }}
                   </template>
                 </el-table-column>
-                <el-table-column label="操作" width="120" fixed="right">
+                <el-table-column label="操作" width="200" fixed="right">
                   <template #default="{ row }">
                     <el-button size="small" type="primary" plain @click.stop="openApplyProgress(row)">审批进度</el-button>
+                    <el-button link type="primary" @click.stop="openSubDetail(row, 'mine')">详情</el-button>
                   </template>
                 </el-table-column>
               </el-table>
