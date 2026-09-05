@@ -312,8 +312,6 @@ const batchColumnForm = reactive({
   shareLevel: 'CONDITIONAL',
   displayFlag: true,
   searchFlag: false,
-  statFlag: false,
-  sortFlag: false,
 })
 const wizardStep = ref(0)
 const saving = ref(false)
@@ -2016,8 +2014,6 @@ function openBatchColumnSetting() {
   batchColumnForm.shareLevel = 'CONDITIONAL'
   batchColumnForm.displayFlag = true
   batchColumnForm.searchFlag = false
-  batchColumnForm.statFlag = false
-  batchColumnForm.sortFlag = false
   batchColumnVisible.value = true
 }
 
@@ -2027,8 +2023,6 @@ function applyBatchColumnSetting() {
     row.shareLevel = batchColumnForm.shareLevel
     row.displayFlag = batchColumnForm.displayFlag
     row.searchFlag = batchColumnForm.searchFlag
-    row.statFlag = batchColumnForm.statFlag
-    row.sortFlag = batchColumnForm.sortFlag
   }
   batchColumnVisible.value = false
   ElMessage.success(`已批量设置 ${columnRows.value.length} 个字段`)
@@ -2516,14 +2510,6 @@ onActivated(async () => {
               <template #header><div class="col-flag-head">是否<br>搜索项</div></template>
               <template #default="{ row }"><el-checkbox v-model="row.searchFlag" :disabled="viewMode" /></template>
             </el-table-column>
-            <el-table-column width="72" align="center">
-              <template #header><div class="col-flag-head">是否<br>统计项</div></template>
-              <template #default="{ row }"><el-checkbox v-model="row.statFlag" :disabled="viewMode" /></template>
-            </el-table-column>
-            <el-table-column width="72" align="center">
-              <template #header><div class="col-flag-head">是否<br>排序项</div></template>
-              <template #default="{ row }"><el-checkbox v-model="row.sortFlag" :disabled="viewMode" /></template>
-            </el-table-column>
           </el-table>
         </template>
 
@@ -2759,7 +2745,7 @@ onActivated(async () => {
           <el-button @click="dialogVisible = false">取消</el-button>
           <el-button v-if="wizardStep === 1" @click="goPrev">上一步</el-button>
           <el-button v-if="wizardStep === 0" type="primary" @click="goNext">下一步</el-button>
-          <el-button v-if="wizardStep === 1" type="primary" :loading="saving" @click="save">提交</el-button>
+          <el-button v-if="wizardStep === 1" type="primary" :loading="saving" @click="save">确定</el-button>
         </template>
       </template>
     </el-dialog>
@@ -3041,12 +3027,6 @@ onActivated(async () => {
         </el-form-item>
         <el-form-item label="是否搜索项">
           <el-switch v-model="batchColumnForm.searchFlag" />
-        </el-form-item>
-        <el-form-item label="是否统计项">
-          <el-switch v-model="batchColumnForm.statFlag" />
-        </el-form-item>
-        <el-form-item label="是否排序项">
-          <el-switch v-model="batchColumnForm.sortFlag" />
         </el-form-item>
       </el-form>
       <template #footer>

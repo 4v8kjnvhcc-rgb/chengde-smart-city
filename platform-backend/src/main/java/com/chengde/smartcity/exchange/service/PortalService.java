@@ -789,13 +789,14 @@ public class PortalService {
         if (blank(reviewerName)) {
             throw new BusinessException(400, "请填写审批人");
         }
-        String reviewerContact = str(body.get("reviewerContact"), str(body.get("contact"), ""));
-        if (blank(reviewerContact)) {
-            throw new BusinessException(400, "请填写联系方式");
-        }
+        String reviewerContactRaw = str(body.get("reviewerContact"), str(body.get("contact"), ""));
+        String reviewerContact = blank(reviewerContactRaw) ? null : reviewerContactRaw.trim();
         String note = str(body.get("approverNote"), str(body.get("comment"), ""));
         if (!approved && blank(note)) {
             throw new BusinessException(400, "驳回须填写驳回意见");
+        }
+        if (approved && blank(note)) {
+            note = "同意";
         }
         LocalDateTime now = LocalDateTime.now();
         String step = normalizeApprovalStep(sub.getApprovalStep());
@@ -805,14 +806,14 @@ public class PortalService {
                 sub.setStatus("REJECTED");
                 sub.setApproverNote(note);
                 sub.setReviewedBy(reviewerName.trim());
-                sub.setReviewerContact(reviewerContact.trim());
+                sub.setReviewerContact(reviewerContact);
                 sub.setReviewedAt(now);
                 sub.setApprovalStep("PLATFORM");
                 sub.setUpdatedAt(now);
                 subscriptionMapper.updateById(sub);
                 try {
                     catalogSubscriptionService.syncReviewFromPortal(
-                            id, "REJECTED", note, reviewerName.trim(), now, reviewerContact.trim());
+                            id, "REJECTED", note, reviewerName.trim(), now, reviewerContact);
                 } catch (Exception ex) {
                     log.warn("sync gov review from portal failed: {}", ex.getMessage());
                 }
@@ -826,8 +827,8 @@ public class PortalService {
                 return out;
             }
             sub.setPlatformReviewedBy(reviewerName.trim());
-            sub.setPlatformReviewerContact(reviewerContact.trim());
-            sub.setPlatformApproverNote(blank(note) ? "同意" : note);
+            sub.setPlatformReviewerContact(reviewerContact);
+            sub.setPlatformApproverNote(note);
             sub.setPlatformReviewedAt(now);
             sub.setApprovalStep("PROVIDER");
             sub.setStatus("PENDING");
@@ -835,7 +836,7 @@ public class PortalService {
             subscriptionMapper.updateById(sub);
             try {
                 catalogSubscriptionService.syncPlatformPassFromPortal(id, reviewerName.trim(),
-                        reviewerContact.trim(), blank(note) ? "同意" : note, now);
+                        reviewerContact, note, now);
             } catch (Exception ex) {
                 log.warn("sync gov platform pass from portal failed: {}", ex.getMessage());
             }
@@ -852,7 +853,7 @@ public class PortalService {
         sub.setStatus(approved ? "APPROVED" : "REJECTED");
         sub.setApproverNote(note);
         sub.setReviewedBy(reviewerName.trim());
-        sub.setReviewerContact(reviewerContact.trim());
+        sub.setReviewerContact(reviewerContact);
         sub.setReviewedAt(now);
         sub.setApprovalStep("PROVIDER");
         sub.setUpdatedAt(now);
@@ -860,7 +861,7 @@ public class PortalService {
 
         try {
             catalogSubscriptionService.syncReviewFromPortal(
-                    id, sub.getStatus(), note, reviewerName.trim(), now, reviewerContact.trim());
+                    id, sub.getStatus(), note, reviewerName.trim(), now, reviewerContact);
         } catch (Exception ex) {
             log.warn("sync gov review from portal failed: {}", ex.getMessage());
         }

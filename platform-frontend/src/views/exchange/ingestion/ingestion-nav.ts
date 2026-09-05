@@ -3,7 +3,24 @@ import type { HubNavGroup, HubNavItem } from '@/components/common/HubSideLayout.
 export type IngestionSystem = 'register' | 'collect'
 
 /** 采集汇聚一级模块（质量管控、数据资产管理含子页） */
-export type CollectModuleKey = 'ingest' | 'pipeline' | 'catalog' | 'quality' | 'asset'
+export type CollectModuleKey = 'ingest' | 'pipeline' | 'dept-data' | 'catalog' | 'quality' | 'asset'
+
+/** 部门数据管理侧栏叶子（与本地文件上传同一套模板/记录数据，按机构隔离） */
+export const DEPT_DATA_SUB_KEYS = [
+  'dept-data.templates',
+  'dept-data.records',
+] as const
+export type DeptDataSubKey = (typeof DEPT_DATA_SUB_KEYS)[number]
+
+export const DEPT_DATA_SUB_LABELS: Record<DeptDataSubKey, string> = {
+  'dept-data.templates': '模板管理',
+  'dept-data.records': '上传记录',
+}
+
+export const DEPT_DATA_SUB_PERMISSIONS: Record<DeptDataSubKey, string> = {
+  'dept-data.templates': 'hub:ingestion:collect:dept-data:templates',
+  'dept-data.records': 'hub:ingestion:collect:dept-data:records',
+}
 
 /** 汇聚数据质量管控侧栏叶子 key（与治理质量页同组件，双入口） */
 export const QUALITY_SUB_KEYS = [
@@ -136,6 +153,14 @@ export const REGISTER_MODULES: IngestionModuleMeta[] = [
 export const COLLECT_MODULES: IngestionModuleMeta[] = [
   { key: 'ingest', mCode: 'M054', label: '数据汇聚接入', subLabel: '结构化·非结构·半结构·API·CDC', system: 'collect', permission: 'hub:ingestion:collect:ingest' },
   { key: 'pipeline', mCode: 'M061', label: '规范设计', subLabel: '分类·探查·定义·对账', system: 'collect', permission: 'hub:ingestion:collect:pipeline' },
+  {
+    key: 'dept-data',
+    mCode: 'DDM',
+    label: '部门数据管理',
+    subLabel: '本部门模板·上传记录',
+    system: 'collect',
+    permission: 'hub:ingestion:collect:dept-data',
+  },
   { key: 'catalog', mCode: 'M065', label: '指标与目录体系构建', subLabel: '编目·分类·注册发布·审批', system: 'collect', permission: 'hub:ingestion:collect:catalog' },
   {
     key: 'quality',
@@ -284,6 +309,9 @@ export function filterIngestionModules(
     if (m.key === 'catalog') {
       return CATALOG_SUB_KEYS.some((k) => perms.includes(CATALOG_SUB_PERMISSIONS[k]))
     }
+    if (m.key === 'dept-data') {
+      return DEPT_DATA_SUB_KEYS.some((k) => perms.includes(DEPT_DATA_SUB_PERMISSIONS[k]))
+    }
     return false
   })
 }
@@ -422,7 +450,25 @@ export function isCollectModuleAllowed(
     const p = CATALOG_SUB_PERMISSIONS[moduleKey as CatalogSubKey]
     return opts.permissions.includes(p) || opts.permissions.includes('hub:ingestion:collect:catalog')
   }
+  if (isDeptDataSubKey(moduleKey) || moduleKey === 'dept-data') {
+    if (!allowed.some((m) => m.key === 'dept-data')) return false
+    if (!opts || opts.isSystemAdmin || moduleKey === 'dept-data') return true
+    const p = DEPT_DATA_SUB_PERMISSIONS[moduleKey as DeptDataSubKey]
+    return opts.permissions.includes(p) || opts.permissions.includes('hub:ingestion:collect:dept-data')
+  }
   return false
+}
+
+/** 部门数据管理：落到当前账号有权访问的第一个子页 */
+export function firstAllowedDeptDataModule(opts: { isSystemAdmin: boolean; permissions: string[] }): DeptDataSubKey {
+  for (const k of DEPT_DATA_SUB_KEYS) {
+    if (opts.isSystemAdmin) return k
+    const p = DEPT_DATA_SUB_PERMISSIONS[k]
+    if (opts.permissions.includes(p) || opts.permissions.includes('hub:ingestion:collect:dept-data')) {
+      return k
+    }
+  }
+  return 'dept-data.templates'
 }
 
 /** 目录模块：落到当前账号有权访问的第一个子页 */
@@ -463,7 +509,12 @@ export function normalizeCollectModuleKey(
   if (key === 'quality.standards') return 'quality.standards.element'
   if (key === 'asset') return 'asset.classify'
   if (key === 'catalog') return opts ? firstAllowedCatalogModule(opts) : 'catalog.resources'
+  if (key === 'dept-data') return opts ? firstAllowedDeptDataModule(opts) : 'dept-data.templates'
   return key
+}
+
+export function isDeptDataSubKey(key: string): key is DeptDataSubKey {
+  return (DEPT_DATA_SUB_KEYS as readonly string[]).includes(key)
 }
 
 function toNavItem(m: IngestionModuleMeta): HubNavItem {
@@ -585,6 +636,21 @@ function toCollectNavItem(
       children,
     }
   }
+  if (m.key === 'dept-data') {
+    const children = DEPT_DATA_SUB_KEYS
+      .filter((k) => {
+        if (!opts || opts.isSystemAdmin) return true
+        const p = DEPT_DATA_SUB_PERMISSIONS[k]
+        return opts.permissions.includes(p) || opts.permissions.includes('hub:ingestion:collect:dept-data')
+      })
+      .map((k) => ({ key: k, label: DEPT_DATA_SUB_LABELS[k] }))
+    return {
+      key: m.key,
+      label: m.label,
+      subLabel: m.subLabel,
+      children,
+    }
+  }
   return toNavItem(m)
 }
 
@@ -598,6 +664,8 @@ function resolveCollectModule(mod: string): string | undefined {
   if (mod === 'asset') return 'asset.classify'
   if (isCatalogSubKey(mod)) return mod
   if (mod === 'catalog') return 'catalog.resources'
+  if (isDeptDataSubKey(mod)) return mod
+  if (mod === 'dept-data') return 'dept-data.templates'
   if (COLLECT_BY_KEY[mod]) return mod
   const m = /^m0?(\d+)$/i.exec(mod)
   if (m) {
@@ -653,6 +721,9 @@ export function moduleTitle(moduleKey: string): string {
   if (isCatalogSubKey(moduleKey)) {
     return `${COLLECT_BY_KEY.catalog?.label || '指标与目录体系构建'} · ${CATALOG_SUB_LABELS[moduleKey]}`
   }
+  if (isDeptDataSubKey(moduleKey)) {
+    return `${COLLECT_BY_KEY['dept-data']?.label || '部门数据管理'} · ${DEPT_DATA_SUB_LABELS[moduleKey]}`
+  }
   const m = REGISTER_BY_KEY[moduleKey] || COLLECT_BY_KEY[moduleKey]
   return m?.label || moduleKey
 }
@@ -703,6 +774,7 @@ export function collectSectionFromQuery(query: Record<string, unknown>, module: 
   const defaults: Record<CollectModuleKey, string> = {
     ingest: 'structured-table',
     pipeline: 'step-probe',
+    'dept-data': 'dept-data.templates',
     catalog: 'catalog.resources',
     quality: 'rule-config',
     asset: 'classify',

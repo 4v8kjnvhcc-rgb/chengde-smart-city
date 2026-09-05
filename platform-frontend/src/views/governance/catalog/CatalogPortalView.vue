@@ -441,7 +441,7 @@ async function submitApplyPayload(payload: Record<string, unknown>) {
         ...payload,
         catalogId: row.portalCatalogId,
       })
-      ElMessage.success('资源申请已提交，可在个人空间「我的申请」与目录「资源申请订阅」查看')
+      ElMessage.success('资源申请已提交，可在个人中心「我的申请」与目录「资源申请订阅」查看')
     } else {
       await api.post('/governance/catalog/subscriptions', {
         resourceId: row.id,
@@ -510,91 +510,60 @@ onActivated(() => {
         </section>
 
         <section v-if="detail.resourceType === 'TABLE'" class="detail-sec">
-          <h4>库表信息</h4>
-          <div class="split">
-            <aside class="subside">
-              <div class="subside__label">库表</div>
-              <button
-                v-for="(t, i) in detailTables"
-                :key="i"
-                type="button"
-                class="subside__item"
-                :class="{ 'is-on': activeChild === i }"
-                @click="activeChild = i"
-              >{{ t.tableName }}</button>
-              <div v-if="!detailTables.length" class="muted">暂无挂接表</div>
-            </aside>
-            <div v-if="currentTable" class="submain">
-              <div class="info-grid">
-                <div><em>数据表名称</em>{{ currentTable.tableName }}</div>
-                <div><em>目录 Code</em>{{ currentTable.catalogCode || detail.catalogCode }}</div>
-                <div><em>数据项摘要</em>{{ currentTable.summary || '—' }}</div>
-              </div>
-              <p class="sub-title">数据项</p>
-              <el-table :data="tableColumns" size="small" stripe border>
-                <el-table-column prop="name" label="字段名称" min-width="120" />
-                <el-table-column prop="comment" label="字段描述" min-width="120" />
-                <el-table-column prop="type" label="字段类型" width="90" />
-                <el-table-column prop="length" label="字段长度" width="90" />
-                <el-table-column label="是否主键" width="90">
-                  <template #default="{ row }">{{ row.pk ? '是' : '否' }}</template>
-                </el-table-column>
-                <el-table-column label="是否非空" width="90">
-                  <template #default="{ row }">{{ row.nullable === false ? '是' : '否' }}</template>
-                </el-table-column>
-                <el-table-column prop="sensitivity" label="数据敏感级别" width="110" />
-              </el-table>
+          <h4>详细信息</h4>
+          <template v-if="currentTable">
+            <div class="info-grid">
+              <div><em>数据表名称</em>{{ currentTable.tableName }}</div>
             </div>
-          </div>
+            <p class="sub-title">数据项</p>
+            <el-table :data="tableColumns" size="small" stripe border>
+              <el-table-column prop="name" label="字段名称" min-width="120" />
+              <el-table-column prop="comment" label="字段描述" min-width="120" />
+              <el-table-column prop="type" label="字段类型" width="90" />
+              <el-table-column label="是否主键" width="90">
+                <template #default="{ row }">{{ row.pk ? '是' : '否' }}</template>
+              </el-table-column>
+              <el-table-column label="是否非空" width="90">
+                <template #default="{ row }">{{ row.nullable === false ? '是' : '否' }}</template>
+              </el-table-column>
+            </el-table>
+          </template>
+          <div v-else class="muted">暂无挂接表</div>
         </section>
 
         <section v-else-if="detail.resourceType === 'API'" class="detail-sec">
-          <h4>接口</h4>
-          <div class="split">
-            <aside class="subside">
-              <div class="subside__label">接口</div>
-              <button
-                v-for="(a, i) in detailApis"
-                :key="i"
-                type="button"
-                class="subside__item"
-                :class="{ 'is-on': activeChild === i }"
-                @click="activeChild = i"
-              >{{ a.apiName }}</button>
-            </aside>
-            <div v-if="currentApi" class="submain">
-              <div class="info-grid">
-                <div><em>接口名称</em>{{ currentApi.apiName }}</div>
-                <div><em>接口编码</em>{{ currentApi.apiCode }}</div>
-                <div><em>目录编码</em>{{ currentApi.catalogCode || detail.catalogCode }}</div>
-                <div><em>版本</em>{{ currentApi.version || '—' }}</div>
-                <div><em>接口目标地址</em>{{ currentApi.targetAddressHint || '资源申请通过后前往个人中心查看' }}</div>
-                <div><em>接口请求路径</em>{{ currentApi.requestPath }}</div>
-                <div><em>服务请求方法</em>{{ currentApi.httpMethod }}</div>
-                <div><em>注册时间</em>{{ currentApi.registeredAt || '—' }}</div>
-                <div><em>资源描述</em>{{ currentApi.description || '—' }}</div>
-                <div><em>失效时间</em>{{ currentApi.expireAt || '—' }}</div>
-              </div>
-              <p class="sub-title">请求参数</p>
-              <el-table :data="apiReqParams" size="small" stripe border>
-                <el-table-column prop="name" label="参数名称" />
-                <el-table-column label="是否必填" width="90">
-                  <template #default="{ row }">{{ row.required ? '是' : '否' }}</template>
-                </el-table-column>
-                <el-table-column prop="dataType" label="参数数据类型" width="120" />
-                <el-table-column prop="comment" label="参数描述" />
-              </el-table>
-              <p class="sub-title">响应参数</p>
-              <el-table :data="apiRespParams" size="small" stripe border>
-                <el-table-column prop="name" label="参数名称" />
-                <el-table-column label="是否必填" width="90">
-                  <template #default="{ row }">{{ row.required ? '是' : '否' }}</template>
-                </el-table-column>
-                <el-table-column prop="dataType" label="参数数据类型" width="120" />
-                <el-table-column prop="comment" label="参数描述" />
-              </el-table>
+          <h4>详细信息</h4>
+          <template v-if="currentApi">
+            <div class="info-grid">
+              <div><em>接口名称</em>{{ currentApi.apiName }}</div>
+              <div><em>目录编码</em>{{ currentApi.catalogCode || detail.catalogCode }}</div>
+              <div><em>版本</em>{{ currentApi.version || '—' }}</div>
+              <div><em>接口目标地址</em>资源申请通过后前往个人中心查看</div>
+              <div><em>接口请求路径</em>资源申请通过后前往个人中心查看</div>
+              <div><em>请求方式</em>{{ currentApi.httpMethod }}</div>
+              <div><em>注册时间</em>{{ currentApi.registeredAt || '—' }}</div>
+              <div><em>资源描述</em>{{ currentApi.description || '—' }}</div>
+              <div><em>失效时间</em>{{ currentApi.expireAt || '—' }}</div>
             </div>
-          </div>
+            <p class="sub-title">请求参数</p>
+            <el-table :data="apiReqParams" size="small" stripe border>
+              <el-table-column prop="name" label="参数名称" min-width="120" />
+              <el-table-column prop="comment" label="参数描述" min-width="140" />
+              <el-table-column prop="dataType" label="数据类型" width="120" />
+              <el-table-column label="是否必填" width="90">
+                <template #default="{ row }">{{ row.required ? '是' : '否' }}</template>
+              </el-table-column>
+            </el-table>
+            <p class="sub-title">响应参数</p>
+            <el-table :data="apiRespParams" size="small" stripe border>
+              <el-table-column prop="name" label="参数名称" min-width="120" />
+              <el-table-column prop="comment" label="参数描述" min-width="140" />
+              <el-table-column prop="dataType" label="数据类型" width="120" />
+              <el-table-column label="是否必填" width="90">
+                <template #default="{ row }">{{ row.required ? '是' : '否' }}</template>
+              </el-table-column>
+            </el-table>
+          </template>
         </section>
 
         <section v-else class="detail-sec">

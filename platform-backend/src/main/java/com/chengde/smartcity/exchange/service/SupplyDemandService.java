@@ -1125,7 +1125,7 @@ public class SupplyDemandService {
                 "DEMAND_ADMIN_REFUSE_RETURN", "biz_data_demand", String.valueOf(id), note);
     }
 
-    /** 提供部门标记：目录已挂载至门户（须选择门户目录） */
+    /** 提供部门标记：目录已挂载至门户（须选择门户目录，支持多选） */
     @Transactional
     public void markCatalogMounted(UserPrincipal operator, Long id, Map<String, Object> body) {
         requireProviderOperator(operator);
@@ -1134,35 +1134,82 @@ public class SupplyDemandService {
                 && !"CATALOG_MOUNTED".equals(demand.getStatus())) {
             throw new BusinessException(400, "仅已确认（含挂载督办中）的需求可标记目录已挂载");
         }
-        Object catalogIdObj = body.get("matchedCatalogId");
-        if (catalogIdObj == null || String.valueOf(catalogIdObj).isBlank()) {
-            catalogIdObj = body.get("catalogId");
-        }
-        if (catalogIdObj == null || String.valueOf(catalogIdObj).isBlank()) {
+        List<Long> catalogIds = parseMountedCatalogIds(body);
+        if (catalogIds.isEmpty()) {
             throw new BusinessException(400, "请选择已挂载的目录名称");
         }
-        Long catalogId = Long.valueOf(String.valueOf(catalogIdObj));
-        BizCatalogItem catalog = catalogMapper.selectById(catalogId);
-        if (catalog == null || !"PUBLISHED".equals(catalog.getPublishStatus())
-                || catalog.getGovResourceId() == null) {
-            throw new BusinessException(400, "仅可选择部门数据共享门户已发布目录");
-        }
         String provider = demand.getAssigneeOrg() == null ? "" : demand.getAssigneeOrg().trim();
-        if (!provider.isBlank() && catalog.getProviderOrg() != null
-                && !provider.equalsIgnoreCase(catalog.getProviderOrg().trim())) {
-            throw new BusinessException(400, "所选目录不属于当前数据提供部门");
+        List<String> titles = new ArrayList<>();
+        for (Long catalogId : catalogIds) {
+            BizCatalogItem catalog = catalogMapper.selectById(catalogId);
+            if (catalog == null || !"PUBLISHED".equals(catalog.getPublishStatus())
+                    || catalog.getGovResourceId() == null) {
+                throw new BusinessException(400, "仅可选择部门数据共享门户已发布目录");
+            }
+            if (!provider.isBlank() && catalog.getProviderOrg() != null
+                    && !provider.equalsIgnoreCase(catalog.getProviderOrg().trim())) {
+                throw new BusinessException(400, "所选目录不属于当前数据提供部门");
+            }
+            if (catalog.getTitle() != null && !catalog.getTitle().isBlank()) {
+                titles.add(catalog.getTitle().trim());
+            }
         }
-        demand.setMatchedCatalogId(catalogId);
+        demand.setMatchedCatalogId(catalogIds.get(0));
+        demand.setMatchedCatalogIds(toJsonObject(catalogIds));
         demand.setCatalogMountedAt(java.time.LocalDateTime.now());
         demand.setStatus("CATALOG_MOUNTED");
         demand.setStage("AUDIT");
+        String titleText = titles.isEmpty() ? "" : String.join("、", titles);
         String tip = str(body.get("confirmNote"),
-                "目录已挂载至部门数据共享门户：" + Objects.toString(catalog.getTitle(), ""));
+                titleText.isBlank()
+                        ? "目录已挂载至部门数据共享门户"
+                        : "目录已挂载至部门数据共享门户：" + titleText);
         String prev = demand.getConfirmNote() == null ? "" : demand.getConfirmNote() + " | ";
         demand.setConfirmNote(prev + tip);
         demandMapper.updateById(demand);
         auditService.log(operator.getUserId(), operator.getUsername(), operator.getOrgId(),
                 "DEMAND_CATALOG_MOUNTED", "biz_data_demand", String.valueOf(id), tip);
+    }
+
+    private List<Long> parseMountedCatalogIds(Map<String, Object> body) {
+        List<Long> out = new ArrayList<>();
+        Object multi = body.get("matchedCatalogIds");
+        if (multi == null) {
+            multi = body.get("catalogIds");
+        }
+        if (multi instanceof List<?> list) {
+            for (Object item : list) {
+                if (item == null || String.valueOf(item).isBlank()) {
+                    continue;
+                }
+                out.add(Long.valueOf(String.valueOf(item)));
+            }
+        } else if (multi instanceof String s && !s.isBlank()) {
+            try {
+                Object parsed = new com.fasterxml.jackson.databind.ObjectMapper().readValue(s, Object.class);
+                if (parsed instanceof List<?> list) {
+                    for (Object item : list) {
+                        if (item == null || String.valueOf(item).isBlank()) {
+                            continue;
+                        }
+                        out.add(Long.valueOf(String.valueOf(item)));
+                    }
+                }
+            } catch (Exception ignored) {
+                // fall through to single id
+            }
+        }
+        if (!out.isEmpty()) {
+            return out.stream().distinct().collect(Collectors.toList());
+        }
+        Object catalogIdObj = body.get("matchedCatalogId");
+        if (catalogIdObj == null || String.valueOf(catalogIdObj).isBlank()) {
+            catalogIdObj = body.get("catalogId");
+        }
+        if (catalogIdObj == null || String.valueOf(catalogIdObj).isBlank()) {
+            return List.of();
+        }
+        return List.of(Long.valueOf(String.valueOf(catalogIdObj)));
     }
 
     /** 定时：挂载超时自动督办 */

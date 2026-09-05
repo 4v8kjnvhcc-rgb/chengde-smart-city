@@ -11,6 +11,7 @@ import {
   filterCollectNavItems,
   filterIngestionModules,
   firstAllowedCatalogModule,
+  firstAllowedDeptDataModule,
   isCollectModuleAllowed,
   moduleTitle,
   normalizeCollectModuleKey,
@@ -82,6 +83,8 @@ const moduleComponents: Record<string, ReturnType<typeof defineAsyncComponent>> 
   'ingest.api': CollectIngestView,
   'ingest.cdc': CollectIngestView,
   pipeline: defineAsyncComponent(() => import('./collect/CollectPipelineView.vue')),
+  'dept-data.templates': defineAsyncComponent(() => import('./collect/ManualUploadView.vue')),
+  'dept-data.records': defineAsyncComponent(() => import('./collect/ManualUploadView.vue')),
   catalog: defineAsyncComponent(() => import('./collect/catalog/CatalogResourcesView.vue')),
   'catalog.resources': defineAsyncComponent(() => import('./collect/catalog/CatalogResourcesView.vue')),
   'catalog.classify': defineAsyncComponent(() => import('./collect/catalog/CatalogClassifyView.vue')),
@@ -155,6 +158,7 @@ function firstAllowedModule(sys: IngestionSystem): string {
   const list = sys === 'register' ? allowedRegister.value : allowedCollect.value
   const key = list[0]?.key || DEFAULT_MODULE[sys]
   if (sys === 'collect' && key === 'catalog') return firstAllowedCatalogModule(permOpts.value)
+  if (sys === 'collect' && key === 'dept-data') return firstAllowedDeptDataModule(permOpts.value)
   if (sys === 'collect' && key === 'ingest') return 'ingest.structured'
   return sys === 'collect' ? normalizeCollectModuleKey(key, permOpts.value) : key
 }
@@ -298,6 +302,8 @@ onUnmounted(() => {
           :module="module"
           :initial-tab="module.startsWith('quality.standards') ? standardsInitialTab : undefined"
           :catalog-origin="module.startsWith('catalog') ? 'INGEST' : undefined"
+          :variant="module.startsWith('dept-data') ? 'dept' : undefined"
+          :fixed-tab="module === 'dept-data.templates' ? 'templates' : module === 'dept-data.records' ? 'records' : undefined"
         />
       </keep-alive>
     </HubSideLayout>

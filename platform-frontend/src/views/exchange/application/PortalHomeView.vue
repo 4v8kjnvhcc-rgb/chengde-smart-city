@@ -127,10 +127,11 @@ const subForm = reactive({
   resourceType: 'TABLE',
   purpose: '',
 })
+const DEFAULT_APPROVE_COMMENT = '同意'
 const reviewForm = reactive({
   reviewerName: '',
   reviewerContact: '',
-  note: '',
+  note: DEFAULT_APPROVE_COMMENT,
 })
 const subDetail = reactive<{
   visible: boolean
@@ -333,24 +334,27 @@ async function reviewSub(id: number, action: 'APPROVE' | 'REJECT') {
     ElMessage.warning('请填写审批人')
     return
   }
-  if (!reviewForm.reviewerContact.trim()) {
-    ElMessage.warning('请填写联系方式')
-    return
-  }
-  if (action === 'REJECT' && !reviewForm.note.trim()) {
-    ElMessage.warning('驳回须填写驳回意见')
-    return
+  if (action === 'REJECT') {
+    const note = reviewForm.note.trim()
+    if (!note || note === DEFAULT_APPROVE_COMMENT) {
+      ElMessage.warning('驳回须填写驳回意见')
+      return
+    }
   }
   try {
     const pendingRow = pendingSubsList.value.find((r) => r.id === id)
       || (subDetail.row?.id === id ? subDetail.row : null)
     const wasPlatform = String(pendingRow?.approvalStep || 'PLATFORM').toUpperCase() !== 'PROVIDER'
     const providerName = pendingRow?.providerOrg || '目录提供单位'
+    const note =
+      action === 'APPROVE'
+        ? (reviewForm.note.trim() || DEFAULT_APPROVE_COMMENT)
+        : reviewForm.note.trim()
     const res = await api.post(`/exchange/portal/subscriptions/${id}/review`, {
       action,
-      approverNote: reviewForm.note,
+      approverNote: note,
       reviewerName: reviewForm.reviewerName.trim(),
-      reviewerContact: reviewForm.reviewerContact.trim(),
+      reviewerContact: reviewForm.reviewerContact.trim() || undefined,
     }, { timeout: 45_000 })
     if (action === 'APPROVE') {
       const nextStep = String(res.data?.approvalStep || '').toUpperCase()
@@ -362,7 +366,7 @@ async function reviewSub(id: number, action: 'APPROVE' | 'REJECT') {
     } else {
       ElMessage.success('已驳回')
     }
-    reviewForm.note = ''
+    reviewForm.note = DEFAULT_APPROVE_COMMENT
     subDetail.visible = false
     await loadSubscriptions()
   } catch (e: unknown) {
@@ -377,7 +381,7 @@ function openSubDetail(row: Subscription, mode: 'mine' | 'pending' | 'reviewed')
   if (mode === 'pending') {
     reviewForm.reviewerName = auth.user?.displayName || auth.user?.username || ''
     reviewForm.reviewerContact = ''
-    reviewForm.note = ''
+    reviewForm.note = DEFAULT_APPROVE_COMMENT
   }
 }
 
@@ -580,8 +584,8 @@ function payloadEntries(row: Subscription | null): { label: string; value: strin
       { label: '应用系统名称', value: dash(payloadStr(obj, 'systemName')), section: 'api' },
       { label: '接口URL', value: dash(row.apiUrl || payloadStr(obj, 'apiUrl')), section: 'api' },
       { label: '接口请求方式', value: dash(row.apiMethod || payloadStr(obj, 'apiMethod') || 'POST'), section: 'api' },
-      { label: '用于Oauth2服务认证的client secret信息', value: dash(row.oauthClientSecret || payloadStr(obj, 'oauthClientSecret')), section: 'api' },
-      { label: '用于Oauth2服务认证的clientid信息', value: dash(row.oauthClientId || payloadStr(obj, 'oauthClientId')), section: 'api' },
+      { label: 'client_id', value: dash(row.oauthClientId || payloadStr(obj, 'oauthClientId')), section: 'api' },
+      { label: 'client_secret', value: dash(row.oauthClientSecret || payloadStr(obj, 'oauthClientSecret')), section: 'api' },
       { label: '使用时间范围', value: dash(payloadStr(obj, 'timeRange')), section: 'api' },
       { label: '使用期限', value: days ? `${days}天` : '—', section: 'api' },
       { label: '其他技术请求说明', value: dash(payloadStr(obj, 'techReq')), section: 'api' },
@@ -1015,7 +1019,7 @@ onMounted(() => {
       <div v-else-if="portalTab === 'myspace'" class="myspace">
         <header class="myspace__hero">
           <div>
-            <h1>个人空间</h1>
+            <h1>个人中心</h1>
           </div>
           <div class="myspace__stats">
             <button
@@ -1314,17 +1318,17 @@ onMounted(() => {
       size="640px"
     >
       <template v-if="subDetail.row">
-        <section class="detail-block">
+        <section class="detail-block" :class="{ 'detail-block--base': isCredentialSub(subDetail.row) }">
           <h4>{{ isCredentialSub(subDetail.row) ? '基本信息' : '资源与办理' }}</h4>
-          <el-descriptions :column="1" border size="small">
+          <el-descriptions :column="1" border size="small" class="detail-desc">
             <el-descriptions-item v-for="(it, i) in payloadEntries(subDetail.row).filter(e => !e.section || e.section === 'base')" :key="'b'+i" :label="it.label">
               {{ it.value }}
             </el-descriptions-item>
           </el-descriptions>
         </section>
-        <section v-if="payloadEntries(subDetail.row).some(e => e.section === 'api')" class="detail-block">
+        <section v-if="payloadEntries(subDetail.row).some(e => e.section === 'api')" class="detail-block detail-block--api">
           <h4>接口信息</h4>
-          <el-descriptions :column="1" border size="small">
+          <el-descriptions :column="1" border size="small" class="detail-desc">
             <el-descriptions-item v-for="(it, i) in payloadEntries(subDetail.row).filter(e => e.section === 'api')" :key="'i'+i" :label="it.label">
               {{ it.value }}
             </el-descriptions-item>
@@ -1406,8 +1410,8 @@ onMounted(() => {
             <el-form-item label="审批人" required>
               <el-input v-model="reviewForm.reviewerName" maxlength="64" placeholder="请填写审批人" clearable />
             </el-form-item>
-            <el-form-item label="联系方式" required>
-              <el-input v-model="reviewForm.reviewerContact" maxlength="64" placeholder="请填写手机号或固话" clearable />
+            <el-form-item label="联系方式">
+              <el-input v-model="reviewForm.reviewerContact" maxlength="64" placeholder="选填：手机号或固话" clearable />
             </el-form-item>
             <el-form-item label="审批意见">
               <el-input
@@ -1416,7 +1420,7 @@ onMounted(() => {
                 :rows="3"
                 maxlength="500"
                 show-word-limit
-                placeholder="通过可填同意；驳回时必须填写驳回意见"
+                placeholder="默认：同意；驳回时必须填写驳回意见"
               />
             </el-form-item>
           </el-form>
@@ -1644,6 +1648,22 @@ onMounted(() => {
   color: #1f2329;
   padding-left: 8px;
   border-left: 3px solid #1677ff;
+}
+.detail-desc {
+  width: 100%;
+}
+.detail-desc :deep(.el-descriptions__table) {
+  width: 100%;
+  table-layout: fixed;
+}
+.detail-block--base .detail-desc :deep(.el-descriptions__label) {
+  width: 110px;
+}
+.detail-block--api .detail-desc :deep(.el-descriptions__label) {
+  width: 140px;
+}
+.detail-desc :deep(.el-descriptions__content) {
+  word-break: break-all;
 }
 .detail-section-title {
   margin: 12px 0 8px;

@@ -1,6 +1,5 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref, watch } from 'vue'
-import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import PageCard from '@/components/common/PageCard.vue'
 import { statusLabel } from '@/utils/status-label'
@@ -15,6 +14,7 @@ import {
   type Upload,
   type UploadTemplate,
 } from '../useIngestionHub'
+import { formatDateTime } from '@/utils/datetime'
 
 type TplBinding = {
   sheetName: string
@@ -28,9 +28,28 @@ type TplBinding = {
 
 type OrgOption = { id: number; orgName: string }
 
-const router = useRouter()
+const props = withDefaults(
+  defineProps<{
+    /** platform=汇聚接入·本地文件上传；dept=部门数据管理（本机构隔离） */
+    variant?: 'platform' | 'dept'
+    /** 部门侧栏固定子页：模板管理 / 上传记录 */
+    fixedTab?: 'templates' | 'records'
+  }>(),
+  {
+    variant: 'platform',
+    fixedTab: undefined,
+  },
+)
+
 const auth = useAuthStore()
-const canPickOrg = computed(() => !!auth.isSystemAdmin || !!auth.isPlatformAdmin)
+const isDeptVariant = computed(() => props.variant === 'dept')
+const canPickOrg = computed(() => !isDeptVariant.value && (!!auth.isSystemAdmin || !!auth.isPlatformAdmin))
+const pageTitle = computed(() => {
+  if (props.fixedTab === 'templates') return '模板管理'
+  if (props.fixedTab === 'records') return '上传记录'
+  return '本地文件上传'
+})
+const showTabs = computed(() => !props.fixedTab)
 
 const templates = ref<UploadTemplate[]>([])
 const projects = ref<Project[]>([])
@@ -38,7 +57,7 @@ const fileSources = ref<DataSource[]>([])
 const orgs = ref<OrgOption[]>([])
 const queryKeyword = ref('')
 const queryOrgId = ref<number | undefined>()
-const listTab = ref<'templates' | 'records'>('templates')
+const listTab = ref<'templates' | 'records'>(props.fixedTab || 'templates')
 const recentUploads = ref<Upload[]>([])
 const recentLoading = ref(false)
 const dropActive = ref(false)
@@ -280,10 +299,20 @@ async function submitAddSystem() {
 async function loadLists() {
   const params: { keyword?: string; orgId?: number } = {}
   if (queryKeyword.value.trim()) params.keyword = queryKeyword.value.trim()
-  if (canPickOrg.value && queryOrgId.value) params.orgId = queryOrgId.value
+  const scopedOrgId = resolveListOrgId()
+  if (scopedOrgId != null) params.orgId = scopedOrgId
   const tpl = await ingestionApi.templates(params)
   templates.value = tpl.data || []
   await loadRecentUploads()
+}
+
+/** 部门入口强制本机构；平台入口仅在筛选时带 orgId */
+function resolveListOrgId(): number | undefined {
+  if (isDeptVariant.value) {
+    return auth.user?.orgId ?? undefined
+  }
+  if (canPickOrg.value && queryOrgId.value) return queryOrgId.value
+  return undefined
 }
 
 async function loadRecentUploads() {
@@ -291,7 +320,8 @@ async function loadRecentUploads() {
   try {
     const params: { keyword?: string; orgId?: number } = {}
     if (queryKeyword.value.trim()) params.keyword = queryKeyword.value.trim()
-    if (canPickOrg.value && queryOrgId.value) params.orgId = queryOrgId.value
+    const scopedOrgId = resolveListOrgId()
+    if (scopedOrgId != null) params.orgId = scopedOrgId
     const res = await ingestionApi.uploads(params)
     recentUploads.value = (res.data || []).slice(0, 50)
   } catch {
@@ -704,18 +734,6 @@ async function commitToOds() {
       previewRows.value = []
     }
 
-    const goDataItems = async () => {
-      uploadDialog.value = false
-      await router.push({
-        path: '/exchange/ingestion',
-        query: {
-          system: 'register',
-          module: 'm044',
-          ...(tableId != null ? { tableId: String(tableId) } : {}),
-        },
-      })
-    }
-
     if (remainingSheets.value.length) {
       await ElMessageBox.alert(
         `本表已写入（资产#${tableId ?? '—'}），还有 ${remainingSheets.value.length} 个 Sheet 待处理，请继续校验并写入`,
@@ -729,18 +747,18 @@ async function commitToOds() {
       await ElMessageBox.alert(
         `已绑定资产#${tableId ?? '—'}，请在数据项管理中核对并补充字段名称/注释`,
         '全量覆盖写入成功',
-        { confirmButtonText: '前往数据项管理', type: 'success' },
+        { confirmButtonText: '确定', type: 'success' },
       )
-      await goDataItems()
+      uploadDialog.value = false
       return
     }
 
     await ElMessageBox.alert(
       `增量写入成功：smart_city_ods.${odsTable}（${rows} 行）`,
       '写入成功',
-      { confirmButtonText: '前往数据项管理', type: 'success' },
+      { confirmButtonText: '确定', type: 'success' },
     )
-    await goDataItems()
+    uploadDialog.value = false
   } catch (err: unknown) {
     const msg = (err as { response?: { data?: { message?: string } } })?.response?.data?.message
     ElMessage.error(msg || '写入 ODS 失败')
@@ -765,9 +783,20 @@ async function onUploadDialogClosed() {
 }
 
 onMounted(async () => {
+  if (props.fixedTab) listTab.value = props.fixedTab
   await loadOrgs()
   await loadLists()
 })
+
+watch(
+  () => props.fixedTab,
+  (tab) => {
+    if (tab) {
+      listTab.value = tab
+      void loadLists()
+    }
+  },
+)
 </script>
 
 <template>
@@ -776,11 +805,13 @@ onMounted(async () => {
       <template #header>
         <div class="wiz-head">
           <div>
-            <div class="wiz-title">本地文件上传</div>
+            <div class="wiz-title">{{ pageTitle }}</div>
           </div>
           <div class="wiz-actions">
-            <el-button @click="openCreateTemplate">新建模板</el-button>
-            <el-button type="primary" @click="openUploadDialog()">上传文件</el-button>
+            <template v-if="listTab === 'templates'">
+              <el-button @click="openCreateTemplate">新建模板</el-button>
+              <el-button type="primary" @click="openUploadDialog()">上传文件</el-button>
+            </template>
           </div>
         </div>
       </template>
@@ -805,71 +836,75 @@ onMounted(async () => {
         </el-form-item>
       </el-form>
 
-      <el-tabs v-model="listTab">
-        <el-tab-pane label="上传模板" name="templates">
-          <el-table
-            :data="listedTemplates"
-            stripe
-            size="small"
-            empty-text="暂无模板：请先「新建模板」用样例文件定义字段，再上传业务数据"
-          >
-            <el-table-column prop="templateName" label="模板" min-width="140" show-overflow-tooltip />
-            <el-table-column prop="orgName" label="归属机构" min-width="120" show-overflow-tooltip>
-              <template #default="{ row }">{{ row.orgName || '—' }}</template>
-            </el-table-column>
-            <el-table-column label="同步资产" min-width="140" show-overflow-tooltip>
-              <template #default="{ row }">{{ templateAssetLabel(row) }}</template>
-            </el-table-column>
-            <el-table-column label="目标表" min-width="140" show-overflow-tooltip>
-              <template #default="{ row }">{{ templateTarget(row) }}</template>
-            </el-table-column>
-            <el-table-column label="状态" width="90">
-              <template #default="{ row }">
-                <el-tag :type="statusTagType(row.status)" size="small">{{ statusLabel(row.status) }}</el-tag>
-              </template>
-            </el-table-column>
-            <el-table-column label="操作" width="300" fixed="right">
-              <template #default="{ row }">
-                <el-button link type="primary" @click="showTemplateDetail(row)">详情</el-button>
-                <el-button
-                  link
-                  type="primary"
-                  :disabled="row.status === 'INACTIVE'"
-                  @click="openUploadDialog(row.templateCode)"
-                >
-                  上传
-                </el-button>
-                <el-button link type="primary" @click="openTemplateRecords(row)">记录</el-button>
-                <el-button link :type="row.status === 'INACTIVE' ? 'success' : 'warning'" @click="toggleTemplateStatus(row)">
-                  {{ row.status === 'INACTIVE' ? '启用' : '停用' }}
-                </el-button>
-                <el-button link type="danger" @click="removeTemplate(row)">删除</el-button>
-              </template>
-            </el-table-column>
-          </el-table>
-        </el-tab-pane>
-        <el-tab-pane label="最近上传" name="records">
-          <el-table
-            v-loading="recentLoading"
-            :data="recentUploads"
-            stripe
-            size="small"
-            empty-text="暂无上传记录，请在「上传模板」中选模板后上传文件"
-          >
-            <el-table-column prop="fileName" label="文件" min-width="160" show-overflow-tooltip />
-            <el-table-column prop="templateCode" label="模板编码" min-width="120" show-overflow-tooltip />
-            <el-table-column prop="sheetName" label="工作表" width="110" show-overflow-tooltip />
-            <el-table-column prop="targetTable" label="目标表" min-width="140" show-overflow-tooltip />
-            <el-table-column prop="rowCount" label="行数" width="80" />
-            <el-table-column label="状态" width="100">
-              <template #default="{ row }">
-                <el-tag :type="statusTagType(row.status)" size="small">{{ statusLabel(row.status) }}</el-tag>
-              </template>
-            </el-table-column>
-            <el-table-column prop="createdAt" label="时间" width="170" show-overflow-tooltip />
-          </el-table>
-        </el-tab-pane>
+      <el-tabs v-if="showTabs" v-model="listTab" class="manual-upload-tabs">
+        <el-tab-pane label="上传模板" name="templates" />
+        <el-tab-pane label="最近上传" name="records" />
       </el-tabs>
+
+      <el-table
+        v-if="listTab === 'templates'"
+        :data="listedTemplates"
+        stripe
+        size="small"
+        empty-text="暂无模板：请先「新建模板」用样例文件定义字段，再上传业务数据"
+      >
+        <el-table-column prop="templateName" label="模板" min-width="140" show-overflow-tooltip />
+        <el-table-column prop="orgName" label="归属机构" min-width="120" show-overflow-tooltip>
+          <template #default="{ row }">{{ row.orgName || '—' }}</template>
+        </el-table-column>
+        <el-table-column label="同步资产" min-width="140" show-overflow-tooltip>
+          <template #default="{ row }">{{ templateAssetLabel(row) }}</template>
+        </el-table-column>
+        <el-table-column label="目标表" min-width="140" show-overflow-tooltip>
+          <template #default="{ row }">{{ templateTarget(row) }}</template>
+        </el-table-column>
+        <el-table-column label="状态" width="90">
+          <template #default="{ row }">
+            <el-tag :type="statusTagType(row.status)" size="small">{{ statusLabel(row.status) }}</el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column label="操作" width="300" fixed="right">
+          <template #default="{ row }">
+            <el-button link type="primary" @click="showTemplateDetail(row)">详情</el-button>
+            <el-button
+              link
+              type="primary"
+              :disabled="row.status === 'INACTIVE'"
+              @click="openUploadDialog(row.templateCode)"
+            >
+              上传
+            </el-button>
+            <el-button link type="primary" @click="openTemplateRecords(row)">记录</el-button>
+            <el-button link :type="row.status === 'INACTIVE' ? 'success' : 'warning'" @click="toggleTemplateStatus(row)">
+              {{ row.status === 'INACTIVE' ? '启用' : '停用' }}
+            </el-button>
+            <el-button link type="danger" @click="removeTemplate(row)">删除</el-button>
+          </template>
+        </el-table-column>
+      </el-table>
+
+      <el-table
+        v-else
+        v-loading="recentLoading"
+        :data="recentUploads"
+        stripe
+        size="small"
+        :empty-text="isDeptVariant ? '暂无上传记录，请先在「模板管理」中选模板后上传文件' : '暂无上传记录，请在「上传模板」中选模板后上传文件'"
+      >
+        <el-table-column prop="fileName" label="文件" min-width="160" show-overflow-tooltip />
+        <el-table-column prop="templateCode" label="模板编码" min-width="120" show-overflow-tooltip />
+        <el-table-column prop="sheetName" label="工作表" width="110" show-overflow-tooltip />
+        <el-table-column prop="targetTable" label="目标表" min-width="140" show-overflow-tooltip />
+        <el-table-column prop="rowCount" label="行数" width="80" />
+        <el-table-column label="状态" width="100">
+          <template #default="{ row }">
+            <el-tag :type="statusTagType(row.status)" size="small">{{ statusLabel(row.status) }}</el-tag>
+          </template>
+        </el-table-column>
+        <el-table-column label="时间" width="170" show-overflow-tooltip>
+          <template #default="{ row }">{{ formatDateTime(row.createdAt) }}</template>
+        </el-table-column>
+      </el-table>
     </PageCard>
 
     <!-- 新建模板弹窗 -->

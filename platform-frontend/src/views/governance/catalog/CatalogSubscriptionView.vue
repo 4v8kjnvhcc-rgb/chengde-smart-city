@@ -161,10 +161,11 @@ const targetPage = ref(1)
 const targetPageSize = ref(10)
 const logPage = ref(1)
 const logPageSize = ref(10)
+const DEFAULT_APPROVE_COMMENT = '同意'
 const reviewForm = reactive({
   reviewerName: '',
   reviewerContact: '',
-  note: '',
+  note: DEFAULT_APPROVE_COMMENT,
 })
 const targetForm = reactive({
   visible: false,
@@ -259,6 +260,21 @@ function payloadVal(obj: Record<string, unknown>, key: string) {
   const v = obj[key]
   if (v == null || String(v).trim() === '') return ''
   return String(v)
+}
+
+function cycleLabel(code?: string) {
+  const v = String(code || '').trim()
+  if (!v) return '—'
+  const zh = statusLabel(v)
+  return zh || v
+}
+
+function flowActorLabel(step: ApprovalFlowStep) {
+  if (step.step === '提交申请' || step.status === 'CANCELLED') {
+    const zh = payloadVal(detailPayload.value, 'contactName')
+    if (zh) return zh
+  }
+  return step.actor || '—'
 }
 
 function fmtTime(v?: string) {
@@ -388,10 +404,12 @@ function openDetail(row: SubRow, mode: 'mine' | 'pending' | 'reviewed') {
   subDetail.row = row
   subDetail.mode = mode
   subDetail.visible = true
-  reviewForm.note = ''
   if (mode === 'pending') {
     reviewForm.reviewerName = auth.user?.displayName || auth.user?.username || ''
     reviewForm.reviewerContact = ''
+    reviewForm.note = DEFAULT_APPROVE_COMMENT
+  } else {
+    reviewForm.note = ''
   }
 }
 
@@ -414,15 +432,11 @@ async function approve(row: SubRow) {
     ElMessage.warning('请填写审批人')
     return
   }
-  if (!reviewForm.reviewerContact.trim()) {
-    ElMessage.warning('请填写联系方式')
-    return
-  }
   try {
     const res = await api.post(`/governance/catalog/subscriptions/${row.id}/approve`, {
-      comment: reviewForm.note.trim() || '同意',
+      comment: reviewForm.note.trim() || DEFAULT_APPROVE_COMMENT,
       reviewerName: reviewForm.reviewerName.trim(),
-      reviewerContact: reviewForm.reviewerContact.trim(),
+      reviewerContact: reviewForm.reviewerContact.trim() || undefined,
     }, { timeout: 45_000 })
     const nextStep = String((res.data as any)?.approvalStep || '').toUpperCase()
     if (nextStep === 'PROVIDER' || String((res.data as any)?.status || '').toUpperCase() === 'PENDING') {
@@ -442,18 +456,16 @@ async function reject(row: SubRow) {
     ElMessage.warning('请填写审批人')
     return
   }
-  if (!reviewForm.reviewerContact.trim()) {
-    ElMessage.warning('请填写联系方式')
-    return
-  }
   let comment = reviewForm.note
-  if (!comment?.trim()) {
+  // 默认「同意」不能当作驳回意见
+  if (!comment?.trim() || comment.trim() === DEFAULT_APPROVE_COMMENT) {
     try {
       const { value } = await ElMessageBox.prompt('请填写驳回意见', '驳回申请', {
         confirmButtonText: '驳回',
         cancelButtonText: '取消',
         inputPattern: /\S+/,
         inputErrorMessage: '意见不能为空',
+        inputValue: comment.trim() === DEFAULT_APPROVE_COMMENT ? '' : comment,
       })
       comment = value
     } catch {
@@ -464,7 +476,7 @@ async function reject(row: SubRow) {
     await api.post(`/governance/catalog/subscriptions/${row.id}/reject`, {
       comment,
       reviewerName: reviewForm.reviewerName.trim(),
-      reviewerContact: reviewForm.reviewerContact.trim(),
+      reviewerContact: reviewForm.reviewerContact.trim() || undefined,
     })
     ElMessage.success('已驳回')
     subDetail.visible = false
@@ -1058,7 +1070,7 @@ onActivated(() => {
             <el-descriptions-item label="提供方">{{ subDetail.row.providerOrg || '—' }}</el-descriptions-item>
             <el-descriptions-item label="共享方式">{{ shareLabel(subDetail.row.shareMode) }}</el-descriptions-item>
             <el-descriptions-item label="物理表">{{ subDetail.row.physicalTableName || '—' }}</el-descriptions-item>
-            <el-descriptions-item label="更新周期">{{ subDetail.row.updateCycle || '—' }}</el-descriptions-item>
+            <el-descriptions-item label="更新周期">{{ cycleLabel(subDetail.row.updateCycle) }}</el-descriptions-item>
             <el-descriptions-item label="资源描述">{{ subDetail.row.description || '—' }}</el-descriptions-item>
           </el-descriptions>
         </section>
@@ -1067,7 +1079,6 @@ onActivated(() => {
           <h4>申请方信息</h4>
           <el-descriptions :column="1" border size="small">
             <el-descriptions-item label="申请单位">{{ subDetail.row.applicantOrg || '—' }}</el-descriptions-item>
-            <el-descriptions-item label="申请人">{{ subDetail.row.applicantUser || '—' }}</el-descriptions-item>
             <el-descriptions-item label="联系人">{{ payloadVal(parsePayload(subDetail.row), 'contactName') || '—' }}</el-descriptions-item>
             <el-descriptions-item label="联系电话">{{ payloadVal(parsePayload(subDetail.row), 'contactPhone') || '—' }}</el-descriptions-item>
             <el-descriptions-item label="联系邮箱">{{ payloadVal(parsePayload(subDetail.row), 'contactEmail') || '—' }}</el-descriptions-item>
@@ -1132,11 +1143,11 @@ onActivated(() => {
             <el-descriptions-item label="应用系统名称">{{ payloadVal(parsePayload(subDetail.row), 'systemName') || '—' }}</el-descriptions-item>
             <el-descriptions-item label="接口URL">{{ subDetail.row.apiUrl || payloadVal(parsePayload(subDetail.row), 'apiUrl') || '—' }}</el-descriptions-item>
             <el-descriptions-item label="接口请求方式">{{ subDetail.row.apiMethod || payloadVal(parsePayload(subDetail.row), 'apiMethod') || 'POST' }}</el-descriptions-item>
-            <el-descriptions-item label="用于Oauth2服务认证的client secret信息">
-              {{ subDetail.row.oauthClientSecret || payloadVal(parsePayload(subDetail.row), 'oauthClientSecret') || '—' }}
-            </el-descriptions-item>
-            <el-descriptions-item label="用于Oauth2服务认证的clientid信息">
+            <el-descriptions-item label="client_id">
               {{ subDetail.row.oauthClientId || payloadVal(parsePayload(subDetail.row), 'oauthClientId') || '—' }}
+            </el-descriptions-item>
+            <el-descriptions-item label="client_secret">
+              {{ subDetail.row.oauthClientSecret || payloadVal(parsePayload(subDetail.row), 'oauthClientSecret') || '—' }}
             </el-descriptions-item>
             <el-descriptions-item label="使用时间范围">{{ payloadVal(parsePayload(subDetail.row), 'timeRange') || '—' }}</el-descriptions-item>
             <el-descriptions-item label="使用期限">
@@ -1183,7 +1194,7 @@ onActivated(() => {
               </template>
             </el-table-column>
             <el-table-column label="处理人" width="110" show-overflow-tooltip>
-              <template #default="{ row }">{{ row.actor || '—' }}</template>
+              <template #default="{ row }">{{ flowActorLabel(row) }}</template>
             </el-table-column>
             <el-table-column label="时间" width="160">
               <template #default="{ row }">{{ fmtTime(row.time) }}</template>
@@ -1197,8 +1208,8 @@ onActivated(() => {
             <el-form-item label="审批人" required>
               <el-input v-model="reviewForm.reviewerName" maxlength="64" placeholder="请填写审批人" clearable />
             </el-form-item>
-            <el-form-item label="联系方式" required>
-              <el-input v-model="reviewForm.reviewerContact" maxlength="64" placeholder="请填写手机号或固话" clearable />
+            <el-form-item label="联系方式">
+              <el-input v-model="reviewForm.reviewerContact" maxlength="64" placeholder="选填：手机号或固话" clearable />
             </el-form-item>
             <el-form-item label="审批意见">
               <el-input
@@ -1207,7 +1218,7 @@ onActivated(() => {
                 :rows="3"
                 maxlength="500"
                 show-word-limit
-                placeholder="通过可填同意；驳回时必须填写驳回意见"
+                placeholder="默认：同意；驳回时必须填写驳回意见"
               />
             </el-form-item>
           </el-form>

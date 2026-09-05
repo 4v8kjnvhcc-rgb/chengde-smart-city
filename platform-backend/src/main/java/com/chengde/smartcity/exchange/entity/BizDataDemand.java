@@ -22,6 +22,8 @@ public class BizDataDemand {
     private String templateCode;
     private String stage;
     private Long matchedCatalogId;
+    /** 已挂载门户目录 ID 列表（JSON 数组，如 [1,2,3]） */
+    private String matchedCatalogIds;
     private BigDecimal matchScore;
     private String analysisNote;
     private String assigneeOrg;
@@ -73,6 +75,8 @@ public class BizDataDemand {
     public void setStage(String stage) { this.stage = stage; }
     public Long getMatchedCatalogId() { return matchedCatalogId; }
     public void setMatchedCatalogId(Long matchedCatalogId) { this.matchedCatalogId = matchedCatalogId; }
+    public String getMatchedCatalogIds() { return matchedCatalogIds; }
+    public void setMatchedCatalogIds(String matchedCatalogIds) { this.matchedCatalogIds = matchedCatalogIds; }
     public BigDecimal getMatchScore() { return matchScore; }
     public void setMatchScore(BigDecimal matchScore) { this.matchScore = matchScore; }
     public String getAnalysisNote() { return analysisNote; }

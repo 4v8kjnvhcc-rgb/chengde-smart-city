@@ -434,15 +434,13 @@ public class CatalogSubscriptionService {
             throw new BusinessException(400, "请填写审批人");
         }
         String reviewerContact = str(body.get("reviewerContact"), str(body.get("contact"), null));
-        if (reviewerContact == null || reviewerContact.isBlank()) {
-            throw new BusinessException(400, "请填写联系方式");
-        }
+        String contactVal = reviewerContact == null || reviewerContact.isBlank() ? null : reviewerContact.trim();
         String comment = str(body.get("comment"), "同意");
         LocalDateTime now = LocalDateTime.now();
 
         if ("PLATFORM".equals(step)) {
             sub.setPlatformReviewedBy(reviewerName.trim());
-            sub.setPlatformReviewerContact(reviewerContact.trim());
+            sub.setPlatformReviewerContact(contactVal);
             sub.setPlatformApproverNote(comment);
             sub.setPlatformReviewedAt(now);
             sub.setApprovalStep("PROVIDER");
@@ -456,7 +454,7 @@ public class CatalogSubscriptionService {
             }
             if (portal != null && "PENDING".equalsIgnoreCase(portal.getStatus())) {
                 portal.setPlatformReviewedBy(reviewerName.trim());
-                portal.setPlatformReviewerContact(reviewerContact.trim());
+                portal.setPlatformReviewerContact(contactVal);
                 portal.setPlatformApproverNote(comment);
                 portal.setPlatformReviewedAt(now);
                 portal.setApprovalStep("PROVIDER");
@@ -471,7 +469,7 @@ public class CatalogSubscriptionService {
         sub.setStatus("APPROVED");
         sub.setReviewComment(comment);
         sub.setReviewedBy(reviewerName.trim());
-        sub.setReviewerContact(reviewerContact.trim());
+        sub.setReviewerContact(contactVal);
         sub.setReviewedAt(now);
         sub.setApprovalStep("PROVIDER");
         sub.setUpdatedAt(now);
@@ -509,9 +507,7 @@ public class CatalogSubscriptionService {
             throw new BusinessException(400, "请填写审批人");
         }
         String reviewerContact = str(body.get("reviewerContact"), str(body.get("contact"), null));
-        if (reviewerContact == null || reviewerContact.isBlank()) {
-            throw new BusinessException(400, "请填写联系方式");
-        }
+        String contactVal = reviewerContact == null || reviewerContact.isBlank() ? null : reviewerContact.trim();
         String comment = str(body.get("comment"), null);
         if (comment == null || comment.isBlank()) {
             throw new BusinessException(400, "驳回须填写驳回意见");
@@ -519,7 +515,7 @@ public class CatalogSubscriptionService {
         sub.setStatus("REJECTED");
         sub.setReviewComment(comment);
         sub.setReviewedBy(reviewerName.trim());
-        sub.setReviewerContact(reviewerContact.trim());
+        sub.setReviewerContact(contactVal);
         sub.setReviewedAt(LocalDateTime.now());
         sub.setUpdatedAt(LocalDateTime.now());
         subscriptionMapper.updateById(sub);

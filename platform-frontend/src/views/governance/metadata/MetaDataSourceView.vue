@@ -157,7 +157,7 @@ const form = reactive({
   realtimeFlag: false,
   readOnlyFlag: false,
   dbHost: '',
-  dbPort: 3306,
+  dbPort: '3306',
   dbName: '',
   dbSchema: '',
   username: '',
@@ -408,7 +408,7 @@ function resetForm() {
   form.realtimeFlag = false
   form.readOnlyFlag = false
   form.dbHost = ''
-  form.dbPort = defaultPort('MYSQL')
+  form.dbPort = String(defaultPort('MYSQL'))
   form.dbName = ''
   form.dbSchema = ''
   form.username = ''
@@ -465,7 +465,7 @@ async function openEdit(row: DataSourceRow) {
     form.realtimeFlag = d.realtimeFlag === 1
     form.readOnlyFlag = d.readOnlyFlag !== 0
     form.dbHost = d.dbHost || ''
-    form.dbPort = d.dbPort ?? defaultPort(form.adapterType)
+    form.dbPort = String(d.dbPort ?? defaultPort(form.adapterType))
     form.dbName = d.dbName || ''
     form.dbSchema = d.dbSchema || ''
     form.username = d.username || ''
@@ -478,7 +478,7 @@ async function openEdit(row: DataSourceRow) {
 
 function selectAdapter(code: string) {
   form.adapterType = code
-  form.dbPort = defaultPort(code)
+  form.dbPort = String(defaultPort(code))
 }
 
 function onCategoryChange(categoryId: number) {
@@ -545,8 +545,8 @@ function buildPayload(includePassword = true) {
     realtimeFlag: form.realtimeFlag ? 1 : 0,
     readOnlyFlag: form.readOnlyFlag ? 1 : 0,
     dbHost: form.dbHost.trim(),
-    dbPort: form.dbPort,
-    dbName: form.dbName.trim() || undefined,
+    dbPort: Number(form.dbPort) || defaultPort(form.adapterType),
+    dbName: form.dbName.trim(),
     dbSchema: form.dbSchema.trim() || undefined,
     username: form.username.trim(),
   }
@@ -560,9 +560,23 @@ async function buildEncryptedPayload(includePassword = true) {
   return withPasswordTransport(buildPayload(includePassword), includePassword ? form.password : null)
 }
 
+function parseDbPort(): number | null {
+  const n = Number(form.dbPort)
+  if (!Number.isInteger(n) || n < 1 || n > 65535) return null
+  return n
+}
+
 async function testConnection() {
   if (!form.dbHost.trim() || !form.username.trim()) {
     ElMessage.warning('请先填写连接地址与用户名')
+    return
+  }
+  if (!parseDbPort()) {
+    ElMessage.warning('请填写有效端口号')
+    return
+  }
+  if (!form.dbName.trim()) {
+    ElMessage.warning('请填写数据库名称')
     return
   }
   if (!form.password && !editingId.value) {
@@ -586,6 +600,14 @@ async function testConnection() {
 async function submitForm() {
   if (!form.dbHost.trim()) {
     ElMessage.warning('请填写数据库连接地址')
+    return
+  }
+  if (!parseDbPort()) {
+    ElMessage.warning('请填写有效端口号')
+    return
+  }
+  if (!form.dbName.trim()) {
+    ElMessage.warning('请填写数据库名称')
     return
   }
   if (!form.username.trim()) {
@@ -921,27 +943,26 @@ onMounted(async () => {
       <div v-else class="mds-wizard-body">
         <div class="mds-step-head">
           <div class="mds-step-head__title">连接配置</div>
-          <div class="mds-step-head__desc">填写数据库连接地址、端口、库名与账号密码</div>
         </div>
         <div class="mds-form-panel">
           <div class="mds-summary-bar">
             <span>分类：{{ form.categoryName || '—' }}</span>
             <span>{{ form.readOnlyFlag ? '只读' : '可写' }}</span>
           </div>
-          <el-form label-width="168px">
-            <el-form-item label="db_host(数据库连接地址)" required>
-              <el-input v-model="form.dbHost" placeholder="例如 192.168.1.10 或 db.example.com" />
+          <el-form label-width="108px">
+            <el-form-item label="db_host" required>
+              <el-input v-model="form.dbHost" />
             </el-form-item>
-            <el-form-item label="db_port(数据库端口)" required>
-              <el-input-number v-model="form.dbPort" :min="1" :max="65535" controls-position="right" class="mds-full-width" />
+            <el-form-item label="db_port" required>
+              <el-input v-model="form.dbPort" maxlength="5" />
             </el-form-item>
-            <el-form-item label="db_name(数据库名称)">
-              <el-input v-model="form.dbName" placeholder="库名（可选）" />
+            <el-form-item label="db_name" required>
+              <el-input v-model="form.dbName" />
             </el-form-item>
-            <el-form-item label="username(用户名)" required>
+            <el-form-item label="username" required>
               <el-input v-model="form.username" autocomplete="off" placeholder="数据库用户名" />
             </el-form-item>
-            <el-form-item label="password(密码)" :required="!editingId">
+            <el-form-item label="password" :required="!editingId">
               <el-input
                 v-model="form.password"
                 type="password"
@@ -949,9 +970,6 @@ onMounted(async () => {
                 autocomplete="new-password"
                 :placeholder="editingId ? '留空则不修改' : '请输入密码'"
               />
-            </el-form-item>
-            <el-form-item label="db_schema(SCHEMA)">
-              <el-input v-model="form.dbSchema" placeholder="Schema（可选）" />
             </el-form-item>
           </el-form>
         </div>

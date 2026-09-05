@@ -360,7 +360,7 @@ const mountDialog = reactive({
   visible: false,
   id: 0,
   providerOrg: '',
-  catalogId: undefined as number | undefined,
+  catalogIds: [] as number[],
   loading: false,
   catalogs: [] as Record<string, unknown>[],
 })
@@ -1327,7 +1327,7 @@ async function openMountDialog(id: number, row?: Record<string, unknown>) {
   const providerOrg = String(hit?.assigneeOrg || parseFormPayload(hit || {}).providerOrg || '').trim()
   mountDialog.id = id
   mountDialog.providerOrg = providerOrg
-  mountDialog.catalogId = hit?.matchedCatalogId != null ? Number(hit.matchedCatalogId) : undefined
+  mountDialog.catalogIds = resolveMountedCatalogIds(hit || {})
   mountDialog.visible = true
   mountDialog.loading = true
   mountDialog.catalogs = []
@@ -1348,17 +1348,43 @@ async function openMountDialog(id: number, row?: Record<string, unknown>) {
   }
 }
 
+function resolveMountedCatalogIds(row: Record<string, unknown>): number[] {
+  const raw = row.matchedCatalogIds
+  if (Array.isArray(raw)) {
+    return raw.map((x) => Number(x)).filter((n) => Number.isFinite(n) && n > 0)
+  }
+  if (typeof raw === 'string' && raw.trim()) {
+    try {
+      const parsed = JSON.parse(raw) as unknown
+      if (Array.isArray(parsed)) {
+        return parsed.map((x) => Number(x)).filter((n) => Number.isFinite(n) && n > 0)
+      }
+    } catch {
+      /* ignore */
+    }
+  }
+  if (row.matchedCatalogId != null && Number(row.matchedCatalogId) > 0) {
+    return [Number(row.matchedCatalogId)]
+  }
+  return []
+}
+
 async function confirmMarkCatalogMounted() {
-  if (!mountDialog.catalogId) {
+  if (!mountDialog.catalogIds.length) {
     return ElMessage.warning('请选择已挂载的目录名称')
   }
-  const cat = mountDialog.catalogs.find((c) => Number(c.id) === Number(mountDialog.catalogId))
-  const title = String(cat?.title || '')
+  const selected = mountDialog.catalogs.filter((c) =>
+    mountDialog.catalogIds.includes(Number(c.id)),
+  )
+  const titles = selected.map((c) => String(c.title || '')).filter(Boolean)
+  const titleText = titles.join('、')
   await api.post(`/exchange/supply/demands/${mountDialog.id}/mark-mounted`, {
-    matchedCatalogId: mountDialog.catalogId,
-    catalogTitle: title || undefined,
-    confirmNote: title
-      ? `目录已挂载至部门数据共享门户：${title}`
+    matchedCatalogId: mountDialog.catalogIds[0],
+    matchedCatalogIds: mountDialog.catalogIds,
+    catalogTitle: titleText || undefined,
+    catalogTitles: titles,
+    confirmNote: titleText
+      ? `目录已挂载至部门数据共享门户：${titleText}`
       : '目录已挂载至部门数据共享门户',
   })
   mountDialog.visible = false
@@ -3235,10 +3261,13 @@ onMounted(() => {
         </el-form-item>
         <el-form-item label="已挂载目录" required>
           <el-select
-            v-model="mountDialog.catalogId"
+            v-model="mountDialog.catalogIds"
+            multiple
             filterable
             clearable
-            placeholder="请选择部门数据共享门户中该提供部门的目录"
+            collapse-tags
+            collapse-tags-tooltip
+            placeholder="请选择部门数据共享门户中该提供部门的目录（可多选）"
             style="width:100%"
             :loading="mountDialog.loading"
           >
@@ -3253,7 +3282,7 @@ onMounted(() => {
       </el-form>
       <template #footer>
         <el-button @click="mountDialog.visible = false">取消</el-button>
-        <el-button type="primary" :disabled="!mountDialog.catalogId" @click="confirmMarkCatalogMounted">确定</el-button>
+        <el-button type="primary" :disabled="!mountDialog.catalogIds.length" @click="confirmMarkCatalogMounted">确定</el-button>
       </template>
     </el-dialog>
 

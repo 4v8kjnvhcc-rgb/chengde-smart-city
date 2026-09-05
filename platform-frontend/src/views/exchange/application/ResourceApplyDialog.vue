@@ -96,7 +96,7 @@ export function applyApiMetaFromDetail(src: Record<string, unknown> | null | und
 
 <script setup lang="ts">
 import { computed, reactive, ref, watch } from 'vue'
-import { ElMessage } from 'element-plus'
+import { ElMessage, ElMessageBox } from 'element-plus'
 import api from '@/api/http'
 import { useAuthStore } from '@/stores/auth'
 
@@ -175,7 +175,7 @@ const isTable = computed(() => {
   return t === 'TABLE' || t === 'DATABASE'
 })
 const showQuotaFields = computed(() => isApi.value || isTable.value)
-const useDaysMax = computed(() => (isTable.value ? 3096 : 3656))
+const USE_DAYS_MAX = 365
 
 function toParamRow(c: ApplyColumn): ParamRow {
   return {
@@ -302,6 +302,13 @@ function hasText(v: unknown) {
   return String(v ?? '').trim().length > 0
 }
 
+function isPositiveInt(v: unknown) {
+  if (typeof v === 'number') return Number.isInteger(v) && v > 0
+  if (v == null || String(v).trim() === '') return false
+  const n = Number(v)
+  return Number.isInteger(n) && n > 0
+}
+
 async function onSubmit() {
   if (!props.resource) return
   if (!form.applicantOrg.trim()) return ElMessage.warning('请填写申请方名称')
@@ -309,7 +316,7 @@ async function onSubmit() {
   if (!form.contactPhone.trim()) return ElMessage.warning('请填写联系电话')
   if (!hasText(form.scene)) return ElMessage.warning('请选择或填写使用办事场景')
   if (!form.systemName.trim()) {
-    return ElMessage.warning(myApps.value.length ? '请选择应用系统名称' : '请先在个人空间「我的应用」中登记应用系统')
+    return ElMessage.warning(myApps.value.length ? '请选择应用系统名称' : '请先在个人中心「我的应用」中登记应用系统')
   }
   if (!hasText(form.timeRange)) return ElMessage.warning('请选择或填写使用时间范围')
   if (isTable.value) {
@@ -317,10 +324,14 @@ async function onSubmit() {
     if (!selectedParams(outputRows.value).length) return ElMessage.warning('请至少勾选出参字段')
   }
   if (showQuotaFields.value) {
-    if (form.callFreq == null) return ElMessage.warning('请填写服务接口调用频次')
-    if (form.peakFreq == null) return ElMessage.warning('请填写服务接口峰值频率')
+    if (!isPositiveInt(form.callFreq)) return ElMessage.warning('服务接口调用频次须为正整数')
+    if (!isPositiveInt(form.peakFreq)) return ElMessage.warning('服务接口峰值频率须为正整数')
     if (form.useDays == null) return ElMessage.warning('请填写服务接口使用期限')
-    if (form.useDays > useDaysMax.value) return ElMessage.warning(`期限不得超过${useDaysMax.value}天`)
+    if (!isPositiveInt(form.useDays)) return ElMessage.warning('服务接口使用期限须为正整数')
+    if (form.useDays > USE_DAYS_MAX) {
+      await ElMessageBox.alert('期限不能超过365天', '提示', { confirmButtonText: '确定', type: 'warning' })
+      return
+    }
   }
   if (!hasText(form.useScope)) return ElMessage.warning('请选择或填写使用范围说明')
   if (!form.dataDesc.trim()) return ElMessage.warning('请填写数据描述')
@@ -417,8 +428,8 @@ defineExpose({ close })
 
           <template v-if="isTable">
             <p class="sub-cap">库表资源申请</p>
-            <p class="param-cap">入参<span class="param-cap__hint">（编目「是否搜索项」）</span></p>
-            <el-table :data="visibleInputRows" size="small" stripe border class="param-table" empty-text="编目未勾选搜索项">
+            <p class="param-cap">入参</p>
+            <el-table :data="visibleInputRows" size="small" stripe border class="param-table" empty-text="无">
               <el-table-column width="46" align="center">
                 <template #header>
                   <el-checkbox
@@ -441,8 +452,8 @@ defineExpose({ close })
               @click="inputExpanded = !inputExpanded"
             >{{ inputExpanded ? '收起内容' : '展开内容' }}</button>
 
-            <p class="param-cap">出参<span class="param-cap__hint">（编目「是否展示项」）</span></p>
-            <el-table :data="visibleOutputRows" size="small" stripe border class="param-table" empty-text="编目未勾选展示项">
+            <p class="param-cap">出参</p>
+            <el-table :data="visibleOutputRows" size="small" stripe border class="param-table" empty-text="无">
               <el-table-column width="46" align="center">
                 <template #header>
                   <el-checkbox
@@ -486,7 +497,7 @@ defineExpose({ close })
                 filterable
                 clearable
                 :loading="myAppsLoading"
-                :placeholder="myApps.length ? '请选择应用系统' : '请先在个人空间登记应用'"
+                :placeholder="myApps.length ? '请选择应用系统' : '请先在个人中心登记应用'"
                 style="width: 100%"
                 @change="onSystemNameChange"
               >
@@ -514,13 +525,13 @@ defineExpose({ close })
           <div v-if="showQuotaFields" class="api-row">
             <el-form-item label="服务接口调用频次" required>
               <div class="with-unit">
-                <el-input-number v-model="form.callFreq" :min="1" :controls="false" placeholder="次数" />
+                <el-input-number v-model="form.callFreq" :min="1" :precision="0" :controls="false" />
                 <span class="unit">次/天</span>
               </div>
             </el-form-item>
             <el-form-item label="服务接口峰值频率" required>
               <div class="with-unit">
-                <el-input-number v-model="form.peakFreq" :min="1" :controls="false" placeholder="次数" />
+                <el-input-number v-model="form.peakFreq" :min="1" :precision="0" :controls="false" />
                 <span class="unit">次/天</span>
               </div>
             </el-form-item>
@@ -529,13 +540,12 @@ defineExpose({ close })
                 <el-input-number
                   v-model="form.useDays"
                   :min="1"
-                  :max="useDaysMax"
+                  :precision="0"
                   :controls="false"
-                  placeholder="天数"
                 />
                 <span class="unit">天</span>
               </div>
-              <p class="field-hint">期限不能超过{{ useDaysMax }}天</p>
+              <p class="field-hint">期限不能超过{{ USE_DAYS_MAX }}天</p>
             </el-form-item>
           </div>
           <el-form-item label="使用范围说明" required>
@@ -653,12 +663,6 @@ defineExpose({ close })
   font-size: 13px;
   font-weight: 600;
   color: #1f2329;
-}
-.param-cap__hint {
-  margin-left: 6px;
-  font-weight: 400;
-  color: #86909c;
-  font-size: 12px;
 }
 .param-table {
   width: 100%;

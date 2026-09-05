@@ -1283,7 +1283,7 @@ public class CatalogResourceService {
         }
     }
 
-    /** 审批须填写审批人、联系方式；驳回时意见另校验。 */
+    /** 审批须填写审批人；联系方式选填；驳回时意见另校验。 */
     private void applyReviewerFields(GovCatalogApproval a, Map<String, Object> body) {
         String reviewerName = str(body.get("reviewerName"), null);
         if (reviewerName == null || reviewerName.isBlank()) {
@@ -1296,11 +1296,8 @@ public class CatalogResourceService {
         if (contact == null || contact.isBlank()) {
             contact = str(body.get("contact"), null);
         }
-        if (contact == null || contact.isBlank()) {
-            throw new BusinessException(400, "请填写联系方式");
-        }
         a.setReviewedBy(reviewerName.trim());
-        a.setReviewerContact(contact.trim());
+        a.setReviewerContact(contact == null || contact.isBlank() ? null : contact.trim());
     }
 
     private void insertApprovedAudit(UserPrincipal operator, GovCatalogResource r, String actionType, String comment) {

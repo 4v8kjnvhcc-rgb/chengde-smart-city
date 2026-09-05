@@ -40,7 +40,7 @@ export const DEPT_PORTAL_TABS = [
   { key: 'home', label: '首页' },
   { key: 'catalog', label: '政务共享资源' },
   { key: 'subscribe', label: '基础资源目录' },
-  { key: 'myspace', label: '个人空间' },
+  { key: 'myspace', label: '个人中心' },
 ] as const
 
 export const DEPT_PORTAL_BRAND = '部门数据共享门户'

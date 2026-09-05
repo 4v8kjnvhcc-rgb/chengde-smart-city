@@ -689,10 +689,6 @@ async function submitReview() {
     ElMessage.warning('请填写审批人')
     return
   }
-  if (!reviewForm.reviewerContact.trim()) {
-    ElMessage.warning('请填写联系方式')
-    return
-  }
   if (reviewForm.decision === 'REJECT' && !reviewForm.comment.trim()) {
     ElMessage.warning('驳回须填写驳回意见')
     return
@@ -1149,8 +1145,8 @@ onActivated(() => {
         <el-form-item label="审批人" required>
           <el-input v-model="reviewForm.reviewerName" maxlength="64" placeholder="请填写审批人姓名" clearable />
         </el-form-item>
-        <el-form-item label="联系方式" required>
-          <el-input v-model="reviewForm.reviewerContact" maxlength="64" placeholder="请填写手机号或固话" clearable />
+        <el-form-item label="联系方式">
+          <el-input v-model="reviewForm.reviewerContact" maxlength="64" placeholder="选填：手机号或固话" clearable />
         </el-form-item>
       </el-form>
 
