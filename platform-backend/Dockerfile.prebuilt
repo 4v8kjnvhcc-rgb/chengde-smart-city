@@ -3,10 +3,13 @@
 FROM eclipse-temurin:17-jre
 WORKDIR /app
 RUN useradd -r -u 10001 appuser \
-  && apt-get update && apt-get install -y --no-install-recommends curl \
+  && apt-get update && apt-get install -y --no-install-recommends curl tzdata \
   && rm -rf /var/lib/apt/lists/*
 COPY target/platform-backend-*.jar /app/app.jar
 USER appuser
 EXPOSE 8080
-ENV JAVA_OPTS="-Xms512m -Xmx1536m"
+# 生产按北京时间落库/展示；JAVA_TOOL_OPTIONS 即使 compose 覆盖 JAVA_OPTS 也会生效
+ENV TZ=Asia/Shanghai
+ENV JAVA_TOOL_OPTIONS="-Duser.timezone=Asia/Shanghai"
+ENV JAVA_OPTS="-Duser.timezone=Asia/Shanghai -Xms512m -Xmx1536m"
 ENTRYPOINT ["sh", "-c", "java $JAVA_OPTS -jar /app/app.jar"]

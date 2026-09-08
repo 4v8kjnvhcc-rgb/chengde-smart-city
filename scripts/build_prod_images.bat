@@ -1,85 +1,92 @@
 @echo off
 chcp 65001 >nul
-setlocal EnableExtensions
+setlocal EnableExtensions EnableDelayedExpansion
 
-REM åŒå‡»ï¼šè¾“å…¥è¿œç¨‹åˆ†æ”¯å â†’ fetch åæŒ‰ origin/<åˆ†æ”¯> æ„å»ºç”Ÿäº§é•œåƒ
-REM é»˜è®¤è¾“å‡ºåˆ°ä»“åº“ release/
-REM ä¾èµ–ï¼šGitï¼ˆå¯è®¿é—® originï¼‰ã€Docker Desktop
+REM Ë«»÷£º°´ origin/<·ÖÖ§> ¹¹½¨Éú²ú¾µÏñµ½ release/
+REM ÒÀÀµ£ºGit¡¢Docker Desktop
 
 cd /d "%~dp0.."
+set ERR=1
 if not exist ".git" (
-  echo [é”™è¯¯] æœªæ‰¾åˆ° Git ä»“åº“ï¼Œè¯·æŠŠæœ¬è„šæœ¬æ”¾åœ¨ä»“åº“ scripts ç›®å½•ä¸‹ã€‚
-  pause
-  exit /b 1
+  echo [´íÎó] Î´ÕÒµ½ Git ²Ö¿â£¬Çë°Ñ±¾½Å±¾·ÅÔÚ²Ö¿â scripts Ä¿Â¼ÏÂ¡£
+  goto end_pause
 )
 
 echo ========================================
-echo   æ‰¿å¾·å¹³å° - ç”Ÿäº§é•œåƒä¸€é”®æ„å»º
-echo   ä»“åº“: %CD%
-echo   è¾“å‡º: %CD%\release
-echo   æ¥æº: origin/^<åˆ†æ”¯^>ï¼ˆå…ˆ fetchï¼Œéæœ¬åœ°å·¥ä½œåŒºï¼‰
+echo   ³ĞµÂÆ½Ì¨ - Éú²ú¾µÏñÒ»¼ü¹¹½¨
+echo   ²Ö¿â: %CD%
+echo   Êä³ö: %CD%\release
+echo   À´Ô´: origin/^<·ÖÖ§^> ÏÈ fetch£¬·Ç±¾µØ¹¤×÷Çø
 echo ========================================
 echo.
-set /p BRANCH=è¯·è¾“å…¥è¿œç¨‹åˆ†æ”¯å ^(å¦‚ feature_yxj / main^): 
+set /p BRANCH=ÇëÊäÈëÔ¶³Ì·ÖÖ§Ãû ^(Èç feature_yrj / main^): 
 if "%BRANCH%"=="" (
-  echo [é”™è¯¯] åˆ†æ”¯åä¸èƒ½ä¸ºç©ºã€‚
-  pause
-  exit /b 1
+  echo [´íÎó] ·ÖÖ§Ãû²»ÄÜÎª¿Õ¡£
+  goto end_pause
 )
 
 echo.
-echo ==^> è¿œç¨‹åˆ†æ”¯: origin/%BRANCH%
-echo ==^> è¾“å‡º: %CD%\release
+echo ==^> Ô¶³Ì·ÖÖ§: origin/%BRANCH%
+echo ==^> Êä³ö: %CD%\release
 echo.
-echo æ³¨æ„: ä»¥è¿œç¨‹å·² push çš„æäº¤ä¸ºå‡†ï¼›æœ¬åœ°æœª push çš„æ”¹åŠ¨ä¸ä¼šè¿›é•œåƒã€‚
+echo ×¢Òâ: ÒÔÔ¶³ÌÒÑ push µÄÌá½»Îª×¼£»±¾µØÎ´ push µÄ¸Ä¶¯²»»á½ø¾µÏñ¡£
 echo.
 
 where docker >nul 2>&1
 if errorlevel 1 (
-  echo [é”™è¯¯] æœªæ‰¾åˆ° docker å‘½ä»¤ï¼Œè¯·å…ˆå®‰è£…å¹¶å¯åŠ¨ Docker Desktopã€‚
-  pause
-  exit /b 1
+  echo [´íÎó] Î´ÕÒµ½ docker ÃüÁî£¬ÇëÏÈ°²×°²¢Æô¶¯ Docker Desktop¡£
+  goto end_pause
 )
 
 docker info >nul 2>&1
-if errorlevel 1 (
-  echo [æç¤º] Docker æœªè¿è¡Œï¼Œå°è¯•å¯åŠ¨ Docker Desktop...
-  if exist "%LOCALAPPDATA%\Programs\DockerDesktop\Docker Desktop.exe" (
-    start "" "%LOCALAPPDATA%\Programs\DockerDesktop\Docker Desktop.exe"
-  ) else if exist "%ProgramFiles%\Docker\Docker\Docker Desktop.exe" (
-    start "" "%ProgramFiles%\Docker\Docker\Docker Desktop.exe"
-  ) else (
-    echo [é”™è¯¯] æœªæ‰¾åˆ° Docker Desktop å¯æ‰§è¡Œæ–‡ä»¶ï¼Œè¯·æ‰‹åŠ¨å¯åŠ¨åå†æ‰§è¡Œã€‚
-    pause
-    exit /b 1
-  )
-  echo [æç¤º] ç­‰å¾… Docker å¼•æ“å°±ç»ªï¼ˆæœ€é•¿çº¦ 90 ç§’ï¼‰...
-  set /a _i=0
-  :wait_docker
-  timeout /t 5 /nobreak >nul
-  docker info >nul 2>&1
-  if not errorlevel 1 goto docker_ready
-  set /a _i+=1
-  if %_i% geq 18 (
-    echo [é”™è¯¯] Docker ä»æœªå°±ç»ªï¼Œè¯·ç¡®è®¤ Desktop å·²å¯åŠ¨åå†åŒå‡»æœ¬è„šæœ¬ã€‚
-    pause
-    exit /b 1
-  )
+if errorlevel 1 goto start_docker
+goto run_build
+
+:start_docker
+echo [ÌáÊ¾] Docker Î´ÔËĞĞ£¬³¢ÊÔÆô¶¯ Docker Desktop...
+if exist "%LOCALAPPDATA%\Programs\DockerDesktop\Docker Desktop.exe" (
+  start "" "%LOCALAPPDATA%\Programs\DockerDesktop\Docker Desktop.exe"
   goto wait_docker
-  :docker_ready
-  echo [æç¤º] Docker å·²å°±ç»ªã€‚
+)
+if exist "%ProgramFiles%\Docker\Docker\Docker Desktop.exe" (
+  start "" "%ProgramFiles%\Docker\Docker\Docker Desktop.exe"
+  goto wait_docker
+)
+echo [´íÎó] Î´ÕÒµ½ Docker Desktop£¬ÇëÊÖ¶¯Æô¶¯ºóÔÙÖ´ĞĞ¡£
+goto end_pause
+
+:wait_docker
+echo [ÌáÊ¾] µÈ´ı Docker ÒıÇæ¾ÍĞ÷£¨×î³¤Ô¼ 90 Ãë£©...
+set /a _i=0
+
+:wait_docker_loop
+timeout /t 5 /nobreak >nul
+docker info >nul 2>&1
+if not errorlevel 1 (
+  echo [ÌáÊ¾] Docker ÒÑ¾ÍĞ÷¡£
+  goto run_build
+)
+set /a _i+=1
+if !_i! geq 18 (
+  echo [´íÎó] Docker ÈÔÎ´¾ÍĞ÷£¬ÇëÈ·ÈÏ Desktop ÒÑÆô¶¯ºóÔÙË«»÷±¾½Å±¾¡£
+  goto end_pause
+)
+goto wait_docker_loop
+
+:run_build
+powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0build_prod_images.ps1" -Branch "%BRANCH%"
+set ERR=!ERRORLEVEL!
+echo.
+if not "!ERR!"=="0" (
+  echo [Ê§°Ü] ÍË³öÂë !ERR!
+  echo Èô±¨±í´ïÊ½½âÎö´íÎó£ºÇëÈ·ÈÏ scripts\build_prod_images.ps1 Îª UTF-8 BOM¡£
+  echo Èô git fetch Ê§°Ü£ºÏÈ¼ì²éÍøÂç£¬»òÔÚÃüÁîĞĞ¼Ó -LocalOnly¡£
+) else (
+  echo [Íê³É] ÒÑĞ´Èë release\ : ¾µÏñ *.tar + prod-mid.env + prod-app.env
+  echo        .51 ÓÃ mid.env£¬.57 ÓÃ app.env + docker load
 )
 
-powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0build_prod_images.ps1" -Branch "%BRANCH%"
-set ERR=%ERRORLEVEL%
+:end_pause
 echo.
-if %ERR% neq 0 (
-  echo [å¤±è´¥] é€€å‡ºç  %ERR%
-  echo è‹¥æŠ¥ã€Œè¡¨è¾¾å¼ä¸­æœ‰æ„å¤–çš„æ ‡è®°ã€ï¼šè¯·ç¡®è®¤ scripts\build_prod_images.ps1 ä¸º UTF-8 BOMï¼ˆä»“åº“å·²ä¿®å¤ï¼‰ã€‚
-) else (
-  echo [å®Œæˆ] å·²å†™å…¥ release\ : é•œåƒ *.tar + prod-mid.env + prod-app.env
-  echo        .51 ç”¨ mid.envï¼Œ.55 ç”¨ app.env + docker loadï¼Œç°åœºä¸ç”¨å†å¡«å¯†ç 
-  echo        æ³¨æ„: release\prod-*.env å·²æ˜¯ Unix LFï¼Œå¯ç›´æ¥æ‹·åˆ° Linux
-)
 pause
-exit /b %ERR%
+exit /b !ERR!

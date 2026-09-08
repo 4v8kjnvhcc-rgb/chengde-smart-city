@@ -17,6 +17,7 @@ services:
     container_name: sc_app_backend
     restart: unless-stopped
     environment:
+      TZ: Asia/Shanghai
       SPRING_PROFILES_ACTIVE: prod
       SERVER_PORT: "8080"
       MYSQL_HOST: ${MYSQL_HOST:-10.10.10.51}
@@ -88,7 +89,8 @@ services:
       ESB_API_NAME: ${ESB_API_NAME:-esb}
       ESB_SOURCE_NAME: ${ESB_SOURCE_NAME:-esb}
       ESB_ONLINE_METHOD: ${ESB_ONLINE_METHOD:-get}
-      JAVA_OPTS: ${BACKEND_JAVA_OPTS:--Xms1g -Xmx3g}
+      # 默认带北京时区；现场可用 BACKEND_JAVA_OPTS 覆盖堆内存，建议保留 -Duser.timezone
+      JAVA_OPTS: ${BACKEND_JAVA_OPTS:--Duser.timezone=Asia/Shanghai -Xms1g -Xmx3g}
       # 容器内路径；必须与下方宿主机绑定挂载目标一致
       APP_UPLOAD_DIR: ${APP_UPLOAD_DIR:-/data/uploads}
       APP_ARCHIVE_DIR: ${APP_ARCHIVE_DIR:-/data/archives}
@@ -117,6 +119,8 @@ services:
     image: smart-city/platform-frontend:local
     container_name: sc_app_web
     restart: unless-stopped
+    environment:
+      TZ: Asia/Shanghai
     depends_on:
       backend:
         condition: service_healthy

@@ -10,10 +10,12 @@ RUN mvn -B -DskipTests package
 FROM eclipse-temurin:17-jre
 WORKDIR /app
 RUN useradd -r -u 10001 appuser \
-  && apt-get update && apt-get install -y --no-install-recommends curl \
+  && apt-get update && apt-get install -y --no-install-recommends curl tzdata \
   && rm -rf /var/lib/apt/lists/*
 COPY --from=build /app/target/platform-backend-*.jar /app/app.jar
 USER appuser
 EXPOSE 8080
-ENV JAVA_OPTS="-Xms512m -Xmx1536m"
+ENV TZ=Asia/Shanghai
+ENV JAVA_TOOL_OPTIONS="-Duser.timezone=Asia/Shanghai"
+ENV JAVA_OPTS="-Duser.timezone=Asia/Shanghai -Xms512m -Xmx1536m"
 ENTRYPOINT ["sh", "-c", "java $JAVA_OPTS -jar /app/app.jar"]

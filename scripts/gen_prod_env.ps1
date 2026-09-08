@@ -119,7 +119,8 @@ $appLines = @(
   "MONGO_URL=mongodb://${MidHost}:27017",
   "CANAL_URL=http://${MidHost}:19090",
   "",
-  'BACKEND_JAVA_OPTS="-Xms1g -Xmx3g"'
+  "TZ=Asia/Shanghai",
+  'BACKEND_JAVA_OPTS="-Duser.timezone=Asia/Shanghai -Xms1g -Xmx3g"'
 )
 $sheetLines = @(
   "chengde prod secrets (local only, do not commit)",

@@ -5,6 +5,8 @@ server:
   port: ${SERVER_PORT:8080}
 
 spring:
+  jackson:
+    time-zone: Asia/Shanghai
   datasource:
     url: jdbc:mysql://${MYSQL_HOST:mysql}:${MYSQL_PORT:3306}/${MYSQL_DATABASE:smart_city}?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai&allowPublicKeyRetrieval=true&useSSL=false
     username: ${MYSQL_USER:smart_city}
